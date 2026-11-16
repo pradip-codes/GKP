@@ -1,0 +1,214 @@
+const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const multer = require('multer');
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+const logger = require('../../config/logger');
+
+const s3Options = {
+  region: process.env.AWS_REGION || 'ap-south-1',
+};
+
+if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+  s3Options.credentials = {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  };
+}
+
+const s3Client = new S3Client(s3Options);
+
+const BUCKET = process.env.AWS_S3_BUCKET;
+if (!BUCKET) {
+  logger.error('AWS_S3_BUCKET not configured — file uploads will fail');
+}
+
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
+const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+
+const MIME_MAP = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.pdf': 'application/pdf',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+};
+
+// Multer memory storage (file goes to memory, then we push to S3)
+const storage = multer.memoryStorage();
+
+const fileFilter = (req, file, cb) => {
+  const ext = path.extname(file.originalname).toLowerCase();
+  const FORBIDDEN_EXTS = ['.exe', '.bat', '.js', '.zip', '.rar', '.sh'];
+
+  if (FORBIDDEN_EXTS.includes(ext)) {
+    return cb(new Error('Forbidden file type detected'), false);
+  }
+
+  if (ALLOWED_TYPES.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only JPEG, PNG, and PDF files are allowed'), false);
+  }
+};
+
+// Multer upload instance
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: MAX_SIZE },
+});
+
+const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska', 'video/mov'];
+const MAX_VIDEO_SIZE = 100 * 1024 * 1024; // 100MB
+
+const videoFileFilter = (req, file, cb) => {
+  const ext = path.extname(file.originalname).toLowerCase();
+  const allowedExts = ['.mp4', '.webm', '.mov', '.mkv', '']; // Allow empty extension for raw blobs
+  const allowedMimeTypes = [...ALLOWED_VIDEO_TYPES, 'application/octet-stream', 'audio/mp4']; // Allow octet-stream and audio/mp4 for iOS Safari blobs
+
+  if (
+    allowedExts.includes(ext) || 
+    allowedMimeTypes.includes(file.mimetype) || 
+    file.originalname === 'blob' ||
+    file.mimetype.startsWith('video/') ||
+    file.mimetype.startsWith('audio/')
+  ) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only MP4, WebM, and MOV video formats are allowed'), false);
+  }
+};
+
+const uploadVideo = multer({
+  storage,
+  fileFilter: videoFileFilter,
+  limits: { fileSize: MAX_VIDEO_SIZE },
+});
+
+const DEFAULT_CLOUDFRONT_DOMAIN = 'd18qh1l6j6vziz.cloudfront.net';
+
+const getCloudFrontDomain = () => {
+  const cf = process.env.AWS_CLOUDFRONT_DOMAIN || process.env.CLOUDFRONT_DOMAIN || process.env.CLOUDFRONT_URL;
+  return cf ? cf.replace(/^https?:\/\//, '').replace(/\/$/, '') : DEFAULT_CLOUDFRONT_DOMAIN;
+};
+
+// Upload a buffer to S3
+const uploadToS3 = async (buffer, originalName, folder = 'kyc') => {
+  let ext = path.extname(originalName).toLowerCase();
+  if (!ext || ext === '') {
+    ext = '.mp4'; // Default to mp4 if extension is missing (e.g. raw iOS Safari blob upload)
+  }
+  const key = `${folder}/${uuidv4()}${ext}`;
+
+  // Sanitize original filename for metadata (remove path components and special chars)
+  const sanitizedOriginalName = originalName
+    .split(/[/\\]/)
+    .pop()
+    .replace(/[^a-zA-Z0-9._-]/g, '_');
+
+  await s3Client.send(new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    Body: buffer,
+    ContentType: MIME_MAP[ext] || 'video/mp4',
+    ServerSideEncryption: 'AES256',
+    Metadata: {
+      'original-filename': sanitizedOriginalName
+    }
+  }));
+
+  const cfDomain = getCloudFrontDomain();
+  const url = `https://${cfDomain}/${key}`;
+
+  logger.info(`Uploaded to S3 and mapped to CloudFront: ${key} -> ${url} (original: ${sanitizedOriginalName})`);
+  return { url, key, originalFilename: sanitizedOriginalName };
+};
+
+// Generate a temporary signed URL (for secure document viewing)
+const getSignedDownloadUrl = async (key, expiresInSeconds = 3600) => {
+  const command = new GetObjectCommand({ Bucket: BUCKET, Key: key });
+  return getSignedUrl(s3Client, command, { expiresIn: expiresInSeconds });
+};
+
+// Get CloudFront / Public S3 URL for images & media
+const getCloudFrontUrl = (urlOrKey) => {
+  if (!urlOrKey) return null;
+  if (typeof urlOrKey === 'string' && (urlOrKey.startsWith('/uploads/') || urlOrKey.startsWith('uploads/'))) {
+    return urlOrKey;
+  }
+  const cfDomain = getCloudFrontDomain();
+
+  let key = urlOrKey;
+  if (typeof urlOrKey === 'string' && (urlOrKey.startsWith('http://') || urlOrKey.startsWith('https://'))) {
+    if (urlOrKey.includes('.amazonaws.com/')) {
+      key = urlOrKey.split('.amazonaws.com/')[1];
+    } else if (urlOrKey.includes('.cloudfront.net/')) {
+      key = urlOrKey.split('.cloudfront.net/')[1];
+    } else if (urlOrKey.includes('gharkapaisa')) {
+      key = urlOrKey.replace(/^https?:\/\/[^\/]+\//, '');
+    } else {
+      return urlOrKey;
+    }
+  }
+
+  if (key) {
+    return `https://${cfDomain}/${key.replace(/^\//, '')}`;
+  }
+  return urlOrKey;
+};
+
+// Upload private biometric reference image (Never exposed via public URL)
+const uploadBiometricReference = async ({ buffer, employeeId, version = 1, mimeType = 'image/jpeg' }) => {
+  const ext = mimeType === 'image/png' ? 'png' : 'jpg';
+  const key = `employee-biometric/${employeeId}/v${version}/reference.${ext}`;
+
+  await s3Client.send(new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    Body: buffer,
+    ContentType: mimeType === 'image/png' ? 'image/png' : 'image/jpeg',
+    ServerSideEncryption: 'AES256',
+  }));
+
+  logger.info(`[S3 BIOMETRIC] Securely stored private biometric reference: ${key}`);
+  return {
+    bucket: BUCKET,
+    key,
+  };
+};
+
+// Get S3 Object Stream (for private streaming through backend)
+const getObjectStream = async (key) => {
+  if (!BUCKET) throw new Error('AWS_S3_BUCKET not configured');
+  let cleanKey = String(key || '').replace(/^\/+/, '');
+  if (cleanKey.includes('?')) {
+    cleanKey = cleanKey.split('?')[0];
+  }
+  const command = new GetObjectCommand({ Bucket: BUCKET, Key: cleanKey });
+  const data = await s3Client.send(command);
+  return {
+    stream: data.Body,
+    contentType: data.ContentType,
+    contentLength: data.ContentLength,
+  };
+};
+
+// Delete from S3
+const deleteFromS3 = async (key) => {
+  await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+  logger.info(`Deleted from S3: ${key}`);
+};
+
+module.exports = { 
+  upload, 
+  uploadVideo, 
+  uploadToS3, 
+  uploadBiometricReference, 
+  getSignedDownloadUrl, 
+  getObjectStream,
+  getCloudFrontUrl, 
+  deleteFromS3 
+};

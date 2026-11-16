@@ -1,0 +1,150 @@
+const express = require('express');
+const router  = express.Router();
+const { catalogCacheMiddleware } = require('../middleware/compression.middleware.js');
+
+const authRoute                             = require('../modules/auth/route.js');
+const { partnerRouter, partnerSelfRouter, kycRouter } = require('../modules/partner/route.js');
+const adminRoute                            = require('../modules/admin/route.js');
+const { superadminRouter, settingsRouter }  = require('../modules/super-admin/route.js');
+const bannerRoute                           = require('../modules/banner/route.js');
+const { applicationRouter, leadRouter, cardApplicationRouter, loanApplicationRouter, insuranceApplicationRouter, bankCardApplicationRouter } = require('../modules/crm/route.js');
+const { sbiRouter }                         = require('../modules/sbi-credit-card/route.js');
+const walletRoute                           = require('../modules/wallet/route.js');
+const productRoute                          = require('../modules/products/route.js');
+const notificationRoute                     = require('../modules/notifications/route.js');
+const reportRoute                           = require('../modules/reports/route.js');
+const bankRoute                             = require('../modules/banks/route.js');
+const { cmsRouter, serviceRouter, serviceCatalogRouter } = require('../modules/cms/route.js');
+const supportRoute                          = require('../modules/support/support.routes.js');
+const marketingRoute                        = require('../modules/marketing/marketing.routes.js');
+const redirectCtrl = require('../modules/products/link-management.controller.js');
+const analyticsRoute = require('../modules/analytics/route.js');
+
+const paymentRoute                          = require('../modules/payment/payment.route.js');
+const locationRoute                         = require('../modules/location/location.routes.js');
+
+const walletCtrl = require('../modules/wallet/controller.js');
+const partnerCtrl = require('../modules/partner/partner.controller.js');
+const partnerShareCtrl = require('../modules/partner/partner-share.controller.js');
+
+const customerRoute = require('../modules/customer/customer.routes.js');
+const customerPortalRoute = require('../modules/customer/customer_portal.routes.js');
+const publicCareersRoute = require('../modules/public/public.routes.js');
+const hrRoute = require('../modules/hr/hr.routes.js');
+const employeeManagementRoute = require('../modules/employee-management/employee-management.routes.js');
+const employeeRoute = require('../modules/employee/employee.routes.js');
+const chatbotRoute = require('../modules/chatbot/chatbot.routes.js');
+
+// ── Webhooks & Public Actions ──────────────────────────────────
+router.post('/razorpay/webhook', walletCtrl.handleRazorpayWebhook);
+router.post('/webhooks/razorpay', walletCtrl.handleRazorpayWebhook);
+router.post('/partner/referral-click', partnerCtrl.invitePartnerClick);
+
+const contestRoute = require('../modules/contest/routes.js');
+const travelUtilitiesRoute = require('../modules/travel-utilities/routes.js');
+
+// ── Public Homepage & Catalog Content (No auth required) ────────
+router.use('/public/products',  catalogCacheMiddleware(120, 300), productRoute);
+router.use('/products',         catalogCacheMiddleware(120, 300), productRoute);
+router.use('/banners',          catalogCacheMiddleware(300, 600), bannerRoute);
+router.use('/contests',         contestRoute);
+router.use('/cms/sections',     catalogCacheMiddleware(300, 600), cmsRouter);
+router.use('/services',         catalogCacheMiddleware(300, 600), serviceRouter);
+router.use('/service-catalog',  catalogCacheMiddleware(300, 600), serviceCatalogRouter);
+router.use('/settings',         catalogCacheMiddleware(300, 600), settingsRouter);
+router.use('/customer-portal',  customerPortalRoute);
+router.use('/public/careers',   publicCareersRoute);
+router.use('/hr',               hrRoute);
+router.use('/employees',        employeeManagementRoute);
+router.use('/employee',         employeeRoute);
+router.use('/chatbot',          chatbotRoute);
+
+// ── Public Share Link & Self-Fulfillment Routes (No auth required) ──
+router.get('/app/:trackingToken', partnerShareCtrl.handleDirectAppRedirect);
+router.get('/a/:trackingToken', partnerShareCtrl.handleDirectAppRedirect);
+router.get('/public/share/:trackingToken', partnerShareCtrl.getShareLinkDetails);
+router.post('/public/share/submit', partnerShareCtrl.submitShareLead);
+
+router.get('/public/apply/:token', partnerShareCtrl.getApplyTokenDetails);
+router.get('/public/a/:token', partnerShareCtrl.getApplyTokenDetails);
+router.patch('/public/apply/:token', partnerShareCtrl.updateApplyTokenDetails);
+router.patch('/public/a/:token', partnerShareCtrl.updateApplyTokenDetails);
+
+router.get('/public/apply/:token/post-apply', partnerShareCtrl.getPostApplyDetails);
+router.patch('/public/apply/:token/post-apply', partnerShareCtrl.updatePostApplyDetails);
+
+// ── Redirects & Analytics ──────────────────────────────────────
+router.get('/redirect/:productId', redirectCtrl.handleRedirect);
+router.get('/r/:partnerCode/:productId', redirectCtrl.handleRedirect);
+router.use('/analytics', analyticsRoute);
+
+// ── Auth Endpoints ─────────────────────────────────────────────
+router.use('/auth',             authRoute);
+
+// ── Location & Payment ─────────────────────────────────────────
+router.use('/payment', paymentRoute);
+router.use('/location', locationRoute);
+
+// ── Partner Scopes ─────────────────────────────────────────────
+router.use('/partner',          partnerSelfRouter);
+router.use('/Partners',         partnerRouter);
+router.use('/kyc',              kycRouter);
+
+const kycOperatorRoute                     = require('../modules/kyc-operator/kyc-operator.routes.js');
+const superAdminReportsRoute               = require('../modules/reports/reports.routes.js');
+const bulkSmsRoute                         = require('../modules/bulk-sms/bulk-sms.routes.js');
+
+// ── Admin / CRM / Operational Scopes ───────────────────────────
+router.use('/kyc-operator',     kycOperatorRoute);
+router.use('/kyc/applications', kycOperatorRoute);
+router.use('/super-admin/reports', superAdminReportsRoute);
+router.use('/superadmin/reports', superAdminReportsRoute);
+router.use('/admin/bulk-sms',   bulkSmsRoute);
+router.use('/super-admin/bulk-sms', bulkSmsRoute);
+router.use('/admin',            adminRoute);
+router.use('/superadmin',       superadminRouter);
+router.use('/super-admin',      superadminRouter);
+router.use('/applications',     applicationRouter);
+router.use('/wallet',           walletRoute);
+router.use('/notifications',    notificationRoute);
+router.use('/reports',          reportRoute);
+router.use('/banks',            catalogCacheMiddleware(300, 600), bankRoute);
+router.use('/leads',            leadRouter);
+router.use('/customers',        customerRoute);
+router.use('/card-applications',cardApplicationRouter);
+router.use('/admin/bank-cards', bankCardApplicationRouter);
+router.use('/crm/loan-applications', loanApplicationRouter);
+router.use('/crm/insurance-applications', insuranceApplicationRouter);
+router.use('/sbi-credit-card-applications', sbiRouter);
+router.use('/support/tickets',   supportRoute);
+router.use('/marketing/materials', marketingRoute);
+
+const teamRoute                             = require('../modules/team/team.routes.js');
+const messengerRoute                        = require('../modules/messenger/messenger.routes.js');
+const whatsappRoute                         = require('../modules/whatsapp/whatsapp.routes.js');
+const attendanceEnrollmentRoute             = require('../modules/attendance-enrollment/attendance-enrollment.routes.js');
+const attendanceVerificationRoute           = require('../modules/attendance-verification/attendance-verification.routes.js');
+const attendanceAdminRoute                  = require('../modules/attendance-admin/attendance-admin.routes.js');
+const attendanceReportsRoute                = require('../modules/attendance-reports/attendance-reports.routes.js');
+const attendanceRoute                       = require('../modules/attendance/attendance.routes.js');
+
+// ── Referrals & Team Routes ──
+router.use('/team', teamRoute);
+router.use('/partner/team-dashboard', teamRoute);
+router.use('/messenger', messengerRoute);
+router.use('/whatsapp', whatsappRoute);
+
+// ── Attendance Phase 6-2, 6-3, 6-4, 6-5, 6-7 ──
+router.use('/attendance/enrollment', attendanceEnrollmentRoute);
+router.use('/attendance-enrollment', attendanceEnrollmentRoute);
+router.use('/enrollment', attendanceEnrollmentRoute);
+router.use('/attendance/verification', attendanceVerificationRoute);
+router.use('/attendance-verification', attendanceVerificationRoute);
+router.use('/attendance/admin/reports', attendanceReportsRoute);
+router.use('/attendance/admin', attendanceAdminRoute);
+router.use('/attendance', attendanceRoute);
+
+// ── Travel & Utilities (Partner margin services) ────────────────
+router.use('/travel-utilities', travelUtilitiesRoute);
+
+module.exports = router;

@@ -1,0 +1,2993 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useSearchParams, useLocation } from 'react-router-dom';
+import api from '../../../services/api';
+import { useTheme, makeS } from '../../../contexts/ThemeContext';
+import { useActiveBanks } from '../../../contexts/BanksContext';
+import { getCleanImageUrl } from '../../../utils/urlHelper';
+import { useAuthStore } from '../../../app/store/authStore';
+import { usePartnerStore } from '../../../app/store/partnerStore';
+import { FINANCE_COMPANIES, isFinanceProduct, isBankProduct, getLoanEligibilityType, isProductOfSubCategory } from '../../../utils/personalLoanHelpers';
+export { isProductOfSubCategory };
+
+import { 
+  MdFilterList, MdSearch, MdCheckCircle, MdLocalOffer, 
+  MdAccessTime, MdInfoOutline, MdClose, MdShare, MdChevronRight,
+  MdCreditCard, MdAccountBalance, MdShield, MdDirectionsCar, MdTrendingUp,
+  MdAccountBalanceWallet
+} from 'react-icons/md';
+import { FaBalanceScale } from 'react-icons/fa';
+import { getCardDetails } from '../../home/components/CreditCards/CardDetailsData';
+import { getBankApplyLink, getDirectProcessLink } from '../../home/components/CreditCards/cardLinkHelper';
+import PincodeAutoComplete, { isSbiPincodeValid, isS8Pincode, getS8PincodeDetails, getAllS8Cities } from '../../../components/PincodeAutoComplete';
+
+const CATEGORIES = [
+  { id: 'all', label: 'All Products' },
+  { id: 'credit_card', label: 'Credit Cards' },
+  { id: 'loans', label: 'Loans' },
+  { id: 'insurance', label: 'Insurance' },
+  { id: 'others', label: 'Others' },
+];
+
+const BANKS = ['All Banks', 'AU SMALL FINANCE BANK', 'AXIS', 'BANDHAN BANK', 'BOB', 'CANARA BANK', 'CSB BANK', 'DCB', 'EQUITAS', 'FEDERAL', 'HDFC', 'HSBC', 'ICICI', 'IDFC', 'INDUSIND', 'KOTAK', 'PUNJAB NATIONAL BANK', 'RBL', 'SBM', 'SBI', 'STANDARD CHARTERED', 'TATA CO-BRAND HDFC BANK', 'TATA CO-BRAND SBI BANK', 'UNION BANK', 'YES'];
+
+const getCategoryIcon = (cat, props = { size: 24 }) => {
+  const c = cat?.toLowerCase() || '';
+  if (c.includes('card') || c === 'credit_card') return <MdCreditCard color="#0EA5E9" {...props} />;
+  if (c.includes('loan') || c === 'loans') return <MdAccountBalance color="#6366F1" {...props} />;
+  if (c.includes('insurance')) return <MdShield color="#10B981" {...props} />;
+  if (c.includes('savings')) return <MdAccountBalance color="#F59E0B" {...props} />;
+  if (c.includes('fastag')) return <MdDirectionsCar color="#F97316" {...props} />;
+  if (c.includes('demat')) return <MdTrendingUp color="#14B8A6" {...props} />;
+  return <MdAccountBalanceWallet color="#8B5CF6" {...props} />;
+};
+
+const getMarketingBadges = (p, isEmployee = false) => {
+  const val = parseFloat(p.commission_value || 0);
+  const cat = p.category?.toLowerCase() || '';
+  const badges = [];
+  if (val >= 1200) badges.push(isEmployee ? 'High Incentive' : 'High Commission');
+  if (cat.includes('card')) {
+    if (p.name.toLowerCase().includes('pixel') || p.name.toLowerCase().includes('zone')) {
+      badges.push('Lifetime Free');
+    } else {
+      badges.push('Co Branded');
+    }
+  }
+  if (cat.includes('loan')) badges.push('Instant Loan');
+  if (badges.length === 0) badges.push('Trending');
+  return badges.slice(0, 2);
+};
+
+export default function PartnerProducts({ 
+  initialSearch = '', 
+  initialBank = '', 
+  initialCategory = '',
+  initialSubCategory = '',
+  // Safe optional props for specialized flows
+  providerType = 'all', // 'bank' | 'finance' | 'all'
+  eligibilityType = null, // 'cibil' | 'income' | null
+  customBankOptions = null,
+  bankLabel = null,
+  allBanksLabel = null,
+  emptyStateMessage = null,
+  emptyStateSubtitle = null,
+  hideCategoryFilter = false,
+  allowEmptyFilterSelection = false,
+  onBankChange = null
+}) {
+  const { t } = useTranslation();
+  const { C, isDark } = useTheme();
+  const S = makeS(C);
+  const { activeBanks } = useActiveBanks();
+  
+  const user = useAuthStore(state => state.user);
+  const partnerCode = user?.partner_code || user?.Partner_code || '';
+
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [showMobileFilter, setShowMobileFilter] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const [shareModalProduct, setShareModalProduct] = useState(null);
+  const [copiedNotice, setCopiedNotice] = useState(false);
+  const [generatingShareLink, setGeneratingShareLink] = useState(false);
+
+  const handleCopyLink = async (product) => {
+    setGeneratingShareLink(true);
+    try {
+      const res = await api.post('/partner/share-link', { productId: product.id });
+      if (res.data?.success && res.data?.data) {
+        const shareLink = res.data.data.share_link;
+        const shareText = `Apply for ${product.name} on GharKaPaisa! Click here to apply: ${shareLink}`;
+        
+        if (navigator.share) {
+          navigator.share({
+            title: product.name,
+            text: shareText,
+            url: shareLink
+          }).catch(() => {
+            setShareModalProduct({ ...product, shareLink, trackingToken: res.data.data.tracking_token });
+          });
+        } else {
+          setShareModalProduct({ ...product, shareLink, trackingToken: res.data.data.tracking_token });
+        }
+      } else {
+        alert('Failed to generate share link. Please try again.');
+      }
+    } catch (err) {
+      console.error('Share link generation error:', err);
+      alert('Failed to generate share link. Please try again.');
+    } finally {
+      setGeneratingShareLink(false);
+    }
+  };
+
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  // Filters & Sorting & Pagination
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const isEmployee = user?.role === 'EMPLOYEE' || (location?.pathname && location.pathname.startsWith('/employee'));
+  const allDefaultBankValue = allBanksLabel || 'All Banks';
+
+  // Dynamically compute list of all available banks from API, active DB context, and loaded products
+  const bankOptions = useMemo(() => {
+    if (customBankOptions && Array.isArray(customBankOptions)) {
+      return customBankOptions;
+    }
+    const list = new Set();
+    
+    // 1. Add active banks from database context
+    if (Array.isArray(activeBanks)) {
+      activeBanks.forEach(b => {
+        const name = b.name || b.label || b.bank_name;
+        if (name) list.add(name);
+      });
+    }
+
+    // 2. Add bank names from currently loaded products
+    if (Array.isArray(products)) {
+      products.forEach(p => {
+        const bName = p.bank_name || p.bank_code;
+        if (bName) list.add(bName);
+      });
+    }
+
+    // 3. Complete list of latest supported banks
+    BANKS.forEach(b => list.add(b));
+
+    const sorted = Array.from(list).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    return [allDefaultBankValue, ...sorted];
+  }, [activeBanks, products, customBankOptions, allDefaultBankValue]);
+
+  // Normalize bank name string
+  const getNormalizedBank = (bankStr) => {
+    if (!bankStr || bankStr.toLowerCase() === 'all banks' || bankStr.toLowerCase() === 'all' || (allBanksLabel && bankStr === allBanksLabel)) return allDefaultBankValue;
+    
+    // Check custom options first if provided
+    if (customBankOptions && Array.isArray(customBankOptions)) {
+      const cleanCustom = bankStr.toLowerCase().trim();
+      const matchCustom = customBankOptions.find(b => {
+        const bLower = b.toLowerCase().trim();
+        if (bLower === cleanCustom || cleanCustom.includes(bLower) || bLower.includes(cleanCustom)) return true;
+        const bCore = bLower.replace(/bank|first/g, '').trim();
+        const customCore = cleanCustom.replace(/bank|first/g, '').trim();
+        return Boolean(bCore && customCore && bCore === customCore);
+      });
+      if (matchCustom) return matchCustom;
+    }
+
+    const cleanStr = decodeURIComponent(bankStr).toLowerCase().replace(/[-_%]/g, ' ').trim();
+    if (cleanStr.includes('tata')) {
+      if (cleanStr.includes('sbi')) return 'TATA CO-BRAND SBI BANK';
+      return 'TATA CO-BRAND HDFC BANK';
+    }
+
+    const foundInBanks = bankOptions.find(b => {
+      const bNorm = b.toLowerCase().replace(/[-_%]/g, ' ').trim();
+      return bNorm === cleanStr || bNorm.includes(cleanStr) || cleanStr.includes(bNorm);
+    });
+    if (foundInBanks) return foundInBanks;
+
+    const foundInActive = activeBanks.find(b => {
+      const nameNorm = (b.name || '').toLowerCase().replace(/[-_%]/g, ' ').trim();
+      const codeNorm = (b.short_code || '').toLowerCase().replace(/[-_%]/g, ' ').trim();
+      return nameNorm === cleanStr || codeNorm === cleanStr || nameNorm.includes(cleanStr);
+    });
+    if (foundInActive) return foundInActive.name || foundInActive.label || foundInActive.short_code;
+
+    return bankStr;
+  };
+
+  const getSubCategoryFromParams = () => {
+    if (initialSubCategory) return initialSubCategory;
+    const raw = searchParams.get('sub_category') || searchParams.get('subCategory') || searchParams.get('subcategory') || searchParams.get('sub_cat') || searchParams.get('loan_type');
+    if (!raw) return "";
+    const clean = String(raw).toLowerCase().trim();
+    if (['cibil', 'income', 'bank', 'finance', 'all'].includes(clean)) return "";
+    return raw;
+  };
+
+  const [search, setSearch] = useState(() => initialSearch || searchParams.get('q') || searchParams.get('search') || "");
+  const [activeCategory, setActiveCategory] = useState(() => initialCategory || searchParams.get('category') || "all");
+  const [activeSubCategory, setActiveSubCategory] = useState(getSubCategoryFromParams);
+  const [activeBank, setActiveBank] = useState(() => getNormalizedBank(initialBank || searchParams.get('bank') || allDefaultBankValue));
+  const [featureFilter, setFeatureFilter] = useState("all"); // 'all', 'ltf', 'high_payout', 'high_approval'
+  const [filterTab, setFilterTab] = useState("products"); // 'products' or 'banks'
+  const [sortBy, setSortBy] = useState("featured");
+  const [minCommission, setMinCommission] = useState(0);
+  const [minApproval, setMinApproval] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [cardsPerPage, setCardsPerPage] = useState(12);
+
+  // Sync initialBank, initialCategory, or initialSearch props
+  useEffect(() => {
+    if (initialBank !== undefined && initialBank !== null) {
+      setActiveBank(getNormalizedBank(initialBank));
+    }
+  }, [initialBank, activeBanks, allDefaultBankValue]);
+
+  useEffect(() => {
+    if (initialCategory) setActiveCategory(initialCategory);
+  }, [initialCategory]);
+
+  useEffect(() => {
+    if (initialSubCategory !== undefined && initialSubCategory !== null) {
+      setActiveSubCategory(initialSubCategory);
+    }
+  }, [initialSubCategory]);
+
+  useEffect(() => {
+    if (initialSearch) {
+      setSearch(initialSearch);
+    } else {
+      const q = searchParams.get('q') || searchParams.get('search');
+      if (q) setSearch(q);
+    }
+  }, [initialSearch, searchParams]);
+
+  useEffect(() => {
+    if (onBankChange && typeof onBankChange === 'function') {
+      onBankChange(activeBank);
+    }
+  }, [activeBank, onBankChange]);
+
+  // Memoize active filters count for the badge
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (activeCategory !== 'all') count++;
+    if (activeSubCategory && activeSubCategory !== 'all') count++;
+    if (activeBank !== 'All Banks') count++;
+    if (featureFilter !== 'all') count++;
+    if (minCommission !== 0) count++;
+    if (minApproval !== 0) count++;
+    if (search.trim() !== '') count++;
+    return count;
+  }, [activeCategory, activeSubCategory, activeBank, featureFilter, minCommission, minApproval, search]);
+
+  // Sync category & subcategory from URL search query parameter or navigation state
+  useEffect(() => {
+    const cat = searchParams.get('category') || location.state?.category;
+    if (cat) {
+      if (cat === 'loans' || cat === 'personal_loan') {
+        setActiveCategory('personal_loan');
+      } else {
+        setActiveCategory(cat);
+      }
+    }
+    const raw = searchParams.get('sub_category') || searchParams.get('subCategory') || searchParams.get('subcategory') || searchParams.get('sub_cat') || searchParams.get('loan_type') || location.state?.sub_category;
+    if (raw) {
+      const clean = String(raw).toLowerCase().trim();
+      if (!['cibil', 'income', 'bank', 'finance', 'all'].includes(clean)) {
+        setActiveSubCategory(raw);
+      }
+    }
+  }, [searchParams, location.state]);
+
+  // Reset pagination when any filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, activeCategory, activeSubCategory, activeBank, filterTab, sortBy, minCommission, minApproval, cardsPerPage]);
+
+  // Apply Modal state
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [customerName, setCustomerName] = useState("");
+  const [countryCode, setCountryCode] = useState("+91");
+  const [mobile, setMobile] = useState("");
+  const [panNumber, setPanNumber] = useState("");
+  const [pincode, setPincode] = useState("");
+  const [negativeArea, setNegativeArea] = useState("No");
+  const [processType, setProcessType] = useState("lead_punching"); // 'lead_punching', 'linked_share', 'direct_bank'
+  const [submitting, setSubmitting] = useState(false);
+  const [formErrors, setFormErrors] = useState({});
+
+  // Physical Process Detail Sheet Modal state
+  const [showPhysicalSheetModal, setShowPhysicalSheetModal] = useState(false);
+  const [physicalSheetData, setPhysicalSheetData] = useState(null);
+  const [copiedPhysicalNotice, setCopiedPhysicalNotice] = useState(false);
+
+  // Toast notification state (top-right corner alert)
+  const [toast, setToast] = useState(null); // { type: 'success' | 'error', message: string }
+
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 4500);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
+
+  // Benefits & Compare state
+  const [showBenefitsProduct, setShowBenefitsProduct] = useState(null);
+  const [compareList, setCompareList] = useState([]);
+  const [showCompareModal, setShowCompareModal] = useState(false);
+  const [loadingCompare, setLoadingCompare] = useState(false);
+
+  const handleToggleCompare = (product) => {
+    setCompareList(prev => {
+      const exists = prev.find(p => p.id === product.id);
+      if (exists) {
+        return (Array.isArray(prev) ? prev : []).filter(p => p.id !== product.id);
+      } else {
+        if (prev.length >= 2) {
+          alert("You can select up to 2 products to compare.");
+          return prev;
+        }
+        return [...prev, product];
+      }
+    });
+  };
+
+  const [adobeSupportLinks, setAdobeSupportLinks] = useState({
+    hdfc_tata_neu_adobe_support_link: 'https://applyonline.hdfc.bank.in/cards/credit-cards.html?CHANNELSOURCE=TDCC&DEDUPE=N&DSACode=XYOH&LGcode=YOH5&LCcode=YOH5&LC2=A222&SMcode=S54558',
+    tata_cobrand_hdfc_adobe_support_link: 'https://applyonline.hdfc.bank.in/cards/credit-cards.html?CHANNELSOURCE=TDCC&DEDUPE=N&DSACode=XYOH&LGcode=YOH5&LCcode=YOH5&LC2=A222&SMcode=S54558'
+  });
+
+  const fetchProducts = async () => {
+    try {
+      const res = await api.get('/products', { params: { is_active: 'true', limit: 1000 } });
+      if (res.data?.success) {
+        setProducts(res.data.data);
+      }
+    } catch (err) {
+      setError("Failed to load available products.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAdobeSupportSettings = async () => {
+    try {
+      const res = await api.get('/settings');
+      const data = res.data?.data || res.data || {};
+      setAdobeSupportLinks(prev => ({
+        hdfc_tata_neu_adobe_support_link: data.hdfc_tata_neu_adobe_support_link || prev.hdfc_tata_neu_adobe_support_link,
+        tata_cobrand_hdfc_adobe_support_link: data.tata_cobrand_hdfc_adobe_support_link || prev.tata_cobrand_hdfc_adobe_support_link
+      }));
+    } catch (_) {
+      // Fallback to default links if settings fetch fails
+    }
+  };
+
+  useEffect(() => {
+    fetchProducts();
+    fetchAdobeSupportSettings();
+  }, []);
+
+  const handleApply = (product) => {
+    setSelectedProduct(product);
+    setCustomerName("");
+    setCountryCode("+91");
+    setMobile("");
+    setPanNumber("");
+    setPincode("");
+    setNegativeArea("No");
+    setProcessType("lead_punching");
+    setFormErrors({});
+  };
+
+  const isSbiProduct = selectedProduct?.bank_id === 'e7c2c604-139d-4fcf-a87c-695633535a02' ||
+                       String(selectedProduct?.bank_code || '').toLowerCase() === 'sbi' ||
+                       String(selectedProduct?.bank_name || '').toLowerCase().includes('sbi') ||
+                       String(selectedProduct?.bank_slug || '').toLowerCase() === 'sbi';
+
+  const isHdfcBankProduct = selectedProduct?.bank_id === 'f0b5742d-f04d-4a91-b162-6009ddf6e345' ||
+    (String(selectedProduct?.bank_name || selectedProduct?.bank_code || '').toUpperCase() === 'HDFC' &&
+     !String(selectedProduct?.bank_name || selectedProduct?.bank_code || selectedProduct?.name || '').toUpperCase().includes('TATA'));
+
+  const isTataCobrandHdfcProduct = selectedProduct?.bank_id === '1eacfa67-1187-48c7-adde-8a6edcfe9969' ||
+    String(selectedProduct?.bank_name || selectedProduct?.bank_code || selectedProduct?.name || '').toUpperCase().includes('TATA CO-BRAND HDFC') ||
+    String(selectedProduct?.bank_name || selectedProduct?.bank_code || selectedProduct?.name || '').toUpperCase().includes('TATA CO BRAND HDFC') ||
+    (String(selectedProduct?.bank_name || selectedProduct?.bank_code || selectedProduct?.name || '').toUpperCase().includes('TATA') &&
+     String(selectedProduct?.bank_name || selectedProduct?.bank_code || selectedProduct?.name || '').toUpperCase().includes('HDFC'));
+
+  const selectedProdNameUpper = String(selectedProduct?.name || '').toUpperCase();
+  const isHdfcTataNeuProduct =
+    (selectedProdNameUpper.includes('TATA NEU INFINITY') || selectedProdNameUpper.includes('TATA NEU PLUS')) &&
+    !selectedProdNameUpper.includes('BUSINESS') &&
+    !selectedProdNameUpper.includes('FLOATER');
+  const adobeSupportHref = isHdfcTataNeuProduct
+    ? adobeSupportLinks.hdfc_tata_neu_adobe_support_link
+    : adobeSupportLinks.tata_cobrand_hdfc_adobe_support_link;
+
+  const selectedProdCat = String(selectedProduct?.category || '').toLowerCase();
+  const isLocEoc = ['loc', 'eoc', 'loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loan_on_card', 'card_on_loan'].includes(selectedProdCat);
+  const isOtherCat = selectedProdCat.includes('loan') || selectedProdCat.includes('insurance');
+  const isCreditCardProduct = !isLocEoc && !isOtherCat;
+
+  const isHdfcCreditCard = (
+    isHdfcBankProduct ||
+    selectedProduct?.bank_id === 'f0b5742d-f04d-4a91-b162-6009ddf6e345' ||
+    String(selectedProduct?.bank_name || '').toUpperCase().includes('HDFC') ||
+    String(selectedProduct?.bank_code || '').toUpperCase().includes('HDFC') ||
+    String(selectedProduct?.name || '').toUpperCase().includes('HDFC')
+  ) && isCreditCardProduct;
+
+  const handleSubmitLead = async (e) => {
+    if (e) e.preventDefault();
+
+    const errors = {};
+    if (!customerName.trim() || customerName.trim().length < 2) {
+      errors.customerName = "Customer Name must be at least 2 characters.";
+    }
+    if (!mobile.trim() || !/^[6-9]\d{9}$/.test(mobile.trim())) {
+      errors.mobile = "Please enter a valid 10-digit mobile number.";
+    }
+    if (isSbiProduct) {
+      if (!panNumber.trim() || !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(panNumber.trim().toUpperCase())) {
+        errors.panNumber = "Please enter a valid 10-character PAN Card number (e.g. ABCDE1234F).";
+      }
+      if (!pincode.trim() || !/^\d{6}$/.test(pincode.trim())) {
+        errors.pincode = "Please enter a valid 6-digit Pincode.";
+      } else if (!isSbiPincodeValid(pincode.trim())) {
+        errors.pincode = "You can't add lead for this pincode";
+      }
+    }
+
+    if (isHdfcCreditCard && processType === 'lead_punching') {
+      const cleanPan = panNumber.trim().toUpperCase();
+      if (!cleanPan || !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(cleanPan)) {
+        errors.panNumber = "Please enter a valid 10-character PAN Card number (e.g. ABCDE1234F).";
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      return;
+    }
+
+    setSubmitting(true);
+
+    try {
+      const code = partnerCode || user?.partner_code || 'PARTNER';
+      const directProcessUrl = getDirectProcessLink(selectedProduct, selectedProduct.name, selectedProduct.bank_code || selectedProduct.bank_name);
+      const directBankUrl = getBankApplyLink(selectedProduct.name, selectedProduct.bank_code || selectedProduct.bank_name, selectedProduct) || selectedProduct.partner_url || selectedProduct.application_url || selectedProduct.public_url || selectedProduct.apply_url || selectedProduct.redirect_url || selectedProduct.bank_link || selectedProduct.tracking_url || `${window.location.origin}/redirect/${selectedProduct.category}?id=${selectedProduct.id}&partner=${code}`;
+
+      const payload = {
+        product_id: selectedProduct.id,
+        full_name: customerName.trim(),
+        country_code: countryCode || '+91',
+        mobile: mobile.trim(),
+        pan_number: panNumber.trim().toUpperCase() || undefined,
+        pan: panNumber.trim().toUpperCase() || undefined,
+        pincode: pincode.trim() || undefined,
+        negative_area: negativeArea,
+        process_type: processType,
+        agree_terms: true
+      };
+
+      if (processType === 'direct_bank') {
+        if (!directProcessUrl) {
+          setToast({
+            type: 'error',
+            message: 'Direct Process link is not configured for this bank or product. Please contact Super Admin.'
+          });
+          setSubmitting(false);
+          return;
+        }
+        const bankWin = window.open(directProcessUrl, '_blank', 'noopener,noreferrer');
+        api.post('/applications/partner-apply', payload).then((res) => {
+          const appData = res.data?.data;
+          const targetUrl = appData?.bank_url || directProcessUrl;
+          if (bankWin && !bankWin.closed && targetUrl && targetUrl !== directProcessUrl) {
+
+            bankWin.location.href = targetUrl;
+          }
+          usePartnerStore.getState().fetchCustomers().catch(() => {});
+          usePartnerStore.getState().fetchApplications().catch(() => {});
+        }).catch(() => {});
+
+        setSelectedProduct(null);
+        setCustomerName("");
+        setMobile("");
+        setPanNumber("");
+        return;
+      }
+
+      const res = await api.post('/applications/partner-apply', payload);
+      const appData = res.data?.data;
+
+      // Refresh partner store for real-time CRM table/cards update
+      usePartnerStore.getState().fetchCustomers().catch(() => {});
+      usePartnerStore.getState().fetchApplications().catch(() => {});
+
+      if (processType === 'linked_share') {
+        const shareLink = directBankUrl;
+        const shareMessage = customerName.trim() 
+          ? `Hi ${customerName.trim()},\n\nPlease complete your application for ${selectedProduct.name} using this link: ${shareLink}`
+          : `Apply for ${selectedProduct.name} directly on official bank portal: ${shareLink}`;
+
+        const cleanMob = mobile.trim().replace(/\D/g, '');
+        const waUrl = appData?.whatsapp_url || (cleanMob 
+          ? `https://wa.me/91${cleanMob}?text=${encodeURIComponent(shareMessage)}`
+          : `https://wa.me/?text=${encodeURIComponent(shareMessage)}`);
+
+        setToast({
+          type: 'success',
+          message: `Linked share lead created for ${customerName.trim()} (${mobile.trim()})! Application #${appData?.app_number || ''} added to Applications.`
+        });
+
+        // Directly open WhatsApp page for customer
+        window.open(waUrl, '_blank');
+
+        setSelectedProduct(null);
+        setCustomerName("");
+        setMobile("");
+        setPanNumber("");
+        return;
+      } else if (processType === 'lead_punching') {
+        setToast({
+          type: 'success',
+          message: `Lead punched successfully for ${customerName.trim()} (${mobile.trim()})! Application #${appData?.app_number || ''} recorded.`
+        });
+      } else if (processType === 'co_browsing') {
+        setToast({
+          type: 'success',
+          message: `Co-Browsing lead created for ${customerName.trim()} (${mobile.trim()})! Application #${appData?.app_number || ''} recorded.`
+        });
+        const cobrowsingUrl = 'https://agentapp.ddp.hdfcbank.com/dsa-agent-portal/welcome';
+        window.open(cobrowsingUrl, '_blank');
+
+        setSelectedProduct(null);
+        setCustomerName("");
+        setMobile("");
+        setPanNumber("");
+        return;
+      } else if (processType === 'physical_process') {
+        setToast({
+          type: 'success',
+          message: `Physical process lead created for ${customerName.trim()} (${mobile.trim()}).`
+        });
+        const cleanMobile = mobile.trim().replace(/\D/g, '');
+        const token = appData?.tracking_token || appData?.token || appData?.application_id || appData?.app_id || appData?.id;
+        const uploadUrl = (token ? `${window.location.origin}/physical-application/${token}` : null) || appData?.share_url || `${window.location.origin}/partner/applications`;
+        const waMsg = `Hello ${customerName.trim()},\n\nPlease fill your required customer details (Full Name, Address, PAN, DOB, Mother Name, Email, Company Name, Designation) using this link:\n${uploadUrl}`;
+        const waUrl = appData?.whatsapp_url || `https://wa.me/91${cleanMobile}?text=${encodeURIComponent(waMsg)}`;
+
+        setPhysicalSheetData({
+          customerName: customerName.trim(),
+          mobile: mobile.trim(),
+          shareUrl: uploadUrl,
+          whatsappUrl: waUrl,
+          token: token,
+          app: appData
+        });
+        setShowPhysicalSheetModal(true);
+      }
+
+      setSelectedProduct(null);
+      setCustomerName("");
+      setMobile("");
+      setPanNumber("");
+    } catch (err) {
+      setToast({
+        type: 'error',
+        message: err.response?.data?.message || err.message || "Failed to process lead. Please try again."
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Get simulated approval rate for a product
+  const getApprovalRate = (p) => {
+    return p.approval_rate || (p.id ? (p.id.charCodeAt(0) % 20) + 78 : 85);
+  };
+
+  // Compute banks available for the selected category (dynamic bank list)
+  const banksForCategory = useMemo(() => {
+    return ['All Banks', ...activeBanks.map(b => b.short_code).filter(Boolean)];
+  }, [activeBanks]);
+
+  // Helper to check if a product belongs to selected bank filter
+  const isProductOfBank = (p, bankFilter) => {
+    if (!bankFilter || bankFilter.toLowerCase() === 'all banks' || bankFilter.toLowerCase() === 'all' || (allBanksLabel && bankFilter === allBanksLabel)) return true;
+    const filterLower = bankFilter.toLowerCase().trim();
+    const pBankName = (p.bank_name || '').toLowerCase();
+    const pBankCode = (p.bank_code || '').toLowerCase();
+    const pBankSlug = (p.bank_slug || '').toLowerCase();
+    const pName = (p.name || '').toLowerCase();
+    const pBankId = p.bank_id || '';
+
+    // If matching a finance company in Finance mode
+    if (providerType === 'finance') {
+      const matchedCompany = FINANCE_COMPANIES.find(fc => 
+        fc.label.toLowerCase() === filterLower || 
+        fc.id.toLowerCase() === filterLower || 
+        filterLower.includes(fc.id) || 
+        fc.match.some(m => filterLower.includes(m))
+      );
+      if (matchedCompany) {
+        return matchedCompany.match.some(m => pBankName.includes(m) || pBankCode.includes(m) || pName.includes(m));
+      }
+    }
+
+    if (filterLower.includes('tata')) {
+      const isTataProduct = pBankId === '1eacfa67-1187-48c7-adde-8a6edcfe9969' || 
+                            pBankId === 'ad9a965f-63c9-4a67-92be-058b45eea1f5' || 
+                            pBankName.includes('tata') || pName.includes('tata');
+
+      if (filterLower.includes('hdfc')) {
+        return isTataProduct && (pBankId === '1eacfa67-1187-48c7-adde-8a6edcfe9969' || pBankName.includes('hdfc') || pName.includes('hdfc'));
+      } else if (filterLower.includes('sbi')) {
+        return isTataProduct && (pBankId === 'ad9a965f-63c9-4a67-92be-058b45eea1f5' || pBankName.includes('sbi') || pName.includes('sbi'));
+      }
+      return isTataProduct;
+    }
+
+    const cleanFilterWord = filterLower.replace(/bank/g, '').trim();
+
+    return (pBankCode && (pBankCode === filterLower || pBankCode === cleanFilterWord)) ||
+           (pBankName && pBankName.includes(filterLower)) ||
+           (pBankName && cleanFilterWord && pBankName.includes(cleanFilterWord)) ||
+           (pBankSlug && pBankSlug === filterLower) ||
+           (pName && pName.includes(filterLower)) ||
+           (pName && cleanFilterWord && pName.includes(cleanFilterWord));
+  };
+
+  // Reset bank filter ONLY if products are loaded and no product matches selected bank (bypassed if allowEmptyFilterSelection is true)
+  useEffect(() => {
+    if (!allowEmptyFilterSelection && activeBank !== allDefaultBankValue && products.length > 0) {
+      const hasMatchingProduct = products.some(p => isProductOfBank(p, activeBank));
+      if (!hasMatchingProduct) {
+        setActiveBank(allDefaultBankValue);
+      }
+    }
+  }, [activeBank, products, allowEmptyFilterSelection, allDefaultBankValue]);
+
+  // Filter Logic
+  const filteredProducts = (Array.isArray(products) ? products : []).filter(p => {
+    const approvalRate = getApprovalRate(p);
+    
+    // Deep Search: by Name, Bank Code, Category, Commission, Eligibility
+    const details = getCardDetails(p.id || p.name.toLowerCase().replace(/[^a-z0-9]/g, '-'), p.name);
+    const eligibilityText = details.eligibility?.criteria || '';
+    
+    const query = search.toLowerCase();
+    const matchSearch = !query || 
+                        p.name.toLowerCase().includes(query) || 
+                        p.bank_code?.toLowerCase().includes(query) ||
+                        p.bank_name?.toLowerCase().includes(query) ||
+                        p.category?.toLowerCase().includes(query) ||
+                        p.commission_value?.toString().includes(query) ||
+                        eligibilityText.toLowerCase().includes(query);
+                        
+    const pCat = (p.category || '').toLowerCase();
+    let matchCategory = false;
+    if (activeCategory === 'all') {
+      matchCategory = true;
+    } else if (activeCategory === 'credit_card' || activeCategory.includes('card')) {
+      matchCategory = pCat.includes('card') || pCat.includes('credit');
+    } else if (activeCategory === 'personal_loan') {
+      matchCategory = pCat === 'personal_loan' || (providerType === 'finance' && pCat.includes('loan'));
+    } else if (activeCategory.includes('loan')) {
+      matchCategory = pCat.includes('loan');
+    } else if (activeCategory.includes('insurance')) {
+      matchCategory = pCat.includes('insurance');
+    } else if (activeCategory === 'others') {
+      matchCategory = !pCat.includes('card') && !pCat.includes('credit') && !pCat.includes('loan') && !pCat.includes('insurance');
+    } else {
+      matchCategory = pCat === activeCategory || pCat.includes(activeCategory);
+    }
+
+    const matchBank = isProductOfBank(p, activeBank);
+
+    // Subcategory Filter (Home Loan, Business Loan, Personal Loan, etc.)
+    const matchSubCategory = !activeSubCategory || activeSubCategory === 'all' || isProductOfSubCategory(p, activeSubCategory);
+    
+    // Commission Filter
+    const matchCommission = parseFloat(p.commission_value || 0) >= minCommission;
+    
+    // Approval % Filter
+    const matchApproval = approvalRate >= minApproval;
+    
+    // Feature Filter
+    const pName = (p.name || '').toLowerCase();
+    const pDesc = (p.description || '').toLowerCase();
+    const matchFeature = featureFilter === 'all' ||
+      (featureFilter === 'ltf' && (pName.includes('free') || pName.includes('ltf') || pName.includes('pixel') || pDesc.includes('free'))) ||
+      (featureFilter === 'high_payout' && parseFloat(p.commission_value || 0) >= 1000) ||
+      (featureFilter === 'high_approval' && approvalRate >= 88);
+    
+    // Provider Filter (Bank vs Finance)
+    let matchProvider = true;
+    if (providerType === 'bank') {
+      matchProvider = isBankProduct(p);
+    } else if (providerType === 'finance') {
+      matchProvider = isFinanceProduct(p);
+    }
+
+    // Eligibility Filter (CIBIL vs Income)
+    let matchEligibility = true;
+    if (eligibilityType === 'cibil') {
+      matchEligibility = getLoanEligibilityType(p) === 'cibil';
+    } else if (eligibilityType === 'income') {
+      matchEligibility = getLoanEligibilityType(p) === 'income';
+    }
+
+    return matchSearch && matchCategory && matchSubCategory && matchBank && matchCommission && matchApproval && matchFeature && matchProvider && matchEligibility;
+  });
+
+  // Sort Logic
+  const sortedProducts = [...filteredProducts].sort((a, b) => {
+    if (sortBy === 'highest_commission') {
+      return parseFloat(b.commission_value || 0) - parseFloat(a.commission_value || 0);
+    }
+    if (sortBy === 'newest') {
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    }
+    if (sortBy === 'highest_approval') {
+      return getApprovalRate(b) - getApprovalRate(a);
+    }
+    if (sortBy === 'a_z') {
+      return a.name.localeCompare(b.name);
+    }
+    if (sortBy === 'popular') {
+      const popA = a.id ? a.id.charCodeAt(0) % 100 : 50;
+      const popB = b.id ? b.id.charCodeAt(0) % 100 : 50;
+      return popB - popA;
+    }
+    // Default: featured
+    return (b.id || '').localeCompare(a.id || '');
+  });
+
+  // Pagination Logic
+  const limitValue = cardsPerPage === 'all' ? sortedProducts.length : cardsPerPage;
+  const indexOfLastCard = cardsPerPage === 'all' ? sortedProducts.length : currentPage * limitValue;
+  const indexOfFirstCard = cardsPerPage === 'all' ? 0 : indexOfLastCard - limitValue;
+  const currentCards = cardsPerPage === 'all' ? sortedProducts : sortedProducts.slice(indexOfFirstCard, indexOfLastCard);
+  const totalPages = cardsPerPage === 'all' ? 1 : Math.ceil(sortedProducts.length / limitValue);
+
+  // Smart Pagination helper to avoid overflowing mobile screen
+  const getPageNumbers = () => {
+    const pages = [];
+    const maxVisiblePages = isMobile ? 3 : 5;
+    
+    if (totalPages <= maxVisiblePages + 2) {
+      for (let i = 1; i <= totalPages; i++) {
+        pages.push(i);
+      }
+    } else {
+      pages.push(1);
+      
+      let start = Math.max(2, currentPage - Math.floor(maxVisiblePages / 2));
+      let end = Math.min(totalPages - 1, currentPage + Math.floor(maxVisiblePages / 2));
+      
+      if (currentPage <= Math.floor(maxVisiblePages / 2) + 1) {
+        end = maxVisiblePages;
+      } else if (currentPage >= totalPages - Math.floor(maxVisiblePages / 2)) {
+        start = totalPages - maxVisiblePages + 1;
+      }
+      
+      if (start > 2) {
+        pages.push('...');
+      }
+      
+      for (let i = start; i <= end; i++) {
+        pages.push(i);
+      }
+      
+      if (end < totalPages - 1) {
+        pages.push('...');
+      }
+      
+      pages.push(totalPages);
+    }
+    return pages;
+  };
+
+  const sectionLabel = { fontSize: '11px', fontWeight: 700, color: C.textLight, textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '10px' };
+
+  // Helper to render filter options block
+  const renderFilterContent = (isDrawer = false) => (
+    <div style={isDrawer ? {
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      padding: '0 4px',
+      boxSizing: 'border-box'
+    } : {
+      ...S.card,
+      padding: '24px',
+      borderRadius: '20px',
+      background: C.card,
+      border: `1.5px solid ${C.border}`,
+      boxShadow: isDark ? 'none' : '0 10px 30px rgba(0,0,0,0.04)'
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexShrink: 0 }}>
+        <h3 style={{ fontWeight: 800, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 8, fontSize: '18px' }}>
+          <MdFilterList size={20} style={{ color: C.primary }} /> {t("Filter Products")}
+        </h3>
+        {isMobile && (
+          <button 
+            onClick={() => setShowMobileFilter(false)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMid, padding: '4px' }}
+          >
+            <MdClose size={20} />
+          </button>
+        )}
+      </div>
+
+      {/* Filter Body Area */}
+      <div style={isDrawer ? {
+        flex: 1,
+        overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '16px',
+        paddingBottom: '20px',
+        paddingRight: '4px'
+      } : {
+        display: 'flex',
+        flexDirection: 'column'
+      }}>
+        {/* ─── TWO MAIN FILTER SELECT DROPDOWNS: ALL PRODUCTS & ALL BANKS ─── */}
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexDirection: 'column' }}>
+          {!hideCategoryFilter && (
+            <div>
+              <label style={{ fontSize: '11px', fontWeight: 700, color: C.textLight, textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '6px', display: 'block' }}>
+                {t("Product Category")}
+              </label>
+              <select
+                id="sidebar-select-products"
+                value={activeCategory}
+                onChange={(e) => {
+                  setActiveCategory(e.target.value);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '10px 14px',
+                  borderRadius: '12px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  border: activeCategory !== 'all' ? `1.5px solid ${C.primary}` : `1.5px solid ${C.border}`,
+                  background: activeCategory !== 'all' ? `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})` : (isDark ? '#18181B' : '#F8FAFC'),
+                  color: activeCategory !== 'all' ? '#FFFFFF' : C.text,
+                  boxShadow: activeCategory !== 'all' ? `0 4px 12px ${C.primary}35` : 'none',
+                  outline: 'none'
+                }}
+              >
+                <option value="all" style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>{t("All Products")}</option>
+                {(Array.isArray(CATEGORIES) ? CATEGORIES : []).filter(c => c.id !== 'all').map(cat => (
+                  <option key={cat.id} value={cat.id} style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>
+                    {t(cat.label)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div>
+            <label style={{ fontSize: '11px', fontWeight: 700, color: C.textLight, textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '6px', display: 'block' }}>
+              {bankLabel || t("Select Bank")}
+            </label>
+            <select
+              id="sidebar-select-banks"
+              value={activeBank}
+              onChange={(e) => {
+                setActiveBank(e.target.value);
+              }}
+              style={{
+                width: '100%',
+                padding: '10px 14px',
+                borderRadius: '12px',
+                fontSize: '13px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                border: activeBank !== allDefaultBankValue && activeBank !== 'All Banks' ? `1.5px solid ${C.primary}` : `1.5px solid ${C.border}`,
+                background: activeBank !== allDefaultBankValue && activeBank !== 'All Banks' ? `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})` : (isDark ? '#18181B' : '#F8FAFC'),
+                color: activeBank !== allDefaultBankValue && activeBank !== 'All Banks' ? '#FFFFFF' : C.text,
+                boxShadow: activeBank !== allDefaultBankValue && activeBank !== 'All Banks' ? `0 4px 12px ${C.primary}35` : 'none',
+                outline: 'none'
+              }}
+            >
+              <option value={allDefaultBankValue} style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>{allDefaultBankValue}</option>
+              {(Array.isArray(bankOptions) ? bankOptions : []).filter(b => b !== allDefaultBankValue && b !== 'All Banks').map(bank => (
+                <option key={bank} value={bank} style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>
+                  {bank}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {((activeCategory && (activeCategory.includes('loan') || activeCategory === 'loans')) || Boolean(activeSubCategory)) && (
+            <div>
+              <label style={{ fontSize: '11px', fontWeight: 700, color: C.textLight, textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '6px', display: 'block' }}>
+                {t("Loan Subcategory")}
+              </label>
+              <select
+                id="sidebar-select-subcategory"
+                value={activeSubCategory || 'all'}
+                onChange={(e) => {
+                  const val = e.target.value === 'all' ? '' : e.target.value;
+                  setActiveSubCategory(val);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '10px 14px',
+                  borderRadius: '12px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  border: activeSubCategory && activeSubCategory !== 'all' ? `1.5px solid ${C.primary}` : `1.5px solid ${C.border}`,
+                  background: activeSubCategory && activeSubCategory !== 'all' ? `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})` : (isDark ? '#18181B' : '#F8FAFC'),
+                  color: activeSubCategory && activeSubCategory !== 'all' ? '#FFFFFF' : C.text,
+                  boxShadow: activeSubCategory && activeSubCategory !== 'all' ? `0 4px 12px ${C.primary}35` : 'none',
+                  outline: 'none'
+                }}
+              >
+                <option value="all" style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>All Loan Types</option>
+                <option value="home-loan" style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>Home Loan</option>
+                <option value="personal-loan" style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>Personal Loan</option>
+                <option value="business-loan" style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>Business Loan</option>
+                <option value="loan-against-property" style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>Loan Against Property</option>
+                <option value="gold-loan" style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>Gold Loan</option>
+                <option value="vehicle-loan" style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>Vehicle / Car Loan</option>
+                <option value="loan-on-credit-card" style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>Loan on Credit Card</option>
+                <option value="smart-emi" style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>Smart EMI</option>
+                <option value="loc-eoc" style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>LOC / EOC</option>
+              </select>
+            </div>
+          )}
+        </div>
+
+        <div style={{ height: 1, background: C.border, margin: '0 0 20px' }} />
+
+        {/* Card Features */}
+        <p style={sectionLabel}>{t("Card Features")}</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '20px' }}>
+          {[
+            { id: 'all', label: t('All Cards') },
+            { id: 'ltf', label: t('Lifetime Free') },
+            { id: 'high_payout', label: isEmployee ? t('High Incentive (₹1000+)') : t('High Payout (₹1000+)') },
+            { id: 'high_approval', label: t('High Approval (88%+)') }
+          ].map(feat => {
+            const isActive = featureFilter === feat.id;
+            return (
+              <button
+                key={feat.id}
+                type="button"
+                onClick={() => setFeatureFilter(feat.id)}
+                style={{
+                  textAlign: 'left', padding: '9px 12px', borderRadius: '10px',
+                  fontSize: '13px', fontWeight: 650, border: 'none', cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  background: isActive ? `${C.primary}15` : 'transparent',
+                  color: isActive ? C.primary : C.textMid,
+                }}
+                className={isActive ? "" : "hover-bg-button"}
+              >
+                {feat.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Commission / Incentives */}
+        <p style={sectionLabel}>{isEmployee ? t("Incentives") : t("Commission")}</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '20px' }}>
+          {[0, 500, 1000, 1500].map(val => {
+            const isActive = minCommission === val;
+            return (
+              <button
+                key={val}
+                type="button"
+                onClick={() => { setMinCommission(val); }}
+                style={{
+                  textAlign: 'left', padding: '9px 12px', borderRadius: '10px',
+                  fontSize: '13px', fontWeight: 650, border: 'none', cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  background: isActive ? `${C.primary}15` : 'transparent',
+                  color: isActive ? C.primary : C.textMid,
+                }}
+                className={isActive ? "" : "hover-bg-button"}
+              >
+                {val === 0 ? (isEmployee ? t('Any Incentive') : t('Any Payout')) : `₹${val}+`}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Cards Per Page */}
+        <p style={sectionLabel}>{t("Cards Per Page")}</p>
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+          {[12, 24, 48, 'all'].map(val => {
+            const isActive = cardsPerPage === val;
+            return (
+              <button
+                key={val}
+                type="button"
+                onClick={() => setCardsPerPage(val)}
+                style={{
+                  flex: 1, padding: '8px 4px', borderRadius: '10px',
+                  fontSize: '12px', fontWeight: 700,
+                  border: isActive ? `1.5px solid ${C.primary}` : `1px solid ${C.border}`,
+                  cursor: 'pointer',
+                  background: isActive ? `${C.primary}15` : 'transparent',
+                  color: isActive ? C.primary : C.textMid
+                }}
+              >
+                {val === 'all' ? t('All') : `${val}`}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {isDrawer ? (
+        <div style={{
+          marginTop: 'auto',
+          paddingTop: '16px',
+          display: 'flex',
+          gap: '10px',
+          borderTop: `1.5px solid ${C.border}`,
+          background: C.card,
+          flexShrink: 0
+        }}>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveCategory('all');
+              setActiveBank('All Banks');
+              setFeatureFilter('all');
+              setMinCommission(0);
+              setMinApproval(0);
+              setSearch('');
+              setSortBy('featured');
+              setShowMobileFilter(false);
+            }}
+            style={{
+              ...S.btn('outline'),
+              flex: 1,
+              padding: '12px 6px',
+              fontSize: '13px',
+              fontWeight: 700,
+              borderRadius: '10px',
+              cursor: 'pointer',
+              borderColor: C.red,
+              color: C.red
+            }}
+          >
+            {t("Reset")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowMobileFilter(false)}
+            style={{
+              ...S.btn('primary'),
+              flex: 1.5,
+              padding: '12px 6px',
+              fontSize: '13px',
+              fontWeight: 800,
+              borderRadius: '10px',
+              cursor: 'pointer',
+              background: `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})`,
+              color: '#fff',
+              border: 'none',
+              textAlign: 'center'
+            }}
+          >
+            {t("Show {{count}} Results", { count: filteredProducts.length })}
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => {
+            setActiveCategory(initialCategory || 'all');
+            setActiveSubCategory(initialSubCategory || '');
+            setActiveBank(allDefaultBankValue);
+            setFeatureFilter('all');
+            setMinCommission(0);
+            setMinApproval(0);
+            setSearch('');
+            setSortBy('featured');
+          }}
+          style={{
+            width: '100%', padding: '12px', borderRadius: '10px',
+            background: 'none', border: `1.5px solid ${C.border}`,
+            color: C.red, fontWeight: 700, fontSize: '13px', cursor: 'pointer',
+            transition: 'all 0.15s ease'
+          }}
+          className="hover-bg-button-danger"
+        >
+          {t("Reset Filters")}
+        </button>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={{
+      padding: isMobile ? '16px 12px' : '24px 20px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '24px',
+      maxWidth: '1280px',
+      margin: '0 auto',
+      boxSizing: 'border-box'
+    }}>
+
+      {/* ═══ TOP-RIGHT CORNER TOAST NOTIFICATION ═══ */}
+      {toast && (
+        <div style={{
+          position: 'fixed',
+          top: '24px',
+          right: '24px',
+          zIndex: 12000,
+          minWidth: '320px',
+          maxWidth: '440px',
+          padding: '14px 18px',
+          borderRadius: '16px',
+          background: toast.type === 'success' ? 'linear-gradient(135deg, #059669 0%, #10B981 100%)' : 'linear-gradient(135deg, #DC2626 0%, #EF4444 100%)',
+          color: '#FFFFFF',
+          fontWeight: 800,
+          fontSize: '13.5px',
+          boxShadow: '0 12px 35px rgba(0,0,0,0.3)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+            <span style={{ fontSize: '20px' }}>{toast.type === 'success' ? '✅' : '❌'}</span>
+            <div style={{ lineHeight: 1.4, wordBreak: 'break-word' }}>{toast.message}</div>
+          </div>
+          <button
+            onClick={() => setToast(null)}
+            style={{ background: 'none', border: 'none', color: '#FFF', fontSize: '18px', cursor: 'pointer', fontWeight: 900, padding: '2px 6px' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+
+      {/* ─── MAIN SIDEBAR + GRID CONTAINER ─── */}
+      <div style={{
+        display: 'flex',
+        flexDirection: isMobile ? 'column' : 'row',
+        gap: '24px',
+        width: '100%'
+      }}>
+        
+        {/* ═══ DESKTOP SIDEBAR FILTERS ═══ */}
+        {!isMobile && (
+          <aside style={{ width: '240px', flexShrink: 0, position: 'sticky', top: '94px', alignSelf: 'start', zIndex: 10 }}>
+            {renderFilterContent()}
+          </aside>
+        )}
+
+        {/* ═══ MOBILE FILTER MODAL / DRAWER ═══ */}
+        {isMobile && showMobileFilter && (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 999,
+            background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)',
+            display: 'flex', justifyContent: 'flex-end'
+          }}>
+            <div style={{
+              width: '85%', maxWidth: '320px', height: '100%',
+              background: C.card, padding: '16px 20px',
+              boxShadow: '-10px 0 30px rgba(0,0,0,0.15)',
+              display: 'flex', flexDirection: 'column',
+              boxSizing: 'border-box'
+            }}>
+              {renderFilterContent(true)}
+            </div>
+          </div>
+        )}
+
+      {/* ═══ MAIN CONTENT ═══ */}
+      <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+        {/* Smart & User-Friendly Filter Controls Header */}
+        <div style={{
+          ...S.card,
+          padding: isMobile ? '14px' : '18px 22px',
+          borderRadius: '20px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '14px',
+          background: C.card,
+          border: `1.5px solid ${C.border}`,
+          boxShadow: isDark ? '0 4px 20px rgba(0,0,0,0.2)' : '0 4px 20px rgba(15,23,42,0.04)'
+        }}>
+          
+          {/* Row 1: Search Bar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexDirection: isMobile ? 'column' : 'row' }}>
+            <div style={{ position: 'relative', flex: 1, width: '100%' }}>
+              <MdSearch style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: C.primary }} size={20} />
+              <input 
+                type="text" 
+                placeholder={t("Search by card name, bank, category, or payout...")} 
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{
+                  ...S.input,
+                  paddingLeft: '42px',
+                  paddingRight: search ? '36px' : '14px',
+                  height: '44px',
+                  fontSize: '13.5px',
+                  borderRadius: '12px',
+                  border: `1.5px solid ${search ? C.primary : C.border}`,
+                  background: isDark ? '#18181B' : '#F8FAFC',
+                  color: C.text,
+                  boxShadow: search ? `0 0 0 3px ${C.primary}20` : 'none'
+                }}
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  style={{
+                    position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)',
+                    background: 'none', border: 'none', color: C.textMid, cursor: 'pointer', padding: '4px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }}
+                  title="Clear search"
+                >
+                  <MdClose size={18} />
+                </button>
+              )}
+            </div>
+            
+            {!isMobile && (
+              <div style={{ display: 'flex', gap: '8px', alignSelf: 'stretch' }}>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  style={{
+                    ...S.input,
+                    width: '170px',
+                    height: '44px',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    borderRadius: '12px',
+                    padding: '0 10px',
+                    background: isDark ? '#18181B' : '#F8FAFC',
+                    border: `1.5px solid ${C.border}`
+                  }}
+                >
+                  <option value="featured">Featured</option>
+                  <option value="highest_commission">Highest Commission</option>
+                  <option value="highest_approval">Highest Approval</option>
+                  <option value="newest">Newest</option>
+                  <option value="a_z">A-Z</option>
+                  <option value="popular">Popular</option>
+                </select>
+
+                <select
+                  value={cardsPerPage}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCardsPerPage(val === 'all' ? 'all' : parseInt(val, 10));
+                  }}
+                  style={{
+                    ...S.input,
+                    width: '130px',
+                    height: '44px',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    borderRadius: '12px',
+                    padding: '0 10px',
+                    background: isDark ? '#18181B' : '#F8FAFC',
+                    border: `1.5px solid ${C.border}`
+                  }}
+                >
+                  <option value={12}>12 / page</option>
+                  <option value={24}>24 / page</option>
+                  <option value={48}>48 / page</option>
+                  <option value="all">Show All</option>
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* Mobile Screen Controls: Product & Bank Select Buttons + Sort & Filter Buttons */}
+          {isMobile ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
+              {/* Row 2 on Mobile: Product Category & Select Bank Buttons */}
+              <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                {!hideCategoryFilter && (
+                  <select
+                    id="mobile-select-products"
+                    value={activeCategory}
+                    onChange={(e) => setActiveCategory(e.target.value)}
+                    style={{
+                      flex: 1,
+                      padding: '10px 12px',
+                      borderRadius: '12px',
+                      fontSize: '12.5px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      border: activeCategory !== 'all' ? `1.5px solid ${C.primary}` : `1.5px solid ${C.border}`,
+                      background: activeCategory !== 'all' ? `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})` : (isDark ? '#18181B' : '#F8FAFC'),
+                      color: activeCategory !== 'all' ? '#FFFFFF' : C.text,
+                      outline: 'none'
+                    }}
+                  >
+                    <option value="all" style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>{t("Products (All)")}</option>
+                    {(Array.isArray(CATEGORIES) ? CATEGORIES : []).filter(c => c.id !== 'all').map(cat => (
+                      <option key={cat.id} value={cat.id} style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>
+                        {t(cat.label)}
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                <select
+                  id="mobile-select-banks"
+                  value={activeBank}
+                  onChange={(e) => setActiveBank(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: '10px 12px',
+                    borderRadius: '12px',
+                    fontSize: '12.5px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    border: activeBank !== allDefaultBankValue && activeBank !== 'All Banks' ? `1.5px solid ${C.primary}` : `1.5px solid ${C.border}`,
+                    background: activeBank !== allDefaultBankValue && activeBank !== 'All Banks' ? `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})` : (isDark ? '#18181B' : '#F8FAFC'),
+                    color: activeBank !== allDefaultBankValue && activeBank !== 'All Banks' ? '#FFFFFF' : C.text,
+                    outline: 'none'
+                  }}
+                >
+                  <option value={allDefaultBankValue} style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>{allDefaultBankValue}</option>
+                  {(Array.isArray(bankOptions) ? bankOptions : []).filter(b => b !== allDefaultBankValue && b !== 'All Banks').map(bank => (
+                    <option key={bank} value={bank} style={{ background: isDark ? '#18181B' : '#FFFFFF', color: isDark ? '#F8FAFC' : '#111827' }}>
+                      {bank}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Row 3 on Mobile: Sort By & Filter Drawer Button */}
+              <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  style={{
+                    ...S.input,
+                    flex: 1,
+                    height: '42px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    borderRadius: '12px',
+                    padding: '0 8px',
+                    background: isDark ? '#18181B' : '#F8FAFC',
+                    border: `1.5px solid ${C.border}`
+                  }}
+                >
+                  <option value="featured">{t("Featured")}</option>
+                  <option value="highest_commission">{t("Highest Commission")}</option>
+                  <option value="highest_approval">{t("Highest Approval")}</option>
+                  <option value="newest">{t("Newest")}</option>
+                  <option value="a_z">{t("A-Z")}</option>
+                  <option value="popular">{t("Popular")}</option>
+                </select>
+
+                <button
+                  onClick={() => setShowMobileFilter(true)}
+                  style={{
+                    background: `${C.primary}15`,
+                    border: `1.5px solid ${C.primary}`,
+                    color: C.primary,
+                    borderRadius: '12px',
+                    padding: '0 14px',
+                    height: '42px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    fontWeight: 800,
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                    flex: 1
+                  }}
+                >
+                  <MdFilterList size={18} /> {t("Filters")} {activeFiltersCount > 0 ? `(${activeFiltersCount})` : ''}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Row 4: Results Count & Active Filter Tags */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', paddingTop: '6px', borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : '#F1F5F9'}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '12.5px', fontWeight: 700, color: C.textMid }}>
+                {t("Showing")} <strong style={{ color: C.text, fontSize: '14px' }}>{filteredProducts.length}</strong> {t("products")}
+              </span>
+
+              {/* Active Filter Removable Tags */}
+              {activeCategory !== 'all' && (
+                <span style={{
+                  fontSize: '11px', fontWeight: 800, padding: '3px 8px', borderRadius: '12px',
+                  background: `${C.primary}18`, color: C.primary, display: 'inline-flex', alignItems: 'center', gap: '4px'
+                }}>
+                  {t("Category:")} {t(CATEGORIES.find(c => c.id === activeCategory)?.label)}
+                  <MdClose size={12} style={{ cursor: 'pointer' }} onClick={() => setActiveCategory('all')} />
+                </span>
+              )}
+
+              {activeSubCategory && activeSubCategory !== 'all' && (
+                <span style={{
+                  fontSize: '11px', fontWeight: 800, padding: '3px 8px', borderRadius: '12px',
+                  background: `${C.primary}18`, color: C.primary, display: 'inline-flex', alignItems: 'center', gap: '4px'
+                }}>
+                  {t("Subcategory:")} {activeSubCategory.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                  <MdClose size={12} style={{ cursor: 'pointer' }} onClick={() => setActiveSubCategory('')} />
+                </span>
+              )}
+
+              {activeBank !== allDefaultBankValue && activeBank !== 'All Banks' && (
+                <span style={{
+                  fontSize: '11px', fontWeight: 800, padding: '3px 8px', borderRadius: '12px',
+                  background: `${C.primary}18`, color: C.primary, display: 'inline-flex', alignItems: 'center', gap: '4px'
+                }}>
+                  {providerType === 'finance' ? t("Company:") : t("Bank:")} {activeBank}
+                  <MdClose size={12} style={{ cursor: 'pointer' }} onClick={() => setActiveBank(allDefaultBankValue)} />
+                </span>
+              )}
+
+              {featureFilter !== 'all' && (
+                <span style={{
+                  fontSize: '11px', fontWeight: 800, padding: '3px 8px', borderRadius: '12px',
+                  background: `${C.primary}18`, color: C.primary, display: 'inline-flex', alignItems: 'center', gap: '4px'
+                }}>
+                  {t("Feature:")} {featureFilter === 'ltf' ? t('Lifetime Free') : featureFilter === 'high_payout' ? t('High Payout') : t('High Approval')}
+                  <MdClose size={12} style={{ cursor: 'pointer' }} onClick={() => setFeatureFilter('all')} />
+                </span>
+              )}
+
+              {minCommission > 0 && (
+                <span style={{
+                  fontSize: '11px', fontWeight: 800, padding: '3px 8px', borderRadius: '12px',
+                  background: `${C.primary}18`, color: C.primary, display: 'inline-flex', alignItems: 'center', gap: '4px'
+                }}>
+                  {t("Payout:")} ₹{minCommission}+
+                  <MdClose size={12} style={{ cursor: 'pointer' }} onClick={() => setMinCommission(0)} />
+                </span>
+              )}
+
+              {search && (
+                <span style={{
+                  fontSize: '11px', fontWeight: 800, padding: '3px 8px', borderRadius: '12px',
+                  background: `${C.primary}18`, color: C.primary, display: 'inline-flex', alignItems: 'center', gap: '4px'
+                }}>
+                  {t("Search:")} "{search}"
+                  <MdClose size={12} style={{ cursor: 'pointer' }} onClick={() => setSearch('')} />
+                </span>
+              )}
+            </div>
+
+            {activeFiltersCount > 0 && (
+              <button
+                onClick={() => {
+                  setActiveCategory(initialCategory || 'all');
+                  setActiveSubCategory(initialSubCategory || '');
+                  setActiveBank(allDefaultBankValue);
+                  setFeatureFilter('all');
+                  setMinCommission(0);
+                  setMinApproval(0);
+                  setSearch('');
+                  setSortBy('featured');
+                }}
+                style={{
+                  background: 'none', border: 'none', color: C.red, fontWeight: 800,
+                  cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px'
+                }}
+              >
+                {t("Clear All")} ✕
+              </button>
+            )}
+          </div>
+
+        </div>
+
+        {error && (
+          <div style={{
+            padding: '14px 18px', background: `${C.red}12`, border: `1px solid ${C.red}25`,
+            color: C.red, borderRadius: '12px', fontWeight: 600, fontSize: '13px'
+          }}>
+            {error}
+          </div>
+        )}
+
+        {loading ? (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
+            gap: isMobile ? '10px' : '20px'
+          }}>
+            {[1, 2, 3, 4, 5, 6].map(idx => (
+              <div key={idx} style={{
+                ...S.card,
+                padding: '24px',
+                borderRadius: '16px',
+                border: `1.5px solid ${C.border}`,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px',
+                minHeight: '280px'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <div style={{ width: '60px', height: '18px', borderRadius: '4px', background: C.border, opacity: 0.5 }} />
+                  <div style={{ width: '50px', height: '18px', borderRadius: '4px', background: C.border, opacity: 0.5 }} />
+                </div>
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: C.border, opacity: 0.5 }} />
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ width: '80%', height: '16px', borderRadius: '4px', background: C.border, opacity: 0.5 }} />
+                    <div style={{ width: '40%', height: '12px', borderRadius: '4px', background: C.border, opacity: 0.5 }} />
+                  </div>
+                </div>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px', justifyContent: 'center' }}>
+                  <div style={{ width: '100%', height: '12px', borderRadius: '4px', background: C.border, opacity: 0.5 }} />
+                  <div style={{ width: '90%', height: '12px', borderRadius: '4px', background: C.border, opacity: 0.5 }} />
+                </div>
+                <div style={{ height: '40px', borderRadius: '8px', background: C.border, opacity: 0.5 }} />
+              </div>
+            ))}
+          </div>
+        ) : filteredProducts.length === 0 ? (
+          <div style={{
+            ...S.card, padding: '60px 24px', textAlign: 'center', borderRadius: '16px'
+          }}>
+            <div style={{
+              width: 56, height: 56, borderRadius: '50%', background: C.bgSecondary,
+              color: C.textLight, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 16px'
+            }}>
+              <MdSearch size={28} />
+            </div>
+            <h3 style={{ fontSize: '17px', fontWeight: 700, color: C.text, margin: '0 0 4px' }}>
+              {emptyStateMessage || (activeSubCategory ? `No ${activeSubCategory.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())} Offers Found` : t("No products found"))}
+            </h3>
+            <p style={{ color: C.textMid, margin: '0 0 20px', fontSize: '13px' }}>
+              {emptyStateSubtitle || t("Try adjusting your filters or search terms.")}
+            </p>
+            <button
+              onClick={() => { 
+                setActiveCategory(initialCategory || 'all'); 
+                setActiveSubCategory(initialSubCategory || '');
+                setActiveBank(allDefaultBankValue); 
+                setFeatureFilter('all');
+                setMinCommission(0);
+                setMinApproval(0);
+                setSearch(''); 
+              }}
+              style={{ background: 'none', border: 'none', color: C.primary, fontWeight: 700, cursor: 'pointer', fontSize: '14px' }}
+            >
+              {t("Clear all filters")}
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
+              gap: isMobile ? '10px' : '20px'
+            }}>
+              {currentCards.map((product) => {
+                const isSelectedForCompare = compareList.some(p => p.id === product.id);
+                const approvalRate = getApprovalRate(product);
+                const cardDetails = getCardDetails(product.id || product.name.toLowerCase().replace(/[^a-z0-9]/g, '-'), product.name);
+                const eligibilityCriteria = cardDetails.eligibility?.criteria || 'Min Age: 21 | Income details apply';
+                const badges = getMarketingBadges(product, isEmployee);
+                const categoryIcon = getCategoryIcon(product.category, { size: isMobile ? 22 : 26 });
+
+                let keyFeatures = [];
+                if (Array.isArray(product.features) && product.features.length > 0) {
+                  keyFeatures = product.features;
+                } else if (Array.isArray(product.features_list) && product.features_list.length > 0) {
+                  keyFeatures = product.features_list;
+                } else if (product.description && typeof product.description === 'string' && product.description.includes('•')) {
+                  keyFeatures = product.description.split('•').map(s => s.trim()).filter(Boolean);
+                } else if (cardDetails.features && cardDetails.features.length > 0) {
+                  keyFeatures = cardDetails.features;
+                } else if (product.description) {
+                  keyFeatures = [product.description];
+                }
+
+                return (
+                  <div 
+                    key={product.id} 
+                    className="gkp-product-card"
+                    style={{
+                      ...S.card,
+                      padding: isMobile ? '14px 12px' : '20px',
+                      borderRadius: '18px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between',
+                      gap: isMobile ? '12px' : '14px',
+                      transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                      border: isSelectedForCompare ? `2.5px solid ${C.primary}` : `1.5px solid ${C.border}`,
+                      boxShadow: isSelectedForCompare ? `0 12px 28px ${C.primary}20` : (isDark ? 'none' : '0 4px 15px rgba(0,0,0,0.02)'),
+                      background: C.card
+                    }}
+                  >
+                    <div>
+                      {/* Top Badges Row */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', gap: '4px', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+                          <span style={{
+                            ...S.tag(C.primary),
+                            fontSize: isMobile ? '10px' : '11px',
+                            fontWeight: 750,
+                            padding: isMobile ? '3px 8px' : '4px 10px',
+                            borderRadius: '8px',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px'
+                          }}>
+                            {providerType !== 'all' 
+                              ? (isFinanceProduct(product) ? 'Finance' : 'Bank') 
+                              : (product.category?.replace(/_/g, ' ') || 'Finance')}
+                          </span>
+                          {eligibilityType && (
+                            <span style={{
+                              fontSize: isMobile ? '10px' : '11px', fontWeight: 750,
+                              background: isDark ? '#064E3B' : '#ECFDF5',
+                              color: isDark ? '#34D399' : '#059669',
+                              border: `1px solid ${isDark ? '#059669' : '#A7F3D0'}`,
+                              padding: isMobile ? '3px 8px' : '4px 10px', borderRadius: '8px',
+                              letterSpacing: '0.3px'
+                            }}>
+                              {getLoanEligibilityType(product) === 'income' ? 'Income Based' : 'CIBIL Based'}
+                            </span>
+                          )}
+                          {isSelectedForCompare && (
+                            <span style={{
+                              fontSize: isMobile ? '10px' : '11px', fontWeight: 800, color: '#fff',
+                              background: C.green, padding: isMobile ? '3px 8px' : '4px 10px', borderRadius: '8px'
+                            }}>
+                              ✓ Compare
+                            </span>
+                          )}
+                        </div>
+                        <span style={{
+                          fontSize: isMobile ? '10px' : '11px', fontWeight: 700, color: C.textMid,
+                          background: C.bgSecondary, padding: isMobile ? '3px 8px' : '4px 10px', borderRadius: '8px',
+                          textTransform: 'uppercase', letterSpacing: '0.5px',
+                          border: `1px solid ${C.border}`
+                        }}>
+                          {product.bank_code || 'BANK'}
+                        </span>
+                      </div>
+
+                      {/* Product Logo & Info Header */}
+                      <div style={{ display: 'flex', gap: isMobile ? '10px' : '12px', alignItems: 'center', marginBottom: '10px' }}>
+                        <div style={{
+                          width: isMobile ? 44 : 52,
+                          height: isMobile ? 44 : 52,
+                          flexShrink: 0,
+                          background: C.bgSecondary,
+                          borderRadius: '12px',
+                          border: `1.5px solid ${C.border}`,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          overflow: 'hidden',
+                          fontSize: isMobile ? '20px' : '24px',
+                          boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)'
+                        }}>
+                          {(() => {
+                            const imgSrc = getCleanImageUrl(product.image_url || product.logo || product.image || product.bank_logo);
+                            return imgSrc ? (
+                              <img
+                                src={imgSrc}
+                                alt={product.name}
+                                onError={(e) => {
+                                  if (product.bank_logo && e.target.src !== getCleanImageUrl(product.bank_logo)) {
+                                    e.target.src = getCleanImageUrl(product.bank_logo);
+                                  } else {
+                                    e.target.onerror = null;
+                                    e.target.style.display = 'none';
+                                  }
+                                }}
+                                style={{ width: '100%', height: '100%', objectFit: 'contain', padding: '3px' }}
+                              />
+                            ) : (
+                              categoryIcon
+                            );
+                          })()}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <h3 style={{
+                            fontSize: isMobile ? '14.5px' : '16.5px',
+                            fontWeight: 800,
+                            color: C.text,
+                            margin: '0 0 2px',
+                            lineHeight: 1.3,
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden'
+                          }}>
+                            {product.name}
+                          </h3>
+                        </div>
+                      </div>
+
+                      {/* Key Features */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
+                        {keyFeatures.slice(0, 3).map((feat, idx) => {
+                          const featStr = typeof feat === 'string' ? feat : (feat.title || feat.label || feat.description || '');
+                          return featStr ? (
+                            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: isMobile ? '11.5px' : '12px', color: C.textMid, fontWeight: 550, lineHeight: 1.3 }}>
+                              <MdCheckCircle color={C.green} size={isMobile ? 13 : 14} style={{ flexShrink: 0 }} />
+                              <span style={{ display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                                {featStr}
+                              </span>
+                            </div>
+                          ) : null;
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Footer Action Bar */}
+                    <div style={{
+                      borderTop: `1px solid ${C.border}`,
+                      paddingTop: '12px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                      marginTop: 'auto'
+                    }}>
+                      {/* Payout & Commission Row */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: isMobile ? '11px' : '12.5px', color: C.textLight, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          {isEmployee ? t("Incentives") : t("Partner Payout")}
+                        </span>
+                        <span style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: 800, color: C.green }}>
+                          ₹{parseFloat(product.commission_value || 0).toLocaleString('en-IN')}
+                        </span>
+                      </div>
+
+                      {/* Buttons Row 1 */}
+                      <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
+                        <button
+                          onClick={() => handleCopyLink(product)}
+                          type="button"
+                          style={{
+                            ...S.btn('outline'),
+                            flex: 1,
+                            padding: isMobile ? '9px 6px' : '10px 8px',
+                            fontSize: isMobile ? '12px' : '12.5px',
+                            borderRadius: '10px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '4px',
+                            fontWeight: 700
+                          }}
+                        >
+                          <MdShare size={isMobile ? 13 : 14} /> {t("Share")}
+                        </button>
+                        
+                        <button
+                          onClick={() => handleToggleCompare(product)}
+                          type="button"
+                          style={{
+                            ...S.btn(isSelectedForCompare ? 'primary' : 'outline'),
+                            flex: 1,
+                            padding: isMobile ? '9px 6px' : '10px 8px',
+                            fontSize: isMobile ? '12px' : '12.5px',
+                            borderRadius: '10px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px',
+                            fontWeight: 700,
+                            borderColor: isSelectedForCompare ? 'transparent' : C.primary,
+                            color: isSelectedForCompare ? '#fff' : C.primary
+                          }}
+                        >
+                          <FaBalanceScale size={isMobile ? 13 : 15} />
+                          {t("Compare")}
+                        </button>
+                      </div>
+
+                      {/* Buttons Row 2 */}
+                      <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
+                        <button
+                          onClick={() => setShowBenefitsProduct(product)}
+                          type="button"
+                          style={{
+                            ...S.btn('outline'),
+                            borderColor: C.border,
+                            color: C.textMid,
+                            flex: 1,
+                            padding: isMobile ? '9px 6px' : '11px 12px',
+                            fontSize: isMobile ? '12px' : '13px',
+                            borderRadius: '10px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '4px',
+                            fontWeight: 700
+                          }}
+                          className="hover-bg-button"
+                        >
+                          {t("Benefits")}
+                        </button>
+                        
+                        <button
+                          onClick={() => handleApply(product)}
+                          style={{
+                            background: `linear-gradient(135deg, ${C.primary} 0%, ${C.primaryDark} 100%)`,
+                            color: '#fff',
+                            border: 'none',
+                            flex: 1.5,
+                            padding: isMobile ? '9px 6px' : '11px 12px',
+                            fontSize: isMobile ? '12px' : '13px',
+                            borderRadius: '10px',
+                            cursor: 'pointer',
+                            fontWeight: 800,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px',
+                            transition: 'transform 0.2s, box-shadow 0.2s',
+                            boxShadow: isDark ? 'none' : `0 4px 12px ${C.primary}20`
+                          }}
+                          className="hover-scale-button"
+                        >
+                          {t("Apply")} <MdChevronRight size={isMobile ? 14 : 16} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div style={{
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                gap: '8px',
+                marginTop: '24px',
+                paddingBottom: '20px'
+              }}>
+                <button
+                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                  disabled={currentPage === 1}
+                  style={{
+                    ...S.btn('outline'),
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                    opacity: currentPage === 1 ? 0.4 : 1,
+                    fontSize: '14px',
+                    fontWeight: 700
+                  }}
+                >
+                  &lt;
+                </button>
+                
+                {getPageNumbers().map((page, idx) => {
+                  if (page === '...') {
+                    return (
+                      <span key={`ellipsis-${idx}`} style={{ padding: '8px', color: C.textLight, fontWeight: 700 }}>
+                        ...
+                      </span>
+                    );
+                  }
+                  return (
+                    <button
+                      key={page}
+                      onClick={() => setCurrentPage(page)}
+                      style={{
+                        ...S.btn(currentPage === page ? 'primary' : 'outline'),
+                        padding: '8px 14px',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 750,
+                        boxShadow: currentPage === page && !isDark ? `0 4px 10px ${C.primary}30` : 'none'
+                      }}
+                    >
+                      {page}
+                    </button>
+                  );
+                })}
+                
+                <button
+                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                  disabled={currentPage === totalPages}
+                  style={{
+                    ...S.btn('outline'),
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
+                    opacity: currentPage === totalPages ? 0.4 : 1,
+                    fontSize: '14px',
+                    fontWeight: 700
+                  }}
+                >
+                  &gt;
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+
+      {/* ═══ STREAMLINED 3-OPTION PARTNER APPLY MODAL ═══ */}
+      {selectedProduct && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)', padding: isMobile ? '45px 10px 85px 10px' : '50px 16px 20px 16px'
+        }}>
+          <div style={{
+            background: C.card, width: '100%', maxWidth: '520px', maxHeight: isMobile ? 'calc(100vh - 110px)' : '85vh',
+            borderRadius: '24px', border: `1px solid ${C.border}`,
+            boxShadow: '0 25px 60px rgba(0,0,0,0.4)', position: 'relative',
+            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            marginTop: isMobile ? '0' : '20px'
+          }}>
+            {/* Modal Header */}
+            <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, background: C.bgSecondary, position: 'sticky', top: 0, zIndex: 10 }}>
+              <button
+                onClick={() => setSelectedProduct(null)}
+                style={{
+                  position: 'absolute', top: '16px', right: '16px',
+                  background: C.card, border: `1px solid ${C.border}`, cursor: 'pointer',
+                  width: 32, height: 32, borderRadius: '50%',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: C.textMid, fontSize: '16px', fontWeight: 700
+                }}
+              >
+                ✕
+              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 800, padding: '4px 10px', borderRadius: '12px', background: `${C.primary}15`, color: C.primary, textTransform: 'uppercase' }}>
+                  {selectedProduct.category?.replace(/_/g, ' ')}
+                </span>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: C.textLight }}>
+                  Bank: {selectedProduct.bank_code || 'Partner Bank'}
+                </span>
+              </div>
+              <h3 style={{ fontSize: '20px', fontWeight: 800, color: C.text, margin: '6px 0 2px' }}>
+                Apply for {selectedProduct.name}
+              </h3>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px' }}>
+                <p style={{ fontSize: '12px', color: C.textMid, margin: 0 }}>
+                  {isEmployee ? "Incentive: " : "Payout: "}<strong style={{ color: C.green }}>₹{parseFloat(selectedProduct.commission_value || 0).toLocaleString('en-IN')}</strong>
+                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  {isTataCobrandHdfcProduct ? (
+                    <>
+                      <a
+                        href={adobeSupportLinks.hdfc_tata_neu_adobe_support_link}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Open Adobe Support SWCC Portal"
+                        style={{
+                          padding: '5px 12px',
+                          borderRadius: '8px',
+                          background: 'linear-gradient(135deg, #FF0000 0%, #CC0000 100%)',
+                          color: '#FFFFFF',
+                          fontWeight: 800,
+                          fontSize: '12px',
+                          textDecoration: 'none',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          boxShadow: '0 2px 8px rgba(255,0,0,0.3)',
+                          transition: 'transform 0.15s ease'
+                        }}
+                      >
+                        📄 Adobe Support (SWCC)
+                      </a>
+                      <a
+                        href={adobeSupportLinks.tata_cobrand_hdfc_adobe_support_link}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Open Adobe Support TDCC Portal"
+                        style={{
+                          padding: '5px 12px',
+                          borderRadius: '8px',
+                          background: 'linear-gradient(135deg, #4F46E5 0%, #3730A3 100%)',
+                          color: '#FFFFFF',
+                          fontWeight: 800,
+                          fontSize: '12px',
+                          textDecoration: 'none',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          boxShadow: '0 2px 8px rgba(79,70,229,0.35)',
+                          transition: 'transform 0.15s ease'
+                        }}
+                      >
+                        📄 Adobe Support (TDCC)
+                      </a>
+                    </>
+                  ) : isHdfcTataNeuProduct ? (
+                    <a
+                      href={adobeSupportLinks.hdfc_tata_neu_adobe_support_link}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Open Adobe Support SWCC Portal"
+                      style={{
+                        padding: '5px 12px',
+                        borderRadius: '8px',
+                        background: 'linear-gradient(135deg, #FF0000 0%, #CC0000 100%)',
+                        color: '#FFFFFF',
+                        fontWeight: 800,
+                        fontSize: '12px',
+                        textDecoration: 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        boxShadow: '0 2px 8px rgba(255,0,0,0.3)'
+                      }}
+                    >
+                      📄 Adobe Support (SWCC)
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleSubmitLead} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', margin: 0 }}>
+              <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px', overflowY: 'auto', flex: 1 }}>
+                
+                {/* 1. Customer Name */}
+                <div>
+                  <label style={S.label}>1. Customer Name *</label>
+                  <input
+                    type="text"
+                    placeholder="Enter customer full name"
+                    value={customerName}
+                    onChange={(e) => { setCustomerName(e.target.value); setFormErrors(prev => ({ ...prev, customerName: null })); }}
+                    style={{ ...S.input, height: '44px', fontSize: '14px', borderColor: formErrors.customerName ? C.red : C.border }}
+                  />
+                  {formErrors.customerName && <span style={{ fontSize: '11.5px', color: C.red, marginTop: '4px', display: 'block' }}>{formErrors.customerName}</span>}
+                </div>
+
+                {/* 2. Mobile Number */}
+                <div>
+                  <label style={S.label}>2. Mobile Number *</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <select
+                      value={countryCode}
+                      onChange={(e) => setCountryCode(e.target.value)}
+                      style={{ ...S.input, width: '90px', height: '44px', fontSize: '13px', fontWeight: 700, padding: '0 8px' }}
+                    >
+                      <option value="+91">🇮🇳 +91</option>
+                      <option value="+1">🇺🇸 +1</option>
+                      <option value="+44">🇬🇧 +44</option>
+                    </select>
+                    <input
+                      type="tel"
+                      placeholder="Enter 10-digit mobile number"
+                      maxLength={10}
+                      value={mobile}
+                      onChange={(e) => { setMobile(e.target.value.replace(/\D/g, '')); setFormErrors(prev => ({ ...prev, mobile: null })); }}
+                      style={{ ...S.input, flex: 1, height: '44px', fontSize: '14px', borderColor: formErrors.mobile ? C.red : C.border }}
+                    />
+                  </div>
+                  {formErrors.mobile && <span style={{ fontSize: '11.5px', color: C.red, marginTop: '4px', display: 'block' }}>{formErrors.mobile}</span>}
+                </div>
+
+                {/* Pan Card Field (Shown below Mobile Number ONLY when product is HDFC in Credit Card category AND process by is lead punching only) */}
+                {isHdfcCreditCard && processType === 'lead_punching' && (
+                  <div>
+                    <label style={S.label}>Pan Card *</label>
+                    <input
+                      type="text"
+                      placeholder="Enter 10-digit PAN (e.g. ABCDE1234F)"
+                      maxLength={10}
+                      value={panNumber}
+                      onChange={(e) => {
+                        setPanNumber(e.target.value.toUpperCase());
+                        setFormErrors(prev => ({ ...prev, panNumber: null }));
+                      }}
+                      style={{
+                        ...S.input,
+                        height: '44px',
+                        fontSize: '14px',
+                        textTransform: 'uppercase',
+                        fontFamily: 'monospace',
+                        borderColor: formErrors.panNumber ? C.red : C.border
+                      }}
+                    />
+                    {formErrors.panNumber && (
+                      <span style={{ fontSize: '11.5px', color: C.red, marginTop: '4px', display: 'block' }}>
+                        {formErrors.panNumber}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* PAN Card & Pincode Fields (Shown when product bank is SBI) */}
+                {isSbiProduct && (
+                  <>
+                    <div>
+                      <label style={S.label}>PAN Card Number *</label>
+                      <input
+                        type="text"
+                        placeholder="Enter 10-digit PAN (e.g. ABCDE1234F)"
+                        maxLength={10}
+                        value={panNumber}
+                        onChange={(e) => { setPanNumber(e.target.value.toUpperCase()); setFormErrors(prev => ({ ...prev, panNumber: null })); }}
+                        style={{ ...S.input, height: '44px', fontSize: '14px', textTransform: 'uppercase', fontFamily: 'monospace', borderColor: formErrors.panNumber ? C.red : C.border }}
+                      />
+                      {formErrors.panNumber && <span style={{ fontSize: '11.5px', color: C.red, marginTop: '4px', display: 'block' }}>{formErrors.panNumber}</span>}
+                    </div>
+
+                    <div>
+                      <label style={S.label}>Enter Pincode *</label>
+                      <PincodeAutoComplete
+                        value={pincode}
+                        onChange={(val) => {
+                          setPincode(val);
+                          setFormErrors(prev => ({ ...prev, pincode: null }));
+                          if (isS8Pincode(val)) {
+                            const details = getS8PincodeDetails(val);
+                            const cName = details?.city ? details.city.toUpperCase() : '';
+                            setNegativeArea(cName ? `Yes (S8 Area - ${cName})` : 'Yes (S8 Area)');
+                          } else {
+                            setNegativeArea('No');
+                          }
+                        }}
+                        onSelect={({ pincode: pin }) => {
+                          setPincode(pin);
+                          setFormErrors(prev => ({ ...prev, pincode: null }));
+                          if (isS8Pincode(pin)) {
+                            const details = getS8PincodeDetails(pin);
+                            const cName = details?.city ? details.city.toUpperCase() : '';
+                            setNegativeArea(cName ? `Yes (S8 Area - ${cName})` : 'Yes (S8 Area)');
+                          } else {
+                            setNegativeArea('No');
+                          }
+                        }}
+                        isSbiOnly={true}
+                        placeholder="Enter 6-digit Pincode"
+                        error={formErrors.pincode}
+                        C={C}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={S.label}>Negative Area (S8 Location Check)</label>
+                      <select
+                        value={negativeArea}
+                        onChange={(e) => setNegativeArea(e.target.value)}
+                        style={{
+                          ...S.input,
+                          height: '44px',
+                          fontSize: '13.5px',
+                          fontWeight: 700,
+                          borderColor: negativeArea && negativeArea.toLowerCase().includes('yes') ? C.red : C.border,
+                          background: negativeArea && negativeArea.toLowerCase().includes('yes') ? `${C.red}0D` : C.card,
+                          color: negativeArea && negativeArea.toLowerCase().includes('yes') ? C.red : C.text
+                        }}
+                      >
+                        <option value="No">No (Standard Area)</option>
+                        <option value="Yes (S8 Area)">Yes (S8 Negative Area)</option>
+                        {negativeArea && !['No', 'Yes (S8 Area)'].includes(negativeArea) && (
+                          <option value={negativeArea}>{negativeArea}</option>
+                        )}
+                        <optgroup label="S8 Excel Negative Area Locations">
+                          {getAllS8Cities().map(cName => (
+                            <option key={cName} value={`Yes (S8 Area - ${cName})`}>
+                              Yes (S8 - {cName})
+                            </option>
+                          ))}
+                        </optgroup>
+                      </select>
+                    </div>
+                  </>
+                )}
+
+                {/* 3. Process By (3 Modes) */}
+                {(() => {
+                  const userDesig = String(user?.designation || user?.hierarchy_level || '').trim().toUpperCase();
+                  const userRole = String(user?.role || '').trim().toUpperCase();
+                  const isSalesExec = userDesig === 'ADMINISTRATIVE SALES EXECUTIVE' || userDesig === 'ADMINISTRATIVE_SALES_EXECUTIVE' || userRole === 'ADMINISTRATIVE_SALES_EXECUTIVE';
+                  const isPanChecker = userDesig === 'PAN CHECKER' || userDesig === 'PAN_CHECKER' || userRole === 'PAN_CHECKER';
+                  const isPunchingOnlyRole = isSalesExec || isPanChecker;
+
+                  return (
+                    <div>
+                      <label style={S.label}>3. Process By *</label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '6px' }}>
+                        
+                        {/* Mode 1: Lead punching only */}
+                        <label style={{
+                          display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px 14px', borderRadius: '12px',
+                          border: `2px solid ${processType === 'lead_punching' ? C.primary : C.border}`,
+                          background: processType === 'lead_punching' ? `${C.primary}0D` : C.card,
+                          cursor: 'pointer', transition: 'all 0.2s'
+                        }}>
+                          <input
+                            type="radio"
+                            name="processType"
+                            value="lead_punching"
+                            checked={processType === 'lead_punching'}
+                            onChange={(e) => {
+                              setProcessType(e.target.value);
+                              setFormErrors(prev => ({ ...prev, panNumber: null }));
+                            }}
+                            style={{ marginTop: '2px', accentColor: C.primary }}
+                          />
+                          <div>
+                            <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text }}>
+                              1. Lead punching only
+                            </div>
+                            <div style={{ fontSize: '11.5px', color: C.textMid, marginTop: '2px' }}>
+                              Records lead directly into your Partner CRM & Applications queue for internal processing.
+                            </div>
+                          </div>
+                        </label>
+
+                        {!isPunchingOnlyRole && (
+                          <>
+
+                    {/* Mode 2: Linked share */}
+                    <label style={{
+                      display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px 14px', borderRadius: '12px',
+                      border: `2px solid ${processType === 'linked_share' ? C.primary : C.border}`,
+                      background: processType === 'linked_share' ? `${C.primary}0D` : C.card,
+                      cursor: 'pointer', transition: 'all 0.2s'
+                    }}>
+                      <input
+                        type="radio"
+                        name="processType"
+                        value="linked_share"
+                        checked={processType === 'linked_share'}
+                        onChange={(e) => {
+                          setProcessType(e.target.value);
+                          setFormErrors(prev => ({ ...prev, panNumber: null }));
+                        }}
+                        style={{ marginTop: '2px', accentColor: C.primary }}
+                      />
+                      <div>
+                        <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text }}>
+                          2. Linked share
+                        </div>
+                        <div style={{ fontSize: '11.5px', color: C.textMid, marginTop: '2px' }}>
+                          Generates & opens a pre-filled WhatsApp share link embedded with the official bank URL.
+                        </div>
+                      </div>
+                    </label>
+
+                    {/* Mode 3: Direct bank process / Adobe direct bank process */}
+                    <label style={{
+                      display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px 14px', borderRadius: '12px',
+                      border: `2px solid ${processType === 'direct_bank' ? C.primary : C.border}`,
+                      background: processType === 'direct_bank' ? `${C.primary}0D` : C.card,
+                      cursor: 'pointer', transition: 'all 0.2s'
+                    }}>
+                      <input
+                        type="radio"
+                        name="processType"
+                        value="direct_bank"
+                        checked={processType === 'direct_bank'}
+                        onChange={(e) => {
+                          setProcessType(e.target.value);
+                          setFormErrors(prev => ({ ...prev, panNumber: null }));
+                        }}
+                        style={{ marginTop: '2px', accentColor: C.primary }}
+                      />
+                      <div>
+                        <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text }}>
+                          {(isHdfcBankProduct || isTataCobrandHdfcProduct) ? '3. Adobe direct bank process' : '3. Direct bank process'}
+                        </div>
+                        <div style={{ fontSize: '11.5px', color: C.textMid, marginTop: '2px' }}>
+                          {(isHdfcBankProduct || isTataCobrandHdfcProduct) ? 'Immediately opens the official Adobe application form portal for direct customer application.' : 'Immediately opens the official bank portal in a new tab for direct customer application.'}
+                        </div>
+                      </div>
+                    </label>
+
+                    {/* Mode 4: Card Assist process (Co-Browsing) for HDFC BANK */}
+                    {isHdfcBankProduct && (
+                      <label style={{
+                        display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px 14px', borderRadius: '12px',
+                        border: `2px solid ${processType === 'co_browsing' ? C.primary : C.border}`,
+                        background: processType === 'co_browsing' ? `${C.primary}0D` : C.card,
+                        cursor: 'pointer', transition: 'all 0.2s'
+                      }}>
+                        <input
+                          type="radio"
+                          name="processType"
+                          value="co_browsing"
+                          checked={processType === 'co_browsing'}
+                          onChange={(e) => {
+                            setProcessType(e.target.value);
+                            setFormErrors(prev => ({ ...prev, panNumber: null }));
+                          }}
+                          style={{ marginTop: '2px', accentColor: C.primary }}
+                        />
+                        <div>
+                          <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text }}>
+                            4. Card Assist process(Co-Browsing)
+                          </div>
+                          <div style={{ fontSize: '11.5px', color: C.textMid, marginTop: '2px' }}>
+                            Co-Browsing Card Assist process link for live customer guidance and application assist.
+                          </div>
+                        </div>
+                      </label>
+                    )}
+
+                    {/* Mode 4: Physical process (Disabled for TATA CO-BRAND HDFC & HDFC BANK) */}
+                    {!isTataCobrandHdfcProduct && !isHdfcBankProduct && (
+                      <label style={{
+                        display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px 14px', borderRadius: '12px',
+                        border: `2px solid ${processType === 'physical_process' ? C.primary : C.border}`,
+                        background: processType === 'physical_process' ? `${C.primary}0D` : C.card,
+                        cursor: 'pointer', transition: 'all 0.2s'
+                      }}>
+                        <input
+                          type="radio"
+                          name="processType"
+                          value="physical_process"
+                          checked={processType === 'physical_process'}
+                          onChange={(e) => {
+                            setProcessType(e.target.value);
+                            setFormErrors(prev => ({ ...prev, panNumber: null }));
+                          }}
+                          style={{ marginTop: '2px', accentColor: C.primary }}
+                        />
+                        <div>
+                          <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text }}>
+                            4. Physical process
+                          </div>
+                          <div style={{ fontSize: '11.5px', color: C.textMid, marginTop: '2px' }}>
+                            Generates SBI or Physical Process Detail Sheet template for physical offline customer verification.
+                          </div>
+                        </div>
+                      </label>
+                    )}
+                  </>
+                )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+              </div>
+
+              {/* Modal Sticky Footer Buttons */}
+              <div style={{
+                position: 'sticky', bottom: 0, zIndex: 10,
+                background: C.card, padding: '14px 24px 18px 24px',
+                borderTop: `1px solid ${C.border}`, display: 'flex', gap: '10px',
+                boxShadow: '0 -4px 14px rgba(0,0,0,0.08)'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedProduct(null)}
+                  style={{
+                    ...S.btn('outline'), flex: 1, padding: '12px', fontSize: '13.5px',
+                    borderRadius: '12px', cursor: 'pointer', fontWeight: 700
+                  }}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  style={{
+                    background: `linear-gradient(135deg, ${C.primary} 0%, ${C.primaryDark} 100%)`,
+                    color: '#ffffff', border: 'none', flex: 2, padding: '12px', fontSize: '13.5px',
+                    borderRadius: '12px', cursor: submitting ? 'not-allowed' : 'pointer',
+                    fontWeight: 800, boxShadow: `0 4px 14px ${C.primary}35`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
+                  }}
+                >
+                  {submitting ? 'Processing...' : processType === 'lead_punching' ? 'Punch Lead' : processType === 'linked_share' ? 'Generate & Share Link' : processType === 'co_browsing' ? 'Generate Co-Browsing Link' : processType === 'physical_process' ? 'Generate Detail Sheet' : 'Open Bank Portal'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ BENEFITS MODAL ═══ */}
+      {showBenefitsProduct && (() => {
+        const cardDetails = getCardDetails(
+          showBenefitsProduct.id || showBenefitsProduct.name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+          showBenefitsProduct.name
+        );
+        const { features, eligibility, howItWorks, termsAndConditions } = cardDetails;
+        
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)', padding: '16px'
+          }}>
+            <div style={{
+              background: C.card, width: '100%', maxWidth: '520px',
+              borderRadius: '20px', overflow: 'hidden', border: `1px solid ${C.border}`,
+              boxShadow: '0 20px 60px rgba(0,0,0,0.3)', position: 'relative',
+              maxHeight: '85vh', display: 'flex', flexDirection: 'column'
+            }}>
+              <button
+                onClick={() => setShowBenefitsProduct(null)}
+                style={{
+                  position: 'absolute', top: '16px', right: '16px', zIndex: 10,
+                  width: '32px', height: '32px', borderRadius: '50%', background: C.bgSecondary,
+                  border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', color: C.textMid, fontSize: '16px', fontWeight: 700
+                }}
+              >
+                ✕
+              </button>
+
+              <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}` }}>
+                <h3 style={{ fontSize: '18px', fontWeight: 800, color: C.text, margin: '0 0 4px' }}>
+                  {showBenefitsProduct.name} Benefits
+                </h3>
+                <p style={{ fontSize: '13px', color: C.textLight, margin: 0 }}>
+                  Bank: <strong style={{ color: C.text }}>{showBenefitsProduct.bank_code}</strong> | Category: <strong style={{ color: C.text }}>{showBenefitsProduct.category?.replace(/_/g, ' ')}</strong>
+                </p>
+              </div>
+
+              <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {/* Features & Highlights */}
+                <div>
+                  <h4 style={{ fontSize: '13px', fontWeight: 800, color: C.primary, textTransform: 'uppercase', margin: '0 0 10px 0', letterSpacing: '0.5px' }}>
+                    Key Features
+                  </h4>
+                  <ul style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {features && features.map((f, idx) => (
+                      <li key={idx} style={{ fontSize: '13.5px', color: C.text, lineHeight: 1.4 }}>{f}</li>
+                    ))}
+                  </ul>
+                </div>
+
+                {/* Eligibility Criteria */}
+                <div>
+                  <h4 style={{ fontSize: '13px', fontWeight: 800, color: C.primary, textTransform: 'uppercase', margin: '0 0 10px 0', letterSpacing: '0.5px' }}>
+                    Eligibility Criteria
+                  </h4>
+                  <p style={{ fontSize: '13.5px', color: C.text, margin: 0, lineHeight: 1.4 }}>
+                    {eligibility?.criteria || 'Stable income required. Minimum age 21 years.'}
+                  </p>
+                </div>
+
+                {/* Documents Required */}
+                {eligibility?.documentsRequired && eligibility.documentsRequired.length > 0 && (
+                  <div>
+                    <h4 style={{ fontSize: '13px', fontWeight: 800, color: C.primary, textTransform: 'uppercase', margin: '0 0 10px 0', letterSpacing: '0.5px' }}>
+                      Documents Required
+                    </h4>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {eligibility.documentsRequired.map((doc, idx) => (
+                        <span key={idx} style={{
+                          fontSize: '11.5px', fontWeight: 600, color: C.textMid, background: C.bgSecondary,
+                          padding: '4px 10px', borderRadius: '6px', border: `1px solid ${C.border}`
+                        }}>
+                          {doc}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* How it Works */}
+                {howItWorks && howItWorks.length > 0 && (
+                  <div>
+                    <h4 style={{ fontSize: '13px', fontWeight: 800, color: C.primary, textTransform: 'uppercase', margin: '0 0 10px 0', letterSpacing: '0.5px' }}>
+                      How It Works
+                    </h4>
+                    <ol style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {howItWorks.map((step, idx) => (
+                        <li key={idx} style={{ fontSize: '13px', color: C.text, lineHeight: 1.4 }}>{step}</li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+
+                {/* Terms and Conditions */}
+                {termsAndConditions && (
+                  <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                    <span style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>
+                      Terms &amp; Conditions
+                    </span>
+                    <p style={{ fontSize: '12px', color: C.textMid, margin: 0, lineHeight: 1.4 }}>
+                      {termsAndConditions}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ padding: '16px 24px', borderTop: `1px solid ${C.border}`, display: 'flex', gap: '10px', background: C.bgSecondary }}>
+                <button
+                  onClick={() => {
+                    handleToggleCompare(showBenefitsProduct);
+                    setShowBenefitsProduct(null);
+                  }}
+                  style={{
+                    ...S.btn(compareList.some(p => p.id === showBenefitsProduct.id) ? 'outline' : 'primary'),
+                    flex: 1, padding: '12px', fontSize: '13px', borderRadius: '12px', fontWeight: 700, cursor: 'pointer'
+                  }}
+                >
+                  {compareList.some(p => p.id === showBenefitsProduct.id) ? '✓ Selected for Compare' : 'Add to Compare'}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowBenefitsProduct(null);
+                    handleApply(showBenefitsProduct);
+                  }}
+                  style={{
+                    ...S.btn('primary'),
+                    background: C.green,
+                    borderColor: C.green,
+                    flex: 1, padding: '12px', fontSize: '13px', borderRadius: '12px', fontWeight: 700, cursor: 'pointer'
+                  }}
+                >
+                  Apply Now
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ═══ FLOATING COMPARE BAR ═══ */}
+      {compareList.length > 0 && (
+        <div style={{
+          position: 'fixed',
+          bottom: isMobile ? '64px' : '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: '90%',
+          maxWidth: '600px',
+          background: C.card,
+          border: `2px solid ${C.primary}`,
+          borderRadius: '16px',
+          boxShadow: '0 10px 40px rgba(0,0,0,0.15)',
+          padding: '12px 18px',
+          zIndex: 900,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '16px',
+          boxSizing: 'border-box'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', overflow: 'hidden' }}>
+            <span style={{ fontSize: '13px', fontWeight: 800, color: C.primary, whiteSpace: 'nowrap', display: isMobile ? 'none' : 'inline' }}>
+              Compare ({compareList.length}/2):
+            </span>
+            <div style={{ display: 'flex', gap: '8px', overflowX: 'auto' }}>
+              {compareList.map(prod => (
+                <div key={prod.id} style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  background: C.bgSecondary, border: `1px solid ${C.border}`,
+                  padding: '4px 10px', borderRadius: '8px', flexShrink: 0
+                }}>
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: C.text, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', maxWidth: isMobile ? '100px' : '150px' }}>
+                    {prod.name}
+                  </span>
+                  <button
+                    onClick={() => handleToggleCompare(prod)}
+                    style={{ background: 'none', border: 'none', color: C.textLight, cursor: 'pointer', fontWeight: 900, fontSize: '11px', padding: '2px' }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              {compareList.length === 1 && (
+                <div style={{
+                  display: 'flex', alignItems: 'center',
+                  background: 'transparent', border: `1px dashed ${C.border}`,
+                  padding: '4px 10px', borderRadius: '8px', color: C.textLight, fontSize: '11.5px', fontWeight: 600, whiteSpace: 'nowrap'
+                }}>
+                  + Add second product
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+            <button
+              onClick={() => {
+                setLoadingCompare(true);
+                setShowCompareModal(true);
+                setTimeout(() => {
+                  setLoadingCompare(false);
+                }, 800);
+              }}
+              disabled={compareList.length < 2}
+              style={{
+                ...S.btn('primary'),
+                padding: '8px 16px',
+                fontSize: '12px',
+                borderRadius: '10px',
+                fontWeight: 750,
+                cursor: compareList.length < 2 ? 'not-allowed' : 'pointer',
+                opacity: compareList.length < 2 ? 0.5 : 1,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <FaBalanceScale size={15} />
+              Compare
+            </button>
+            <button
+              onClick={() => setCompareList([])}
+              style={{
+                ...S.btn('outline'),
+                padding: '8px 12px',
+                fontSize: '12px',
+                borderRadius: '10px',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ COMPARISON SIDE-BY-SIDE MODAL ═══ */}
+      {showCompareModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 1001,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)', padding: '16px'
+        }}>
+          <div style={{
+            background: C.card, width: '100%', maxWidth: '800px',
+            borderRadius: '24px', overflow: 'hidden', border: `1.5px solid ${C.border}`,
+            boxShadow: '0 25px 70px rgba(0,0,0,0.3)', position: 'relative',
+            maxHeight: '90vh', display: 'flex', flexDirection: 'column'
+          }}>
+            <button
+              onClick={() => setShowCompareModal(false)}
+              style={{
+                position: 'absolute', top: '16px', right: '16px', zIndex: 10,
+                width: '32px', height: '32px', borderRadius: '50%', background: C.bgSecondary,
+                border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', color: C.textMid, fontSize: '16px', fontWeight: 700
+              }}
+            >
+              ✕
+            </button>
+
+            <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}` }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 800, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <FaBalanceScale size={22} style={{ color: C.primary }} />
+                Product Comparison
+              </h3>
+              <p style={{ fontSize: '13px', color: C.textLight, margin: '4px 0 0' }}>
+                Comparing selected finance options side-by-side
+              </p>
+            </div>
+
+            {loadingCompare ? (
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', padding: '60px 0' }}>
+                <span style={{
+                  width: 38, height: 38, borderRadius: '50%',
+                  border: `3px solid ${C.border}`, borderTopColor: C.primary,
+                  animation: 'spin .8s linear infinite', display: 'inline-block'
+                }} />
+                <div style={{ fontSize: '14px', fontWeight: 700, color: C.textMid }}>Analyzing features and rates...</div>
+              </div>
+            ) : (() => {
+              const p1 = compareList[0];
+              const p2 = compareList[1];
+              if (!p1 || !p2) return null;
+
+              const c1Details = getCardDetails(p1.id || p1.name.toLowerCase().replace(/[^a-z0-9]/g, '-'), p1.name);
+              const c2Details = getCardDetails(p2.id || p2.name.toLowerCase().replace(/[^a-z0-9]/g, '-'), p2.name);
+
+              return (
+                <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13.5px', color: C.text }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: '25%', padding: '12px', borderBottom: `2px solid ${C.border}`, textAlign: 'left' }}>Parameter</th>
+                        <th style={{ width: '37.5%', padding: '12px', borderBottom: `2px solid ${C.border}`, textAlign: 'left', color: C.primary, fontWeight: 800 }}>
+                          {p1.name}
+                        </th>
+                        <th style={{ width: '37.5%', padding: '12px', borderBottom: `2px solid ${C.border}`, textAlign: 'left', color: C.primary, fontWeight: 800 }}>
+                          {p2.name}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {/* Payout */}
+                      <tr>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, fontWeight: 800, color: C.textLight }}>Your Payout</td>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, fontWeight: 800, color: C.green, fontSize: '15px' }}>
+                          ₹{parseFloat(p1.commission_value || 0).toLocaleString('en-IN')}
+                        </td>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, fontWeight: 800, color: C.green, fontSize: '15px' }}>
+                          ₹{parseFloat(p2.commission_value || 0).toLocaleString('en-IN')}
+                        </td>
+                      </tr>
+                      {/* Bank Code */}
+                      <tr>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, fontWeight: 700, color: C.textLight }}>Partner Bank</td>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, fontWeight: 700 }}>{p1.bank_code || 'BANK'}</td>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, fontWeight: 700 }}>{p2.bank_code || 'BANK'}</td>
+                      </tr>
+                      {/* Category */}
+                      <tr>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, fontWeight: 700, color: C.textLight }}>Category</td>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, textTransform: 'capitalize' }}>
+                          {p1.category?.replace(/_/g, ' ') || 'Finance'}
+                        </td>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, textTransform: 'capitalize' }}>
+                          {p2.category?.replace(/_/g, ' ') || 'Finance'}
+                        </td>
+                      </tr>
+                      {/* Key Features */}
+                      <tr>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, fontWeight: 700, color: C.textLight }}>Key Features</td>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top' }}>
+                          <ul style={{ margin: 0, paddingLeft: '16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            {c1Details.features.map((f, idx) => <li key={idx}>{f}</li>)}
+                          </ul>
+                        </td>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top' }}>
+                          <ul style={{ margin: 0, paddingLeft: '16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            {c2Details.features.map((f, idx) => <li key={idx}>{f}</li>)}
+                          </ul>
+                        </td>
+                      </tr>
+                      {/* Eligibility */}
+                      <tr>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, fontWeight: 700, color: C.textLight }}>Eligibility</td>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top' }}>
+                          {c1Details.eligibility.criteria}
+                        </td>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top' }}>
+                          {c2Details.eligibility.criteria}
+                        </td>
+                      </tr>
+                      {/* Documents Required */}
+                      <tr>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, fontWeight: 700, color: C.textLight }}>Documents</td>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top' }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {c1Details.eligibility.documentsRequired.map((doc, idx) => (
+                              <span key={idx} style={{ fontSize: '10.5px', background: C.bgSecondary, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${C.border}` }}>
+                                {doc}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td style={{ padding: '14px 12px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top' }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {c2Details.eligibility.documentsRequired.map((doc, idx) => (
+                              <span key={idx} style={{ fontSize: '10.5px', background: C.bgSecondary, padding: '2px 6px', borderRadius: '4px', border: `1px solid ${C.border}` }}>
+                                {doc}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+
+            <div style={{ padding: '16px 24px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: '10px', background: C.bgSecondary }}>
+              <button
+                onClick={() => {
+                  setShowCompareModal(false);
+                  setCompareList([]);
+                }}
+                style={{
+                  ...S.btn('outline'), padding: '10px 20px', fontSize: '13px', borderRadius: '10px', cursor: 'pointer'
+                }}
+              >
+                Reset Comparison
+              </button>
+              <button
+                onClick={() => setShowCompareModal(false)}
+                style={{
+                  ...S.btn('primary'), padding: '10px 24px', fontSize: '13px', borderRadius: '10px', cursor: 'pointer', fontWeight: 700
+                }}
+              >
+                Close Comparison
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .gkp-product-card {
+          transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        }
+        .gkp-product-card:hover {
+          transform: translateY(-6px) !important;
+          box-shadow: ${isDark ? '0 10px 30px rgba(249, 115, 22, 0.15)' : '0 20px 40px rgba(99, 102, 241, 0.15)'} !important;
+          border-color: ${C.primary} !important;
+        }
+        .hover-bg-button {
+          transition: background-color 0.2s ease, color 0.2s ease !important;
+        }
+        .hover-bg-button:hover {
+          background-color: ${C.bgSecondary} !important;
+        }
+        .hover-bg-button-danger {
+          transition: all 0.2s ease !important;
+        }
+        .hover-bg-button-danger:hover {
+          background-color: ${C.red}12 !important;
+          border-color: ${C.red}40 !important;
+        }
+        .hover-scale-button {
+          transition: all 0.2s ease !important;
+        }
+        .hover-scale-button:hover {
+          transform: scale(1.02);
+          box-shadow: ${isDark ? 'none' : `0 6px 20px ${C.primary}30`} !important;
+        }
+        .hover-scale-button:active {
+          transform: scale(0.98);
+        }
+        .hover-scale-button svg {
+          transition: transform 0.2s ease;
+        }
+        .hover-scale-button:hover svg {
+          transform: translateX(3px);
+        }
+      `}</style>
+
+
+
+      {/* ═══ PHYSICAL PROCESS ACTION MODAL ═══ */}
+      {showPhysicalSheetModal && physicalSheetData && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', padding: '16px' }}>
+          <div style={{ background: C.card, width: '100%', maxWidth: '520px', borderRadius: '24px', padding: '24px', border: `1px solid ${C.border}`, boxShadow: '0 25px 60px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 800, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                Physical Process - Customer Details Needed
+              </h3>
+              <button onClick={() => setShowPhysicalSheetModal(false)} style={{ background: 'none', border: 'none', fontSize: '18px', fontWeight: 700, cursor: 'pointer', color: C.textMid }}>✕</button>
+            </div>
+
+            {/* Notification Alert */}
+            <div style={{ padding: '14px 16px', background: '#F59E0B15', border: '1px solid #F59E0B40', borderRadius: '14px', color: isDark ? '#FBBF24' : '#B45309' }}>
+              <div style={{ fontWeight: 800, fontSize: '13.5px', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                Partner Action Required:
+              </div>
+              <div style={{ fontSize: '12.5px', lineHeight: 1.5 }}>
+                Lead created for <strong>{physicalSheetData.customerName}</strong> ({physicalSheetData.mobile}). Complete the required customer details (DOB, PAN, Address, Mother Name, Email, Company, Designation) or share the secure upload link directly with the customer.
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <a
+                href={physicalSheetData.whatsappUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: '12px',
+                  background: '#25D366',
+                  color: '#FFFFFF',
+                  fontWeight: 800,
+                  fontSize: '13.5px',
+                  textDecoration: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 14px rgba(37,211,102,0.3)'
+                }}
+              >
+                💬 Share Upload Link to Customer via WhatsApp
+              </a>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const linkToCopy = physicalSheetData.shareUrl || physicalSheetData.whatsappUrl;
+                  navigator.clipboard.writeText(linkToCopy);
+                  setCopiedPhysicalNotice(true);
+                  setTimeout(() => setCopiedPhysicalNotice(false), 2500);
+                }}
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: '12px',
+                  background: C.bgSecondary,
+                  color: C.text,
+                  border: `1px solid ${C.border}`,
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px'
+                }}
+              >
+                🔗 {copiedPhysicalNotice ? '✓ Customer Upload Link Copied!' : 'Copy Customer Upload Link'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPhysicalSheetModal(false);
+                  const token = physicalSheetData.token || physicalSheetData.app?.tracking_token || physicalSheetData.app?.token || physicalSheetData.app?.id;
+                  if (token) {
+                    window.open(`/physical-application/${token}`, '_blank');
+                  } else {
+                    window.location.href = '/partner/applications';
+                  }
+                }}
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: '12px',
+                  background: `linear-gradient(135deg, ${C.primary} 0%, ${C.primaryDark} 100%)`,
+                  color: '#FFFFFF',
+                  border: 'none',
+                  fontWeight: 800,
+                  fontSize: '13.5px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px'
+                }}
+              >
+                Fill Customer Details as Partner
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      </div>
+    </div>
+  );
+}

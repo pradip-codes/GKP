@@ -1,0 +1,1834 @@
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const { query, getClient } = require('../../config/database');
+const { logAction } = require('../admin/audit.service.js');
+const { getPaginationParams, sanitizeMobile, normalizeAssignmentCategory } = require('../../utils/helpers/helpers');
+const { success, created, error, paginate, notFound } = require('../../utils/response/response');
+const logger = require('../../config/logger');
+const isUuid = (str) => typeof str === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str.trim());
+
+const resolveBankId = async (bId, client = null) => {
+  if (!bId) return null;
+  const str = String(bId).trim();
+  const execQuery = client ? (q, p) => client.query(q, p) : (q, p) => query(q, p);
+  if (isUuid(str)) return str;
+
+  if (str.toUpperCase() === 'LOC_EOC' || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(str)) {
+    const { rows } = await execQuery(`
+      SELECT id FROM banks 
+      WHERE UPPER(COALESCE(short_code, '')) = 'LOC_EOC' 
+         OR LOWER(name) LIKE '%loc/eoc%' 
+         OR LOWER(name) LIKE '%loan on card%' 
+      LIMIT 1
+    `).catch(() => ({ rows: [] }));
+    if (rows && rows.length > 0) return rows[0].id;
+    try {
+      const { rows: created } = await execQuery(`
+        INSERT INTO banks (name, short_code, is_active, status)
+        VALUES ('LOC/EOC (Loan on Card & Smart EMI)', 'LOC_EOC', true, 'Active')
+        ON CONFLICT (short_code) DO UPDATE SET 
+          name = EXCLUDED.name,
+          is_active = true,
+          status = 'Active'
+        RETURNING id
+      `);
+      return created[0]?.id || null;
+    } catch (insErr) {
+      const { rows: byName } = await execQuery(`
+        SELECT id FROM banks WHERE LOWER(name) LIKE '%loc/eoc%' OR LOWER(name) LIKE '%loan on card%' LIMIT 1
+      `).catch(() => ({ rows: [] }));
+      return byName[0]?.id || null;
+    }
+  }
+
+  // Look up bank by id, short_code, or name if not a direct UUID
+  const { rows } = await execQuery(`
+    SELECT id FROM banks 
+    WHERE id::text = $1 
+       OR UPPER(COALESCE(short_code, '')) = UPPER($1) 
+       OR LOWER(name) = LOWER($1) 
+    LIMIT 1
+  `, [str]).catch(() => ({ rows: [] }));
+  if (rows && rows.length > 0) return rows[0].id;
+
+  return null;
+};
+
+let spCounter = 0;
+const safeTxQuery = async (client, text, params) => {
+  if (!client) {
+    return query(text, params).catch(() => ({ rows: [] }));
+  }
+  const spName = `sp_safe_${Date.now()}_${++spCounter}`;
+  try {
+    await client.query(`SAVEPOINT ${spName}`);
+    const res = await client.query(text, params);
+    await client.query(`RELEASE SAVEPOINT ${spName}`);
+    return res;
+  } catch (err) {
+    try {
+      await client.query(`ROLLBACK TO SAVEPOINT ${spName}`);
+    } catch (rbErr) {
+      return client.query(text, params).catch(() => ({ rows: [] }));
+    }
+    return { rows: [] };
+  }
+};
+
+const insertBankAssignment = async (adminId, bankId, category, createdById, client = null) => {
+  const cat = normalizeAssignmentCategory(category);
+  const qFn = (q, p) => safeTxQuery(client, q, p);
+
+  // Validate actor / creator exists in users table to prevent FK 23503 violation
+  let validCreatedBy = null;
+  if (isUuid(createdById)) {
+    const userCheck = await qFn(`SELECT id FROM users WHERE id::text = $1 LIMIT 1`, [createdById]);
+    if (userCheck.rows && userCheck.rows.length > 0) {
+      validCreatedBy = createdById;
+    }
+  }
+
+  // 0. Ensure bank exists in banks table before attempting assignment
+  const bankCheck = await qFn(`SELECT id FROM banks WHERE id::text = $1 LIMIT 1`, [bankId]);
+  if (!bankCheck.rows || bankCheck.rows.length === 0) {
+    logger.warn(`Skipping bank assignment: bank id ${bankId} does not exist in banks table.`);
+    return null;
+  }
+
+  // 1. Check if the assignment already exists
+  let checkRes = await qFn(
+    `SELECT id FROM admin_bank_assignments WHERE admin_id = $1 AND bank_id = $2 AND COALESCE(category, 'credit_card'::varchar)::varchar = $3::varchar LIMIT 1`,
+    [adminId, bankId, cat]
+  );
+  if (!checkRes.rows || checkRes.rows.length === 0) {
+    checkRes = await qFn(
+      `SELECT id FROM admin_bank_assignments WHERE admin_id = $1 AND bank_id = $2 LIMIT 1`,
+      [adminId, bankId]
+    );
+  }
+
+  if (checkRes.rows && checkRes.rows.length > 0) {
+    return await qFn(
+      `UPDATE admin_bank_assignments SET is_active = TRUE, category = $2, created_by = COALESCE($3, created_by) WHERE id = $1`,
+      [checkRes.rows[0].id, cat, validCreatedBy]
+    );
+  }
+
+  // 2. Insert new assignment safely with WHERE NOT EXISTS (constraint-agnostic, avoids ON CONFLICT mismatch)
+  try {
+    return await qFn(
+      `INSERT INTO admin_bank_assignments (admin_id, bank_id, category, is_active, created_by)
+       SELECT $1, $2, $3::varchar, TRUE, $4
+       WHERE NOT EXISTS (
+         SELECT 1 FROM admin_bank_assignments
+         WHERE admin_id = $1 AND bank_id = $2 AND COALESCE(category, 'credit_card'::varchar)::varchar = $3::varchar
+       )`,
+      [adminId, bankId, cat, validCreatedBy]
+    );
+  } catch (insErr) {
+    // Fallback if category or other columns are missing
+    return await qFn(
+      `INSERT INTO admin_bank_assignments (admin_id, bank_id)
+       SELECT $1, $2
+       WHERE NOT EXISTS (
+         SELECT 1 FROM admin_bank_assignments
+         WHERE admin_id = $1 AND bank_id = $2
+       )`,
+      [adminId, bankId]
+    );
+  }
+};
+
+const parseAssignmentPairsFromBody = (body) => {
+  if (!body) return null;
+  let assignmentPairs = [];
+  if (Array.isArray(body.category_assignments)) {
+    assignmentPairs = body.category_assignments;
+  } else if (Array.isArray(body.assignments)) {
+    assignmentPairs = body.assignments;
+  } else if (body.category_assignments && typeof body.category_assignments === 'object') {
+    Object.keys(body.category_assignments).forEach(cat => {
+      const arr = body.category_assignments[cat];
+      if (Array.isArray(arr)) {
+        arr.forEach(bId => assignmentPairs.push({ category: cat, bank_id: bId }));
+      }
+    });
+  } else if (body.categoryAssignments && typeof body.categoryAssignments === 'object') {
+    Object.keys(body.categoryAssignments).forEach(cat => {
+      const arr = body.categoryAssignments[cat];
+      if (Array.isArray(arr)) {
+        arr.forEach(bId => assignmentPairs.push({ category: cat, bank_id: bId }));
+      }
+    });
+  } else {
+    const rawBankIds = Array.isArray(body.bank_ids) ? body.bank_ids : (Array.isArray(body.bankIds) ? body.bankIds : null);
+    if (rawBankIds) {
+      rawBankIds.forEach(rawBId => {
+        if (String(rawBId).toUpperCase() === 'LOC_EOC') {
+          assignmentPairs.push({ category: 'loc_eoc', bank_id: rawBId });
+        } else {
+          assignmentPairs.push({ category: 'credit_card', bank_id: rawBId });
+        }
+      });
+    } else {
+      return null;
+    }
+  }
+  return assignmentPairs;
+};
+
+/**
+ * POST /api/v1/superadmin/create-admin
+ * Provision a new admin or employee in Firebase Auth and PostgreSQL.
+ */
+const createAdmin = async (req, res, next) => {
+  try {
+    let { 
+      fullName, email, mobile, role,
+      password, confirmPassword, department, designation 
+    } = req.body;
+
+    role = role || 'ADMIN';
+    department = department || 'Operations';
+
+    logger.info("CREATE ADMIN REQUEST:", req.body);
+    logger.info("ROLE:", role);
+
+    if (!fullName || !email || !mobile || !password || !confirmPassword || !designation) {
+      logger.info("FAILED: Missing required fields");
+      return error(res, 'All required fields must be provided', 400);
+    }
+
+    if (String(designation || '').toUpperCase().includes('KYC OPERATOR') || String(designation || '').toUpperCase() === 'KYC_OPERATOR') {
+      role = 'KYC_OPERATOR';
+    }
+
+    if (!['ADMIN', 'EMPLOYEE', 'HR', 'KYC_OPERATOR'].includes(role)) {
+      return error(res, 'Role must be either ADMIN, EMPLOYEE, HR, or KYC_OPERATOR', 400);
+    }
+
+    if (password !== confirmPassword) {
+      logger.info("FAILED: Password mismatch");
+      return error(res, 'Passwords do not match', 400);
+    }
+
+    const formattedMobile = sanitizeMobile(mobile);
+
+    // Check if email already exists
+    const { rows: [existingEmail] } = await query(`SELECT id FROM users WHERE email = $1`, [email]);
+    if (existingEmail) {
+      return error(res, 'A user with this email address already exists', 400);
+    }
+
+    // Check if mobile already exists
+    const { rows: [existingMobile] } = await query(`SELECT id FROM users WHERE mobile = $1`, [formattedMobile]);
+    if (existingMobile) {
+      return error(res, 'A user with this mobile number already exists', 400);
+    }
+
+    // Check bank assignment requirement BEFORE user insert
+    const bankIds = Array.isArray(req.body.bank_ids) ? req.body.bank_ids : (req.body.bank_id ? [req.body.bank_id] : []);
+    const desigUpper = String(designation || '').toUpperCase();
+    const isOpHead = ['OPERATIONAL_HEAD', 'OPERATIONAL HEAD', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES EXECUTIVE', 'PAN_CHECKER', 'PAN CHECKER', 'REMARK_OPERATOR', 'REMARK OPERATOR', 'QD_OPERATOR', 'QD OPERATOR', 'FINAL_STATUS_OPERATOR', 'FINAL STATUS OPERATOR', 'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE', 'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR'].includes(desigUpper);
+    if (isOpHead && bankIds.length === 0) {
+      return error(res, 'At least one assigned bank is required for Operational Head, Administrative Operator, Administrative Sales Executive, PAN Checker, Remark Operator, QD Operator, Final Status Operator, Querable Operator, or Curable Operator designation', 400);
+    }
+
+    let uniqueEmployeeId = req.body.employeeId || req.body.employee_id || '';
+    if (!uniqueEmployeeId || !/^CAND\d+$/.test(uniqueEmployeeId)) {
+      try {
+        const { rows } = await query(`SELECT nextval('candidate_reference_seq') AS seq`);
+        if (rows[0]?.seq) {
+          uniqueEmployeeId = `CAND${rows[0].seq}`;
+        }
+      } catch (e) {}
+      if (!uniqueEmployeeId) {
+        let isUnique = false;
+        while (!isUnique) {
+          const num = Math.floor(10000 + Math.random() * 90000);
+          uniqueEmployeeId = `CAND${num}`;
+          const { rows: [existingEmployee] } = await query(`SELECT id FROM users WHERE employee_id = $1`, [uniqueEmployeeId]);
+          if (!existingEmployee) isUnique = true;
+        }
+      }
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Insert new User
+    const { rows: [dbUser] } = await query(
+      `INSERT INTO users (
+        email, mobile, password_hash, role, status, 
+        full_name, employee_id, department, designation, created_by, is_active, email_verified
+      )
+      VALUES ($1, $2, $3, $9::user_role, 'active'::user_status, $4, $5, $6, $7, $8, true, true)
+      RETURNING id, email, role, status`,
+      [email, formattedMobile, hashedPassword, fullName, uniqueEmployeeId, department, designation, req.user?.id || null, role]
+    );
+
+    logger.info(`Super admin ${req.user.email} created new user: ${email} with role: ${role}`);
+
+    if (role === 'EMPLOYEE') {
+      await query(`
+        INSERT INTO employees (
+          employee_id, user_id, full_name, mobile_number, email_id, designation, department, joining_date, employment_type, employee_status, activation_status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_DATE, 'Full-time', 'ACTIVE', 'APPROVED')
+        ON CONFLICT (mobile_number) DO UPDATE SET
+          user_id = EXCLUDED.user_id,
+          employee_id = EXCLUDED.employee_id,
+          full_name = EXCLUDED.full_name,
+          designation = EXCLUDED.designation,
+          department = EXCLUDED.department,
+          employee_status = 'ACTIVE',
+          activation_status = 'APPROVED'
+      `, [uniqueEmployeeId, dbUser.id, fullName, formattedMobile, email, designation, department]).catch(e => logger.warn('Employees sync note:', e.message));
+    } else if (role === 'HR') {
+      await query(`
+        INSERT INTO hr_profiles (
+          user_id, employee_id, full_name, email, mobile_number, designation, department, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+        ON CONFLICT (employee_id) DO UPDATE SET
+          user_id = EXCLUDED.user_id,
+          full_name = EXCLUDED.full_name,
+          email = EXCLUDED.email,
+          mobile_number = EXCLUDED.mobile_number,
+          designation = EXCLUDED.designation,
+          department = EXCLUDED.department,
+          status = 'active'
+      `, [dbUser.id, uniqueEmployeeId, fullName, email, formattedMobile, designation || 'HR Manager', department || 'Human Resources']).catch(e => logger.warn('HR profile sync note:', e.message));
+
+      // Ensure HR is removed from employees table (and clean up child FK records)
+      const targetEmpSubquery = `SELECT id FROM employees WHERE user_id = $1 OR mobile_number = $2`;
+      await query(`DELETE FROM employee_onboarding_checklist WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
+      await query(`DELETE FROM employee_hierarchy WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
+      await query(`DELETE FROM employee_joining_details WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
+      await query(`DELETE FROM employee_kyc WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
+      await query(`DELETE FROM employee_documents WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
+      await query(`DELETE FROM employee_terms_acceptance WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
+      await query(`DELETE FROM employee_product_links WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
+      await query(`DELETE FROM employee_incentive_transactions WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
+      await query(`DELETE FROM employees WHERE user_id = $1 OR mobile_number = $2`, [dbUser.id, formattedMobile]).catch(() => {});
+    }
+
+    const isNewUserOpHead = ['Operational Head', 'OPERATIONAL_HEAD', 'OPERATIONAL HEAD', 'OPERATIONS HEAD', 'OPERATIONS_HEAD'].includes(dbUser.designation)
+      || ['OPERATIONAL_HEAD', 'OPERATIONAL HEAD', 'OPERATIONS_HEAD', 'OPERATIONS HEAD'].includes(dbUser.role);
+
+    let assignmentPairs = [];
+    if (Array.isArray(req.body.category_assignments)) {
+      assignmentPairs = req.body.category_assignments;
+    } else if (Array.isArray(req.body.assignments)) {
+      assignmentPairs = req.body.assignments;
+    } else if (req.body.category_assignments && typeof req.body.category_assignments === 'object') {
+      Object.keys(req.body.category_assignments).forEach(cat => {
+        const arr = req.body.category_assignments[cat];
+        if (Array.isArray(arr)) {
+          arr.forEach(bId => assignmentPairs.push({ category: cat, bank_id: bId }));
+        }
+      });
+    } else if (req.body.categoryAssignments && typeof req.body.categoryAssignments === 'object') {
+      Object.keys(req.body.categoryAssignments).forEach(cat => {
+        const arr = req.body.categoryAssignments[cat];
+        if (Array.isArray(arr)) {
+          arr.forEach(bId => assignmentPairs.push({ category: cat, bank_id: bId }));
+        }
+      });
+    } else if (bankIds && bankIds.length > 0) {
+      bankIds.forEach(rawBId => {
+        if (String(rawBId).toUpperCase() === 'LOC_EOC') {
+          assignmentPairs.push({ category: 'loc_eoc', bank_id: rawBId });
+        } else {
+          assignmentPairs.push({ category: 'credit_card', bank_id: rawBId });
+        }
+      });
+    }
+
+    const actorId = req.user?.id || req.user?._id || req.user?.userId || null;
+    if (assignmentPairs.length > 0) {
+      for (const pair of assignmentPairs) {
+        const bId = await resolveBankId(pair.bank_id || pair.id);
+        if (!bId) continue;
+        const cat = normalizeAssignmentCategory(pair.category);
+        await insertBankAssignment(dbUser.id, bId, cat, actorId);
+        if (isNewUserOpHead) {
+          await query(`UPDATE banks SET operation_head_id = $1 WHERE id = $2`, [dbUser.id, bId]).catch(() => {});
+          await query(`UPDATE products SET operation_head_id = $1 WHERE bank_id = $2`, [dbUser.id, bId]).catch(() => {});
+          const { rows: bRows } = await query(`SELECT short_code, name FROM banks WHERE id = $1`, [bId]).catch(() => ({ rows: [] }));
+          if (bRows && bRows.length > 0 && ((bRows[0].short_code || '').toUpperCase() === 'LOC_EOC' || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(bRows[0].name || '') || cat === 'loc_eoc')) {
+            await query(`UPDATE products SET operation_head_id = $1 WHERE category::text = 'loc_eoc' OR category::text IN ('loan_on_credit_card', 'smart_emi')`, [dbUser.id]).catch(() => {});
+          }
+        }
+      }
+    }
+    const hasLocEocInput = req.body.has_loc_eoc !== undefined ? Boolean(req.body.has_loc_eoc) : (req.body.hasLocEoc !== undefined ? Boolean(req.body.hasLocEoc) : assignmentPairs.some(p => normalizeAssignmentCategory(p.category) === 'loc_eoc' || String(p.bank_id).toUpperCase() === 'LOC_EOC'));
+    if (hasLocEocInput) {
+      await query(`UPDATE users SET has_loc_eoc = TRUE WHERE id = $1`, [dbUser.id]);
+    }
+    await logAction(req, 'CREATE_USER', dbUser.id, { email, role: dbUser.role, bankIds, assignmentPairs });
+
+    return created(res, {
+      userId: dbUser.id,
+      email: dbUser.email,
+      role: dbUser.role,
+      status: dbUser.status
+    }, `Administrative user provisioned successfully.`);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const listAdmins = async (req, res, next) => {
+  try {
+    const roleFilter = req.query.role ? String(req.query.role).trim().toUpperCase() : null;
+    let whereClause = `WHERE role::text IN ('ADMIN', 'SUPER_ADMIN', 'KYC_OPERATOR', 'HR') OR designation IN ('Operational Head', 'Administrative Operator', 'Administrative Sales Executive', 'PAN Checker', 'Remark Operator', 'QD Operator', 'KYC Operator', 'Final Status Operator', 'Querable Operator', 'Queryable Operator', 'Physical Curable Operator', 'Digital Curable Operator', 'Email Curable Operator', 'Physical Curable', 'Digital Curable', 'Email Curable', 'Backend', 'Super Admin')`;
+    const params = [];
+    if (roleFilter && roleFilter !== 'ALL' && roleFilter !== 'ADMIN') {
+      whereClause = `WHERE role::text = $1`;
+      params.push(roleFilter);
+    }
+
+    const { ensureAccountStatusSchema, determineAccountStatus, getWorkingHoursSummary } = require('./accountStatus.service');
+    const { ensureWorkingHoursTables } = require('../auth/workingHours.service');
+    await ensureAccountStatusSchema();
+    await ensureWorkingHoursTables();
+
+    const { rows: admins } = await query(`
+      SELECT 
+        id as _id, 
+        email, 
+        mobile, 
+        role, 
+        status, 
+        full_name as "fullName", 
+        employee_id as "employeeId", 
+        department, 
+        designation, 
+        is_active as "isActive", 
+        is_active,
+        deactivated_at,
+        deactivated_by,
+        deactivation_reason,
+        activated_at,
+        activated_by,
+        activation_scheduled_at,
+        deactivation_scheduled_at,
+        scheduled_status_action,
+        scheduled_by,
+        scheduled_reason,
+        COALESCE((to_jsonb(users)->>'has_loc_eoc')::boolean, FALSE) as has_loc_eoc,
+        created_by as "createdBy", 
+        created_at as "createdAt"
+      FROM users 
+      ${whereClause}
+      ORDER BY created_at DESC
+    `, params);
+    let assignments = [];
+    try {
+      const { rows } = await query(`
+        SELECT aba.admin_id, COALESCE(aba.category, 'credit_card') as category, b.id as bank_id, b.name as bank_name, b.short_code, b.short_code as code, b.logo_url 
+        FROM admin_bank_assignments aba 
+        JOIN banks b ON b.id = aba.bank_id
+      `);
+      assignments = rows;
+    } catch (abaErr) {
+      const { rows } = await query(`
+        SELECT aba.admin_id, 'credit_card' as category, b.id as bank_id, b.name as bank_name, b.short_code, b.short_code as code, b.logo_url 
+        FROM admin_bank_assignments aba 
+        JOIN banks b ON b.id = aba.bank_id
+      `);
+      assignments = rows;
+    }
+    const adminBankMap = {};
+    const adminBankIdMap = {};
+    const adminCategoryMap = {};
+    assignments.forEach(a => {
+      if (!adminBankMap[a.admin_id]) {
+        adminBankMap[a.admin_id] = [];
+        adminBankIdMap[a.admin_id] = [];
+        adminCategoryMap[a.admin_id] = { credit_card: [], loc_eoc: [], personal_loan: [], business_loan: [] };
+      }
+      const cat = normalizeAssignmentCategory(a.category);
+      const isLocEoc = cat === 'loc_eoc' || (a.short_code || '').toUpperCase() === 'LOC_EOC' || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(a.bank_name || '');
+      const bankItem = { id: a.bank_id, bank_id: a.bank_id, name: a.bank_name, category: cat, short_code: a.short_code || a.code, logo_url: a.logo_url, is_loc_eoc: isLocEoc };
+      adminBankMap[a.admin_id].push(bankItem);
+      adminBankIdMap[a.admin_id].push(a.bank_id);
+      if (!adminCategoryMap[a.admin_id][cat]) adminCategoryMap[a.admin_id][cat] = [];
+      adminCategoryMap[a.admin_id][cat].push(a.bank_id);
+    });
+    const result = await Promise.all(admins.map(async a => {
+      const assigned = adminBankMap[a._id] || [];
+      const hasLocEoc = Boolean(a.has_loc_eoc) || assigned.some(b => b.is_loc_eoc);
+      const accountStatus = determineAccountStatus(a);
+      const whSummary = await getWorkingHoursSummary(a);
+
+      return {
+        ...a,
+        id: a._id,
+        account_status: accountStatus,
+        is_active: a.is_active !== false,
+        working_hours: whSummary,
+        has_loc_eoc: hasLocEoc,
+        hasLocEoc: hasLocEoc,
+        assigned_banks: assigned,
+        category_assignments: adminCategoryMap[a._id] || { credit_card: [], loc_eoc: [], personal_loan: [], business_loan: [] },
+        bank_ids: adminBankIdMap[a._id] || []
+      };
+    }));
+    return success(res, result);
+  } catch (err) {
+    next(err);
+  }
+};
+
+let _adminSchemaReady = null;
+const ensureAdminSchemaOnce = () => {
+  if (!_adminSchemaReady) {
+    _adminSchemaReady = (async () => {
+      try {
+        const { ensureAccountStatusSchema } = require('./accountStatus.service');
+        await ensureAccountStatusSchema();
+      } catch (scErr) {
+        // Ignore if already loaded or in test environment
+      }
+      // Schema is permanently provisioned via database migrations (migrate_runtime_ddl_cleanup.js).
+      // Runtime DDL eliminated to prevent AccessExclusiveLock contention and connection pool exhaustion.
+    })().catch(() => { _adminSchemaReady = null; });
+  }
+  return _adminSchemaReady;
+};
+
+const updateAdmin = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    let { fullName, email, mobile, designation, role, status, password, bank_ids, bankIds } = req.body || {};
+    const onlyStr = (v) => (typeof v === 'string' ? v : undefined);
+    fullName = onlyStr(fullName);
+    email = onlyStr(email);
+    mobile = onlyStr(mobile);
+    designation = onlyStr(designation);
+    role = onlyStr(role);
+    status = onlyStr(status);
+    password = onlyStr(password);
+
+    const { rows: [existing] } = await query(`SELECT id, role, designation, full_name, email, mobile, employee_id FROM users WHERE id::text = $1`, [id]);
+    if (!existing) {
+      return notFound(res, 'Administrator user not found.');
+    }
+
+    await ensureAdminSchemaOnce();
+
+    // Check duplicate email / mobile
+    if (email !== undefined && email && email.trim()) {
+      const normEmail = email.trim().toLowerCase();
+      const { rows: emailDup } = await query(
+        `SELECT id FROM users WHERE LOWER(email) = $1 AND id <> $2 LIMIT 1`,
+        [normEmail, existing.id]
+      ).catch(() => ({ rows: [] }));
+      if (emailDup && emailDup.length > 0) {
+        return error(res, 'Email is already in use by another user.', 409);
+      }
+    }
+
+    if (mobile !== undefined && mobile && mobile.trim()) {
+      const normMobile = mobile.trim();
+      const { rows: mobileDup } = await query(
+        `SELECT id FROM users WHERE mobile = $1 AND id <> $2 LIMIT 1`,
+        [normMobile, existing.id]
+      ).catch(() => ({ rows: [] }));
+      if (mobileDup && mobileDup.length > 0) {
+        return error(res, 'Mobile number is already in use by another user.', 409);
+      }
+    }
+
+    const updates = [];
+    const params = [];
+    let pIdx = 1;
+
+    if (fullName !== undefined) {
+      updates.push(`full_name = $${pIdx++}`);
+      params.push(fullName.trim());
+    }
+    if (email !== undefined) {
+      updates.push(`email = $${pIdx++}`);
+      params.push(email.trim().toLowerCase());
+    }
+    if (mobile !== undefined) {
+      updates.push(`mobile = $${pIdx++}`);
+      params.push(mobile.trim());
+    }
+    let normRole = null;
+    if (role !== undefined && role.trim()) {
+      normRole = role.trim().toUpperCase();
+      updates.push(`role = $${pIdx++}::user_role`);
+      params.push(normRole);
+    }
+    if (designation !== undefined) {
+      updates.push(`designation = $${pIdx++}`);
+      params.push(designation.trim());
+    }
+    let normStatus = null;
+    if (status !== undefined && status.trim()) {
+      normStatus = status.trim().toLowerCase();
+      updates.push(`status = $${pIdx++}::user_status`);
+      params.push(normStatus);
+
+      // Keep is_active in sync with status
+      const newActive = normStatus === 'active';
+      updates.push(`is_active = $${pIdx++}`);
+      params.push(newActive);
+    }
+    if (password && password.trim().length >= 6) {
+      const hash = await bcrypt.hash(password.trim(), 10);
+      updates.push(`password_hash = $${pIdx++}`);
+      params.push(hash);
+    }
+
+    if (updates.length > 0) {
+      updates.push(`updated_at = NOW()`);
+      params.push(existing.id);
+      try {
+        await query(`UPDATE users SET ${updates.join(', ')} WHERE id = $${pIdx}`, params);
+      } catch (updErr) {
+        logger.warn(`Update users with enum cast failed, retrying without cast: ${updErr.message}`);
+        const fallbackUpdates = updates.map(u => u.replace(/::user_role/g, '').replace(/::user_status/g, ''));
+        await query(`UPDATE users SET ${fallbackUpdates.join(', ')} WHERE id = $${pIdx}`, params);
+      }
+    }
+
+    if (normRole) {
+      await query(`UPDATE users SET role = $1::user_role WHERE id = $2`, [normRole, existing.id]).catch(async () => {
+        await query(`UPDATE users SET role = $1 WHERE id = $2`, [normRole, existing.id]).catch(() => {});
+      });
+      if (normRole === 'HR') {
+        const fullNameVal = fullName !== undefined ? fullName.trim() : (existing.full_name || 'HR Manager');
+        const emailVal = email !== undefined ? email.trim().toLowerCase() : existing.email;
+        const mobileVal = mobile !== undefined ? mobile.trim() : existing.mobile;
+        const designationVal = designation !== undefined ? designation.trim() : (existing.designation || 'HR Manager');
+        
+        await query(`
+          INSERT INTO hr_profiles (
+            user_id, employee_id, full_name, email, mobile_number, designation, department, status
+          ) VALUES ($1, $2, $3, $4, $5, $6, 'Human Resources', 'active')
+          ON CONFLICT (employee_id) DO UPDATE SET
+            user_id = EXCLUDED.user_id,
+            full_name = EXCLUDED.full_name,
+            email = EXCLUDED.email,
+            mobile_number = EXCLUDED.mobile_number,
+            designation = EXCLUDED.designation,
+            status = 'active'
+        `, [existing.id, existing.employee_id || `HR-${Date.now()}`, fullNameVal, emailVal, mobileVal, designationVal]).catch(() => {});
+      }
+    }
+
+    // Handle bank assignments
+    let assignmentPairs = parseAssignmentPairsFromBody(req.body);
+    const rawActorId = req.user?.id || req.user?._id || req.user?.userId || null;
+    const actorId = isUuid(rawActorId) ? rawActorId : null;
+
+    if (assignmentPairs !== null) {
+      await query(`DELETE FROM admin_bank_assignments WHERE admin_id = $1`, [existing.id]).catch(() => {});
+      await query(`UPDATE banks SET operation_head_id = NULL WHERE operation_head_id = $1`, [existing.id]).catch(() => {});
+      await query(`UPDATE products SET operation_head_id = NULL WHERE operation_head_id = $1`, [existing.id]).catch(() => {});
+
+      const currentDesig = designation !== undefined ? designation.trim() : existing.designation;
+      const currentRole = role !== undefined ? role.trim() : existing.role;
+      const isTargetOpHead = ['Operational Head', 'OPERATIONAL_HEAD', 'OPERATIONAL HEAD', 'OPERATIONS HEAD', 'OPERATIONS_HEAD', 'Backend', 'BACKEND', 'Administrative Operator', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'Administrative Sales Executive', 'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'PAN Checker', 'PAN CHECKER', 'PAN_CHECKER', 'Remark Operator', 'REMARK OPERATOR', 'REMARK_OPERATOR', 'QD Operator', 'QD OPERATOR', 'QD_OPERATOR', 'KYC Operator', 'KYC OPERATOR', 'KYC_OPERATOR', 'Final Status Operator', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'Querable Operator', 'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'Queryable Operator', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR', 'Physical Curable Operator', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'Digital Curable Operator', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'Email Curable Operator', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'Physical Curable', 'Digital Curable', 'Email Curable'].includes(currentDesig)
+        || ['OPERATIONAL_HEAD', 'OPERATIONAL HEAD', 'OPERATIONS_HEAD', 'OPERATIONS HEAD'].includes(currentRole);
+
+      // Deduplicate assignment pairs
+      const uniqueMap = new Map();
+      for (const pair of assignmentPairs) {
+        const rawBId = pair.bank_id || pair.bankId || pair.id;
+        if (!rawBId) continue;
+        const bId = await resolveBankId(rawBId);
+        if (!bId) continue;
+
+        // Verify the bank exists in database
+        const { rows: bankCheck } = await query(`SELECT id FROM banks WHERE id::text = $1`, [bId]).catch(() => ({ rows: [] }));
+        if (!bankCheck || bankCheck.length === 0) continue;
+
+        const cat = (pair.category || 'credit_card').toLowerCase() === 'loc_eoc' ? 'loc_eoc' : 'credit_card';
+        const key = `${bId}_${cat}`;
+        if (!uniqueMap.has(key)) {
+          uniqueMap.set(key, { bank_id: bId, category: cat });
+        }
+      }
+
+      for (const item of uniqueMap.values()) {
+        try {
+          await insertBankAssignment(existing.id, item.bank_id, item.category, actorId);
+          if (isTargetOpHead) {
+            await query(`UPDATE banks SET operation_head_id = $1 WHERE id = $2`, [existing.id, item.bank_id]).catch(() => {});
+            await query(`UPDATE products SET operation_head_id = $1 WHERE bank_id = $2`, [existing.id, item.bank_id]).catch(() => {});
+            const { rows: bRows } = await query(`SELECT short_code, name FROM banks WHERE id = $1`, [item.bank_id]).catch(() => ({ rows: [] }));
+            if (bRows && bRows.length > 0 && ((bRows[0].short_code || '').toUpperCase() === 'LOC_EOC' || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(bRows[0].name || '') || item.category === 'loc_eoc')) {
+              await query(`UPDATE products SET operation_head_id = $1 WHERE category::text = 'loc_eoc' OR category::text IN ('loan_on_credit_card', 'smart_emi')`, [existing.id]).catch(() => {});
+            }
+          }
+        } catch (pairErr) {
+          logger.warn(`Failed to insert bank assignment for user ${existing.id}: ${pairErr.message}`);
+        }
+      }
+
+      if (req.body.has_loc_eoc !== undefined || req.body.hasLocEoc !== undefined) {
+        const val = req.body.has_loc_eoc !== undefined ? Boolean(req.body.has_loc_eoc) : Boolean(req.body.hasLocEoc);
+        await query(`UPDATE users SET has_loc_eoc = $1 WHERE id = $2`, [val, existing.id]).catch(() => {});
+      } else {
+        let locCheckRows = [];
+        try {
+          const resLoc = await query(`
+            SELECT 1 FROM admin_bank_assignments aba
+            JOIN banks b ON b.id = aba.bank_id
+            WHERE aba.admin_id = $1 AND (aba.category = 'loc_eoc' OR UPPER(COALESCE(b.short_code, '')) = 'LOC_EOC' OR b.name ~* 'loc|loan on card|smart emi')
+          `, [existing.id]);
+          locCheckRows = resLoc.rows;
+        } catch (abaErr) {
+          try {
+            const resLoc = await query(`
+              SELECT 1 FROM admin_bank_assignments aba
+              JOIN banks b ON b.id = aba.bank_id
+              WHERE aba.admin_id = $1 AND (UPPER(COALESCE(b.short_code, '')) = 'LOC_EOC' OR b.name ~* 'loc|loan on card|smart emi')
+            `, [existing.id]);
+            locCheckRows = resLoc.rows;
+          } catch (e) {
+            locCheckRows = [];
+          }
+        }
+        const hasLoc = locCheckRows.length > 0;
+        await query(`UPDATE users SET has_loc_eoc = $1 WHERE id = $2`, [hasLoc, existing.id]).catch(() => {});
+      }
+    }
+
+    await logAction(req, 'UPDATE_USER', existing.id, { email, designation, role, assignmentPairs }).catch(() => {});
+
+    return success(res, { id: existing.id }, 'Administrator updated successfully.');
+  } catch (err) {
+    logger.error('Error in updateAdmin:', {
+      message: err.message,
+      code: err?.code,
+      detail: err?.detail,
+      constraint: err?.constraint,
+      adminId: req.params?.id,
+      stack: err.stack
+    });
+    const pgHttpStatus = { '22P02': 400, '23502': 400, '23503': 400, '23514': 400, '23505': 409 };
+    const httpStatus = err.statusCode || pgHttpStatus[err?.code] || 500;
+    return error(res, err.message || 'Failed to update administrator user', httpStatus);
+  }
+};
+
+const getAdminBanks = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { rows: [userRec] } = await query(`SELECT COALESCE(has_loc_eoc, FALSE) as has_loc_eoc FROM users WHERE id::text = $1`, [id]);
+    let rows = [];
+    try {
+      const resBanks = await query(`
+        SELECT aba.bank_id as id, aba.bank_id, COALESCE(aba.category, 'credit_card') as category, b.name, b.short_code, b.logo_url 
+        FROM admin_bank_assignments aba
+        JOIN banks b ON b.id = aba.bank_id
+        WHERE aba.admin_id::text = $1
+      `, [id]);
+      rows = resBanks.rows;
+    } catch (abaErr) {
+      const resBanks = await query(`
+        SELECT aba.bank_id as id, aba.bank_id, 'credit_card' as category, b.name, b.short_code, b.logo_url 
+        FROM admin_bank_assignments aba
+        JOIN banks b ON b.id = aba.bank_id
+        WHERE aba.admin_id::text = $1
+      `, [id]);
+      rows = resBanks.rows;
+    }
+    const mapped = rows.map(b => ({
+      ...b,
+      category: b.category || 'credit_card',
+      is_loc_eoc: b.category === 'loc_eoc' || (b.short_code || '').toUpperCase() === 'LOC_EOC' || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(b.name || '')
+    }));
+    return success(res, mapped);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const updateAdminBanks = async (req, res, next) => {
+  let client;
+
+  try {
+    client = await getClient();
+
+    logger.info('[BANK ASSIGNMENT] REQUEST RECEIVED', {
+      adminId: req.params.id,
+      bodyKeys: Object.keys(req.body || {})
+    });
+    logger.info('[BANK ASSIGNMENT] BODY', req.body);
+
+    const { id } = req.params;
+
+    await ensureAdminSchemaOnce();
+
+    const { rows: [userRec] } = await client.query(`SELECT id, role, designation FROM users WHERE id::text = $1`, [id]);
+    if (!userRec) {
+      return notFound(res, 'Admin user not found');
+    }
+
+    let rawPairs = parseAssignmentPairsFromBody(req.body) || [];
+    logger.info('[BANK ASSIGNMENT] PARSED PAIRS', rawPairs);
+
+    const uniqueMap = new Map();
+    for (const pair of rawPairs) {
+      const rawBId = pair.bank_id || pair.bankId || pair.id;
+      if (!rawBId) continue;
+      const bId = await resolveBankId(rawBId, client);
+      if (!bId) continue;
+
+      // Verify the bank exists in database
+      const { rows: bankCheck } = await client.query(`SELECT id FROM banks WHERE id::text = $1`, [bId]);
+      if (bankCheck.length === 0) continue;
+
+      const cat = normalizeAssignmentCategory(pair.category);
+      const key = `${bId}_${cat}`;
+      if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, { bank_id: bId, category: cat });
+      }
+    }
+
+    const assignmentPairs = Array.from(uniqueMap.values());
+    logger.info('[BANK ASSIGNMENT] RESOLVED PAIRS', assignmentPairs);
+
+    const rawActorId = req.user?.id || req.user?._id || req.user?.userId || null;
+    const actorId = isUuid(rawActorId) ? rawActorId : null;
+
+    logger.info('[BANK ASSIGNMENT] BEGIN');
+    await client.query('BEGIN');
+
+    logger.info('[BANK ASSIGNMENT] DELETE OLD');
+    await client.query(`DELETE FROM admin_bank_assignments WHERE admin_id = $1`, [userRec.id]);
+
+    const currentDesig = userRec.designation;
+    const currentRole = userRec.role;
+    const isTargetOpHead = ['Operational Head', 'OPERATIONAL_HEAD', 'OPERATIONAL HEAD', 'OPERATIONS HEAD', 'OPERATIONS_HEAD'].includes(currentDesig)
+      || ['OPERATIONAL_HEAD', 'OPERATIONAL HEAD', 'OPERATIONS_HEAD', 'OPERATIONS HEAD'].includes(currentRole);
+
+    if (isTargetOpHead) {
+      await safeTxQuery(client, `UPDATE banks SET operation_head_id = NULL WHERE operation_head_id = $1`, [userRec.id]);
+      await safeTxQuery(client, `UPDATE products SET operation_head_id = NULL WHERE operation_head_id = $1`, [userRec.id]);
+    }
+
+    logger.info('[BANK ASSIGNMENT] INSERT');
+    for (const pair of assignmentPairs) {
+      await insertBankAssignment(userRec.id, pair.bank_id, pair.category, actorId, client);
+      if (isTargetOpHead) {
+        await safeTxQuery(client, `UPDATE banks SET operation_head_id = $1 WHERE id = $2`, [userRec.id, pair.bank_id]);
+        await safeTxQuery(client, `UPDATE products SET operation_head_id = $1 WHERE bank_id = $2`, [userRec.id, pair.bank_id]);
+        if (pair.category === 'loc_eoc') {
+          await safeTxQuery(client, `UPDATE products SET operation_head_id = $1 WHERE category::text = 'loc_eoc' OR category::text IN ('loan_on_credit_card', 'smart_emi')`, [userRec.id]);
+        }
+      }
+    }
+
+    logger.info('[BANK ASSIGNMENT] UPDATE LOC/EOC');
+    const hasLocEoc = assignmentPairs.some(pair => normalizeAssignmentCategory(pair.category) === 'loc_eoc');
+    await safeTxQuery(client, `UPDATE users SET has_loc_eoc = $1 WHERE id = $2`, [hasLocEoc, userRec.id]);
+
+    logger.info('[BANK ASSIGNMENT] COMMIT');
+    await client.query('COMMIT');
+
+    logAction(req, 'UPDATE_ADMIN_BANKS', userRec.id, { assignmentPairs }).catch(() => {});
+
+    return success(res, { adminId: userRec.id, assignedPairs: assignmentPairs }, 'Bank assignments updated successfully');
+
+  } catch (err) {
+    if (client) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
+
+    logger.error('[SUPERADMIN BANK ASSIGNMENT ERROR]', {
+      message: err?.message,
+      code: err?.code,
+      detail: err?.detail,
+      hint: err?.hint,
+      constraint: err?.constraint,
+      table: err?.table,
+      column: err?.column,
+      stack: err?.stack
+    });
+
+    return error(res, `Failed to update bank assignments: ${err?.message || 'Database error'}`, 500);
+
+  } finally {
+    if (client) client.release();
+  }
+};
+
+/**
+ * POST /api/v1/superadmin/block-user
+ * Suspend/unsuspend a user in the database and revoke Firebase session tokens if blocked.
+ */
+const blockUser = async (req, res, next) => {
+  try {
+    const { userId, block } = req.body;
+
+    if (userId === undefined || block === undefined) {
+      return error(res, 'userId and block parameters are required', 400);
+    }
+
+    // Prevent blocking oneself
+    if (userId === req.user.id) {
+      return error(res, 'You are not permitted to block yourself.', 400);
+    }
+
+    // 1. Check if user exists in database
+    const { rows: [targetUser] } = await query(
+      `SELECT id, email, role, status FROM users WHERE id::text = $1`,
+      [userId]
+    );
+
+    if (!targetUser) {
+      return error(res, 'User not found', 404);
+    }
+
+    const newStatus = block ? 'suspended' : 'active';
+    const actionName = block ? 'BLOCK_USER' : 'UNBLOCK_USER';
+
+    // 2. Update status and is_active in PostgreSQL
+    await query(
+      `UPDATE users SET status = $1::user_status, is_active = $2, updated_at = NOW() WHERE id = $3`,
+      [newStatus, !block, targetUser.id]
+    );
+
+    // 3. Revoke active refresh tokens if blocked
+    if (block) {
+      await query(`UPDATE refresh_tokens SET revoked = true, revoked_at = NOW() WHERE user_id = $1`, [targetUser.id]);
+    }
+
+    // 4. Log to audit logs
+    await logAction(req, actionName, targetUser.id, { email: targetUser.email, role: targetUser.role });
+
+    return success(res, {}, `User status updated to ${newStatus} successfully.`);
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /api/v1/superadmin/unlock-user
+ * Unlock a user account that was temporarily locked due to failed login attempts.
+ */
+const unlockUser = async (req, res, next) => {
+  try {
+    const { userId, identity } = req.body;
+    if (!userId && !identity) {
+      return error(res, 'userId or identity (email/mobile) parameter is required', 400);
+    }
+
+    let targetUser;
+    if (userId) {
+      const { rows: [user] } = await query(`SELECT id, email, role FROM users WHERE id::text = $1`, [userId]);
+      targetUser = user;
+    } else {
+      const clean = String(identity).trim().toLowerCase();
+      const { rows: [user] } = await query(`SELECT id, email, role FROM users WHERE LOWER(email) = $1 OR mobile = $1`, [clean]);
+      targetUser = user;
+    }
+
+    if (!targetUser) {
+      return error(res, 'User not found', 404);
+    }
+
+    await query(`UPDATE users SET failed_login_attempts = 0, locked_until = NULL, updated_at = NOW() WHERE id = $1`, [targetUser.id]);
+    await logAction(req, 'UNLOCK_USER', targetUser.id, { email: targetUser.email, role: targetUser.role });
+
+    return success(res, { userId: targetUser.id }, 'User account has been unlocked successfully.');
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+/**
+ * GET /api/v1/superadmin/audit-logs
+ * Fetch system audit logs with pagination and filters.
+ */
+const getAuditLogs = async (req, res, next) => {
+  try {
+    const { page, limit, offset } = getPaginationParams(req.query);
+    const { action, admin_user, start_date, end_date } = req.query;
+
+    let whereClause = 'WHERE 1=1';
+    const values = [];
+    let idx = 1;
+
+    if (action) {
+      whereClause += ` AND al.action = $${idx++}`;
+      values.push(action);
+    }
+
+    if (admin_user) {
+      whereClause += ` AND (u.email ILIKE $${idx} OR u.id::text = $${idx} OR u.firebase_uid = $${idx})`;
+      values.push(admin_user.includes('@') ? `%${admin_user}%` : admin_user);
+      idx++;
+    }
+
+    if (start_date) {
+      whereClause += ` AND al.created_at >= $${idx++}`;
+      values.push(new Date(start_date));
+    }
+
+    if (end_date) {
+      whereClause += ` AND al.created_at <= $${idx++}`;
+      values.push(new Date(end_date));
+    }
+
+    const countQuery = `
+      SELECT COUNT(*) 
+      FROM audit_logs al
+      LEFT JOIN users u ON u.id = al.user_id
+      ${whereClause}
+    `;
+
+    const dataQuery = `
+      SELECT al.id, al.action, al.target_id, al.details, al.created_at,
+             u.id as admin_id, u.email as admin_email, u.role as admin_role
+      FROM audit_logs al
+      LEFT JOIN users u ON u.id = al.user_id
+      ${whereClause}
+      ORDER BY al.created_at DESC
+      LIMIT $${idx} OFFSET $${idx + 1}
+    `;
+
+    const [countResult, dataResult] = await Promise.all([
+      query(countQuery, values),
+      query(dataQuery, [...values, limit, offset]),
+    ]);
+
+    const total = parseInt(countResult.rows[0].count);
+    return paginate(res, dataResult.rows, total, page, limit);
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * DELETE /api/v1/superadmin/admins/:id
+ * DELETE /api/v1/superadmin/users/:id
+ * DELETE /api/v1/superadmin/partners/:id
+ * DELETE /api/v1/superadmin/employees/:id
+ * Delete any user account (temporary or permanent).
+ */
+const deleteAdmin = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const extraUserId = req.query.user_id || req.body?.user_id;
+    const extraEmpCode = req.query.emp_code || req.body?.emp_code;
+
+    // Prevent deleting oneself
+    if (id === req.user.id || (extraUserId && extraUserId === req.user.id)) {
+      return error(res, 'You are not permitted to delete your own account.', 400);
+    }
+
+    // Check if user exists in users table (by UUID, employee_id, email, or mobile)
+    let { rows: [targetUser] } = await query(
+      `SELECT id, email, role, full_name, employee_id, mobile FROM users 
+       WHERE id::text = $1 
+          OR employee_id::text = $1 
+          OR email ILIKE $1 
+          OR mobile = $1`,
+      [id]
+    );
+
+    // If not found, check partner_profiles
+    let targetPartner = null;
+    if (!targetUser) {
+      const { rows: [partner] } = await query(
+        `SELECT id, user_id, partner_code, email, mobile FROM partner_profiles WHERE id::text = $1 OR partner_code::text = $1 OR email ILIKE $1 OR mobile = $1`,
+        [id]
+      );
+      if (partner) {
+        targetPartner = partner;
+        if (partner.user_id) {
+          const { rows: [userByPartner] } = await query(
+            `SELECT id, email, role, full_name, employee_id, mobile FROM users WHERE id::text = $1`,
+            [partner.user_id]
+          );
+          targetUser = userByPartner;
+        }
+      }
+    }
+
+    // Check employees table
+    let targetEmployee = null;
+    const { rows: [emp] } = await query(
+      `SELECT id, user_id, full_name, email_id, mobile_number, employee_id FROM employees WHERE id::text = $1 OR employee_id::text = $1 OR email_id ILIKE $1 OR mobile_number = $1 LIMIT 1`,
+      [id]
+    );
+    if (emp) {
+      targetEmployee = emp;
+      if (!targetUser && emp.user_id) {
+        const { rows: [userByEmp] } = await query(
+          `SELECT id, email, role, full_name, employee_id, mobile FROM users WHERE id::text = $1`,
+          [emp.user_id]
+        );
+        targetUser = userByEmp;
+      }
+      if (!targetUser && (emp.mobile_number || emp.email_id)) {
+        const { rows: [userByContact] } = await query(
+          `SELECT id, email, role, full_name, employee_id, mobile FROM users WHERE (mobile = $1 AND $1 IS NOT NULL) OR (email ILIKE $2 AND $2 IS NOT NULL) LIMIT 1`,
+          [emp.mobile_number || null, emp.email_id || null]
+        );
+        targetUser = userByContact;
+      }
+    }
+
+    // Prevent deleting oneself if matched
+    if (targetUser && targetUser.id === req.user.id) {
+      return error(res, 'You are not permitted to delete your own account.', 400);
+    }
+
+    // Prevent deleting Super Admin accounts
+    if (targetUser && targetUser.role === 'SUPER_ADMIN') {
+      return error(res, 'Super Administrator accounts cannot be deleted or suspended.', 403);
+    }
+
+    const extraIdentifiers = {
+      userId: extraUserId || targetUser?.id,
+      empId: targetEmployee?.id,
+      partnerId: targetPartner?.id,
+      empCode: extraEmpCode || targetEmployee?.employee_id || targetUser?.employee_id,
+      email: targetEmployee?.email_id || targetUser?.email,
+      mobile: targetEmployee?.mobile_number || targetUser?.mobile
+    };
+
+    // Delete user (temporary soft delete or permanent hard delete)
+    const mode = req.query.mode || req.body?.mode || 'permanent';
+    const { softDeleteUserAccount, deleteUserAccount } = require('../auth/user-deletion.service.js');
+    let result;
+    if (mode === 'temporary') {
+      result = await softDeleteUserAccount(id, extraIdentifiers);
+    } else {
+      result = await deleteUserAccount(id);
+      if (extraIdentifiers.userId && extraIdentifiers.userId !== id) {
+        await deleteUserAccount(extraIdentifiers.userId).catch(() => {});
+      }
+    }
+
+    // Record action in audit logs
+    const auditUserId = targetUser?.id || targetEmployee?.user_id || id;
+    if (auditUserId) {
+      await logAction(req, mode === 'temporary' ? 'DEACTIVATE_USER' : 'DELETE_USER', auditUserId, { 
+        email: targetUser?.email || targetEmployee?.email_id, 
+        role: targetUser?.role || 'EMPLOYEE',
+        full_name: targetUser?.full_name || targetEmployee?.full_name,
+        employee_id: targetUser?.employee_id || targetEmployee?.employee_id,
+        mode 
+      }).catch(() => {});
+    }
+
+    const actionText = mode === 'temporary' ? 'temporarily deactivated (soft deleted)' : 'permanently deleted';
+    const entityType = targetEmployee ? 'Employee' : (targetPartner ? 'Partner' : 'Administrator');
+    return success(res, result, `${entityType} account ${actionText} successfully.`);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const updatePartnerStatus = async (req, res, next) => {
+  try {
+    const { userId, status } = req.body;
+
+    if (!userId || !status) {
+      return error(res, 'userId and status are required', 400);
+    }
+
+    let checkStatus = status.toLowerCase();
+    if (checkStatus === 'pending_verification') {
+      checkStatus = 'pending';
+    }
+
+    const validStatuses = ['active', 'inactive', 'pending', 'suspended', 'rejected', 'blocked'];
+    if (!validStatuses.includes(checkStatus)) {
+      return error(res, `Invalid status value. Must be one of: ${validStatuses.join(', ')}`, 400);
+    }
+
+    // Resolve user: either it is direct user_id, or it is partner profile ID
+    let targetUser;
+    const { rows: [userById] } = await query(`SELECT id, email, role, status FROM users WHERE id::text = $1`, [userId]);
+    if (userById) {
+      targetUser = userById;
+    } else {
+      const { rows: [userByPartnerId] } = await query(`
+        SELECT u.id, u.email, u.role, u.status 
+        FROM users u 
+        JOIN partner_profiles ap ON ap.user_id = u.id 
+        WHERE ap.id::text = $1
+      `, [userId]);
+      if (userByPartnerId) {
+        targetUser = userByPartnerId;
+      }
+    }
+
+    if (!targetUser) {
+      return error(res, 'User or Partner Profile not found', 404);
+    }
+
+    // Prevent changing oneself
+    if (targetUser.id === req.user.id) {
+      return error(res, 'You are not permitted to change your own status.', 400);
+    }
+
+    const oldStatus = targetUser.status;
+    const newStatus = checkStatus;
+
+    // Update in database
+    await query(
+      `UPDATE users SET status = $1::user_status, updated_at = NOW() WHERE id = $2`,
+      [newStatus, targetUser.id]
+    );
+
+    // Fetch partner details for status email
+    try {
+      const { rows: [partnerProfile] } = await query(`
+        SELECT first_name, last_name, kyc_status, rejection_reason 
+        FROM partner_profiles 
+        WHERE user_id = $1
+      `, [targetUser.id]);
+
+      if (partnerProfile && targetUser.email) {
+        const { sendPartnerStatusUpdateEmail } = require('../../services/email/email.service.js');
+        await sendPartnerStatusUpdateEmail(
+          targetUser.email,
+          partnerProfile.first_name,
+          partnerProfile.last_name,
+          newStatus,
+          partnerProfile.kyc_status,
+          partnerProfile.rejection_reason
+        );
+      }
+    } catch (mailErr) {
+      logger.error('Failed to send status update email in updatePartnerStatus:', mailErr.message);
+    }
+
+    // Log to audit logs
+    await logAction(req, 'UPDATE_PARTNER_STATUS', targetUser.id, { 
+      email: targetUser.email, 
+      role: targetUser.role, 
+      oldStatus, 
+      newStatus 
+    });
+
+    return success(res, {}, `Partner status updated from ${oldStatus} to ${newStatus} successfully.`);
+  } catch (err) {
+    logger.error('updatePartnerStatus failed:', { error: err.message, stack: err.stack, body: req.body });
+    next(err);
+  }
+};
+
+
+/**
+ * Commission Rules CRUD
+ */
+const createCommissionRule = async (req, res, next) => {
+  try {
+    const { productId, partnerPercentage, parentPercentage, campaignBonus, status } = req.body;
+    
+    if (!productId) {
+      return error(res, 'Product ID is required', 400);
+    }
+
+    const { rows: [rule] } = await query(`
+      INSERT INTO commission_rules (product_id, partner_percentage, parent_percentage, campaign_bonus, status)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *
+    `, [productId, partnerPercentage || 90, parentPercentage || 10, campaignBonus || 0, status || 'active']);
+
+    await logAction(req, 'CREATE_COMMISSION_RULE', rule.id, { productId, partnerPercentage });
+
+    return created(res, rule, 'Commission rule created successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+const getCommissionRules = async (req, res, next) => {
+  try {
+    const { rows } = await query(`
+      SELECT cr.*, p.name as product_name
+      FROM commission_rules cr
+      LEFT JOIN products p ON p.id = cr.product_id
+      ORDER BY cr.created_at DESC
+    `);
+    return success(res, rows);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const approveKYC = async (req, res, next) => {
+  const { partnerId } = req.body;
+  if (!partnerId) return error(res, 'partnerId is required', 400);
+
+  const client = await getClient();
+  try {
+    const { rows: [partner] } = await client.query(`SELECT user_id, first_name, last_name FROM partner_profiles WHERE id = $1`, [partnerId]);
+    if (!partner) return notFound(res, 'Partner profile not found');
+
+    const { rows: [user] } = await client.query(`SELECT email FROM users WHERE id = $1`, [partner.user_id]);
+
+    await client.query('BEGIN');
+
+    // 1. Update partner profile
+    await client.query(`
+      UPDATE partner_profiles 
+      SET kyc_status = 'approved', 
+          kyc_reviewed_at = NOW(), 
+          kyc_reviewed_by = $1,
+          rejection_reason = NULL,
+          kyc_rejection_reason = NULL
+      WHERE id = $2
+    `, [req.user.id, partnerId]);
+
+    // 2. Update user status to active
+    await client.query(`UPDATE users SET status = 'active' WHERE id = $1`, [partner.user_id]);
+
+    // 3. Mark all documents as approved
+    await client.query(`
+      UPDATE kyc_documents 
+      SET verified = true, 
+          verification_status = 'approved',
+          verified_by = $1,
+          verified_at = NOW()
+      WHERE partner_id = $2
+    `, [req.user.id, partnerId]);
+
+    // 4. Mark video as approved
+    await client.query(`
+      UPDATE partner_videos 
+      SET verification_status = 'approved'
+      WHERE partner_id = $1
+    `, [partnerId]);
+
+    // 5. Ensure wallet exists
+    const { ensureWallet } = require('../wallet/service.js');
+    await ensureWallet(partnerId, client);
+
+    await client.query('COMMIT');
+
+    // Send notifications
+    try {
+      const { notify } = require('../notifications/service.js');
+      const { sendPartnerStatusUpdateEmail } = require('../../services/email/email.service.js');
+      await notify.kycApproved(partner.user_id);
+      if (user?.email) {
+        await sendPartnerStatusUpdateEmail(user.email, partner.first_name, partner.last_name, 'active', 'approved', null);
+      }
+    } catch (notifErr) {
+      logger.error('Failed to send KYC approval notifications:', notifErr.message);
+    }
+
+    await logAction(req, 'APPROVE_KYC', partnerId, { userId: partner.user_id });
+
+    return success(res, {}, 'Partner KYC approved and profile activated successfully');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+const rejectKYC = async (req, res, next) => {
+  const { partnerId, rejection_reason } = req.body;
+  if (!partnerId) return error(res, 'partnerId is required', 400);
+  if (!rejection_reason) return error(res, 'rejection_reason is required', 400);
+
+  const client = await getClient();
+  try {
+    const { rows: [partner] } = await client.query(`SELECT user_id, first_name, last_name FROM partner_profiles WHERE id = $1`, [partnerId]);
+    if (!partner) return notFound(res, 'Partner profile not found');
+
+    const { rows: [user] } = await client.query(`SELECT email FROM users WHERE id = $1`, [partner.user_id]);
+
+    await client.query('BEGIN');
+
+    // 1. Update partner profile
+    await client.query(`
+      UPDATE partner_profiles 
+      SET kyc_status = 'rejected', 
+          kyc_reviewed_at = NOW(), 
+          kyc_reviewed_by = $1,
+          rejection_reason = $2,
+          kyc_rejection_reason = $2
+      WHERE id = $3
+    `, [req.user.id, rejection_reason, partnerId]);
+
+    // 2. Update user status
+    // await client.query(`UPDATE users SET status = 'inactive'::user_status WHERE id = $1`, [partner.user_id]);
+
+    // 3. Mark all unverified documents as rejected
+    await client.query(`
+      UPDATE kyc_documents 
+      SET verification_status = 'rejected'
+      WHERE partner_id = $1 AND verified = false
+    `, [partnerId]);
+
+    // 4. Mark video as rejected
+    await client.query(`
+      UPDATE partner_videos 
+      SET verification_status = 'rejected'
+      WHERE partner_id = $1
+    `, [partnerId]);
+
+    await client.query('COMMIT');
+
+    // Send notifications
+    try {
+      const { notify } = require('../notifications/service.js');
+      const { sendPartnerStatusUpdateEmail } = require('../../services/email/email.service.js');
+      await notify.kycRejected(partner.user_id, rejection_reason);
+      if (user?.email) {
+        await sendPartnerStatusUpdateEmail(user.email, partner.first_name, partner.last_name, 'rejected', 'rejected', rejection_reason);
+      }
+    } catch (notifErr) {
+      logger.error('Failed to send KYC rejection notifications:', notifErr.message);
+    }
+
+    await logAction(req, 'REJECT_KYC', partnerId, { userId: partner.user_id, rejection_reason });
+
+    return success(res, {}, 'Partner KYC rejected successfully');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+const requestChangesKYC = async (req, res, next) => {
+  const { partnerId, rejection_reason, rejected_documents } = req.body;
+  if (!partnerId) return error(res, 'partnerId is required', 400);
+  if (!rejection_reason) return error(res, 'rejection_reason is required', 400);
+  if (!Array.isArray(rejected_documents) || rejected_documents.length === 0) {
+    return error(res, 'rejected_documents list is required and must contain document types', 400);
+  }
+
+  const client = await getClient();
+  try {
+    const { rows: [partner] } = await client.query(`SELECT user_id, first_name, last_name FROM partner_profiles WHERE id = $1`, [partnerId]);
+    if (!partner) return notFound(res, 'Partner profile not found');
+
+    const { rows: [user] } = await client.query(`SELECT email FROM users WHERE id = $1`, [partner.user_id]);
+
+    await client.query('BEGIN');
+
+    // 1. Update partner profile status to rejected
+    await client.query(`
+      UPDATE partner_profiles 
+      SET kyc_status = 'rejected', 
+          kyc_reviewed_at = NOW(), 
+          kyc_reviewed_by = $1,
+          rejection_reason = $2,
+          kyc_rejection_reason = $2
+      WHERE id = $3
+    `, [req.user.id, rejection_reason, partnerId]);
+
+    // 2. Set user status to inactive so they correct documents
+    // await client.query(`UPDATE users SET status = 'inactive'::user_status WHERE id = $1`, [partner.user_id]);
+
+    // 3. Mark selected documents as rejected
+    for (const docType of rejected_documents) {
+      if (docType === 'video') {
+        await client.query(`
+          UPDATE partner_videos 
+          SET verification_status = 'rejected'
+          WHERE partner_id = $1
+        `, [partnerId]);
+      } else {
+        await client.query(`
+          UPDATE kyc_documents 
+          SET verification_status = 'rejected',
+              verified = false
+          WHERE partner_id = $1 AND doc_type = $2
+        `, [partnerId, docType]);
+      }
+    }
+
+    // 4. Mark non-rejected documents as approved/verified
+    await client.query(`
+      UPDATE kyc_documents
+      SET verification_status = 'approved',
+          verified = true,
+          verified_by = $1,
+          verified_at = NOW()
+      WHERE partner_id = $2 AND NOT (doc_type = ANY($3))
+    `, [req.user.id, partnerId, rejected_documents]);
+
+    if (!rejected_documents.includes('video')) {
+      await client.query(`
+        UPDATE partner_videos 
+        SET verification_status = 'approved'
+        WHERE partner_id = $1
+      `, [partnerId]);
+    }
+
+    await client.query('COMMIT');
+
+    // Send notifications
+    try {
+      const { notify } = require('../notifications/service.js');
+      const { sendPartnerStatusUpdateEmail } = require('../../services/email/email.service.js');
+      await notify.kycRejected(partner.user_id, rejection_reason);
+      if (user?.email) {
+        await sendPartnerStatusUpdateEmail(user.email, partner.first_name, partner.last_name, 'rejected', 'rejected', rejection_reason);
+      }
+    } catch (notifErr) {
+      logger.error('Failed to send KYC request-changes notifications:', notifErr.message);
+    }
+
+    await logAction(req, 'REQUEST_KYC_CHANGES', partnerId, { userId: partner.user_id, rejected_documents, rejection_reason });
+
+    return success(res, {}, 'KYC correction requested successfully');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+const verifyDocument = async (req, res, next) => {
+  const { partnerId, docType, status, rejectionReason } = req.body;
+  if (!partnerId) return error(res, 'partnerId is required', 400);
+  if (!docType) return error(res, 'docType is required', 400);
+  if (!status || !['approved', 'rejected'].includes(status)) {
+    return error(res, 'status must be approved or rejected', 400);
+  }
+  if (status === 'rejected' && !rejectionReason) {
+    return error(res, 'rejectionReason is required when status is rejected', 400);
+  }
+
+  const client = await getClient();
+  try {
+
+    await client.query('BEGIN');
+
+    // 1. Update document status
+    if (docType === 'video') {
+      await client.query(`
+        UPDATE partner_videos 
+        SET verification_status = $1, rejection_reason = $2
+        WHERE partner_id = $3
+      `, [status, status === 'rejected' ? rejectionReason : null, partnerId]);
+    } else {
+      const isVerified = status === 'approved';
+      await client.query(`
+        UPDATE kyc_documents 
+        SET verification_status = $1, 
+            verified = $2, 
+            verified_by = $3, 
+            verified_at = NOW(),
+            rejection_reason = $4
+        WHERE partner_id = $5 AND doc_type = $6
+      `, [status, isVerified, req.user.id, status === 'rejected' ? rejectionReason : null, partnerId, docType]);
+    }
+
+    // 2. Fetch partner profile
+    const { rows: [partner] } = await client.query(`
+      SELECT user_id, first_name, last_name, gst_number 
+      FROM partner_profiles 
+      WHERE id = $1
+    `, [partnerId]);
+    if (!partner) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Partner profile not found');
+    }
+
+    const { rows: [user] } = await client.query(`SELECT email FROM users WHERE id = $1`, [partner.user_id]);
+
+    // 3. Fetch all document statuses for recalculation
+    const { rows: documents } = await client.query(`
+      SELECT doc_type, verification_status, rejection_reason 
+      FROM kyc_documents 
+      WHERE partner_id = $1
+    `, [partnerId]);
+
+    const { rows: [video] } = await client.query(`
+      SELECT verification_status, rejection_reason 
+      FROM partner_videos 
+      WHERE partner_id = $1
+    `, [partnerId]);
+
+    // 4. Required documents logic — only consider docs the partner has actually uploaded
+    const uploadedDocTypes = documents.map(d => d.doc_type);
+    const hasVideo = !!video;
+
+    // Build the list of required docs from what was actually uploaded
+    // Always require pan, aadhaar, cancelled_cheque if uploaded
+    const coreRequired = ['pan', 'cancelled_cheque'];
+    const uploadedRequired = coreRequired.filter(d => uploadedDocTypes.includes(d));
+    if (hasVideo) uploadedRequired.push('video');
+    if (partner.gst_number && partner.gst_number.trim() !== '' && uploadedDocTypes.includes('gst_cert')) {
+      uploadedRequired.push('gst_cert');
+    }
+
+    // Must have at least pan, aadhaar, cancelled_cheque and video to be approvable
+    const minimumRequired = ['pan', 'cancelled_cheque'];
+    const hasMinimum = minimumRequired.every(d => uploadedDocTypes.includes(d)) && hasVideo;
+
+    const docStatusMap = {};
+    const docReasonMap = {};
+    documents.forEach(d => {
+      docStatusMap[d.doc_type] = d.verification_status;
+      docReasonMap[d.doc_type] = d.rejection_reason;
+    });
+    docStatusMap['video'] = video ? video.verification_status : null;
+    docReasonMap['video'] = video ? video.rejection_reason : null;
+
+    const rejectedReqDocs = uploadedRequired.filter(d => docStatusMap[d] === 'rejected');
+    const approvedReqDocs = uploadedRequired.filter(d => docStatusMap[d] === 'approved');
+    const requiredDocs = uploadedRequired;
+
+    let newKycStatus = 'pending';
+    let combinedRejectionReason = null;
+
+    if (rejectedReqDocs.length > 0) {
+      newKycStatus = 'rejected';
+      const reasonsList = rejectedReqDocs.map(d => {
+        const docName = d.replace('_', ' ').toUpperCase();
+        return `${docName}: ${docReasonMap[d] || 'Verification failed'}`;
+      });
+      combinedRejectionReason = reasonsList.join('; ');
+
+      await client.query(`
+        UPDATE partner_profiles 
+        SET kyc_status = 'rejected', 
+            rejection_reason = $1,
+            kyc_rejection_reason = $1,
+            approved_by = NULL,
+            approved_at = NULL,
+            kyc_reviewed_at = NOW(),
+            kyc_reviewed_by = $2
+        WHERE id = $3
+      `, [combinedRejectionReason, req.user.id, partnerId]);
+
+      // await client.query(`UPDATE users SET status = 'inactive'::user_status WHERE id = $1`, [partner.user_id]);
+
+    } else if (hasMinimum && approvedReqDocs.length === requiredDocs.length) {
+      newKycStatus = 'approved';
+
+      await client.query(`
+        UPDATE partner_profiles 
+        SET kyc_status = 'approved', 
+            rejection_reason = NULL,
+            kyc_rejection_reason = NULL,
+            approved_by = $1,
+            approved_at = NOW(),
+            kyc_reviewed_at = NOW(),
+            kyc_reviewed_by = $1
+        WHERE id = $2
+      `, [req.user.id, partnerId]);
+
+      await client.query(`UPDATE users SET status = 'active' WHERE id = $1`, [partner.user_id]);
+
+      const { ensureWallet } = require('../wallet/service.js');
+      await ensureWallet(partnerId, client);
+
+    } else {
+      newKycStatus = 'under_review';
+
+      await client.query(`
+        UPDATE partner_profiles 
+        SET kyc_status = 'under_review', 
+            rejection_reason = NULL,
+            kyc_rejection_reason = NULL,
+            approved_by = NULL,
+            approved_at = NULL,
+            kyc_reviewed_at = NULL,
+            kyc_reviewed_by = NULL
+        WHERE id = $1
+      `, [partnerId]);
+
+      // await client.query(`UPDATE users SET status = 'pending' WHERE id = $1`, [partner.user_id]);
+    }
+
+    await client.query('COMMIT');
+
+    // Send notifications
+    try {
+      const { notify } = require('../notifications/service.js');
+      const { sendPartnerStatusUpdateEmail } = require('../../services/email/email.service.js');
+
+      if (newKycStatus === 'approved') {
+        await notify.kycApproved(partner.user_id);
+        if (user?.email) {
+          await sendPartnerStatusUpdateEmail(user.email, partner.first_name, partner.last_name, 'active', 'approved', null);
+        }
+      } else if (newKycStatus === 'rejected') {
+        await notify.kycRejected(partner.user_id, combinedRejectionReason);
+        if (user?.email) {
+          await sendPartnerStatusUpdateEmail(user.email, partner.first_name, partner.last_name, 'rejected', 'rejected', combinedRejectionReason);
+        }
+      }
+    } catch (notifErr) {
+      logger.error('Failed to send KYC verification notifications:', notifErr.message);
+    }
+    await logAction(req, 'VERIFY_DOCUMENT', partnerId, { 
+      docType, 
+      status, 
+      overallStatus: newKycStatus,
+      rejectionReason 
+    });
+
+    return success(res, { overallStatus: newKycStatus }, 'Document verification updated successfully');
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+// ── Referral & Team Analytics ──────────────────────────────────────────────────────────────────
+const getReferralAnalytics = async (req, res, next) => {
+  try {
+    const { getReferralAnalytics: fetchAnalytics } = require('../admin/analytics.service.js');
+    const analytics = await fetchAnalytics();
+    return success(res, analytics, 'Referral and team analytics retrieved successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+const getOperationHeads = async (req, res, next) => {
+  try {
+    const { rows: users } = await query(`
+      SELECT 
+        u.id, u.email, u.mobile, u.role, u.status, u.full_name, u.employee_id, u.department, u.designation, u.is_active
+      FROM users u
+      WHERE u.role IN ('ADMIN', 'EMPLOYEE', 'SUPER_ADMIN')
+      ORDER BY u.full_name ASC
+    `);
+
+    const { rows: banks } = await query(`
+      SELECT b.id, b.name, b.short_code, b.logo_url, b.operation_head_id
+      FROM banks b
+      WHERE b.operation_head_id IS NOT NULL
+    `);
+
+    const bankMap = {};
+    banks.forEach(b => {
+      if (!bankMap[b.operation_head_id]) bankMap[b.operation_head_id] = [];
+      bankMap[b.operation_head_id].push(b);
+    });
+
+    const result = users.map(u => ({
+      ...u,
+      assigned_banks: bankMap[u.id] || []
+    }));
+
+    return success(res, result);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const assignBankOperationHead = async (req, res, next) => {
+  try {
+    const { bankId, operationHeadId } = req.body;
+    if (!bankId) return error(res, 'bankId is required', 400);
+
+    const validHeadId = isUuid(operationHeadId) ? operationHeadId : null;
+
+    await query(`UPDATE banks SET operation_head_id = $1, updated_at = NOW() WHERE id = $2`, [validHeadId, bankId]);
+    await query(`UPDATE products SET operation_head_id = $1, updated_at = NOW() WHERE bank_id = $2`, [validHeadId, bankId]);
+
+    return success(res, {}, 'Bank assigned to Operation Head successfully.');
+  } catch (err) {
+    next(err);
+  }
+};
+
+const getPartnersCommissionOverview = async (req, res, next) => {
+  try {
+    const { rows: partners } = await query(`
+      SELECT 
+        p.id, p.user_id, p.partner_code, p.first_name, p.last_name, p.profile_photo_url, p.rank,
+        u.email, u.mobile, u.status,
+        (SELECT COUNT(*)::int FROM partner_team_relationships WHERE parent_partner_id = p.id AND level = 1) AS team_count
+      FROM partner_profiles p
+      JOIN users u ON u.id = p.user_id
+      ORDER BY p.created_at DESC
+    `);
+
+    const { rows: teamMembers } = await query(`
+      SELECT 
+        cp.id, cp.user_id, cp.parent_partner_id, cp.partner_code, cp.first_name, cp.last_name, 
+        COALESCE(cp.commission_rate, 90.00) AS commission_rate,
+        u.email, u.mobile, u.status, r.level
+      FROM partner_team_relationships r
+      JOIN partner_profiles cp ON cp.id = r.child_partner_id
+      JOIN users u ON u.id = cp.user_id
+      WHERE r.level = 1
+      ORDER BY cp.created_at DESC
+    `);
+
+    const teamMap = {};
+    teamMembers.forEach(m => {
+      if (!teamMap[m.parent_partner_id]) {
+        teamMap[m.parent_partner_id] = [];
+      }
+      teamMap[m.parent_partner_id].push({
+        id: m.id,
+        user_id: m.user_id,
+        partner_code: m.partner_code,
+        full_name: `${m.first_name || ''} ${m.last_name || ''}`.trim(),
+        email: m.email,
+        mobile: m.mobile,
+        status: m.status,
+        level: m.level,
+        commission_rate: parseFloat(m.commission_rate || 90.00),
+        parent_share: parseFloat((100 - parseFloat(m.commission_rate || 90.00)).toFixed(2))
+      });
+    });
+
+    const result = partners.map(p => ({
+      id: p.id,
+      user_id: p.user_id,
+      partner_code: p.partner_code,
+      full_name: `${p.first_name || ''} ${p.last_name || ''}`.trim(),
+      email: p.email,
+      mobile: p.mobile,
+      rank: p.rank || 'Partner',
+      status: p.status,
+      team_count: parseInt(p.team_count) || 0,
+      team_members: teamMap[p.id] || []
+    }));
+
+    return success(res, result);
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = {
+  createCommissionRule,
+  getCommissionRules,
+  getPartnersCommissionOverview,
+  createAdmin,
+  listAdmins,
+  updateAdmin,
+  getAdminBanks,
+  updateAdminBanks,
+  blockUser,
+  unlockUser,
+  getAuditLogs,
+  deleteAdmin,
+  updatePartnerStatus,
+  approveKYC,
+  rejectKYC,
+  requestChangesKYC,
+  verifyDocument,
+  getReferralAnalytics,
+  getOperationHeads,
+  assignBankOperationHead
+};

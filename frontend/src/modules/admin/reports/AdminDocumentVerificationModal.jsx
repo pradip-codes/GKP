@@ -1,0 +1,4714 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import api from '../../../services/api';
+import { useAuthStore } from '../../../app/store/authStore';
+import { getBankAppNumberConfig } from '../../../utils/bankAppNumberUtils';
+import { 
+  X, CheckCircle, XCircle, Eye, Send, ShieldCheck, 
+  Building2, User, Clock, AlertTriangle, FileText, Check, ArrowRight, ArrowLeft, Lock,
+  Share2, Copy, MessageSquare, Smartphone, Save, Sliders, Activity, Sparkles, ExternalLink, Link as LinkIcon,
+  Calendar
+} from 'lucide-react';
+import {
+  HDFC_DECLINE_CODES,
+  CURING_DESIGNATIONS,
+  CURING_DESIGNATION_LABELS,
+  CURING_DESIGNATION_BADGES,
+  getHdfcCuringDesignation,
+  getHdfcDeclineCodeInfo
+} from '../../../constants/hdfcDeclineCodes';
+
+export const PAN_CHECK_REMARK_OPTIONS = [
+  { code: 'PAN OK', label: 'PAN OK - OK (Immediate)' },
+  { code: 'ALLREADY PROCESS', label: 'ALLREADY PROCESS - ALLREADY INPROCESS (One Month)' },
+  { code: 'NO RECORD FOUND', label: 'NO RECORD FOUND - OK (Immediate)' },
+  { code: 'S5', label: 'S5 - S5-SCORE REJECT (90 Days)' },
+  { code: 'RS5', label: 'RS5 - RS5-SCORE REFER (45 Days)' },
+  { code: 'CB4. PCB4', label: 'CB4. PCB4 - Income cut-off not met as per applicant age at generic stage (90 days)' },
+  { code: 'RT1', label: 'RT1 - RT1-CURRENT CARD BLOCKED (Never)' },
+  { code: 'DUXP', label: 'DUXP - DUXP (Duplicate Application) (One Month)' },
+  { code: 'DR4', label: 'DR4 (Never)' },
+  { code: 'PSE', label: 'PSE - Pre-Screening Error Mismatch KYC Data (Immediate)' },
+  { code: 'DR1', label: 'DR1 (90 days)' },
+  { code: 'P11', label: 'P11 - P11-BLUE COLLARED WORKER (Never)' },
+  { code: 'P15', label: 'P15 - P15-SALES REJECT (Immediate)' },
+  { code: 'NRR', label: 'NRR - NRR-NRR REJECT (90 days and change the address)' },
+  { code: 'FV15', label: 'FV15 - Customer Not interested (Immediate)' },
+  { code: 'FV16', label: 'FV16 - CMR NOT CONTACTABLE OR NO RESPONSE (Immediate)' },
+  { code: 'FV17', label: 'FV17 - FV17 CMR NOT CONTACTABLE OR NO RESPONSE (Immediate)' },
+  { code: 'FD1', label: 'FD1 - FD1-E-PHOTO NOT PROPERLY CAPTURED (Immediate)' },
+  { code: 'FD2', label: 'FD2 - FD2-FCU PHOTO DOC NOT READABLE (Immediate)' },
+  { code: 'F55', label: 'F55 - F55-DATABASE DEFAULTER (6 Month)' },
+  { code: 'F57', label: 'F57 - PAN Mismatch (Immediate)' },
+  { code: 'F77', label: 'F77 - F77 FRAUD SUSPECTED (Immediate)' },
+  { code: 'FV5', label: 'FV5 - Multiple calls customer not interested (45 days)' },
+  { code: 'FV6', label: 'FV6 - Incorrect Land line / Mobile Number (Immediate)' },
+  { code: 'V1', label: 'V1 - MISMATCH IN COMPANY NAME, DESIGNATION OR OFFICE ADD' },
+  { code: 'V2', label: 'V2 - MISMATCH IN RESI ADD' },
+  { code: 'V3', label: 'V3 - RESIDENCE ADD UNTRACEABLE' },
+  { code: 'V4', label: 'V4 - OFFICE ADD UNTRACEABLE' }
+];
+
+export const isLocOrEocApplication = (app) => {
+  if (!app) return false;
+  const getClean = (val) => String(val || '').trim().toLowerCase();
+  const rawCat = getClean(app.category || app.product_category || app.product?.category || app.metadata?.category);
+  const rawSubCat = getClean(app.sub_category || app.product?.sub_category || app.product_type || app.metadata?.sub_category || app.metadata?.product_type);
+
+  const isLocSubCat = rawSubCat === 'loc' || rawSubCat === 'loan_on_credit_card' || rawSubCat === 'loan on credit card' || rawSubCat === 'loan_on_card' || rawSubCat === 'loan on card';
+  const isEocSubCat = rawSubCat === 'eoc' || rawSubCat === 'smart_emi' || rawSubCat === 'smart emi' || rawSubCat === 'smartemi' || rawSubCat === 'emi_on_credit_card' || rawSubCat === 'emi on credit card' || rawSubCat === 'emi on card';
+
+  // Strictly protect Credit Card: if category is explicitly credit card and sub_category is not LOC/EOC, return false
+  const isExplicitCC = rawCat === 'credit_card' || rawCat === 'credit_cards' || rawCat === 'cc';
+  if (isExplicitCC) {
+    if (isLocSubCat || isEocSubCat || rawSubCat === 'loc_eoc' || rawSubCat === 'loc/eoc') {
+      return true;
+    }
+    return false;
+  }
+
+  // Strictly protect other non-LOC/EOC loan categories (Personal Loan, Business Loan, Home Loan)
+  const isGenericLoan = rawCat === 'loan' || rawCat === 'loans' || rawCat === 'personal_loan' || rawCat === 'business_loan' || rawCat === 'home_loan' || rawCat === 'insurance';
+  if (isGenericLoan) {
+    if (isLocSubCat || isEocSubCat || rawSubCat === 'loc_eoc' || rawSubCat === 'loc/eoc') {
+      return true;
+    }
+    return false;
+  }
+
+  // Check category
+  if (
+    rawCat === 'loc_eoc' ||
+    rawCat === 'loc/eoc' ||
+    rawCat === 'loc' ||
+    rawCat === 'eoc' ||
+    rawCat === 'loan_on_credit_card' ||
+    rawCat === 'loan on credit card' ||
+    rawCat === 'loan_on_card' ||
+    rawCat === 'loan on card' ||
+    rawCat === 'smart_emi' ||
+    rawCat === 'smart emi' ||
+    rawCat === 'smartemi' ||
+    rawCat === 'emi_on_credit_card' ||
+    rawCat === 'emi on credit card' ||
+    rawCat === 'emi on card'
+  ) {
+    return true;
+  }
+
+  // Check sub_category
+  if (isLocSubCat || isEocSubCat || rawSubCat === 'loc_eoc' || rawSubCat === 'loc/eoc') {
+    return true;
+  }
+
+  return false;
+};
+
+export const isEocApplication = (app) => {
+  if (!app) return false;
+  if (!isLocOrEocApplication(app)) return false;
+  const getClean = (val) => String(val || '').trim().toLowerCase();
+  const rawCat = getClean(app.category || app.product_category || app.product?.category || app.metadata?.category);
+  const rawSubCat = getClean(app.sub_category || app.product?.sub_category || app.product_type || app.metadata?.sub_category || app.metadata?.product_type);
+  const name = getClean(app.product_name || app.product?.name || app.card_name);
+
+  if (rawSubCat === 'eoc' || rawSubCat === 'smart_emi' || rawSubCat === 'smart emi' || rawSubCat === 'smartemi' || rawSubCat === 'emi_on_credit_card' || rawSubCat === 'emi on credit card' || rawSubCat === 'emi on card') {
+    return true;
+  }
+  if (rawCat === 'eoc' || rawCat === 'smart_emi' || rawCat === 'smart emi' || rawCat === 'smartemi' || rawCat === 'emi_on_credit_card' || rawCat === 'emi on credit card' || rawCat === 'emi on card') {
+    return true;
+  }
+  if (name.includes('smartemi') || name.includes('smart emi') || name.includes('emi on credit card')) {
+    return true;
+  }
+  return false;
+};
+
+export const isLocApplication = (app) => {
+  if (!app) return false;
+  if (!isLocOrEocApplication(app)) return false;
+  return !isEocApplication(app);
+};
+
+export const SBI_CREDIT_CARD_DIGITAL_JOURNEY_URL = 'https://www.sbicard.com/corecards/?CHN=OMLG&GEMID1=SEP1&GEMID2=YOH01';
+export const HDFC_FD_WES_CC_URL = 'https://pixel.hdfc.bank.in/pixel-onboard/landing/?flow=FDLien&sourcing.assist.channelCode=DSA&sourcing.assist.branchCode=XYOH&sourcing.assist.employeeCode=S54558&sourcing.assist.dsaCode=XYOH&sourcing.assist.lgCode=GHAR01&sourcing.assist.lc1Code=GHAR01&sourcing.assist.lc2Code=GHAR01&sourcing.assist.smCode=S54558';
+
+export const isCreditCardApplication = (app) => {
+  if (!app) return false;
+  if (isLocOrEocApplication(app)) return false;
+  const getClean = (val) => String(val || '').trim().toLowerCase();
+  const rawCat = getClean(app.category || app.product_category || app.product?.category || app.metadata?.category);
+
+  // Non-credit card categories
+  const nonCcList = [
+    'personal_loan', 'business_loan', 'home_loan', 'education_loan', 'gold_loan',
+    'loan', 'loans', 'insurance', 'utility', 'saving_account', 'savings_account', 'demat',
+    'loc', 'eoc', 'loc_eoc', 'loan_on_credit_card', 'smart_emi'
+  ];
+  if (nonCcList.includes(rawCat)) return false;
+
+  if (['credit_card', 'credit_cards', 'credit card', 'cc'].includes(rawCat)) return true;
+
+  const combined = `${rawCat} ${getClean(app.sub_category)} ${getClean(app.product_type)} ${getClean(app.lead_type)} ${getClean(app.product_name)} ${getClean(app.product?.name)} ${getClean(app.card_name)}`.trim();
+  if (nonCcList.some(k => combined.includes(k))) return false;
+
+  return true;
+};
+
+export const resolveFinalBankStage = (val) => {
+  if (!val) return 'DECLINE';
+  const s = String(val).trim().toUpperCase();
+  if (s === 'DECLINE' || s === 'DECLINED' || s === 'REJECT') return 'DECLINE';
+  if (s === 'DISBURSEMENT' || s === 'DISBURSED') return 'DISBURSEMENT';
+  if (s === 'DISBURSEMENT PENDING' || s === 'DISBURSEMENT_PENDING') return 'DISBURSEMENT PENDING';
+  if (s === 'IN PROCESS' || s === 'IN_PROCESS' || s === 'IN-PROCESS') return 'IN PROCESS';
+  const VALID = ['DECLINE', 'DISBURSEMENT', 'DISBURSEMENT PENDING', 'IN PROCESS'];
+  const match = VALID.find((opt) => opt === s);
+  if (match) return match;
+  return 'DECLINE';
+};
+
+export const resolveDisbursementCompleted = (val) => {
+  if (!val) return 'None';
+  const s = String(val).trim();
+  const lower = s.toLowerCase();
+  if (lower === 'yes') return 'Yes';
+  if (lower === 'no') return 'No';
+  if (lower === 'none') return 'None';
+  return 'None';
+};
+
+export const formatDateToDdMmYyyy = (raw) => {
+  if (!raw) return '';
+  if (raw instanceof Date) {
+    if (isNaN(raw.getTime())) return '';
+    const d = String(raw.getDate()).padStart(2, '0');
+    const m = String(raw.getMonth() + 1).padStart(2, '0');
+    const y = raw.getFullYear();
+    return `${d}/${m}/${y}`;
+  }
+  const str = String(raw).trim();
+  if (!str) return '';
+  const datePart = str.split('T')[0];
+  if (datePart.includes('-')) {
+    const parts = datePart.split('-');
+    if (parts.length === 3 && parts[0].length === 4) {
+      return `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+    }
+  }
+  if (str.includes('/')) {
+    const parts = str.split('/');
+    if (parts.length === 3) {
+      if (parts[2].length === 4) {
+        return `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[2]}`;
+      } else if (parts[0].length === 4) {
+        return `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+      }
+    }
+  }
+  return str;
+};
+
+export const formatDateToYyyyMmDd = (raw) => {
+  if (!raw) return '';
+  if (raw instanceof Date) {
+    if (isNaN(raw.getTime())) return '';
+    const d = String(raw.getDate()).padStart(2, '0');
+    const m = String(raw.getMonth() + 1).padStart(2, '0');
+    const y = raw.getFullYear();
+    return `${y}-${m}-${d}`;
+  }
+  const str = String(raw).trim();
+  if (!str) return '';
+  const datePart = str.split('T')[0];
+  if (datePart.includes('-')) {
+    const parts = datePart.split('-');
+    if (parts.length === 3 && parts[0].length === 4) {
+      return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+    }
+  }
+  if (str.includes('/') || str.includes('-')) {
+    const parts = str.split(/[-/]/);
+    if (parts.length === 3) {
+      if (parts[2].length === 4) {
+        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      } else if (parts[0].length === 4) {
+        return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+      }
+    }
+  }
+  const digits = str.replace(/\D/g, '');
+  if (digits.length === 8) {
+    return `${digits.slice(4, 8)}-${digits.slice(2, 4)}-${digits.slice(0, 2)}`;
+  }
+  return str;
+};
+
+export const formatDateInput = (val) => {
+  if (!val) return '';
+  const cleaned = val.replace(/\D/g, '').slice(0, 8);
+  if (cleaned.length <= 2) return cleaned;
+  if (cleaned.length <= 4) return `${cleaned.slice(0, 2)}/${cleaned.slice(2)}`;
+  return `${cleaned.slice(0, 2)}/${cleaned.slice(2, 4)}/${cleaned.slice(4, 8)}`;
+};
+
+export const resolveInstaJumbo = (val) => {
+  if (!val) return 'None';
+  const s = String(val).trim();
+  const lower = s.toLowerCase();
+  if (lower === 'yes') return 'Yes';
+  if (lower === 'no') return 'No';
+  if (lower === 'none') return 'None';
+  return s;
+};
+
+export const resolveCustomerLoanType = (typeVal, offerVal) => {
+  const v = String(typeVal || offerVal || '').trim();
+  if (!v) return 'None';
+  const l = v.toLowerCase();
+  if (l === 'none') return 'None';
+  if (l === 'personal loan' || l === 'personal_loan') return 'Personal Loan';
+  if (l === 'loan on card' || l === 'loan_on_card' || l === 'loan on credit card' || l === 'loan_on_credit_card') return 'Loan on Card';
+  if (l === 'smart emi' || l === 'smart_emi') return 'Smart EMI';
+  if (l === 'insta') return 'Insta';
+  if (l === 'jumbo') return 'Jumbo';
+  const VALID = ['None', 'Personal Loan', 'Loan on Card', 'Smart EMI', 'Insta', 'Jumbo'];
+  const match = VALID.find((opt) => opt.toLowerCase() === l);
+  if (match) return match;
+  return v;
+};
+
+export const resolveTenure = (val) => {
+  if (!val) return 'None';
+  const s = String(val).trim();
+  const l = s.toLowerCase();
+  if (l === 'none') return 'None';
+  if (l === '6 months' || l === '06 months') return '6 Months';
+  if (l === '1 year' || l === '01 year' || l === '1 years' || l === '01 years') return '1 Year';
+  if (l === '2 years' || l === '02 years' || l === '2 year' || l === '02 year') return '2 Years';
+  if (l === '3 years' || l === '03 years' || l === '3 year' || l === '03 year') return '3 Years';
+  if (l === '4 years' || l === '04 years' || l === '4 year' || l === '04 year') return '4 Years';
+  if (l === '5 years' || l === '05 years' || l === '5 year' || l === '05 year') return '5 Years';
+  return s;
+};
+
+export const resolveDisbursementAmount = (app) => {
+  const val = app?.disbursement_amount ?? app?.disbursed_amount ?? app?.physical_details?.disbursement_amount ?? app?.physical_details?.disbursed_amount ?? app?.disbursed_smart_emi ?? app?.physical_details?.disbursed_smart_emi;
+  if (val === null || val === undefined || val === '') return '';
+  return String(val);
+};
+
+export const resolveLosNo = (app) => {
+  return (
+    app?.los_no ||
+    app?.physical_details?.los_no ||
+    app?.bank_ref_number ||
+    app?.physical_details?.bank_ref_number ||
+    app?.bank_application_number ||
+    app?.physical_details?.bank_application_number ||
+    ''
+  ).trim();
+};
+
+const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawApp, onClose, onRefresh, initialTab = 'qd', showAllTabs = false }) => {
+  const application = rawApplication || rawApp || {};
+
+  // User Role & Permissions (Declared at top to avoid TDZ in hooks)
+  const user = useAuthStore((state) => state.user);
+  const role = (user?.role || '').toUpperCase();
+  const userDesignation = (user?.designation || '').toUpperCase();
+  const isFinalStatusOperator = ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userDesignation) || ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(role);
+  const isPanChecker = ['PAN CHECKER', 'PAN_CHECKER'].includes(userDesignation) || ['PAN CHECKER', 'PAN_CHECKER'].includes(role);
+  const isRemarkOperator = ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userDesignation) || ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(role);
+  const isQdOperator = ['QD OPERATOR', 'QD_OPERATOR'].includes(userDesignation) || ['QD OPERATOR', 'QD_OPERATOR'].includes(role);
+  const isQuerableOperator = ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userDesignation) || ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(role);
+  const isPhysicalCurable = ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userDesignation) || ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(role);
+  const isDigitalCurable = ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(role);
+  const isEmailCurable = ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(role);
+  const isCurableOperator = isPhysicalCurable || isDigitalCurable || isEmailCurable;
+  const isAdministrativeOperator = ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(role);
+  const isSalesExecUser = (['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE'].includes(role)) && !isAdministrativeOperator;
+  const isOpsOperator = ['ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'OPERATOR', 'PAN_CHECKER', 'PAN CHECKER', 'QD_OPERATOR', 'QD OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE', 'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR'].includes(role) || ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'PAN CHECKER', 'PAN_CHECKER', 'QD OPERATOR', 'QD_OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR', 'PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'DIGITAL CURABLE', 'DIGITAL_CURABLE', 'EMAIL CURABLE', 'EMAIL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation);
+  const isSuperAdminRole = ['SUPER_ADMIN', 'SUPER ADMIN'].includes(role) || ['SUPER_ADMIN', 'SUPER ADMIN'].includes(userDesignation);
+  const isOpsHead = ['ADMIN', 'SUPER_ADMIN', 'OPERATIONS_HEAD', 'OPERATIONAL_HEAD', 'OPERATIONS HEAD', 'OPERATIONAL HEAD'].includes(role) && !isOpsOperator;
+  const isOpsOrAdmin = isOpsHead || isOpsOperator || isSuperAdminRole;
+  const isPartner = ['PARTNER', 'TEAM_MEMBER'].includes(role) && !isOpsOrAdmin;
+  const isSuperAdminOrAdmin = ['SUPER_ADMIN', 'ADMIN', 'OPERATIONS_HEAD', 'OPERATIONAL_HEAD', 'OPERATIONS HEAD', 'OPERATIONAL HEAD'].includes(role) && !isSalesExecUser;
+  const canEditBackendRemark = isSuperAdminOrAdmin || isSalesExecUser || isOpsOrAdmin;
+
+  // Normalize initialTab ('qd' | 'remark' | 'final' | 'timeline' | legacy aliases)
+  const getTabKey = (tab) => {
+    if (tab === 'details' || tab === 'qd') return 'qd';
+    if (tab === 'remark1' || tab === 'remark2' || tab === 'remark') return 'remark';
+    if (tab === 'bank' || tab === 'final') return 'final';
+    if (tab === 'timeline') return 'timeline';
+    return 'qd';
+  };
+
+  const processTypeStr = String(application?.process_type || application?.process_by || '').toLowerCase();
+  const isLinkedShare = processTypeStr.includes('linked_share') || processTypeStr.includes('link');
+  const isDirectBank = processTypeStr.includes('direct_bank') || processTypeStr.includes('direct');
+  const isDigitalProcess = isLinkedShare || isDirectBank;
+  const isPhysical = processTypeStr.includes('physical');
+
+  const initialTabKey = initialTab ? getTabKey(initialTab) : (isDigitalProcess ? 'remark' : 'qd');
+  const [activeTab, setActiveTab] = useState(initialTabKey);
+  const [timeline, setTimeline] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Fetch system digital journey links from settings (managed by Super Admin)
+  useEffect(() => {
+    const fetchSystemDigitalLink = async () => {
+      try {
+        const res = await api.get('/settings');
+        if (res.data?.success && res.data?.data) {
+          const s = res.data.data;
+          if (s.digital_journey_link) setSystemDigitalJourneyLink(s.digital_journey_link);
+          if (s.sbi_cc_digital_journey_link) setSbiDynamicDigitalJourneyLink(s.sbi_cc_digital_journey_link);
+          if (s.hdfc_fd_wes_cc_link) setHdfcDynamicFdWesCcLink(s.hdfc_fd_wes_cc_link);
+        }
+      } catch (err) {
+        console.error('Failed to fetch system digital journey link:', err);
+      }
+    };
+    fetchSystemDigitalLink();
+  }, []);
+
+
+  useEffect(() => {
+    if (isQuerableOperator || isCurableOperator) {
+      setActiveTab('remark');
+      return;
+    }
+    if (initialTab) {
+      const targetKey = getTabKey(initialTab);
+      setActiveTab(targetKey);
+    }
+  }, [application?.id, initialTab, isSalesExecUser, isQuerableOperator, isCurableOperator]);
+
+  const isPunchLead = processTypeStr.includes('punch') || processTypeStr.includes('lead_punching') || processTypeStr.includes('punching');
+  const isDigital = isLinkedShare || isDirectBank;
+
+  const [currentStatus, setCurrentStatus] = useState(application?.status || 'details_submitted');
+
+  const isLockedStatus = ['approved', 'super_admin_approved', 'sanctioned', 'commission_processing', 'commission_released', 'commission_received', 'disbursed', 'rejected', 'cancelled'].includes(String(currentStatus || application?.status || '').toLowerCase()) && !isSuperAdminOrAdmin;
+
+  // Role & Status Access Rules:
+  const canEditQd = !isLockedStatus;
+  const canEditRemark = !isLockedStatus || isQuerableOperator || isCurableOperator;
+  const canEditFinal = !isSalesExecUser && !isQdOperator && (isSuperAdminOrAdmin || isFinalStatusOperator || isCurableOperator || (!isPartner && !isLockedStatus));
+
+  const sanitizeVal = (val) => {
+    if (!val || val === 'null' || val === 'undefined') return '';
+    return val;
+  };
+
+  const formatDobInput = (val) => {
+    if (!val) return '';
+    const cleaned = val.replace(/\D/g, '').slice(0, 8);
+    if (cleaned.length <= 2) return cleaned;
+    if (cleaned.length <= 4) return `${cleaned.slice(0, 2)}-${cleaned.slice(2)}`;
+    return `${cleaned.slice(0, 2)}-${cleaned.slice(2, 4)}-${cleaned.slice(4, 8)}`;
+  };
+
+  // 1. QD Customer Details State
+  const [customerMobile, setCustomerMobile] = useState(application?.customer_mobile || application?.mobile || application?.phone || '');
+  const [customerName, setCustomerName] = useState(application?.customer_name || application?.full_name || application?.name || '');
+  const [dob, setDob] = useState(application?.dob || application?.date_of_birth || '');
+  const [customerEmail, setCustomerEmail] = useState(application?.customer_email || application?.email || '');
+  const [panNumber, setPanNumber] = useState(application?.pan_number || application?.pan || '');
+  const [companyName, setCompanyName] = useState(application?.company_name || application?.employer_name || '');
+  const [designation, setDesignation] = useState(application?.designation || application?.occupation || application?.physical_details?.designation || '');
+  const [panCheck, setPanCheck] = useState(application?.pan_check || 'no');
+  const [requeryDate, setRequeryDate] = useState(
+    application?.requery_date || application?.re_query_date ? String(application?.requery_date || application?.re_query_date).split('T')[0] : ''
+  );
+  const [address1, setAddress1] = useState(application?.address1 || application?.flat_no || application?.address || '');
+  const [address2, setAddress2] = useState(application?.address2 || application?.sub_area || '');
+  const [landmark, setLandmark] = useState(application?.landmark || '');
+  const [pincode, setPincode] = useState(application?.pincode || '');
+  const [city, setCity] = useState(application?.city || '');
+  const [state, setState] = useState(application?.state || '');
+  const [companyAddress, setCompanyAddress] = useState(application?.company_address || application?.office_address || '');
+  const [motherName, setMotherName] = useState(application?.mother_name || '');
+  const [appNumber, setAppNumber] = useState(application?.app_number || application?.application_no || '');
+  const [vkycUrl, setVkycUrl] = useState(application?.vkyc_url || application?.vkyc_link || '');
+  const [digitalJourneyUrl, setDigitalJourneyUrl] = useState(
+    application?.digital_journey_url || application?.digital_link || application?.redirect_url || application?.product_url || application?.product?.partner_url || application?.product?.public_url || ''
+  );
+  const [systemDigitalJourneyLink, setSystemDigitalJourneyLink] = useState('');
+  const [sbiDynamicDigitalJourneyLink, setSbiDynamicDigitalJourneyLink] = useState('');
+  const [hdfcDynamicFdWesCcLink, setHdfcDynamicFdWesCcLink] = useState('');
+
+  // 2. Remark Form State (Appcode Status, Soft Approval, VKYC Stage, IQA Stage, Dispatch Status, TATA HDFC Stages)
+  const bankId = application?.bank_id || application?.product?.bank_id || '';
+  const combinedBankText = `${application?.bank_name || application?.bank?.name || application?.bank_code || ''} ${application?.product_name || application?.product?.name || ''}`.toUpperCase();
+  const isSbi = bankId === 'e7c2c604-139d-4fcf-a87c-695633535a02' || combinedBankText.includes('SBI') || combinedBankText.includes('STATE BANK');
+  const isTataCobrandHdfc = bankId === '1eacfa67-1187-48c7-adde-8a6edcfe9969' || combinedBankText.includes('TATA CO-BRAND HDFC') || combinedBankText.includes('TATA CO BRAND HDFC') || (combinedBankText.includes('TATA') && combinedBankText.includes('HDFC'));
+  const isHdfcBank = (bankId === 'f0b5742d-f04d-4a91-b162-6009ddf6e345' || (combinedBankText.includes('HDFC') && !combinedBankText.includes('TATA'))) && !isTataCobrandHdfc;
+  const isCreditCard = isCreditCardApplication(application);
+  const isSbiCreditCard = isSbi && isCreditCard;
+  const isHdfcCreditCard = isHdfcBank && isCreditCard;
+  const isLocOrEoc = isLocOrEocApplication(application);
+  const isEoc = isEocApplication(application);
+  const isLoc = isLocApplication(application);
+  const isHdfcCcApp = (isHdfcBank || isTataCobrandHdfc) && isCreditCard && !isLocOrEoc;
+
+  const resolveBankRefNo = (rawRef, sysNo) => {
+    const s = sanitizeVal(rawRef);
+    if (!s || s === sysNo || s.toUpperCase() === 'NA' || s.toUpperCase() === 'N/A') return '';
+    return s;
+  };
+  const [bankRefNumber, setBankRefNumber] = useState(resolveBankRefNo(
+    application?.bank_application_number || application?.bank_ref_number || application?.physical_details?.bank_ref_number || application?.physical_details?.bank_application_number,
+    application?.app_number
+  ));
+
+  const bankAppConfig = getBankAppNumberConfig(
+    application?.bank_name || application?.bank?.name || application?.bank_code || '',
+    application?.product_name || application?.product?.name || '',
+    bankId
+  );
+  const hasBankAppNumber = Boolean((bankRefNumber || application?.bank_application_number || application?.bank_ref_number || '').trim());
+
+  const [ipaStage, setIpaStage] = useState(sanitizeVal(application?.ipa_stage) || sanitizeVal(application?.physical_details?.ipa_stage) || 'None');
+  const [kycStage, setKycStage] = useState(sanitizeVal(application?.kyc_stage) || sanitizeVal(application?.physical_details?.kyc_stage) || 'None');
+  const [incomeDetails, setIncomeDetails] = useState(sanitizeVal(application?.income_details) || sanitizeVal(application?.physical_details?.income_details) || 'None');
+  const [mailStatus, setMailStatus] = useState(sanitizeVal(application?.mail_status) || sanitizeVal(application?.physical_details?.mail_status) || 'None');
+  const [cardApprovalStage, setCardApprovalStage] = useState(sanitizeVal(application?.card_approval_stage) || sanitizeVal(application?.physical_details?.card_approval_stage) || 'None');
+  const [digitalCardIssued, setDigitalCardIssued] = useState(sanitizeVal(application?.digital_card_issued) || sanitizeVal(application?.physical_details?.digital_card_issued) || 'None');
+  const [cardActivationStage, setCardActivationStage] = useState(sanitizeVal(application?.card_activation_stage) || sanitizeVal(application?.physical_details?.card_activation_stage) || 'None');
+  const initialPrimaryDecline = sanitizeVal(application?.primary_decline_code) || sanitizeVal(application?.physical_details?.primary_decline_code) || sanitizeVal(application?.decline_code) || sanitizeVal(application?.physical_details?.decline_code) || (isHdfcCcApp ? 'None' : '');
+  const initialSecondaryDecline = sanitizeVal(application?.secondary_decline_code) || sanitizeVal(application?.physical_details?.secondary_decline_code) || 'None';
+  const [primaryDeclineCode, setPrimaryDeclineCode] = useState(initialPrimaryDecline);
+  const [secondaryDeclineCode, setSecondaryDeclineCode] = useState(initialSecondaryDecline);
+  const [declineCode, setDeclineCode] = useState(initialPrimaryDecline);
+  const [declineRemark, setDeclineRemark] = useState(sanitizeVal(application?.decline_remark) || sanitizeVal(application?.physical_details?.decline_remark) || '');
+  const [secondaryDeclineRemark, setSecondaryDeclineRemark] = useState(sanitizeVal(application?.secondary_decline_description) || sanitizeVal(application?.physical_details?.secondary_decline_description) || '');
+  const [queryableRemark, setQueryableRemark] = useState(sanitizeVal(application?.queryable_remark) || sanitizeVal(application?.physical_details?.queryable_remark) || 'None');
+  const [queryableSalesRemark, setQueryableSalesRemark] = useState(sanitizeVal(application?.queryable_sales_remark) || sanitizeVal(application?.physical_details?.queryable_sales_remark) || '');
+  const [digitalRemark, setDigitalRemark] = useState(sanitizeVal(application?.digital_remark) || sanitizeVal(application?.physical_details?.digital_remark) || 'None');
+
+  const [appcodeStatus, setAppcodeStatus] = useState(sanitizeVal(application?.appcode_status) || sanitizeVal(application?.physical_details?.appcode_status));
+  const [softApprovalStatus, setSoftApprovalStatus] = useState(sanitizeVal(application?.soft_approval_status) || sanitizeVal(application?.physical_details?.soft_approval_status));
+  const [vkycStage, setVkycStage] = useState(sanitizeVal(application?.vkyc_stage) || sanitizeVal(application?.vkyc_status) || sanitizeVal(application?.physical_details?.vkyc_stage));
+  const [iqaStage, setIqaStage] = useState(sanitizeVal(application?.iqa_stage) || sanitizeVal(application?.physical_details?.iqa_stage));
+  const [dispatchStatus, setDispatchStatus] = useState(sanitizeVal(application?.dispatch_status) || sanitizeVal(application?.physical_details?.dispatch_status));
+  const [inProcessStage, setInProcessStage] = useState(sanitizeVal(application?.in_process_stage) || sanitizeVal(application?.physical_details?.in_process_stage) || 'None');
+  const [bankCurrentLeadStatus, setBankCurrentLeadStatus] = useState(sanitizeVal(application?.bank_current_lead_status) || sanitizeVal(application?.physical_details?.bank_current_lead_status) || sanitizeVal(application?.bank_lead_status) || 'None');
+
+  // 3. Final Status & Bank Remarks State
+  const initialRawUserRemark = sanitizeVal(application?.user_remark) || sanitizeVal(application?.notes) || sanitizeVal(application?.physical_details?.user_remark) || sanitizeVal(application?.physical_details?.notes) || '';
+  const initialRawBankRemark = sanitizeVal(application?.bank_remark) || sanitizeVal(application?.physical_details?.bank_remark) || '';
+  const initialSyncedBankRemark = (initialRawUserRemark && initialRawUserRemark.trim() !== '' && initialRawUserRemark.trim().toUpperCase() !== 'NA' && initialRawUserRemark.trim().toUpperCase() !== 'N/A')
+    ? initialRawUserRemark.trim()
+    : ((initialRawBankRemark && initialRawBankRemark.trim() !== '' && initialRawBankRemark.trim().toUpperCase() !== 'NA' && initialRawBankRemark.trim().toUpperCase() !== 'N/A') ? initialRawBankRemark.trim() : '');
+
+  const [bankRemark, setBankRemark] = useState(initialSyncedBankRemark);
+  const [userRemark, setUserRemark] = useState(initialRawUserRemark);
+
+  const handleUserRemarkChange = (val) => {
+    setUserRemark(val);
+    const cleanVal = val !== null && val !== undefined ? String(val).trim() : '';
+    setBankRemark(cleanVal !== '' && cleanVal.toUpperCase() !== 'NA' && cleanVal.toUpperCase() !== 'N/A' ? val : '');
+  };
+
+  const handleBankRemarkChange = (val) => {
+    setBankRemark(val);
+    const cleanVal = val !== null && val !== undefined ? String(val).trim() : '';
+    setUserRemark(cleanVal === 'NA' || cleanVal === 'N/A' ? '' : val);
+  };
+  const [backendRemark, setBackendRemark] = useState(sanitizeVal(application?.backend_remark) || sanitizeVal(application?.physical_details?.backend_remark) || '');
+  const [finalStatus, setFinalStatus] = useState(sanitizeVal(application?.final_status) || sanitizeVal(application?.physical_details?.final_status) || sanitizeVal(application?.status) || 'None');
+  const [appFileGenerated, setAppFileGenerated] = useState(sanitizeVal(application?.app_file_generated) || sanitizeVal(application?.appfile_generated) || sanitizeVal(application?.physical_details?.app_file_generated) || 'None');
+  const [declineReason, setDeclineReason] = useState(sanitizeVal(application?.decline_reason) || sanitizeVal(application?.physical_details?.decline_reason));
+  const [eligibleReQd, setEligibleReQd] = useState(sanitizeVal(application?.eligible_reqd) || sanitizeVal(application?.physical_details?.eligible_reqd) || 'No');
+
+  // Final Form 3 Fields for LOC and EOC
+  const [finalBankStage, setFinalBankStage] = useState(resolveFinalBankStage(application?.final_bank_stage || application?.physical_details?.final_bank_stage));
+  const [disbursementCompleted, setDisbursementCompleted] = useState(resolveDisbursementCompleted(application?.disbursement_completed || application?.physical_details?.disbursement_completed));
+  const [disbursementDate, setDisbursementDate] = useState(formatDateToYyyyMmDd(application?.disbursement_date || application?.physical_details?.disbursement_date || application?.disbursal_date || application?.physical_details?.disbursal_date));
+  const [disbursementDateDisplay, setDisbursementDateDisplay] = useState(formatDateToDdMmYyyy(application?.disbursement_date || application?.physical_details?.disbursement_date || application?.disbursal_date || application?.physical_details?.disbursal_date));
+  const categoryStr = `${application?.category || ''} ${application?.sub_category || ''} ${application?.product_category || ''} ${application?.product_type || ''} ${application?.lead_type || ''} ${application?.card_name || ''} ${application?.product_name || ''} ${application?.product?.name || ''}`.toLowerCase();
+  
+  const isSmartEmi = !isLocOrEoc && (categoryStr.includes('smart_emi') || categoryStr.includes('smart emi') || categoryStr.includes('eoc') || categoryStr.includes('emi_on_credit_card') || categoryStr.includes('emi on credit card'));
+  const isLoanOnCreditCard = !isLocOrEoc && (
+    categoryStr.includes('loan_on_credit_card') || 
+    categoryStr.includes('loan on credit card') || 
+    categoryStr.includes('card_loan') || 
+    categoryStr.includes('card loan') ||
+    categoryStr.includes('loan_on_card') ||
+    categoryStr.includes('loan on card') ||
+    categoryStr.includes('loc_eoc') ||
+    categoryStr.includes('loc/eoc') ||
+    /\bloc\b/.test(categoryStr)
+  );
+
+  // Smart EMI States
+  const [bankSmartEmiOffer, setBankSmartEmiOffer] = useState(sanitizeVal(application?.bank_smart_emi_offer) || sanitizeVal(application?.physical_details?.bank_smart_emi_offer) || '');
+  const [bankSmartEmiTenure, setBankSmartEmiTenure] = useState(sanitizeVal(application?.bank_smart_emi_tenure) || sanitizeVal(application?.physical_details?.bank_smart_emi_tenure) || '06 Months');
+  const [disbursedSmartEmi, setDisbursedSmartEmi] = useState(sanitizeVal(application?.disbursed_smart_emi) || sanitizeVal(application?.physical_details?.disbursed_smart_emi) || '');
+  const [disbursedSmartEmiTenure, setDisbursedSmartEmiTenure] = useState(sanitizeVal(application?.disbursed_smart_emi_tenure) || sanitizeVal(application?.physical_details?.disbursed_smart_emi_tenure) || '06 Months');
+  const [smartEmiOfferStatus, setSmartEmiOfferStatus] = useState(sanitizeVal(application?.smart_emi_offer_status) || sanitizeVal(application?.physical_details?.smart_emi_offer_status) || 'Yes');
+  const [finalSmartEmiDisburse, setFinalSmartEmiDisburse] = useState(sanitizeVal(application?.final_smart_emi_disburse) || sanitizeVal(application?.physical_details?.final_smart_emi_disburse) || '');
+  const [finalTenure, setFinalTenure] = useState(sanitizeVal(application?.final_tenure) || sanitizeVal(application?.physical_details?.final_tenure) || '06 Months');
+  const [offerDeclineReason, setOfferDeclineReason] = useState(sanitizeVal(application?.offer_decline_reason) || sanitizeVal(application?.decline_reason) || sanitizeVal(application?.physical_details?.offer_decline_reason) || '');
+  const [eligibleForIncentive, setEligibleForIncentive] = useState(sanitizeVal(application?.eligible_for_incentive) || sanitizeVal(application?.physical_details?.eligible_for_incentive) || 'YES');
+
+  // LOC / EOC Updated 6 Fields States (also used for backward compatibility with legacy loan on card)
+  const [instaJumboOffer, setInstaJumboOffer] = useState(resolveInstaJumbo(application?.insta_jumbo_offer || application?.physical_details?.insta_jumbo_offer));
+  const [customerLoanType, setCustomerLoanType] = useState(resolveCustomerLoanType(application?.customer_loan_type || application?.physical_details?.customer_loan_type, application?.customer_loan_offer || application?.physical_details?.customer_loan_offer));
+  const [customerLoanOffer, setCustomerLoanOffer] = useState(resolveCustomerLoanType(application?.customer_loan_type || application?.physical_details?.customer_loan_type, application?.customer_loan_offer || application?.physical_details?.customer_loan_offer));
+  const [offerTenure, setOfferTenure] = useState(resolveTenure(application?.offer_tenure || application?.physical_details?.offer_tenure));
+  const [disbursementAmount, setDisbursementAmount] = useState(resolveDisbursementAmount(application));
+  const [disbursedAmount, setDisbursedAmount] = useState(resolveDisbursementAmount(application));
+  const [disbursementAmountError, setDisbursementAmountError] = useState('');
+  const [disbursementTenure, setDisbursementTenure] = useState(resolveTenure(application?.disbursement_tenure || application?.physical_details?.disbursement_tenure || application?.disbursed_tenure || application?.physical_details?.disbursed_tenure));
+  const [disbursedTenure, setDisbursedTenure] = useState(resolveTenure(application?.disbursement_tenure || application?.physical_details?.disbursement_tenure || application?.disbursed_tenure || application?.physical_details?.disbursed_tenure));
+  const [losNo, setLosNo] = useState(resolveLosNo(application));
+  const [finalLoanDisbursed, setFinalLoanDisbursed] = useState(sanitizeVal(application?.final_loan_disbursed) || sanitizeVal(application?.physical_details?.final_loan_disbursed) || '');
+  const [finalLoanTenure, setFinalLoanTenure] = useState(sanitizeVal(application?.final_loan_tenure) || sanitizeVal(application?.physical_details?.final_loan_tenure) || '6 Months');
+
+  const [approvedAmount, setApprovedAmount] = useState(sanitizeVal(application?.approved_amount) || sanitizeVal(application?.physical_details?.approved_amount) || sanitizeVal(application?.loan_amount));
+
+  // 4. Real Database Status Snapshot (for Real DB Status vs Selected Status UI display)
+  const [realData, setRealData] = useState({
+    appcodeStatus: sanitizeVal(application?.appcode_status) || sanitizeVal(application?.physical_details?.appcode_status),
+    softApprovalStatus: sanitizeVal(application?.soft_approval_status) || sanitizeVal(application?.physical_details?.soft_approval_status),
+    vkycStage: sanitizeVal(application?.vkyc_stage) || sanitizeVal(application?.vkyc_status) || sanitizeVal(application?.physical_details?.vkyc_stage),
+    iqaStage: sanitizeVal(application?.iqa_stage) || sanitizeVal(application?.physical_details?.iqa_stage),
+    dispatchStatus: sanitizeVal(application?.dispatch_status) || sanitizeVal(application?.physical_details?.dispatch_status),
+    finalStatus: sanitizeVal(application?.final_status) || sanitizeVal(application?.physical_details?.final_status) || sanitizeVal(application?.status) || 'In Process',
+    appFileGenerated: sanitizeVal(application?.app_file_generated) || sanitizeVal(application?.appfile_generated) || sanitizeVal(application?.physical_details?.app_file_generated) || 'None',
+    bankRemark: sanitizeVal(application?.bank_remark) || sanitizeVal(application?.physical_details?.bank_remark),
+    userRemark: sanitizeVal(application?.user_remark) || sanitizeVal(application?.notes)
+  });
+
+  // Share / Send to Customer State
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareUrl, setShareUrl] = useState('');
+  const [copySuccess, setCopySuccess] = useState(false);
+  const [smsSending, setSmsSending] = useState(false);
+
+  const handleGenerateAndShare = async () => {
+    setShareLoading(true);
+    try {
+      let finalUrl = shareUrl;
+      if (!finalUrl) {
+        const isPhysical = String(application?.process_type || application?.process_by || '').toLowerCase().includes('physical');
+        const endpoint = isPhysical ? '/applications/generate-physical-link' : '/applications/generate-share-link';
+        const res = await api.post(endpoint, {
+          application_id: application.id,
+          lead_id: application.lead_id || application.id,
+          product_id: application.product_id || application.productId
+        });
+        if (res.data?.success && res.data.data?.share_url) {
+          finalUrl = res.data.data.share_url;
+          setShareUrl(finalUrl);
+        } else if (application.share_token) {
+          finalUrl = `${window.location.origin}/share/${application.share_token}`;
+          setShareUrl(finalUrl);
+        } else {
+          finalUrl = `${window.location.origin}/share/${application.id}`;
+          setShareUrl(finalUrl);
+        }
+      }
+
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: 'GharKaPaisa Customer Form',
+            text: `Dear ${customerName || 'Customer'}, please click link to submit your Quick Details (QD) for ${application.product_name || 'application'}:`,
+            url: finalUrl
+          });
+        } catch (shareErr) {
+          console.log('Native share closed:', shareErr);
+        }
+      } else {
+        await navigator.clipboard.writeText(finalUrl);
+        alert('Link copied to clipboard!');
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to generate share link');
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const handleSendSmsApi = async () => {
+    if (!customerMobile) return alert('Customer mobile number is missing.');
+    setSmsSending(true);
+    try {
+      const res = await api.post(`/applications/${application.id}/send-link`, {
+        mobile: customerMobile
+      });
+      if (res.data?.success) {
+        alert('SMS containing QD form link dispatched to customer successfully!');
+      } else {
+        alert(res.data?.message || 'Failed to send SMS');
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error sending SMS to customer');
+    } finally {
+      setSmsSending(false);
+    }
+  };
+
+  const [operatorHistory, setOperatorHistory] = useState([]);
+
+  const fetchData = useCallback(async () => {
+    if (!application?.id) return;
+    try {
+      setLoading(true);
+      const [appRes, timelineRes, opHistRes] = await Promise.all([
+        api.get(`/applications/${application.id}`).catch(() => null),
+        api.get(`/applications/${application.id}/timeline`).catch(() => ({ data: { data: [] } })),
+        api.get(`/applications/${application.id}/operator-history`).catch(() => ({ data: { data: [] } }))
+      ]);
+
+      if (opHistRes?.data) {
+        setOperatorHistory(Array.isArray(opHistRes.data.data) ? opHistRes.data.data : Array.isArray(opHistRes.data) ? opHistRes.data : []);
+      }
+
+      if (appRes?.data?.success && appRes.data.data) {
+        const app = appRes.data.data;
+        const cust = app.customer || {};
+        const pd = app.physical_details || {};
+
+        if (pd.aadhaar_linked_mobile || cust.mobile || app.customer_mobile) setCustomerMobile(pd.aadhaar_linked_mobile || cust.mobile || app.customer_mobile || app.mobile || '');
+        if (pd.pan_name || cust.full_name || app.customer_name) setCustomerName(pd.pan_name || cust.full_name || app.customer_name || app.full_name || '');
+        if (pd.dob || cust.dob || app.dob) setDob(pd.dob || cust.dob || app.dob || '');
+        if (pd.personal_email || cust.email || app.customer_email) setCustomerEmail(pd.personal_email || cust.email || app.customer_email || app.email || '');
+        if (pd.pan_number || cust.pan_number || app.pan_number) setPanNumber(pd.pan_number || cust.pan_number || app.pan_number || app.pan || '');
+        if (pd.company_name || app.company_name) setCompanyName(pd.company_name || app.company_name || app.employer_name || '');
+        if (pd.designation || app.designation) setDesignation(pd.designation || app.designation || app.occupation || '');
+        if (pd.address1 || pd.flat_no || app.address1 || app.address) setAddress1(pd.address1 || pd.flat_no || app.address1 || app.address || '');
+        if (pd.address2 || pd.sub_area || app.address2) setAddress2(pd.address2 || pd.sub_area || app.address2 || '');
+        if (pd.landmark || app.landmark) setLandmark(pd.landmark || app.landmark || '');
+        if (pd.pincode || app.pincode || cust.pincode) setPincode(pd.pincode || app.pincode || cust.pincode || '');
+        if (pd.city || app.city || cust.city) setCity(pd.city || app.city || cust.city || '');
+        if (pd.state || app.state || cust.state) setState(pd.state || app.state || cust.state || '');
+        if (pd.company_address || app.company_address) setCompanyAddress(pd.company_address || app.company_address || app.office_address || '');
+        if (pd.mother_name || app.mother_name) setMotherName(pd.mother_name || app.mother_name || '');
+        if (app.app_number) setAppNumber(app.app_number || app.application_no || '');
+        const realRequeryDate = app.requery_date || app.re_query_date || pd.requery_date || pd.re_query_date;
+        if (realRequeryDate) setRequeryDate(String(realRequeryDate).split('T')[0]);
+        setBankRefNumber(resolveBankRefNo(
+          app.bank_application_number || app.bank_ref_number || pd.bank_application_number || pd.bank_ref_number,
+          app.app_number || application?.app_number
+        ));
+        if (app.vkyc_url || pd.vkyc_url) setVkycUrl(app.vkyc_url || pd.vkyc_url || '');
+        const realDigitalUrl = app.digital_journey_url || pd.digital_journey_url || app.digital_link || app.redirect_url || app.product_url || app.product?.partner_url || app.product?.public_url || '';
+        if (realDigitalUrl) setDigitalJourneyUrl(realDigitalUrl);
+
+        if (app.status) setCurrentStatus(app.status);
+        const realAppcode = sanitizeVal(app.appcode_status) || sanitizeVal(pd.appcode_status);
+        const realSoftApproval = sanitizeVal(app.soft_approval_status) || sanitizeVal(pd.soft_approval_status);
+        const realVkyc = sanitizeVal(app.vkyc_stage) || sanitizeVal(app.vkyc_status) || sanitizeVal(pd.vkyc_stage);
+        const realIqa = sanitizeVal(app.iqa_stage) || sanitizeVal(pd.iqa_stage);
+        const realDispatch = sanitizeVal(app.dispatch_status) || sanitizeVal(pd.dispatch_status);
+        const realFinal = sanitizeVal(app.final_status) || sanitizeVal(pd.final_status) || sanitizeVal(app.status) || 'In Process';
+        const realAppFileGenerated = sanitizeVal(app.app_file_generated) || sanitizeVal(app.appfile_generated) || sanitizeVal(pd.app_file_generated) || sanitizeVal(pd.appfile_generated);
+        const rawUserRem = sanitizeVal(app.user_remark) || sanitizeVal(app.notes) || sanitizeVal(pd.user_remark) || sanitizeVal(pd.notes) || sanitizeVal(app.remarks) || '';
+        const realUserRemark = rawUserRem.trim();
+        const rawBankRem = sanitizeVal(app.bank_remark) || sanitizeVal(pd.bank_remark) || '';
+        const realBankRemark = (realUserRemark !== '' && realUserRemark.toUpperCase() !== 'NA' && realUserRemark.toUpperCase() !== 'N/A')
+          ? realUserRemark
+          : ((rawBankRem && rawBankRem.trim() !== '' && rawBankRem.trim().toUpperCase() !== 'NA' && rawBankRem.trim().toUpperCase() !== 'N/A') ? rawBankRem.trim() : '');
+
+        setRealData({
+          appcodeStatus: realAppcode,
+          softApprovalStatus: realSoftApproval,
+          vkycStage: realVkyc,
+          iqaStage: realIqa,
+          dispatchStatus: realDispatch,
+          finalStatus: realFinal,
+          appFileGenerated: realAppFileGenerated,
+          bankRemark: realBankRemark,
+          userRemark: realUserRemark
+        });
+
+        setAppcodeStatus(realAppcode);
+        setSoftApprovalStatus(realSoftApproval);
+        setVkycStage(realVkyc);
+        setIqaStage(realIqa);
+        setDispatchStatus(realDispatch);
+        setBankRemark(realBankRemark);
+        setUserRemark(realUserRemark);
+        setFinalStatus(realFinal);
+        setIpaStage(sanitizeVal(app.ipa_stage) || sanitizeVal(pd.ipa_stage) || 'None');
+        setKycStage(sanitizeVal(app.kyc_stage) || sanitizeVal(pd.kyc_stage) || 'None');
+        setIncomeDetails(sanitizeVal(app.income_details) || sanitizeVal(pd.income_details) || 'None');
+        setMailStatus(sanitizeVal(app.mail_status) || sanitizeVal(pd.mail_status) || 'None');
+        setCardApprovalStage(sanitizeVal(app.card_approval_stage) || sanitizeVal(pd.card_approval_stage) || 'None');
+        setDigitalCardIssued(sanitizeVal(app.digital_card_issued) || sanitizeVal(pd.digital_card_issued) || 'None');
+        setCardActivationStage(sanitizeVal(app.card_activation_stage) || sanitizeVal(pd.card_activation_stage) || 'None');
+        const fetchedPrimaryDecline = sanitizeVal(app.primary_decline_code) || sanitizeVal(pd.primary_decline_code) || sanitizeVal(app.decline_code) || sanitizeVal(pd.decline_code) || (isHdfcCcApp ? 'None' : '');
+        const fetchedSecondaryDecline = sanitizeVal(app.secondary_decline_code) || sanitizeVal(pd.secondary_decline_code) || 'None';
+        setPrimaryDeclineCode(fetchedPrimaryDecline);
+        setSecondaryDeclineCode(fetchedSecondaryDecline);
+        setDeclineCode(fetchedPrimaryDecline);
+        setDeclineRemark(sanitizeVal(app.decline_remark) || sanitizeVal(pd.decline_remark) || sanitizeVal(app.decline_description) || sanitizeVal(pd.decline_description) || '');
+        setSecondaryDeclineRemark(sanitizeVal(app.secondary_decline_description) || sanitizeVal(pd.secondary_decline_description) || '');
+        setQueryableRemark(sanitizeVal(app.queryable_remark) || sanitizeVal(pd.queryable_remark) || 'None');
+        setQueryableSalesRemark(sanitizeVal(app.queryable_sales_remark) || sanitizeVal(pd.queryable_sales_remark) || '');
+        setDigitalRemark(sanitizeVal(app.digital_remark) || sanitizeVal(pd.digital_remark) || 'None');
+        setInProcessStage(sanitizeVal(app.in_process_stage) || sanitizeVal(pd.in_process_stage) || 'None');
+        if (realAppFileGenerated) setAppFileGenerated(realAppFileGenerated);
+        if (app.decline_reason || pd.decline_reason) setDeclineReason(app.decline_reason || pd.decline_reason);
+        if (app.eligible_reqd || pd.eligible_reqd) setEligibleReQd(app.eligible_reqd || pd.eligible_reqd);
+        if (app.approved_amount || pd.approved_amount) setApprovedAmount(app.approved_amount || pd.approved_amount);
+
+        // LOC / EOC specific fields
+        const fetchedInstaJumbo = resolveInstaJumbo(app.insta_jumbo_offer || pd.insta_jumbo_offer);
+        const fetchedCustomerLoanType = resolveCustomerLoanType(app.customer_loan_type || pd.customer_loan_type, app.customer_loan_offer || pd.customer_loan_offer);
+        const fetchedOfferTenure = resolveTenure(app.offer_tenure || pd.offer_tenure);
+        const fetchedDisbAmount = resolveDisbursementAmount(app);
+        const fetchedDisbTenure = resolveTenure(app.disbursement_tenure || pd.disbursement_tenure || app.disbursed_tenure || pd.disbursed_tenure || app.disbursed_smart_emi_tenure || pd.disbursed_smart_emi_tenure);
+        const fetchedLosNo = resolveLosNo(app);
+
+        setInstaJumboOffer(fetchedInstaJumbo);
+        setCustomerLoanType(fetchedCustomerLoanType);
+        setCustomerLoanOffer(fetchedCustomerLoanType);
+        setOfferTenure(fetchedOfferTenure);
+        setDisbursementAmount(fetchedDisbAmount);
+        setDisbursedAmount(fetchedDisbAmount);
+        setDisbursementAmountError('');
+        setDisbursementTenure(fetchedDisbTenure);
+        setDisbursedTenure(fetchedDisbTenure);
+        setLosNo(fetchedLosNo);
+        if (fetchedLosNo) {
+          setBankRefNumber(fetchedLosNo);
+        }
+
+        // LOC / EOC 3 final fields
+        setFinalBankStage(resolveFinalBankStage(app.final_bank_stage || pd.final_bank_stage));
+        setDisbursementCompleted(resolveDisbursementCompleted(app.disbursement_completed || pd.disbursement_completed));
+        const rawDisbDate = app.disbursement_date || pd.disbursement_date || app.disbursal_date || pd.disbursal_date;
+        setDisbursementDate(formatDateToYyyyMmDd(rawDisbDate));
+        setDisbursementDateDisplay(formatDateToDdMmYyyy(rawDisbDate));
+      }
+
+      if (timelineRes?.data?.data) {
+        setTimeline(timelineRes.data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching verification details:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [application?.id]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    if (application) {
+      setInstaJumboOffer(resolveInstaJumbo(application?.insta_jumbo_offer || application?.physical_details?.insta_jumbo_offer));
+      const initLoanType = resolveCustomerLoanType(application?.customer_loan_type || application?.physical_details?.customer_loan_type, application?.customer_loan_offer || application?.physical_details?.customer_loan_offer);
+      setCustomerLoanType(initLoanType);
+      setCustomerLoanOffer(initLoanType);
+      setOfferTenure(resolveTenure(application?.offer_tenure || application?.physical_details?.offer_tenure));
+      const initDisbAmount = resolveDisbursementAmount(application);
+      setDisbursementAmount(initDisbAmount);
+      setDisbursedAmount(initDisbAmount);
+      setDisbursementAmountError('');
+      const initDisbTenure = resolveTenure(application?.disbursement_tenure || application?.physical_details?.disbursement_tenure || application?.disbursed_tenure || application?.physical_details?.disbursed_tenure);
+      setDisbursementTenure(initDisbTenure);
+      setDisbursedTenure(initDisbTenure);
+      const initLos = resolveLosNo(application);
+      setLosNo(initLos);
+      if (initLos) {
+        setBankRefNumber(initLos);
+      }
+
+      setFinalBankStage(resolveFinalBankStage(application?.final_bank_stage || application?.physical_details?.final_bank_stage));
+      setDisbursementCompleted(resolveDisbursementCompleted(application?.disbursement_completed || application?.physical_details?.disbursement_completed));
+      const initRawDisbDate = application?.disbursement_date || application?.physical_details?.disbursement_date || application?.disbursal_date || application?.physical_details?.disbursal_date;
+      setDisbursementDate(formatDateToYyyyMmDd(initRawDisbDate));
+      setDisbursementDateDisplay(formatDateToDdMmYyyy(initRawDisbDate));
+    }
+  }, [application?.id]);
+
+  const handleSaveDetails = async (formType) => {
+    // Validate Disbursement Amount for LOC / EOC applications
+    if (isLocOrEoc && disbursementAmount !== '' && disbursementAmount !== null && disbursementAmount !== undefined) {
+      const num = Number(disbursementAmount);
+      if (isNaN(num) || num < 0) {
+        setDisbursementAmountError('Disbursement amount must be a valid, non-negative number.');
+        alert('Disbursement amount must be a valid, non-negative number.');
+        return;
+      }
+    }
+    setActionLoading(true);
+    try {
+      const rawUserClean = userRemark && String(userRemark).trim() !== '' && String(userRemark).trim().toUpperCase() !== 'NA' && String(userRemark).trim().toUpperCase() !== 'N/A' ? String(userRemark).trim() : '';
+      const rawBankClean = bankRemark && String(bankRemark).trim() !== '' && String(bankRemark).trim().toUpperCase() !== 'NA' && String(bankRemark).trim().toUpperCase() !== 'N/A' ? String(bankRemark).trim() : '';
+      const effectiveRemarkToSave = rawUserClean || rawBankClean || 'NA';
+      const userRemarkToSave = effectiveRemarkToSave !== 'NA' ? effectiveRemarkToSave : '';
+
+      let payload = {
+        user_remark: userRemarkToSave,
+        bank_remark: effectiveRemarkToSave,
+        notes: userRemarkToSave,
+        backend_remark: backendRemark
+      };
+      if (formType === 'qd') {
+        payload = {
+          ...payload,
+          customer_mobile: customerMobile,
+          customer_name: customerName,
+          dob,
+          customer_email: customerEmail,
+          pan_number: panNumber,
+          company_name: companyName,
+          designation,
+          address1,
+          address2,
+          landmark,
+          pincode,
+          city,
+          state,
+          address: [address1, address2, landmark, city, state, pincode].filter(Boolean).join(', '),
+          company_address: companyAddress,
+          mother_name: motherName,
+          app_number: appNumber,
+          bank_application_number: (bankRefNumber || losNo || '').trim() || undefined,
+          bank_ref_number: (bankRefNumber || losNo || '').trim() || undefined,
+          los_no: (bankRefNumber || losNo || '').trim() || undefined,
+          vkyc_url: vkycUrl,
+          status: 'submitted'
+        };
+      } else if (formType === 'remark') {
+        payload = {
+          ...payload,
+          ipa_stage: ipaStage || 'None',
+          kyc_stage: kycStage || vkycStage || 'None',
+          income_details: incomeDetails || 'None',
+          mail_status: mailStatus || 'None',
+          card_approval_stage: cardApprovalStage || 'None',
+          digital_card_issued: digitalCardIssued || 'None',
+          card_activation_stage: cardActivationStage || 'None',
+          decline_code: declineCode || (isHdfcCcApp ? 'None' : undefined),
+          decline_description: getHdfcDeclineCodeInfo(declineCode)?.type || (declineCode === 'None' ? 'None' : (declineRemark || undefined)),
+          curing_designation: getHdfcCuringDesignation(declineCode) || undefined,
+          decline_remark: declineRemark || (declineCode === 'CIBIL decline' ? 'CIBIL decline' : undefined),
+          queryable_remark: queryableRemark || 'None',
+          queryable_sales_remark: queryableSalesRemark || undefined,
+          digital_remark: digitalRemark || 'None',
+          appcode_status: appcodeStatus || 'None',
+          soft_approval_status: softApprovalStatus || 'None',
+          iqa_stage: iqaStage || 'None',
+          bank_ref_number: (bankRefNumber || losNo || '').trim(),
+          bank_application_number: (bankRefNumber || losNo || '').trim(),
+          vkyc_status: kycStage || vkycStage || 'None',
+          vkyc_stage: vkycStage || kycStage || 'None',
+          vkyc_url: vkycUrl,
+          dispatch_status: dispatchStatus || 'None',
+          in_process_stage: inProcessStage || 'None',
+          bank_current_lead_status: bankCurrentLeadStatus || 'None',
+          bank_lead_status: bankCurrentLeadStatus || 'None',
+          user_remark: userRemarkToSave,
+          bank_remark: effectiveRemarkToSave,
+          backend_remark: backendRemark,
+          notes: userRemarkToSave,
+          operational_remarks: userRemarkToSave,
+          // LOC / EOC updated 6 fields
+          insta_jumbo_offer: instaJumboOffer,
+          customer_loan_type: customerLoanType,
+          customer_loan_offer: customerLoanType,
+          offer_tenure: offerTenure,
+          disbursement_amount: disbursementAmount !== '' && disbursementAmount !== null && disbursementAmount !== undefined ? disbursementAmount : null,
+          disbursed_amount: disbursementAmount !== '' && disbursementAmount !== null && disbursementAmount !== undefined ? disbursementAmount : null,
+          disbursed_smart_emi: disbursementAmount !== '' && disbursementAmount !== null && disbursementAmount !== undefined ? disbursementAmount : null,
+          disbursement_tenure: disbursementTenure,
+          disbursed_tenure: disbursementTenure,
+          disbursed_smart_emi_tenure: disbursementTenure,
+          los_no: (bankRefNumber || losNo || '').trim(),
+          final_bank_stage: finalBankStage || undefined,
+          disbursement_completed: disbursementCompleted || undefined,
+          disbursement_date: (formatDateToYyyyMmDd(disbursementDateDisplay) || undefined),
+          disbursal_date: (formatDateToYyyyMmDd(disbursementDateDisplay) || undefined),
+          // Legacy Smart EMI & Loan on Credit Card fields
+          bank_smart_emi_offer: bankSmartEmiOffer,
+          bank_smart_emi_tenure: bankSmartEmiTenure,
+          smart_emi_offer_status: smartEmiOfferStatus,
+          final_smart_emi_disburse: finalSmartEmiDisburse,
+          final_tenure: finalTenure,
+          offer_decline_reason: offerDeclineReason,
+          eligible_for_incentive: eligibleForIncentive,
+          final_loan_disbursed: finalLoanDisbursed,
+          final_loan_tenure: finalLoanTenure
+        };
+        if (isOpsOrAdmin && !['approved', 'rejected', 'sanctioned'].includes(String(currentStatus).toLowerCase())) {
+          payload.status = 'operational_verified';
+        }
+      } else if (formType === 'final') {
+        let targetStatus = currentStatus;
+        
+        // SBI-specific validation and logic
+        if (isSbi) {
+          if (appFileGenerated === 'Yes' || appFileGenerated === 'yes') {
+            targetStatus = 'approved';
+          } else if (appFileGenerated === 'No' || appFileGenerated === 'no') {
+            if (!declineReason?.trim()) {
+              alert('Rejection reason is required when App File Generated is set to No for SBI products.');
+              setActionLoading(false);
+              return;
+            }
+            targetStatus = 'rejected';
+          } else if (finalStatus && finalStatus.toLowerCase().includes('approve')) {
+            targetStatus = 'approved';
+          } else if (finalStatus && (finalStatus.toLowerCase().includes('decline') || finalStatus.toLowerCase().includes('reject'))) {
+            targetStatus = 'rejected';
+          } else if (finalStatus && finalStatus.toLowerCase().includes('process')) {
+            targetStatus = 'in_process';
+          } else if (finalStatus && finalStatus.toLowerCase().includes('error')) {
+            targetStatus = 'technical_error';
+          }
+        } else if (isLocOrEoc) {
+          // LOC and EOC specific status resolution based on Final Bank Stage
+          const stage = String(finalBankStage || '').toUpperCase();
+          if (stage === 'DISBURSEMENT') {
+            targetStatus = 'approved';
+          } else if (stage === 'DECLINE') {
+            targetStatus = 'rejected';
+          } else if (stage === 'IN PROCESS' || stage === 'DISBURSEMENT PENDING') {
+            targetStatus = 'in_process';
+          }
+        } else {
+          // Non-SBI logic (Uses digitalCardIssued or cardApprovalStage for card approval check)
+          if (digitalCardIssued === 'Yes' || digitalCardIssued === 'yes' || String(cardApprovalStage).toLowerCase().includes('approve')) {
+            targetStatus = 'approved';
+          } else if (digitalCardIssued === 'No' || digitalCardIssued === 'no' || String(cardApprovalStage).toLowerCase().includes('decline')) {
+            targetStatus = 'rejected';
+          } else if (finalStatus && (finalStatus.toLowerCase().includes('decline') || finalStatus.toLowerCase().includes('reject'))) {
+            targetStatus = 'rejected';
+          } else if (finalStatus && finalStatus.toLowerCase().includes('approve')) {
+            targetStatus = 'approved';
+          }
+        }
+        
+        // HDFC Bank Credit Card decline code validation
+        if ((isHdfcBank || isTataCobrandHdfc) && isCreditCard && !isLocOrEoc) {
+          const isDeclineSelected = String(finalStatus || '').toLowerCase().includes('decline') || 
+                                    String(finalStatus || '').toLowerCase().includes('reject') || 
+                                    String(targetStatus || '').toLowerCase() === 'rejected';
+          const effPrimary = primaryDeclineCode || declineCode;
+          if (isDeclineSelected && (!effPrimary || !String(effPrimary).trim() || String(effPrimary).trim().toLowerCase() === 'none')) {
+            alert('Please select a Primary Decline Code (or CIBIL decline) when updating status to Decline for HDFC Credit Card.');
+            setActionLoading(false);
+            return;
+          }
+        }
+
+        const effPrimaryCode = primaryDeclineCode || declineCode || (isHdfcCcApp ? 'None' : undefined);
+        const effSecondaryCode = secondaryDeclineCode && secondaryDeclineCode !== 'None' ? secondaryDeclineCode : (isHdfcCcApp ? 'None' : undefined);
+        const primaryCodeInfo = getHdfcDeclineCodeInfo(effPrimaryCode);
+        const secondaryCodeInfo = getHdfcDeclineCodeInfo(effSecondaryCode);
+        const primaryCuringDesig = getHdfcCuringDesignation(effPrimaryCode);
+        const secondaryCuringDesig = getHdfcCuringDesignation(effSecondaryCode);
+
+        payload = {
+          ...payload,
+          ipa_stage: ipaStage,
+          kyc_stage: kycStage,
+          card_approval_stage: cardApprovalStage,
+          digital_card_issued: digitalCardIssued,
+          card_activation_stage: cardActivationStage,
+          decline_code: effPrimaryCode,
+          decline_description: primaryCodeInfo?.type || (effPrimaryCode === 'None' ? 'None' : (declineRemark || declineReason || undefined)),
+          curing_designation: primaryCuringDesig || undefined,
+          primary_decline_code: effPrimaryCode,
+          primary_decline_description: primaryCodeInfo?.type || (effPrimaryCode === 'None' ? 'None' : (declineRemark || declineReason || undefined)),
+          primary_curing_designation: primaryCuringDesig || undefined,
+          secondary_decline_code: effSecondaryCode || undefined,
+          secondary_decline_description: secondaryCodeInfo?.type || (effSecondaryCode === 'None' ? 'None' : (secondaryDeclineRemark || undefined)),
+          secondary_curing_designation: secondaryCuringDesig || undefined,
+          decline_remark: declineRemark || (effPrimaryCode === 'CIBIL decline' ? 'CIBIL decline' : undefined),
+          queryable_remark: queryableRemark,
+          queryable_sales_remark: queryableSalesRemark,
+          digital_remark: digitalRemark,
+          bank_remark: effectiveRemarkToSave,
+          decline_reason: declineReason || offerDeclineReason || declineRemark || effectiveRemarkToSave,
+          user_remark: userRemarkToSave,
+          backend_remark: backendRemark,
+          notes: userRemarkToSave,
+          operational_remarks: userRemarkToSave,
+          final_status: isLocOrEoc 
+            ? (String(finalBankStage || '').toUpperCase() === 'DISBURSEMENT' ? 'Approved' : String(finalBankStage || '').toUpperCase() === 'DECLINE' ? 'Declined' : String(finalBankStage || '').toUpperCase() === 'DISBURSEMENT PENDING' ? 'Disbursement Pending' : String(finalBankStage || '').toUpperCase() === 'IN PROCESS' ? 'In Process' : (finalBankStage || finalStatus)) 
+            : finalStatus,
+          final_bank_stage: finalBankStage,
+          disbursement_completed: disbursementCompleted,
+          disbursement_date: formatDateToYyyyMmDd(disbursementDateDisplay) || null,
+          disbursal_date: formatDateToYyyyMmDd(disbursementDateDisplay) || null,
+          in_process_stage: inProcessStage || 'None',
+          bank_current_lead_status: bankCurrentLeadStatus || 'None',
+          bank_lead_status: bankCurrentLeadStatus || 'None',
+          bank_ref_number: (bankRefNumber || losNo || '').trim(),
+          bank_application_number: (bankRefNumber || losNo || '').trim(),
+          app_file_generated: appFileGenerated,
+          digital_journey_url: digitalJourneyUrl || (isSbiCreditCard ? (sbiDynamicDigitalJourneyLink || SBI_CREDIT_CARD_DIGITAL_JOURNEY_URL) : undefined),
+          status: targetStatus,
+          // LOC / EOC updated 6 fields
+          insta_jumbo_offer: instaJumboOffer,
+          customer_loan_type: customerLoanType,
+          customer_loan_offer: customerLoanType,
+          offer_tenure: offerTenure,
+          disbursement_amount: disbursementAmount !== '' && disbursementAmount !== null && disbursementAmount !== undefined ? disbursementAmount : null,
+          disbursed_amount: disbursementAmount !== '' && disbursementAmount !== null && disbursementAmount !== undefined ? disbursementAmount : null,
+          disbursed_smart_emi: disbursementAmount !== '' && disbursementAmount !== null && disbursementAmount !== undefined ? disbursementAmount : null,
+          disbursement_tenure: disbursementTenure,
+          disbursed_tenure: disbursementTenure,
+          disbursed_smart_emi_tenure: disbursementTenure,
+          los_no: (bankRefNumber || losNo || '').trim(),
+          // Legacy Smart EMI & Loan on Credit Card fields
+          bank_smart_emi_offer: bankSmartEmiOffer,
+          bank_smart_emi_tenure: bankSmartEmiTenure,
+          smart_emi_offer_status: smartEmiOfferStatus,
+          final_smart_emi_disburse: finalSmartEmiDisburse,
+          final_tenure: finalTenure,
+          offer_decline_reason: offerDeclineReason,
+          eligible_for_incentive: eligibleForIncentive,
+          final_loan_disbursed: finalLoanDisbursed,
+          final_loan_tenure: finalLoanTenure
+        };
+      }
+
+      const res = await api.put(`/applications/${application.id}/verification`, payload);
+      if (res?.data?.success) {
+        alert(`Application details saved successfully!`);
+        try {
+          await fetchData();
+        } catch (_) {}
+        if (onRefresh) onRefresh();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update application details');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position: 'fixed',
+      inset: 0,
+      zIndex: 10000,
+      background: 'rgba(15, 23, 42, 0.75)',
+      backdropFilter: 'blur(5px)',
+      display: 'flex',
+      alignItems: isMobile ? 'flex-end' : 'center',
+      justifyContent: 'center',
+      padding: isMobile ? '0' : '16px'
+    }}>
+      <div style={{
+        background: '#ffffff',
+        width: '100%',
+        maxWidth: '920px',
+        maxHeight: isMobile ? '92vh' : '94vh',
+        borderRadius: isMobile ? '20px 20px 0 0' : '20px',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        boxShadow: '0 25px 50px -12px rgba(0,0,0,0.35)'
+      }}>
+        
+        {/* Modal Header */}
+        <div style={{ padding: isMobile ? '12px 16px' : '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', flexWrap: 'wrap', gap: '12px' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <h3 style={{ fontSize: isMobile ? '16px' : '18px', fontWeight: 800, color: '#0f172a', margin: 0 }}>
+                Application #{appNumber || application.app_number || 'APP-REF'}
+              </h3>
+              <span style={{
+                fontSize: '11px',
+                fontWeight: 800,
+                padding: '4px 10px',
+                borderRadius: '12px',
+                background: (currentStatus === 'operational_verified' || currentStatus === 'approved') ? '#dcfce7' : (currentStatus === 'rejected') ? '#fee2e2' : '#ffedd5',
+                color: (currentStatus === 'operational_verified' || currentStatus === 'approved') ? '#15803d' : (currentStatus === 'rejected') ? '#b91c1c' : '#c2410c'
+              }}>
+                {(currentStatus || application?.status || 'details_submitted').replace(/_/g, ' ').toUpperCase()}
+              </span>
+              {(application.curing_designation || declineCode) && (() => {
+                const desig = application.curing_designation || getHdfcCuringDesignation(declineCode);
+                const badge = CURING_DESIGNATION_BADGES[desig];
+                if (!badge) return null;
+                return (
+                  <span style={{
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    padding: '4px 10px',
+                    borderRadius: '12px',
+                    background: badge.bg,
+                    color: badge.text,
+                    border: `1px solid ${badge.border}`,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}>
+                    🛡️ {badge.label} {declineCode ? `(Code ${declineCode})` : ''}
+                  </span>
+                );
+              })()}
+            </div>
+            <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0', wordBreak: 'break-word' }}>
+              Customer: <strong>{customerName || application.customer_name || 'Customer'}</strong> | Mobile: {(isPanChecker || isRemarkOperator) ? ((customerMobile || application.customer_mobile || application.mobile || '').length >= 6 ? `${(customerMobile || application.customer_mobile || application.mobile).slice(0, (customerMobile || application.customer_mobile || application.mobile).length - 6)}******` : '******') : (customerMobile || application.customer_mobile)} | Bank: {application.bank_name || application.bank_code || 'Partner Bank'}
+              {(isFinalStatusOperator || isOpsOrAdmin) && (
+                <> | Bank App No: <strong style={{ color: hasBankAppNumber ? '#0284c7' : '#94a3b8' }}>{bankRefNumber || application?.bank_application_number || application?.bank_ref_number || 'Not Filled'}</strong> | PAN: <strong style={{ color: hasBankAppNumber ? '#16a34a' : '#dc2626' }}>{hasBankAppNumber ? (panNumber || application.pan_number || application.pan || 'N/A') : '🔒 Hidden (Fill Bank App No Required)'}</strong></>
+              )}
+            </p>
+            {(isOpsOrAdmin || isSuperAdminOrAdmin) && (application.sales_operator_code || application.pan_checker_code || application.remark_operator_code) && (
+              <div style={{ display: 'flex', gap: '12px', fontSize: '11px', fontWeight: 700, color: '#475569', marginTop: '6px', background: '#f1f5f9', padding: '3px 10px', borderRadius: '6px' }}>
+                {application.sales_operator_code && <span>Sales Op Code: <strong style={{ color: '#2563eb' }}>{application.sales_operator_code}</strong></span>}
+                {application.pan_checker_code && <span>PAN Checker Code: <strong style={{ color: '#059669' }}>{application.pan_checker_code}</strong></span>}
+                {application.remark_operator_code && <span>Remark Op Code: <strong style={{ color: '#d97706' }}>{application.remark_operator_code}</strong></span>}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              id="header-digital-complete-journey-btn"
+              onClick={() => {
+                const sbiCcLink = isSbiCreditCard ? (sbiDynamicDigitalJourneyLink || SBI_CREDIT_CARD_DIGITAL_JOURNEY_URL) : null;
+                const link = sbiCcLink || digitalJourneyUrl || application?.digital_journey_url || application?.digital_link || application?.redirect_url || application?.product_url || application?.product?.partner_url || application?.product?.public_url || systemDigitalJourneyLink;
+                if (link && link.trim() !== '') {
+                  let targetUrl = link.trim();
+                  if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+                    targetUrl = 'https://' + targetUrl;
+                  }
+                  window.open(targetUrl, '_blank', 'noopener,noreferrer');
+                } else {
+                  alert("No Digital Journey link assigned yet. Super Admin can configure the default link in Link Settings.");
+                }
+              }}
+              style={{
+                background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+                color: '#ffffff',
+                border: 'none',
+                padding: '7px 14px',
+                borderRadius: '8px',
+                fontSize: '12.5px',
+                fontWeight: 800,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: '0 2px 8px rgba(37, 99, 235, 0.3)'
+              }}
+              title={isSbiCreditCard ? "Open SBI Credit Card Digital Complete Journey" : "Open Digital Complete Journey Link"}
+            >
+              <ExternalLink size={15} /> Digital Complete Journey
+            </button>
+
+            {isHdfcCreditCard && (
+              <button
+                type="button"
+                id="header-hdfc-fd-wes-cc-btn"
+                onClick={() => {
+                  let targetUrl = (hdfcDynamicFdWesCcLink || HDFC_FD_WES_CC_URL).trim();
+                  if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+                    targetUrl = 'https://' + targetUrl;
+                  }
+                  window.open(targetUrl, '_blank', 'noopener,noreferrer');
+                }}
+                style={{
+                  background: 'linear-gradient(135deg, #0284c7, #0369a1)',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '7px 14px',
+                  borderRadius: '8px',
+                  fontSize: '12.5px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 2px 8px rgba(2, 132, 199, 0.3)'
+                }}
+                title="Open HDFC FD wes CC Link"
+              >
+                <ExternalLink size={15} /> FD wes CC link
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                const link = vkycUrl || application?.vkyc_url || application?.vkyc_link || application?.physical_details?.vkyc_url;
+                if (link && String(link).trim() !== '' && String(link).toUpperCase() !== 'N/A' && String(link).toUpperCase() !== 'NA') {
+                  let targetUrl = String(link).trim();
+                  if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+                    targetUrl = 'https://' + targetUrl;
+                  }
+                  window.open(targetUrl, '_blank', 'noopener,noreferrer');
+                } else {
+                  alert("Link not assigned");
+                }
+              }}
+              style={{
+                background: 'linear-gradient(135deg, #059669, #047857)',
+                color: '#ffffff',
+                border: 'none',
+                padding: '7px 14px',
+                borderRadius: '8px',
+                fontSize: '12.5px',
+                fontWeight: 800,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: '0 2px 8px rgba(5, 150, 105, 0.3)'
+              }}
+              title="Open VKYC Link"
+            >
+              <ExternalLink size={15} /> Open VKYC Link
+            </button>
+
+            {(isOpsHead || isFinalStatusOperator || isSuperAdminOrAdmin) && currentStatus !== 'approved' && currentStatus !== 'super_admin_approved' && (
+              <button
+                disabled={actionLoading}
+                onClick={async () => {
+                  setActionLoading(true);
+                  try {
+                    const targetId = application.app_number || application.id || application.application_id || application.lead_id;
+                    const res = await api.put(`/applications/${targetId}/verification`, {
+                      status: 'approved',
+                      final_status: 'Approved',
+                      super_admin_remark: 'Approved by Final Status Operator / Admin',
+                      bank_remark: bankRemark || 'Approved by Final Status Operator'
+                    });
+                    if (res.data?.success) {
+                      alert('Application status updated to APPROVED successfully!');
+                      setCurrentStatus('approved');
+                      await fetchData();
+                      if (onRefresh) onRefresh();
+                    }
+                  } catch (err) {
+                    alert(err.response?.data?.message || 'Failed to approve application');
+                  } finally {
+                    setActionLoading(false);
+                  }
+                }}
+                style={{
+                  background: '#16a34a',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '6px 14px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 2px 4px rgba(22,163,74,0.2)'
+                }}
+              >
+                <CheckCircle size={15} /> Approve Application
+              </button>
+            )}
+
+            {isOpsOperator && currentStatus !== 'operational_verified' && currentStatus !== 'approved' && currentStatus !== 'super_admin_approved' && (
+              <button
+                disabled={actionLoading}
+                onClick={async () => {
+                  setActionLoading(true);
+                  try {
+                    const targetId = application.app_number || application.id || application.application_id || application.lead_id;
+                    const res = await api.put(`/applications/${targetId}/verification`, {
+                      status: 'operational_verified',
+                      final_status: 'Operational Verified',
+                      ops_remark: 'Operational Verified by Administrative Operator',
+                      super_admin_remark: 'Operational Verified by Administrative Operator'
+                    });
+                    if (res.data?.success) {
+                      alert('Application status updated to OPERATIONAL VERIFIED successfully!');
+                      setCurrentStatus('operational_verified');
+                      await fetchData();
+                      if (onRefresh) onRefresh();
+                    }
+                  } catch (err) {
+                    alert(err.response?.data?.message || 'Failed to update application to Operational Verified');
+                  } finally {
+                    setActionLoading(false);
+                  }
+                }}
+                style={{
+                  background: '#8b5cf6',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '6px 14px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 2px 4px rgba(139,92,246,0.2)'
+                }}
+              >
+                <CheckCircle size={15} /> Mark Operational Verified
+              </button>
+            )}
+            {isPanChecker && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  disabled={actionLoading}
+                  onClick={async () => {
+                    setActionLoading(true);
+                    try {
+                      const targetId = application.app_number || application.id || application.application_id;
+                      const res = await api.put(`/applications/${targetId}/verification`, {
+                        status: 'operational_verified',
+                        final_status: 'Operational Verified',
+                        pan_check: 'yes',
+                        requery_date: requeryDate || undefined,
+                        bank_remark: bankRemark || 'PAN Verified OK',
+                        user_remark: userRemark || 'PAN Verified OK',
+                        ops_remark: 'PAN Verified OK by PAN Checker'
+                      });
+                      if (res.data?.success) {
+                        alert('PAN Verified successfully!');
+                        onClose();
+                        if (onRefresh) onRefresh();
+                      }
+                    } catch (err) {
+                      alert(err.response?.data?.message || 'Failed to verify PAN');
+                    } finally {
+                      setActionLoading(false);
+                    }
+                  }}
+                  style={{ background: '#10B981', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <CheckCircle size={15} /> Verify PAN
+                </button>
+                <button
+                  disabled={actionLoading}
+                  onClick={async () => {
+                    const remark = prompt('Enter Bank / Rejection Remark for this PAN:');
+                    if (!remark) return;
+                    setActionLoading(true);
+                    try {
+                      const targetId = application.app_number || application.id || application.application_id;
+                      const res = await api.put(`/applications/${targetId}/verification`, {
+                        status: 'rejected',
+                        final_status: 'Rejected',
+                        requery_date: requeryDate || undefined,
+                        bank_remark: remark,
+                        decline_reason: remark,
+                        user_remark: remark,
+                        ops_remark: remark
+                      });
+                      if (res.data?.success) {
+                        alert('Application rejected with PAN remark successfully!');
+                        onClose();
+                        if (onRefresh) onRefresh();
+                      }
+                    } catch (err) {
+                      alert(err.response?.data?.message || 'Failed to reject PAN application');
+                    } finally {
+                      setActionLoading(false);
+                    }
+                  }}
+                  style={{ background: '#EF4444', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <XCircle size={15} /> Reject PAN
+                </button>
+              </div>
+            )}
+            <button onClick={onClose} style={{ background: '#f1f5f9', border: 'none', color: '#64748b', cursor: 'pointer', padding: '6px', borderRadius: '50%' }}>
+              <X size={20} />
+            </button>
+          </div>
+        </div>
+
+        {/* Modal Body Scrollable */}
+        <div style={{ padding: isMobile ? '16px 16px 90px 16px' : '24px 24px 70px 24px', overflowY: 'auto', flex: 1 }}>
+          
+          {/* PAN Checker Action & Review Panel */}
+          {isPanChecker && (
+            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '12px', padding: '16px', marginBottom: '20px' }}>
+              <div style={{ fontWeight: 800, color: '#166534', fontSize: '14px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <ShieldCheck size={18} /> PAN Checker Review & Submit
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '14px' }}>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>APPLICATION ID</label>
+                  <div style={{ fontSize: '13px', fontWeight: 800, fontFamily: 'monospace', color: '#1e293b' }}>
+                    {appNumber || application.app_number || application.id}
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>PAN NUMBER</label>
+                  <input
+                    type="text"
+                    value={panNumber}
+                    onChange={(e) => setPanNumber(e.target.value.toUpperCase())}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 800, fontFamily: 'monospace', textTransform: 'uppercase', background: '#fff' }}
+                    placeholder="PAN Number"
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>APPLICATION NUMBER ({bankAppConfig.bankName.toUpperCase()})</label>
+                  <input
+                    type="text"
+                    maxLength={bankAppConfig.maxLength}
+                    value={bankRefNumber}
+                    onChange={(e) => {
+                      const val = bankAppConfig.sanitize(e.target.value);
+                      setBankRefNumber(val);
+                      setLosNo(val);
+                    }}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', background: '#fff' }}
+                    placeholder={bankAppConfig.placeholder}
+                  />
+                  <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px', fontWeight: 600 }}>
+                    {bankAppConfig.hint}
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>PAN CHECK REMARK *</label>
+                  <select
+                    value={userRemark || ''}
+                    onChange={(e) => {
+                      const selectedVal = e.target.value;
+                      handleUserRemarkChange(selectedVal);
+                      if (selectedVal === 'PAN OK' || selectedVal === 'NO RECORD FOUND') {
+                        setPanCheck('yes');
+                      } else {
+                        setPanCheck('no');
+                      }
+                    }}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 700, background: '#fff' }}
+                  >
+                    <option value="">Select PAN Check Remark</option>
+                    {PAN_CHECK_REMARK_OPTIONS.map((opt) => (
+                      <option key={opt.code} value={opt.code}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>RE-QD DATE</label>
+                  <input
+                    type="date"
+                    value={requeryDate}
+                    onChange={(e) => setRequeryDate(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 600, background: '#fff', color: '#1e293b' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>BANK REMARK</label>
+                  <input
+                    type="text"
+                    value={bankRemark}
+                    onChange={(e) => setBankRemark(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff' }}
+                    placeholder="Enter Bank Remark"
+                  />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  disabled={actionLoading}
+                  onClick={async () => {
+                    setActionLoading(true);
+                    try {
+                      const targetId = application.app_number || application.id || application.application_id;
+                      const res = await api.put(`/applications/${targetId}/verification`, {
+                        status: 'operational_verified',
+                        final_status: 'Operational Verified',
+                        pan_check: 'yes',
+                        requery_date: requeryDate || undefined,
+                        bank_application_number: (bankRefNumber || losNo || '').trim() || undefined,
+                        bank_ref_number: (bankRefNumber || losNo || '').trim() || undefined,
+                        los_no: (bankRefNumber || losNo || '').trim() || undefined,
+                        bank_remark: bankRemark || userRemark || 'PAN Verified OK',
+                        user_remark: userRemark || bankRemark || 'PAN Verified OK',
+                        ops_remark: userRemark || bankRemark || 'PAN Verified OK by PAN Checker'
+                      });
+                      if (res.data?.success) {
+                        alert('PAN Verification Submitted successfully! Application removed from active queue.');
+                        onClose();
+                        if (onRefresh) onRefresh();
+                      }
+                    } catch (err) {
+                      alert(err.response?.data?.message || 'Failed to verify PAN');
+                    } finally {
+                      setActionLoading(false);
+                    }
+                  }}
+                  style={{ background: '#10B981', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <CheckCircle size={16} /> Submit & Verify PAN
+                </button>
+                <button
+                  disabled={actionLoading}
+                  onClick={async () => {
+                    const remark = bankRemark || userRemark || prompt('Enter Bank / Rejection Remark for this PAN:');
+                    if (!remark) return;
+                    setActionLoading(true);
+                    try {
+                      const targetId = application.app_number || application.id || application.application_id;
+                      const res = await api.put(`/applications/${targetId}/verification`, {
+                        status: 'rejected',
+                        final_status: 'Rejected',
+                        requery_date: requeryDate || undefined,
+                        bank_remark: remark,
+                        decline_reason: remark,
+                        user_remark: remark,
+                        ops_remark: remark
+                      });
+                      if (res.data?.success) {
+                        alert('Application rejected with PAN remark successfully! Removed from active queue.');
+                        onClose();
+                        if (onRefresh) onRefresh();
+                      }
+                    } catch (err) {
+                      alert(err.response?.data?.message || 'Failed to reject PAN application');
+                    } finally {
+                      setActionLoading(false);
+                    }
+                  }}
+                  style={{ background: '#EF4444', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <XCircle size={16} /> Reject PAN
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Remark Operator Action & Review Panel */}
+          {isRemarkOperator && (
+            <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '12px', padding: '16px', marginBottom: '20px' }}>
+              <div style={{ fontWeight: 800, color: '#0369a1', fontSize: '14px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <ShieldCheck size={18} /> Remark Operator Review & Submit
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '14px' }}>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>APPLICATION ID</label>
+                  <div style={{ fontSize: '13px', fontWeight: 800, fontFamily: 'monospace', color: '#1e293b' }}>
+                    {appNumber || application.app_number || application.id}
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>PAN NUMBER</label>
+                  <div style={{ fontSize: '13px', fontWeight: 800, fontFamily: 'monospace', color: '#1e293b' }}>
+                    {panNumber || application.pan_number || 'N/A'}
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>BANK</label>
+                  <div style={{ fontSize: '13px', fontWeight: 800, color: '#1e293b' }}>
+                    {application.bank_name || 'N/A'}
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>BANK REMARK *</label>
+                  <input
+                    type="text"
+                    value={bankRemark || ''}
+                    onChange={(e) => handleBankRemarkChange(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff' }}
+                    placeholder="Enter Bank Remark"
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>USER REMARK / NOTES</label>
+                  <input
+                    type="text"
+                    value={userRemark || ''}
+                    onChange={(e) => handleUserRemarkChange(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff' }}
+                    placeholder="Enter Internal Notes"
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>IPA STAGE</label>
+                  <select
+                    value={ipaStage || 'None'}
+                    onChange={(e) => setIpaStage(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff' }}
+                  >
+                    <option value="None">None</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="Approved">Approved</option>
+                    <option value="Declined">Declined</option>
+                    <option value="Referred">Referred</option>
+                    <option value="Pending">Pending</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>VKYC STAGE</label>
+                  <select
+                    value={vkycStage || 'None'}
+                    onChange={(e) => setVkycStage(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff' }}
+                  >
+                    <option value="None">None</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Completed">Completed</option>
+                    <option value="Failed">Failed</option>
+                    <option value="Initiated">Initiated</option>
+                    <option value="Exempted">Exempted</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>DISPATCH STATUS</label>
+                  <select
+                    value={dispatchStatus || 'None'}
+                    onChange={(e) => setDispatchStatus(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff', fontWeight: 600 }}
+                  >
+                    <option value="None">None</option>
+                    <option value="Dispatch Pending">Dispatch Pending</option>
+                    <option value="Dispatch Complete">Dispatch Complete</option>
+                    <option value="Dispatch Not Available">Dispatch Not Available</option>
+                    <option value="Digital Dispatch">Digital Dispatch</option>
+                    <option value="Physical Dispatch">Physical Dispatch</option>
+                    <option value="Dispatch Hold">Dispatch Hold</option>
+                    <option value="E-Sign Pending">E-Sign Pending</option>
+                    <option value="E-sign Complete">E-sign Complete</option>
+                    <option value="RTB(Error)">RTB(Error)</option>
+                    {dispatchStatus && !['None', 'Dispatch Pending', 'Dispatch Complete', 'Dispatch Not Available', 'Digital Dispatch', 'Physical Dispatch', 'Dispatch Hold', 'E-Sign Pending', 'E-sign Complete', 'RTB(Error)', 'Pending', 'Dispatched', 'Delivered', 'In Transit', 'Returned', ''].includes(dispatchStatus) && (
+                      <option value={dispatchStatus}>{dispatchStatus}</option>
+                    )}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>APP FILE GENERATED</label>
+                  <select
+                    value={appFileGenerated || 'None'}
+                    onChange={(e) => setAppFileGenerated(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff' }}
+                  >
+                    <option value="None">None</option>
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '4px' }}>DECLINE REASON</label>
+                  <input
+                    type="text"
+                    value={declineReason || ''}
+                    onChange={(e) => setDeclineReason(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', background: '#fff' }}
+                    placeholder="Enter Decline Reason (if declined)"
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  disabled={actionLoading}
+                  onClick={async () => {
+                    setActionLoading(true);
+                    try {
+                      const targetId = application.id || application.app_number;
+                      const res = await api.put(`/applications/${targetId}/remark`, {
+                        bank_application_number: (bankRefNumber || losNo || '').trim() || undefined,
+                        bank_ref_number: (bankRefNumber || losNo || '').trim() || undefined,
+                        los_no: (bankRefNumber || losNo || '').trim() || undefined,
+                        bank_remark: bankRemark || undefined,
+                        user_remark: userRemark || undefined,
+                        notes: userRemark || undefined,
+                        ipa_stage: ipaStage !== 'None' ? ipaStage : undefined,
+                        vkyc_stage: vkycStage !== 'None' ? vkycStage : undefined,
+                        dispatch_status: dispatchStatus !== 'None' ? dispatchStatus : undefined,
+                        app_file_generated: appFileGenerated !== 'None' ? appFileGenerated : undefined,
+                        decline_reason: declineReason || undefined
+                      });
+                      if (res.data?.success) {
+                        alert('Remark updated successfully! Application marked as completed in queue.');
+                        onClose();
+                        if (onRefresh) onRefresh();
+                      }
+                    } catch (err) {
+                      alert(err.response?.data?.message || 'Failed to update remark');
+                    } finally {
+                      setActionLoading(false);
+                    }
+                  }}
+                  style={{ background: '#0284c7', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <CheckCircle size={16} /> Save & Complete Remark
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Final Status Operator Workspace Card */}
+          {isFinalStatusOperator && (
+            <div style={{
+              background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+              border: '1px solid #86efac',
+              borderRadius: '14px',
+              padding: '16px 20px',
+              marginBottom: '20px',
+              boxShadow: '0 4px 12px rgba(22, 163, 74, 0.08)'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ background: '#16a34a', color: '#fff', width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>
+                    <Building2 size={18} />
+                  </div>
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#14532d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Final Status Operator Workspace
+                    </h4>
+                    <span style={{ fontSize: '11px', color: '#166534', fontWeight: 600 }}>
+                      Process bank remarks, stage verification &amp; final status updates
+                    </span>
+                  </div>
+                </div>
+
+                {/* Show Remark & Final Both Buttons */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('remark')}
+                    style={{
+                      padding: '9px 18px',
+                      borderRadius: '10px',
+                      fontSize: '13px',
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      border: activeTab === 'remark' ? '2px solid #ea580c' : '1px solid #cbd5e1',
+                      background: activeTab === 'remark' ? '#ea580c' : '#ffffff',
+                      color: activeTab === 'remark' ? '#ffffff' : '#334155',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      boxShadow: activeTab === 'remark' ? '0 4px 12px rgba(234, 88, 12, 0.25)' : 'none',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <Sliders size={16} /> Remark
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('final')}
+                    style={{
+                      padding: '9px 18px',
+                      borderRadius: '10px',
+                      fontSize: '13px',
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      border: activeTab === 'final' ? '2px solid #16a34a' : '1px solid #cbd5e1',
+                      background: activeTab === 'final' ? '#16a34a' : '#ffffff',
+                      color: activeTab === 'final' ? '#ffffff' : '#334155',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      boxShadow: activeTab === 'final' ? '0 4px 12px rgba(22, 163, 74, 0.25)' : 'none',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <Building2 size={16} /> Final
+                  </button>
+                </div>
+              </div>
+
+              {/* Metadata & Conditional PAN Box */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                gap: '12px',
+                background: '#ffffff',
+                padding: '12px 16px',
+                borderRadius: '10px',
+                border: '1px solid #bbf7d0'
+              }}>
+                <div>
+                  <span style={{ fontSize: '11px', fontWeight: 800, color: '#64748b', display: 'block', textTransform: 'uppercase' }}>BANK NAME</span>
+                  <strong style={{ fontSize: '13px', color: '#0f172a', fontWeight: 800 }}>{application.bank_name || application.bank_code || 'Partner Bank'}</strong>
+                </div>
+
+                <div>
+                  <span style={{ fontSize: '11px', fontWeight: 800, color: '#64748b', display: 'block', textTransform: 'uppercase' }}>BANK APPLICATION NO.</span>
+                  <strong style={{ fontSize: '13px', color: bankRefNumber ? '#0284c7' : '#94a3b8', fontFamily: 'monospace', fontWeight: 800 }}>
+                    {bankRefNumber || application?.bank_application_number || application?.bank_ref_number || 'Not Filled Yet'}
+                  </strong>
+                </div>
+
+                <div>
+                  <span style={{ fontSize: '11px', fontWeight: 800, color: '#64748b', display: 'block', textTransform: 'uppercase' }}>PAN NUMBER</span>
+                  {hasBankAppNumber ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#dcfce7', color: '#15803d', padding: '3px 10px', borderRadius: '6px', fontWeight: 900, fontFamily: 'monospace', fontSize: '13px', border: '1px solid #86efac' }}>
+                      <CheckCircle size={14} /> {panNumber || application.pan_number || application.pan || 'N/A'}
+                    </span>
+                  ) : (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#fef2f2', color: '#dc2626', padding: '3px 10px', borderRadius: '6px', fontWeight: 800, fontSize: '12px', border: '1px solid #fecaca' }}>
+                      <Lock size={12} /> Fill Bank App No. to reveal PAN
+                    </span>
+                  )}
+                </div>
+
+                <div>
+                  <span style={{ fontSize: '11px', fontWeight: 800, color: '#64748b', display: 'block', textTransform: 'uppercase' }}>CUSTOMER MOBILE</span>
+                  <strong style={{ fontSize: '13px', color: '#0f172a', fontWeight: 800 }}>{customerMobile || application.customer_mobile || application.mobile || 'N/A'}</strong>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Navigation Tabs (Hidden for PAN Checker & Remark Operator roles) */}
+          {!isPanChecker && !isRemarkOperator && (
+          <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0', marginBottom: '20px', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
+            
+            {/* 1. QD Tab (Hidden for Digital processes) */}
+            {(initialTabKey === 'qd' || showAllTabs || isDigitalProcess) && (
+              <button
+                onClick={() => setActiveTab('qd')}
+                style={{
+                  background: activeTab === 'qd' ? '#eff6ff' : 'none',
+                  border: 'none',
+                  padding: '10px 16px',
+                  borderRadius: '8px',
+                  fontWeight: activeTab === 'qd' ? 800 : 600,
+                  fontSize: '13px',
+                  color: activeTab === 'qd' ? '#2563eb' : '#64748b',
+                  borderBottom: activeTab === 'qd' ? '3px solid #2563eb' : '3px solid transparent',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <FileText size={14} /> {isDigitalProcess ? 'Edit Digital Info' : 'QD / Edit Customer Details'} {!canEditQd && <Lock size={12} style={{ color: '#94a3b8' }} />}
+              </button>
+            )}
+
+            {/* 2. Remark Tab (Shown for all processes, titled Application Remark & Stage Tracking) */}
+            <button
+              onClick={() => setActiveTab('remark')}
+              style={{
+                background: activeTab === 'remark' ? '#fff7ed' : 'none',
+                border: 'none',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                fontWeight: activeTab === 'remark' ? 800 : 600,
+                fontSize: '13px',
+                color: activeTab === 'remark' ? '#ea580c' : '#64748b',
+                borderBottom: activeTab === 'remark' ? '3px solid #ea580c' : '3px solid transparent',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <Sliders size={14} /> Application Remark & Stage Tracking
+            </button>
+
+            {/* 3. Final Tab (Shown for all processes and all admin designations) */}
+            {(!isPartner || initialTabKey === 'final' || showAllTabs || isOpsOrAdmin || isAdministrativeOperator || isSalesExecUser || isRemarkOperator || isPanChecker || isQdOperator || isFinalStatusOperator || isCurableOperator || isQuerableOperator) && (
+              <button
+                onClick={() => setActiveTab('final')}
+                style={{
+                  background: activeTab === 'final' ? '#f0fdf4' : 'none',
+                  border: 'none',
+                  padding: '10px 16px',
+                  borderRadius: '8px',
+                  fontWeight: activeTab === 'final' ? 800 : 600,
+                  fontSize: '13px',
+                  color: activeTab === 'final' ? '#16a34a' : '#64748b',
+                  borderBottom: activeTab === 'final' ? '3px solid #16a34a' : '3px solid transparent',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <Building2 size={14} /> Bank Remark & Final Status {!canEditFinal && <Lock size={12} style={{ color: '#94a3b8' }} />}
+              </button>
+            )}
+
+            {/* 4. Timeline Log */}
+            <button
+              onClick={() => setActiveTab('timeline')}
+              style={{
+                background: activeTab === 'timeline' ? '#f8fafc' : 'none',
+                border: 'none',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                fontWeight: activeTab === 'timeline' ? 800 : 600,
+                fontSize: '13px',
+                color: activeTab === 'timeline' ? '#475569' : '#64748b',
+                borderBottom: activeTab === 'timeline' ? '3px solid #475569' : '3px solid transparent',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <Clock size={14} /> Audit Log
+            </button>
+          </div>
+          )}
+
+          {/* ═════════ TAB CONTENTS (Hidden for PAN Checker role) ═════════ */}
+          {!isPanChecker && (
+            <>
+          {activeTab === 'qd' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px', flexWrap: 'wrap', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <h4 style={{ fontSize: '14px', fontWeight: 800, color: '#1e3a8a', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <FileText size={16} /> {isDigitalProcess ? 'Edit Digital Info (Customer Details)' : 'QD (Customer Details / Form 1 / 2 / 3)'}
+                    </h4>
+                    {!canEditQd && (
+                      <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 10px', borderRadius: '20px', background: '#f1f5f9', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <Lock size={12} /> Locked (Approved Status)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px', fontSize: '13px' }}>
+                  
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Aadhaar Link Contact Number *</label>
+                    <input
+                      type="text"
+                      disabled={!canEditQd}
+                      value={customerMobile}
+                      onChange={(e) => setCustomerMobile(e.target.value)}
+                      placeholder="9876543210"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 700, background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Name As Per PAN Card</label>
+                    <input
+                      type="text"
+                      disabled={!canEditQd}
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="Customer PAN Name"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 700, background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>DOB As Per PAN Card (dd-mm-yyyy)</label>
+                    <input
+                      type="text"
+                      disabled={!canEditQd}
+                      value={dob}
+                      onChange={(e) => setDob(formatDobInput(e.target.value))}
+                      placeholder="dd-mm-yyyy"
+                      maxLength={10}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Personal Email ID</label>
+                    <input
+                      type="email"
+                      disabled={!canEditQd}
+                      value={customerEmail}
+                      onChange={(e) => setCustomerEmail(e.target.value)}
+                      placeholder="email@example.com"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>PAN Card Number</label>
+                    <input
+                      type="text"
+                      disabled={!canEditQd}
+                      value={panNumber}
+                      onChange={(e) => setPanNumber(e.target.value.toUpperCase())}
+                      placeholder="ABCDE1234F"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 800, fontFamily: 'monospace', textTransform: 'uppercase', background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>As Per Salary Slip Company Name</label>
+                    <input
+                      type="text"
+                      disabled={!canEditQd}
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
+                      placeholder="Company Name"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Designation</label>
+                    <input
+                      type="text"
+                      disabled={!canEditQd}
+                      value={designation}
+                      onChange={(e) => setDesignation(e.target.value)}
+                      placeholder="Designation / Role"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Address Line 1</label>
+                    <input
+                      type="text"
+                      disabled={!canEditQd}
+                      value={address1}
+                      onChange={(e) => setAddress1(e.target.value)}
+                      placeholder="Flat / House No / Building Name"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Address Line 2</label>
+                    <input
+                      type="text"
+                      disabled={!canEditQd}
+                      value={address2}
+                      onChange={(e) => setAddress2(e.target.value)}
+                      placeholder="Street / Area / Locality"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Landmark</label>
+                    <input
+                      type="text"
+                      disabled={!canEditQd}
+                      value={landmark}
+                      onChange={(e) => setLandmark(e.target.value)}
+                      placeholder="Nearby Landmark"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Pincode</label>
+                    <input
+                      type="text"
+                      maxLength={6}
+                      disabled={!canEditQd}
+                      value={pincode}
+                      onChange={(e) => setPincode(e.target.value)}
+                      placeholder="e.g. 400001"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>City</label>
+                    <input
+                      type="text"
+                      disabled={!canEditQd}
+                      value={city}
+                      onChange={(e) => setCity(e.target.value)}
+                      placeholder="e.g. Mumbai / Delhi"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>State</label>
+                    <input
+                      type="text"
+                      disabled={!canEditQd}
+                      value={state}
+                      onChange={(e) => setState(e.target.value)}
+                      placeholder="e.g. Maharashtra"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Mother Name</label>
+                    <input
+                      type="text"
+                      disabled={!canEditQd}
+                      value={motherName}
+                      onChange={(e) => setMotherName(e.target.value)}
+                      placeholder="Mother Name"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditQd ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+
+                  {/* Digital Complete Journey Link Modify Field (Super Admin Managed) */}
+                  <div style={{ gridColumn: '1 / -1', marginTop: '6px', padding: '14px', background: '#f0f9ff', borderRadius: '10px', border: '1px solid #bae6fd' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <label style={{ fontSize: '11px', color: '#0369a1', fontWeight: 800, textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '6px', margin: 0 }}>
+                        <LinkIcon size={14} color="#0284c7" /> DIGITAL JOURNEY LINK (Modify Link)
+                      </label>
+                      {isSuperAdminRole ? (
+                        <span style={{ fontSize: '10px', fontWeight: 800, background: '#0284c7', color: '#fff', padding: '2px 8px', borderRadius: '10px' }}>
+                          SUPER ADMIN EDITABLE
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '10px', fontWeight: 700, background: '#e2e8f0', color: '#475569', padding: '2px 8px', borderRadius: '10px' }}>
+                          SUPER ADMIN MANAGED
+                        </span>
+                      )}
+                    </div>
+                    {isSbiCreditCard ? (
+                      <div style={{ fontSize: '11px', color: '#0284c7', marginBottom: '8px', fontWeight: 700 }}>
+                        SBI Credit Card Official Link: {sbiDynamicDigitalJourneyLink || SBI_CREDIT_CARD_DIGITAL_JOURNEY_URL}
+                      </div>
+                    ) : systemDigitalJourneyLink ? (
+                      <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '8px', fontStyle: 'italic' }}>
+                        System Default: {systemDigitalJourneyLink}
+                      </div>
+                    ) : null}
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <input
+                        type="url"
+                        disabled={!isSuperAdminRole && !isSuperAdminOrAdmin}
+                        value={digitalJourneyUrl}
+                        onChange={(e) => setDigitalJourneyUrl(e.target.value)}
+                        placeholder={isSbiCreditCard ? (sbiDynamicDigitalJourneyLink || SBI_CREDIT_CARD_DIGITAL_JOURNEY_URL) : (isSuperAdminRole || isSuperAdminOrAdmin ? "Enter / Edit Digital Journey URL (e.g. https://bank.com/apply)" : "Only Super Admin can upload or edit Digital Journey link")}
+                        style={{ flex: 1, minWidth: '220px', padding: '10px 12px', borderRadius: '8px', border: '1px solid #7dd3fc', fontSize: '13px', fontWeight: 600, background: (!isSuperAdminRole && !isSuperAdminOrAdmin) ? '#f8fafc' : '#fff', color: '#0f172a' }}
+                      />
+                      {(digitalJourneyUrl || (isSbiCreditCard ? (sbiDynamicDigitalJourneyLink || SBI_CREDIT_CARD_DIGITAL_JOURNEY_URL) : systemDigitalJourneyLink)) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            let targetUrl = (digitalJourneyUrl || (isSbiCreditCard ? (sbiDynamicDigitalJourneyLink || SBI_CREDIT_CARD_DIGITAL_JOURNEY_URL) : systemDigitalJourneyLink)).trim();
+                            if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+                              targetUrl = 'https://' + targetUrl;
+                            }
+                            window.open(targetUrl, '_blank', 'noopener,noreferrer');
+                          }}
+                          style={{ padding: '8px 14px', background: '#0284c7', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        >
+                          <ExternalLink size={13} /> Test Link
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* HDFC FD wes CC Link Field (Super Admin Managed) */}
+                  {isHdfcCreditCard && (
+                    <div style={{ gridColumn: '1 / -1', marginTop: '6px', padding: '14px', background: '#f0fdf4', borderRadius: '10px', border: '1px solid #bbf7d0' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <label style={{ fontSize: '11px', color: '#166534', fontWeight: 800, textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '6px', margin: 0 }}>
+                          <LinkIcon size={14} color="#16a34a" /> HDFC FD WES CC LINK (Super Admin Managed)
+                        </label>
+                        <span style={{ fontSize: '10px', fontWeight: 700, background: '#dcfce7', color: '#166534', padding: '2px 8px', borderRadius: '10px' }}>
+                          SUPER ADMIN MANAGED
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#166534', marginBottom: '8px', fontWeight: 700, wordBreak: 'break-all' }}>
+                        Official Portal Link: {hdfcDynamicFdWesCcLink || HDFC_FD_WES_CC_URL}
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            let targetUrl = (hdfcDynamicFdWesCcLink || HDFC_FD_WES_CC_URL).trim();
+                            if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+                              targetUrl = 'https://' + targetUrl;
+                            }
+                            window.open(targetUrl, '_blank', 'noopener,noreferrer');
+                          }}
+                          style={{ padding: '8px 14px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        >
+                          <ExternalLink size={13} /> Open FD wes CC link
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+
+                  {/* VKYC Link Modify Field */}
+                  <div style={{ gridColumn: '1 / -1', marginTop: '6px', padding: '14px', background: '#f0fdf4', borderRadius: '10px', border: '1px solid #bbf7d0' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <label style={{ fontSize: '11px', color: '#15803d', fontWeight: 800, textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '6px', margin: 0 }}>
+                        <LinkIcon size={14} color="#16a34a" /> VKYC LINK (Modify Link)
+                      </label>
+                      <span style={{ fontSize: '10px', fontWeight: 700, background: '#dcfce7', color: '#15803d', padding: '2px 8px', borderRadius: '10px' }}>
+                        APPLICATION VKYC
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <input
+                        type="url"
+                        disabled={!canEditQd}
+                        value={vkycUrl}
+                        onChange={(e) => setVkycUrl(e.target.value)}
+                        placeholder="Enter / Edit VKYC Link (e.g. https://vkyc.bank.com/...)"
+                        style={{ flex: 1, minWidth: '220px', padding: '10px 12px', borderRadius: '8px', border: '1px solid #86efac', fontSize: '13px', fontWeight: 600, background: !canEditQd ? '#f8fafc' : '#fff', color: '#0f172a' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (vkycUrl && String(vkycUrl).trim() !== '' && String(vkycUrl).toUpperCase() !== 'N/A' && String(vkycUrl).toUpperCase() !== 'NA') {
+                            let targetUrl = String(vkycUrl).trim();
+                            if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+                              targetUrl = 'https://' + targetUrl;
+                            }
+                            window.open(targetUrl, '_blank', 'noopener,noreferrer');
+                          } else {
+                            alert("Link not assigned");
+                          }
+                        }}
+                        style={{ padding: '8px 14px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <ExternalLink size={13} /> Open VKYC Link
+                      </button>
+                    </div>
+                  </div>
+
+                </div>
+
+                <div style={{
+                  display: 'flex',
+                  justify: 'flex-end',
+                  gap: '12px',
+                  marginTop: '20px',
+                  position: 'sticky',
+                  bottom: 0,
+                  background: '#ffffff',
+                  padding: '12px 0',
+                  borderTop: '1px solid #e2e8f0',
+                  zIndex: 20,
+                  boxShadow: '0 -6px 16px rgba(0,0,0,0.06)'
+                }}>
+                  {canEditQd ? (
+                    <button
+                      type="button"
+                      onClick={() => handleSaveDetails('qd')}
+                      disabled={actionLoading}
+                      style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '12px 24px', borderRadius: '10px', fontWeight: 700, fontSize: '14px', cursor: 'pointer', width: isMobile ? '100%' : 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                    >
+                      <Save size={16} /> {actionLoading ? 'Saving...' : 'Save QD Details'}
+                    </button>
+                  ) : (
+                    <div style={{ fontSize: '12px', color: '#64748b', fontWeight: 600, padding: '8px 14px', background: '#f1f5f9', borderRadius: '8px', width: '100%', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                      <Lock size={13} /> QD Form is read-only for admin/ops roles. Editable by Partner only.
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* ═════════ TAB 2: REMARK (SOFT APPROVAL, VKYC STAGE, IQA STAGE, DISPATCH STATUS) ═════════ */}
+          {activeTab === 'remark' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px' }}>
+                  <h4 style={{ fontSize: '14px', fontWeight: 800, color: '#c2410c', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Sliders size={16} /> Operational Remarks & Processing Stage
+                  </h4>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '18px' }}>
+                  {/* 💳 LOC / EOC WORKFLOW (6 FIELDS ONLY) */}
+                  {isLocOrEoc ? (
+                    <>
+                      {/* Field 1: Insta / Jumbo Offer */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                          Insta / Jumbo Offer
+                        </label>
+                        <select
+                          id="loc-eoc-insta-jumbo-offer"
+                          disabled={!canEditRemark}
+                          value={instaJumboOffer || 'None'}
+                          onChange={(e) => setInstaJumboOffer(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                      </div>
+
+                      {/* Field 2: Customer Loan Type */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                          Customer Loan Type
+                        </label>
+                        <select
+                          id="loc-eoc-customer-loan-type"
+                          disabled={!canEditRemark}
+                          value={customerLoanType || 'None'}
+                          onChange={(e) => {
+                            setCustomerLoanType(e.target.value);
+                            setCustomerLoanOffer(e.target.value);
+                          }}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Personal Loan">Personal Loan</option>
+                          <option value="Loan on Card">Loan on Card</option>
+                          <option value="Smart EMI">Smart EMI</option>
+                          <option value="Insta">Insta</option>
+                          <option value="Jumbo">Jumbo</option>
+                        </select>
+                      </div>
+
+                      {/* Field 3: Offer Tenure */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                          Offer Tenure
+                        </label>
+                        <select
+                          id="loc-eoc-offer-tenure"
+                          disabled={!canEditRemark}
+                          value={offerTenure || 'None'}
+                          onChange={(e) => setOfferTenure(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="6 Months">6 Months</option>
+                          <option value="1 Year">1 Year</option>
+                          <option value="2 Years">2 Years</option>
+                          <option value="3 Years">3 Years</option>
+                          <option value="4 Years">4 Years</option>
+                          <option value="5 Years">5 Years</option>
+                        </select>
+                      </div>
+
+                      {/* Field 4: Disbursement Amount */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                          Disbursement Amount
+                        </label>
+                        <input
+                          id="loc-eoc-disbursement-amount"
+                          type="number"
+                          min="0"
+                          step="any"
+                          disabled={!canEditRemark}
+                          value={disbursementAmount}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setDisbursementAmount(val);
+                            setDisbursedAmount(val);
+                            if (val === '') {
+                              setDisbursementAmountError('');
+                            } else {
+                              const num = Number(val);
+                              if (isNaN(num) || num < 0) {
+                                setDisbursementAmountError('Disbursement amount must be a valid, non-negative number.');
+                              } else {
+                                setDisbursementAmountError('');
+                              }
+                            }
+                          }}
+                          placeholder="Enter Disbursement Amount"
+                          style={{
+                            width: '100%',
+                            padding: '10px 12px',
+                            borderRadius: '8px',
+                            border: `1px solid ${disbursementAmountError ? '#ef4444' : '#cbd5e1'}`,
+                            fontSize: '13px',
+                            background: !canEditRemark ? '#f8fafc' : '#fff',
+                            fontWeight: 600
+                          }}
+                        />
+                        {disbursementAmountError && (
+                          <div style={{ fontSize: '11px', color: '#ef4444', marginTop: '4px', fontWeight: 600 }}>
+                            {disbursementAmountError}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Field 5: Disbursement Tenure */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                          Disbursement Tenure
+                        </label>
+                        <select
+                          id="loc-eoc-disbursement-tenure"
+                          disabled={!canEditRemark}
+                          value={disbursementTenure || 'None'}
+                          onChange={(e) => {
+                            setDisbursementTenure(e.target.value);
+                            setDisbursedTenure(e.target.value);
+                          }}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="6 Months">6 Months</option>
+                          <option value="1 Year">1 Year</option>
+                          <option value="2 Years">2 Years</option>
+                          <option value="3 Years">3 Years</option>
+                          <option value="4 Years">4 Years</option>
+                          <option value="5 Years">5 Years</option>
+                        </select>
+                      </div>
+
+                      {/* Field 6: LOS No. */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                          LOS No.
+                        </label>
+                        <input
+                          id="loc-eoc-los-no"
+                          type="text"
+                          disabled={!canEditRemark}
+                          value={losNo}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setLosNo(val);
+                            setBankRefNumber(val);
+                          }}
+                          placeholder="Enter LOS No."
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 700, fontFamily: 'monospace' }}
+                        />
+                      </div>
+                    </>
+                  ) : isSmartEmi ? (
+                    <>
+                      {/* 1. BANK SMART EMI OFFER */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>BANK SMART EMI OFFER</label>
+                        <input
+                          type="text"
+                          disabled={!canEditRemark}
+                          value={bankSmartEmiOffer}
+                          onChange={(e) => setBankSmartEmiOffer(e.target.value)}
+                          placeholder="Enter Bank Smart EMI Offer"
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        />
+                      </div>
+
+                      {/* 2. BANK SMART EMI TENURE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>BANK SMART EMI TENURE</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={bankSmartEmiTenure}
+                          onChange={(e) => setBankSmartEmiTenure(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="06 Months">06 Months</option>
+                          <option value="01 Year">01 Year</option>
+                          <option value="02 Years">02 Years</option>
+                          <option value="03 Years">03 Years</option>
+                          <option value="04 Years">04 Years</option>
+                        </select>
+                      </div>
+
+                      {/* 3. DISBURSED SMART EMI */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>DISBURSED SMART EMI</label>
+                        <input
+                          type="text"
+                          disabled={!canEditRemark}
+                          value={disbursedSmartEmi}
+                          onChange={(e) => setDisbursedSmartEmi(e.target.value)}
+                          placeholder="Enter Disbursed Smart EMI Amount"
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        />
+                      </div>
+
+                      {/* 4. DISBURSED SMART EMI TENURE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>DISBURSED SMART EMI TENURE</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={disbursedSmartEmiTenure}
+                          onChange={(e) => setDisbursedSmartEmiTenure(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="06 Months">06 Months</option>
+                          <option value="01 Year">01 Year</option>
+                          <option value="02 Years">02 Years</option>
+                          <option value="03 Years">03 Years</option>
+                          <option value="04 Years">04 Years</option>
+                        </select>
+                      </div>
+
+                      {/* 5. LOS NOT / SMART EMI REF NO. */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>LOS NOT / SMART EMI REF NO.</label>
+                        <input
+                          type="text"
+                          disabled={!canEditRemark}
+                          value={bankRefNumber}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setBankRefNumber(val);
+                            setLosNo(val);
+                          }}
+                          placeholder="Enter LOS / Smart EMI Ref No."
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 700, fontFamily: 'monospace' }}
+                        />
+                      </div>
+
+                      {/* 6. SMART EMI OFFER — YES / NO */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>SMART EMI OFFER — YES / NO</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={smartEmiOfferStatus}
+                          onChange={(e) => setSmartEmiOfferStatus(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                      </div>
+                    </>
+                  ) : isLoanOnCreditCard ? (
+                    /* 💳 LOAN ON CREDIT CARD WORKFLOW */
+                    <>
+                      {/* 1. INSTA/JUMBO OFFER — YES / NO */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>INSTA / JUMBO OFFER</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={instaJumboOffer}
+                          onChange={(e) => setInstaJumboOffer(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                      </div>
+
+                      {/* 2. CUSTOMER LOAN OFFER — YES / NO */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>CUSTOMER LOAN OFFER</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={customerLoanOffer}
+                          onChange={(e) => setCustomerLoanOffer(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                      </div>
+
+                      {/* 3. OFFER TENURE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>OFFER TENURE</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={offerTenure}
+                          onChange={(e) => setOfferTenure(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="6 Months">6 Months</option>
+                          <option value="1 Year">1 Year</option>
+                          <option value="2 Years">2 Years</option>
+                          <option value="3 Years">3 Years</option>
+                          <option value="4 Years">4 Years</option>
+                          <option value="5 Years">5 Years</option>
+                        </select>
+                      </div>
+
+                      {/* 4. DISBURSED AMOUNT */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>DISBURSED AMOUNT</label>
+                        <input
+                          type="text"
+                          disabled={!canEditRemark}
+                          value={disbursedAmount}
+                          onChange={(e) => setDisbursedAmount(e.target.value)}
+                          placeholder="Enter Disbursed Amount"
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        />
+                      </div>
+
+                      {/* 5. DISBURSED TENURE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>DISBURSED TENURE</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={disbursedTenure}
+                          onChange={(e) => setDisbursedTenure(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="6 Months">6 Months</option>
+                          <option value="1 Year">1 Year</option>
+                          <option value="2 Years">2 Years</option>
+                          <option value="3 Years">3 Years</option>
+                          <option value="4 Years">4 Years</option>
+                          <option value="5 Years">5 Years</option>
+                        </select>
+                      </div>
+
+                      {/* 6. LOS NO. / BANK REFERENCE NUMBER */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>LOS NO. / BANK REFERENCE NUMBER</label>
+                        <input
+                          type="text"
+                          disabled={!canEditRemark}
+                          value={bankRefNumber}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setBankRefNumber(val);
+                            setLosNo(val);
+                          }}
+                          placeholder="Enter LOS / Bank Ref No."
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 700, fontFamily: 'monospace' }}
+                        />
+                      </div>
+                    </>
+                  ) : isSbi ? (
+                    <>
+                      {/* 1. APPCODE STATUS (Punching only & Physical process) */}
+                      {(isPunchLead || isPhysical) && (
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>1. APPCODE STATUS</label>
+                          <select
+                            disabled={!canEditRemark}
+                            value={appcodeStatus || 'None'}
+                            onChange={(e) => setAppcodeStatus(e.target.value)}
+                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                          >
+                            <option value="None">None</option>
+                            <option value="Appcode Send">Appcode Send</option>
+                            <option value="Appcode Pending">Appcode Pending</option>
+                            <option value="Appcode submit">Appcode submit</option>
+                          </select>
+                        </div>
+                      )}
+
+                      {/* 2. SOFT APPROVAL STATUS */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>2. SOFT APPROVAL STATUS</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={softApprovalStatus || 'None'}
+                          onChange={(e) => setSoftApprovalStatus(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Approval income 25k">Approval income 25k</option>
+                          <option value="Approval income 30k">Approval income 30k</option>
+                          <option value="Approval NSDP Civil base">Approval NSDP Civil base</option>
+                          <option value="DeclineS5">DeclineS5</option>
+                          <option value="Decline U2">Decline U2</option>
+                          <option value="Normal Decline">Normal Decline</option>
+                          {softApprovalStatus && !['None', 'Approval income 25k', 'Approval income 30k', 'Approval NSDP Civil base', 'Approval NSDP Cibil based', 'DeclineS5', 'Decline S5', 'Decline U2', 'Normal Decline', ''].includes(softApprovalStatus) && (
+                            <option value={softApprovalStatus}>{softApprovalStatus}</option>
+                          )}
+                        </select>
+                      </div>
+
+                      {/* 3. BANK APPLICATION NUMBER */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>3. BANK APPLICATION NUMBER (SBI - 13 DIGITS)</label>
+                        <input
+                          type="text"
+                          maxLength={13}
+                          disabled={!canEditRemark}
+                          value={bankRefNumber}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, '').slice(0, 13);
+                            setBankRefNumber(val);
+                            setLosNo(val);
+                          }}
+                          placeholder="e.g. 2925313102292 (13 numeric digits)"
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', background: !canEditRemark ? '#f8fafc' : '#fff' }}
+                        />
+                        <div style={{ fontSize: '11px', color: '#0284c7', marginTop: '4px', fontWeight: 600 }}>
+                          SBI Structure: Strictly 13 numeric digits
+                        </div>
+                      </div>
+
+                      {/* 4. VKYC LINK */}
+                      {!isPhysical && (
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>4. VKYC LINK</label>
+                          <input
+                            type="url"
+                            disabled={!canEditRemark}
+                            value={vkycUrl}
+                            onChange={(e) => setVkycUrl(e.target.value)}
+                            placeholder="https://vkyc..."
+                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '12px', background: !canEditRemark ? '#f8fafc' : '#fff' }}
+                          />
+                        </div>
+                      )}
+
+                      {/* 5. VKYC STATUS */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>5. VKYC STATUS</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={kycStage || vkycStage || 'None'}
+                          onChange={(e) => {
+                            setKycStage(e.target.value);
+                            setVkycStage(e.target.value);
+                          }}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="VKYC Complete">VKYC Complete</option>
+                          <option value="VKYC Pending">VKYC Pending</option>
+                          <option value="VKYC Failed">VKYC Failed</option>
+                          <option value="BIO Complete">BIO Complete</option>
+                          <option value="BIO Pending">BIO Pending</option>
+                          <option value="BIO Failed">BIO Failed</option>
+                          {kycStage && !['None', 'VKYC Complete', 'VKYC Pending', 'VKYC Failed', 'BIO Complete', 'BIO Pending', 'BIO Failed', ''].includes(kycStage) && (
+                            <option value={kycStage}>{kycStage}</option>
+                          )}
+                        </select>
+                      </div>
+
+                      {/* 6. IQA STAGE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>6. IQA STAGE</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={iqaStage || 'None'}
+                          onChange={(e) => setIqaStage(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="IQA complete">IQA complete</option>
+                          <option value="IQA Pending">IQA Pending</option>
+                          <option value="IQA Failed">IQA Failed</option>
+                          <option value="Blaze Complete">Blaze Complete</option>
+                          <option value="Blaze Decline">Blaze Decline</option>
+                          {iqaStage && !['None', 'IQA complete', 'IQA Pending', 'IQA Failed', 'Blaze Complete', 'Blaze Decline', ''].includes(iqaStage) && (
+                            <option value={iqaStage}>{iqaStage}</option>
+                          )}
+                        </select>
+                      </div>
+
+                      {/* 7. DISPATCH STATUS */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>7. DISPATCH STATUS</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={dispatchStatus || 'None'}
+                          onChange={(e) => setDispatchStatus(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Dispatch Pending">Dispatch Pending</option>
+                          <option value="Dispatch Complete">Dispatch Complete</option>
+                          <option value="Dispatch Not Available">Dispatch Not Available</option>
+                          <option value="Digital Dispatch">Digital Dispatch</option>
+                          <option value="Physical Dispatch">Physical Dispatch</option>
+                          <option value="E-Sign Pending">E-Sign Pending</option>
+                          <option value="E-sign Complete">E-sign Complete</option>
+                          <option value="RTB(Error)">RTB(Error)</option>
+                          {dispatchStatus && !['None', 'Dispatch Pending', 'Dispatch Complete', 'Dispatch Not Available', 'Digital Dispatch', 'Physical Dispatch', 'E-Sign Pending', 'E-sign Complete', 'RTB(Error)', ''].includes(dispatchStatus) && (
+                            <option value={dispatchStatus}>{dispatchStatus}</option>
+                          )}
+                        </select>
+                      </div>
+                    </>
+                  ) : isHdfcBank ? (
+                    /* 🅱️ HDFC BANK WORKFLOW */
+                    <>
+                      {/* 1. IPA */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>1. IPA</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={ipaStage || 'None'}
+                          onChange={(e) => setIpaStage(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="IPA Approved Cibil">IPA Approved Cibil</option>
+                          <option value="IPA Approved Income">IPA Approved Income</option>
+                          <option value="IPA Approved Decline">IPA Approved Decline</option>
+                          {ipaStage && !['None', 'IPA Approved Cibil', 'IPA Approved Income', 'IPA Approved Decline', ''].includes(ipaStage) && (
+                            <option value={ipaStage}>{ipaStage}</option>
+                          )}
+                        </select>
+                      </div>
+
+                      {/* 2. VKYC LINK */}
+                      {!isPhysical && (
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>2. VKYC LINK</label>
+                          <input
+                            type="url"
+                            disabled={!canEditRemark}
+                            value={vkycUrl}
+                            onChange={(e) => setVkycUrl(e.target.value)}
+                            placeholder="https://vkyc..."
+                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '12px', background: !canEditRemark ? '#f8fafc' : '#fff' }}
+                          />
+                        </div>
+                      )}
+
+                      {/* 3. KYC STAGE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>3. KYC STAGE</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={kycStage || 'None'}
+                          onChange={(e) => setKycStage(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Awaiting">Awaiting</option>
+                          <option value="VKYC Link Send">VKYC Link Send</option>
+                          <option value="VKYC Success">VKYC Success</option>
+                          <option value="VKYC Pending">VKYC Pending</option>
+                          <option value="VKYC Failed">VKYC Failed</option>
+                          <option value="VKYC Expired">VKYC Expired</option>
+                          <option value="ID-COM Success">ID-COM Success</option>
+                          <option value="ID-COM Pending">ID-COM Pending</option>
+                          <option value="ID-COM Failed">ID-COM Failed</option>
+                          <option value="BIO Link Send">BIO Link Send</option>
+                          <option value="BIO Success">BIO Success</option>
+                          <option value="BIO Pending">BIO Pending</option>
+                          <option value="KYC Link Not Working">KYC Link Not Working</option>
+                          <option value="Error Occured">Error Occured</option>
+                          {kycStage && !['None', 'Awaiting', 'VKYC Link Send', 'VKYC Success', 'VKYC Pending', 'VKYC Failed', 'VKYC Expired', 'ID-COM Success', 'ID-COM Pending', 'ID-COM Failed', 'BIO Link Send', 'BIO Success', 'BIO Pending', 'KYC Link Not Working', 'Error Occured', ''].includes(kycStage) && (
+                            <option value={kycStage}>{kycStage}</option>
+                          )}
+                        </select>
+                      </div>
+
+                      {/* 4. INCOME DETAILS OR MAIL STATUS */}
+                      {ipaStage === 'IPA Approved Income' ? (
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>4. INCOME DETAILS</label>
+                          <select
+                            disabled={!canEditRemark}
+                            value={incomeDetails || 'None'}
+                            onChange={(e) => setIncomeDetails(e.target.value)}
+                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                          >
+                            <option value="None">None</option>
+                            <option value="Payslip">Payslip</option>
+                            <option value="ITR">ITR</option>
+                            <option value="Card Started">Card Started</option>
+                            <option value="Form 16">Form 16</option>
+                            <option value="Bank Started">Bank Started</option>
+                            <option value="Gov. ID">Gov. ID</option>
+                            {incomeDetails && !['None', 'Payslip', 'ITR', 'Card Started', 'Form 16', 'Bank Started', 'Gov. ID', ''].includes(incomeDetails) && (
+                              <option value={incomeDetails}>{incomeDetails}</option>
+                            )}
+                          </select>
+                        </div>
+                      ) : (
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>4. MAIL STATUS</label>
+                          <select
+                            disabled={!canEditRemark}
+                            value={mailStatus || 'None'}
+                            onChange={(e) => setMailStatus(e.target.value)}
+                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                          >
+                            <option value="None">None</option>
+                            <option value="Verified">Verified</option>
+                            <option value="Pending">Pending</option>
+                            {mailStatus && !['None', 'Verified', 'Pending', ''].includes(mailStatus) && (
+                              <option value={mailStatus}>{mailStatus}</option>
+                            )}
+                          </select>
+                        </div>
+                      )}
+
+                      {/* 5. DISPATCH STAGE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>5. DISPATCH STAGE</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={dispatchStatus || 'None'}
+                          onChange={(e) => setDispatchStatus(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Dispatch Complete">Dispatch Complete</option>
+                          <option value="Dispatch Pending">Dispatch Pending</option>
+                          <option value="Dispatch Not Available">Dispatch Not Available</option>
+                          <option value="Digital Dispatch">Digital Dispatch</option>
+                          <option value="Physical Dispatch">Physical Dispatch</option>
+                          <option value="Dispatch Hold">Dispatch Hold</option>
+                          {dispatchStatus && !['None', 'Dispatch Complete', 'Dispatch Pending', 'Dispatch Not Available', 'Digital Dispatch', 'Physical Dispatch', 'Dispatch Hold', ''].includes(dispatchStatus) && (
+                            <option value={dispatchStatus}>{dispatchStatus}</option>
+                          )}
+                        </select>
+                      </div>
+
+                      {/* 6. BANK APPLICATION NUMBER */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>6. BANK APPLICATION NUMBER (HDFC - ALPHANUMERIC)</label>
+                        <input
+                          type="text"
+                          maxLength={25}
+                          disabled={!canEditRemark}
+                          value={bankRefNumber}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 25);
+                            setBankRefNumber(val);
+                            setLosNo(val);
+                          }}
+                          placeholder="e.g. D26I1045139850YZ (Alphanumeric)"
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', background: !canEditRemark ? '#f8fafc' : '#fff' }}
+                        />
+                        <div style={{ fontSize: '11px', color: '#0284c7', marginTop: '4px', fontWeight: 600 }}>
+                          HDFC Structure: Uppercase Alphanumeric (letters and numbers)
+                        </div>
+                      </div>
+
+                      {/* 7. CARD APPROVAL */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>7. CARD APPROVAL</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={cardApprovalStage || 'None'}
+                          onChange={(e) => setCardApprovalStage(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Approved">Approved</option>
+                          <option value="Decline">Decline</option>
+                          <option value="In Process">In Process</option>
+                          <option value="Awaiting">Awaiting</option>
+                          {cardApprovalStage && !['None', 'Approved', 'Decline', 'In Process', 'Awaiting', ''].includes(cardApprovalStage) && (
+                            <option value={cardApprovalStage}>{cardApprovalStage}</option>
+                          )}
+                        </select>
+                      </div>
+                    </>
+                  ) : isTataCobrandHdfc ? (
+                    /* 🆃 TATA CO-BRAND HDFC WORKFLOW */
+                    <>
+                      {/* 1. IPA STAGE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>1. IPA STAGE</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={ipaStage || 'None'}
+                          onChange={(e) => setIpaStage(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Approve">Approve</option>
+                          <option value="Decline">Decline</option>
+                          <option value="Error">Error</option>
+                          <option value="IPA Failed">IPA Failed</option>
+                          {ipaStage && !['None', 'Approve', 'Decline', 'Error', 'IPA Failed', ''].includes(ipaStage) && (
+                            <option value={ipaStage}>{ipaStage}</option>
+                          )}
+                        </select>
+                      </div>
+
+                      {/* 2. KYC STAGE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>2. KYC STAGE</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={kycStage || 'None'}
+                          onChange={(e) => setKycStage(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Awaiting">Awaiting</option>
+                          <option value="VKYC Link Send">VKYC Link Send</option>
+                          <option value="VKYC Success">VKYC Success</option>
+                          <option value="VKYC Pending">VKYC Pending</option>
+                          <option value="VKYC Failed">VKYC Failed</option>
+                          <option value="VKYC Expired">VKYC Expired</option>
+                          <option value="ID-COM Success">ID-COM Success</option>
+                          <option value="ID-COM Pending">ID-COM Pending</option>
+                          <option value="ID-COM Failed">ID-COM Failed</option>
+                          <option value="BIO Link Send">BIO Link Send</option>
+                          <option value="BIO Success">BIO Success</option>
+                          <option value="BIO Pending">BIO Pending</option>
+                          <option value="KYC Link Not Working">KYC Link Not Working</option>
+                          <option value="Error Occured">Error Occured</option>
+                          {kycStage && !['None', 'Awaiting', 'VKYC Link Send', 'VKYC Success', 'VKYC Pending', 'VKYC Failed', 'VKYC Expired', 'ID-COM Success', 'ID-COM Pending', 'ID-COM Failed', 'BIO Link Send', 'BIO Success', 'BIO Pending', 'KYC Link Not Working', 'Error Occured', ''].includes(kycStage) && (
+                            <option value={kycStage}>{kycStage}</option>
+                          )}
+                        </select>
+                      </div>
+
+                      {/* 3. BANK APPLICATION NUMBER */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>3. BANK APPLICATION NUMBER (TATA HDFC - ALPHANUMERIC)</label>
+                        <input
+                          type="text"
+                          maxLength={25}
+                          disabled={!canEditRemark}
+                          value={bankRefNumber}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 25);
+                            setBankRefNumber(val);
+                            setLosNo(val);
+                          }}
+                          placeholder="e.g. D26I1045139850YZ (Alphanumeric)"
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', background: !canEditRemark ? '#f8fafc' : '#fff' }}
+                        />
+                        <div style={{ fontSize: '11px', color: '#0284c7', marginTop: '4px', fontWeight: 600 }}>
+                          TATA HDFC Structure: Uppercase Alphanumeric (letters and numbers)
+                        </div>
+                      </div>
+
+                      {/* 4. VKYC LINK */}
+                      {!isPhysical && (
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>4. VKYC LINK</label>
+                          <input
+                            type="url"
+                            disabled={!canEditRemark}
+                            value={vkycUrl}
+                            onChange={(e) => setVkycUrl(e.target.value)}
+                            placeholder="https://vkyc..."
+                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '12px', background: !canEditRemark ? '#f8fafc' : '#fff' }}
+                          />
+                        </div>
+                      )}
+
+                      {/* 5. CARD APPROVAL */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>5. CARD APPROVAL</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={cardApprovalStage || 'None'}
+                          onChange={(e) => setCardApprovalStage(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Approved">Approved</option>
+                          <option value="Decline">Decline</option>
+                          <option value="In Process">In Process</option>
+                          <option value="Awaiting">Awaiting</option>
+                          {cardApprovalStage && !['None', 'Approved', 'Decline', 'In Process', 'Awaiting', ''].includes(cardApprovalStage) && (
+                            <option value={cardApprovalStage}>{cardApprovalStage}</option>
+                          )}
+                        </select>
+                      </div>
+
+                      {/* 6. DIGITAL CARD ISSUED */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>6. DIGITAL CARD ISSUED</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={digitalCardIssued || 'None'}
+                          onChange={(e) => setDigitalCardIssued(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                          {digitalCardIssued && !['None', 'Yes', 'No', 'yes', 'no', ''].includes(digitalCardIssued) && (
+                            <option value={digitalCardIssued}>{digitalCardIssued}</option>
+                          )}
+                        </select>
+                      </div>
+                    </>
+                  ) : (
+                    /* 🌐 GENERAL / FALLBACK BANK WORKFLOW */
+                    <>
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>BANK APPLICATION NUMBER ({bankAppConfig.bankName.toUpperCase()})</label>
+                        <input
+                          type="text"
+                          maxLength={bankAppConfig.maxLength}
+                          disabled={!canEditRemark}
+                          value={bankRefNumber}
+                          onChange={(e) => {
+                            const val = bankAppConfig.sanitize(e.target.value);
+                            setBankRefNumber(val);
+                            setLosNo(val);
+                          }}
+                          placeholder={bankAppConfig.placeholder}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', background: !canEditRemark ? '#f8fafc' : '#fff' }}
+                        />
+                        <div style={{ fontSize: '11px', color: '#0284c7', marginTop: '4px', fontWeight: 600 }}>
+                          {bankAppConfig.hint}
+                        </div>
+                      </div>
+                      {!isPhysical && (
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>VKYC LINK</label>
+                          <input
+                            type="url"
+                            disabled={!canEditRemark}
+                            value={vkycUrl}
+                            onChange={(e) => setVkycUrl(e.target.value)}
+                            placeholder="https://vkyc..."
+                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '12px', background: !canEditRemark ? '#f8fafc' : '#fff' }}
+                          />
+                        </div>
+                      )}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>KYC STAGE</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={kycStage || 'None'}
+                          onChange={(e) => setKycStage(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Vkyc Complete">Vkyc Complete</option>
+                          <option value="Vkyc Pending">Vkyc Pending</option>
+                          <option value="Vkyc Failed">Vkyc Failed</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>CARD APPROVAL STAGE</label>
+                        <select
+                          disabled={!canEditRemark}
+                          value={cardApprovalStage || 'None'}
+                          onChange={(e) => setCardApprovalStage(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="instant approved">instant approved</option>
+                          <option value="Approved">Approved</option>
+                          <option value="in process">in process</option>
+                          <option value="decline">decline</option>
+                          <option value="Awaiting">Awaiting</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
+
+                  {/* 🏦 HDFC CARD APPROVAL CONDITIONAL FIELDS (FOR ALL HDFC CARDS) */}
+                  {(isHdfcBank || isTataCobrandHdfc) && !isLocOrEoc && (
+                    <>
+                      {/* WHEN CARD APPROVAL IS APPROVED */}
+                      {String(cardApprovalStage || finalStatus || '').toLowerCase().includes('approve') && (
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#15803d', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>CARD ACTIVATION STAGE</label>
+                          <select
+                            disabled={!canEditRemark}
+                            value={cardActivationStage || 'None'}
+                            onChange={(e) => setCardActivationStage(e.target.value)}
+                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                          >
+                            <option value="None">None</option>
+                            <option value="Transaction active">Transaction active</option>
+                            <option value="V+ active">V+ active</option>
+                            <option value="Inactive">Inactive</option>
+                            <option value="Not Available">Not Available</option>
+                            {cardActivationStage && !['None', 'Transaction active', 'V+ active', 'Inactive', 'Not Available', ''].includes(cardActivationStage) && (
+                              <option value={cardActivationStage}>{cardActivationStage}</option>
+                            )}
+                          </select>
+                        </div>
+                      )}
+
+                      {/* WHEN CARD APPROVAL IS DECLINE */}
+                      {(String(cardApprovalStage || '').toLowerCase().includes('decline') || String(finalStatus || '').toLowerCase().includes('decline') || String(finalStatus || '').toLowerCase().includes('reject')) && (
+                        <>
+                          {/* 1. DECLINE CODE */}
+                          {isHdfcCcApp ? (
+                            <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                              <div>
+                                <label style={{ fontSize: '12px', fontWeight: 800, color: '#dc2626', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                                  <AlertTriangle size={14} /> 1. DECLINE CODE (HDFC CREDIT CARD)
+                                </label>
+                                <select
+                                  disabled={!canEditRemark}
+                                  value={declineCode || 'None'}
+                                  onChange={(e) => {
+                                    const selectedCode = e.target.value;
+                                    setDeclineCode(selectedCode);
+                                    if (selectedCode === 'None' || selectedCode === '') {
+                                      setDeclineRemark('');
+                                    } else {
+                                      const info = getHdfcDeclineCodeInfo(selectedCode);
+                                      if (info?.type) {
+                                        setDeclineRemark(info.type);
+                                        if (!declineReason) setDeclineReason(info.type);
+                                      }
+                                    }
+                                  }}
+                                  style={{
+                                    width: '100%',
+                                    padding: '11px 14px',
+                                    borderRadius: '8px',
+                                    border: '1.5px solid #ef4444',
+                                    fontSize: '13px',
+                                    background: !canEditRemark ? '#fef2f2' : '#fff',
+                                    fontWeight: 700,
+                                    color: '#1e293b'
+                                  }}
+                                >
+                                  <option value="None">None</option>
+                                  <option value="CIBIL decline">CIBIL decline</option>
+                                  <optgroup label="Physical Curable (26 Codes)">
+                                    {HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.PHYSICAL_CURABLE).map(c => (
+                                      <option key={c.code} value={c.code}>
+                                        {c.code} - {c.type}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                  <optgroup label="Digital Curable (17 Codes)">
+                                    {HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.DIGITAL_CURABLE).map(c => (
+                                      <option key={c.code} value={c.code}>
+                                        {c.code} - {c.type}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                  <optgroup label="Email Curable (8 Codes)">
+                                    {HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.EMAIL_CURABLE).map(c => (
+                                      <option key={c.code} value={c.code}>
+                                        {c.code} - {c.type}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                  {declineCode && !['None', 'CIBIL decline', ...HDFC_DECLINE_CODES.map(c => c.code)].includes(declineCode) && (
+                                    <option value={declineCode}>{declineCode}</option>
+                                  )}
+                                </select>
+                              </div>
+
+                              {/* READ-ONLY ALLOCATED CURING TEAM BANNER */}
+                              {declineCode && declineCode !== 'None' && (() => {
+                                const codeInfo = getHdfcDeclineCodeInfo(declineCode);
+                                const curingDesig = codeInfo?.designation || getHdfcCuringDesignation(declineCode);
+                                const isCibil = String(declineCode).trim().toUpperCase() === 'CIBIL DECLINE';
+                                const badgeInfo = CURING_DESIGNATION_BADGES[curingDesig] || (isCibil ? {
+                                  bg: '#fef2f2',
+                                  border: '#fca5a5',
+                                  text: '#991b1b',
+                                  pillBg: '#dc2626',
+                                  label: 'Non-Curable (CIBIL Decline)'
+                                } : {
+                                  bg: '#f1f5f9',
+                                  border: '#cbd5e1',
+                                  text: '#475569',
+                                  pillBg: '#64748b',
+                                  label: 'Unassigned Curing'
+                                });
+
+                                return (
+                                  <div style={{
+                                    background: badgeInfo.bg,
+                                    border: `1.5px solid ${badgeInfo.border}`,
+                                    borderRadius: '10px',
+                                    padding: '12px 16px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '6px'
+                                  }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{ fontSize: '12px', fontWeight: 800, color: '#334155', textTransform: 'uppercase' }}>
+                                          Allocated Curing Team:
+                                        </span>
+                                        <span style={{
+                                          background: badgeInfo.pillBg,
+                                          color: '#ffffff',
+                                          padding: '3px 12px',
+                                          borderRadius: '20px',
+                                          fontSize: '12px',
+                                          fontWeight: 800,
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '4px'
+                                        }}>
+                                          🛡️ {badgeInfo.label}
+                                        </span>
+                                      </div>
+                                      <span style={{ fontSize: '12px', fontWeight: 800, color: '#64748b' }}>
+                                        Code: <strong style={{ color: badgeInfo.text, fontFamily: 'monospace' }}>{declineCode}</strong>
+                                      </span>
+                                    </div>
+                                    <div style={{ fontSize: '12.5px', fontWeight: 700, color: badgeInfo.text }}>
+                                      Description: {codeInfo?.type || declineRemark || '—'}
+                                    </div>
+                                    <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 600 }}>
+                                      {isCibil ? (
+                                        <span>ℹ️ Application is marked as <strong>CIBIL Decline</strong> and does not route to curing operators.</span>
+                                      ) : (
+                                        <span>ℹ️ Application will automatically route to <strong>{badgeInfo.label}</strong> operators in the Admin panel.</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          ) : (
+                            <div>
+                              <label style={{ fontSize: '12px', fontWeight: 800, color: '#dc2626', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>1. DECLINE CODE</label>
+                              <input
+                                type="text"
+                                disabled={!canEditRemark}
+                                value={declineCode}
+                                onChange={(e) => setDeclineCode(e.target.value)}
+                                placeholder="Enter Decline Code"
+                                style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff' }}
+                              />
+                            </div>
+                          )}
+
+                          {/* 2. DECLINE REMARK */}
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#dc2626', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>2. DECLINE REMARK</label>
+                            <input
+                              type="text"
+                              disabled={!canEditRemark}
+                              value={declineRemark}
+                              onChange={(e) => setDeclineRemark(e.target.value)}
+                              placeholder="Enter Decline Remark"
+                              style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff' }}
+                            />
+                          </div>
+
+                          {/* 3. CUREBAL REMARK */}
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>3. CUREBAL REMARK</label>
+                            <select
+                              disabled={!canEditRemark}
+                              value={queryableRemark || 'None'}
+                              onChange={(e) => setQueryableRemark(e.target.value)}
+                              style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                            >
+                              <option value="None">None</option>
+                              <option value="Digital">Digital</option>
+                              <option value="Physical">Physical</option>
+                              <option value="Not Required">Not Required</option>
+                              {queryableRemark && !['None', 'Digital', 'Physical', 'Not Required', ''].includes(queryableRemark) && (
+                                <option value={queryableRemark}>{queryableRemark}</option>
+                              )}
+                            </select>
+                          </div>
+
+                          {/* 4. DIGITAL QUERY DETAILS (WHEN CUREBAL REMARK IS DIGITAL) */}
+                          {String(queryableRemark).toLowerCase() === 'digital' && (
+                            <div style={{ gridColumn: '1 / -1', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '14px', marginTop: '4px' }}>
+                              <div style={{ fontWeight: 800, color: '#1e40af', fontSize: '13px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <Sparkles size={16} /> Digital Journey Query Details
+                              </div>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', alignItems: 'end' }}>
+                                <div>
+                                  <button
+                                    type="button"
+                                    disabled={!canEditRemark}
+                                    onClick={() => {
+                                      setDigitalRemark('Completed');
+                                      alert('Digital journey marked as Completed!');
+                                    }}
+                                    style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 800, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center' }}
+                                  >
+                                    <CheckCircle size={15} /> Complete Digital Journey
+                                  </button>
+                                </div>
+
+                                <div>
+                                  <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e3a8a', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>CUREBAL SALES REMARK</label>
+                                  <input
+                                    type="text"
+                                    disabled={!canEditRemark}
+                                    value={queryableSalesRemark}
+                                    onChange={(e) => setQueryableSalesRemark(e.target.value)}
+                                    placeholder="Enter Curebal Sales Remark"
+                                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff' }}
+                                  />
+                                </div>
+
+                                <div>
+                                  <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e3a8a', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>DIGITAL REMARK</label>
+                                  <select
+                                    disabled={!canEditRemark}
+                                    value={digitalRemark || 'None'}
+                                    onChange={(e) => setDigitalRemark(e.target.value)}
+                                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                                  >
+                                    <option value="None">None</option>
+                                    <option value="Completed">Completed</option>
+                                    <option value="Incomplete">Incomplete</option>
+                                    <option value="In Process">In Process</option>
+                                    {digitalRemark && !['None', 'Completed', 'Incomplete', 'In Process', ''].includes(digitalRemark) && (
+                                      <option value={digitalRemark}>{digitalRemark}</option>
+                                    )}
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </>
+                  )}
+
+                  {/* USER REMARK (TEXT FIELD) */}
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                      <MessageSquare size={14} /> USER REMARK (Employee / Partner Remark)
+                    </label>
+                    <textarea
+                      disabled={isLockedStatus}
+                      value={userRemark}
+                      onChange={(e) => handleUserRemarkChange(e.target.value)}
+                      placeholder="Enter user remark / notes for this application..."
+                      rows={3}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #93c5fd', fontSize: '13px', background: isLockedStatus ? '#f8fafc' : '#eff6ff', fontWeight: 600, color: '#1e3a8a' }}
+                    />
+                  </div>
+
+                  {/* BACKEND REMARK (ADMIN & SALES EXECUTIVE EDITABLE) */}
+                  <div style={{ gridColumn: '1 / -1', marginTop: '12px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 800, color: '#6b21a8', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                      <Lock size={14} color="#6b21a8" /> BACKEND REMARK (Admin Roles & Sales Executive)
+                    </label>
+                    <textarea
+                      disabled={!canEditBackendRemark}
+                      value={backendRemark}
+                      onChange={(e) => setBackendRemark(e.target.value)}
+                      placeholder={canEditBackendRemark ? "Enter confidential backend remark..." : "Only Admin Roles & Administrative Sales Executive can edit backend remark"}
+                      rows={2}
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid #d8b4fe',
+                        fontSize: '13px',
+                        background: !canEditBackendRemark ? '#f3e8ff' : '#faf5ff',
+                        fontWeight: 600,
+                        color: '#581c87'
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{
+                  display: 'flex',
+                  justify: 'flex-end',
+                  gap: '12px',
+                  marginTop: '20px',
+                  position: 'sticky',
+                  bottom: 0,
+                  background: '#ffffff',
+                  padding: '12px 0',
+                  borderTop: '1px solid #e2e8f0',
+                  zIndex: 20,
+                  boxShadow: '0 -6px 16px rgba(0,0,0,0.06)'
+                }}>
+                  {canEditRemark ? (
+                    <button
+                      type="button"
+                      onClick={() => handleSaveDetails('remark')}
+                      disabled={actionLoading}
+                      style={{ background: '#ea580c', color: '#fff', border: 'none', padding: '12px 24px', borderRadius: '10px', fontWeight: 700, fontSize: '14px', cursor: 'pointer', width: isMobile ? '100%' : 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                    >
+                      <Save size={16} /> {actionLoading ? 'Saving...' : 'Save Remarks & Stage'}
+                    </button>
+                  ) : (
+                    <div style={{ fontSize: '12px', color: '#64748b', fontWeight: 600, padding: '8px 14px', background: '#f1f5f9', borderRadius: '8px', width: '100%', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                      <Lock size={13} /> Editing is disabled because application status is {currentStatus?.replace(/_/g, ' ')}.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ═════════ TAB 3: FINAL (BANK REMARK, FINAL STATUS, RE-QD — EDITABLE BY ADMIN & OPS ONLY) ═════════ */}
+          {activeTab === 'final' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px' }}>
+                  <h4 style={{ fontSize: '14px', fontWeight: 800, color: '#15803d', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Building2 size={16} /> Bank Remark & Final Status
+                  </h4>
+                  {!canEditFinal && (
+                    <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 10px', borderRadius: '20px', background: '#f1f5f9', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Lock size={12} /> Read-Only Mode (Operations/Admin Edit Only)
+                    </span>
+                  )}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '18px' }}>
+                  
+                  {/* Quick Context Summary for Final Tab */}
+                  <div style={{
+                    gridColumn: '1 / -1',
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '10px',
+                    padding: '10px 14px',
+                    marginBottom: '4px',
+                    display: 'flex',
+                    justify: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '10px',
+                    fontSize: '12.5px'
+                  }}>
+                    <div>
+                      <span style={{ color: '#64748b', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' }}>Bank Application No: </span>
+                      <strong style={{ color: bankRefNumber ? '#0284c7' : '#94a3b8', fontFamily: 'monospace' }}>
+                        {bankRefNumber || application?.bank_application_number || application?.bank_ref_number || 'Not Filled Yet'}
+                      </strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#64748b', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' }}>PAN Number: </span>
+                      {hasBankAppNumber ? (
+                        <strong style={{ color: '#16a34a', fontFamily: 'monospace', background: '#dcfce7', padding: '2px 8px', borderRadius: '4px', border: '1px solid #86efac' }}>
+                          {panNumber || application.pan_number || application.pan || 'N/A'}
+                        </strong>
+                      ) : (
+                        <span style={{ color: '#dc2626', fontWeight: 700, fontSize: '11.5px', background: '#fef2f2', padding: '2px 8px', borderRadius: '4px', border: '1px solid #fecaca' }}>
+                          🔒 Fill Bank App No. to reveal PAN
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {isEoc ? (
+                    <>
+                      {/* FINAL BANK STAGE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>FINAL BANK STAGE</label>
+                        <select
+                          id="loc-eoc-final-bank-stage"
+                          disabled={!canEditFinal}
+                          value={finalBankStage || 'DECLINE'}
+                          onChange={(e) => setFinalBankStage(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                        >
+                          <option value="DECLINE">DECLINE</option>
+                          <option value="DISBURSEMENT">DISBURSEMENT</option>
+                          <option value="DISBURSEMENT PENDING">DISBURSEMENT PENDING</option>
+                          <option value="IN PROCESS">IN PROCESS</option>
+                        </select>
+                      </div>
+
+                      {/* 3. DISBURSEMENT COMPLETED */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>DISBURSEMENT COMPLETED</label>
+                        <select
+                          id="loc-eoc-disbursement-completed"
+                          disabled={!canEditFinal}
+                          value={disbursementCompleted || 'None'}
+                          onChange={(e) => setDisbursementCompleted(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                      </div>
+
+                      {/* 4. Disbursement Date */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>Disbursement Date</label>
+                        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                          <input
+                            id="loc-eoc-disbursement-date"
+                            type="text"
+                            placeholder="DD/MM/YYYY"
+                            maxLength={10}
+                            disabled={!canEditFinal}
+                            value={disbursementDateDisplay}
+                            onChange={(e) => {
+                              const formatted = formatDateInput(e.target.value);
+                              setDisbursementDateDisplay(formatted);
+                              setDisbursementDate(formatDateToYyyyMmDd(formatted));
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '10px 40px 10px 12px',
+                              borderRadius: '8px',
+                              border: '1px solid #cbd5e1',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              background: !canEditFinal ? '#f8fafc' : '#fff'
+                            }}
+                          />
+                          <input
+                            type="date"
+                            id="loc-eoc-disbursement-date-picker"
+                            disabled={!canEditFinal}
+                            value={formatDateToYyyyMmDd(disbursementDateDisplay) || ''}
+                            onChange={(e) => {
+                              const iso = e.target.value;
+                              setDisbursementDate(iso);
+                              setDisbursementDateDisplay(formatDateToDdMmYyyy(iso));
+                            }}
+                            style={{
+                              position: 'absolute',
+                              right: '8px',
+                              width: '28px',
+                              height: '28px',
+                              opacity: 0,
+                              cursor: canEditFinal ? 'pointer' : 'default',
+                              zIndex: 2
+                            }}
+                            aria-label="Pick disbursement date"
+                          />
+                          <Calendar
+                            size={18}
+                            style={{
+                              position: 'absolute',
+                              right: '12px',
+                              color: '#64748b',
+                              pointerEvents: 'none',
+                              zIndex: 1
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* 5. FINAL SMART EMI DISBURSE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>FINAL SMART EMI DISBURSE</label>
+                        <input
+                          type="text"
+                          disabled={!canEditFinal}
+                          value={finalSmartEmiDisburse}
+                          onChange={(e) => setFinalSmartEmiDisburse(e.target.value)}
+                          placeholder="Enter Final Smart EMI Disburse Amount"
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                        />
+                      </div>
+
+                      {/* 6. FINAL TENURE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>FINAL TENURE</label>
+                        <select
+                          disabled={!canEditFinal}
+                          value={finalTenure}
+                          onChange={(e) => setFinalTenure(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                        >
+                          <option value="06 Months">06 Months</option>
+                          <option value="01 Year">01 Year</option>
+                          <option value="02 Years">02 Years</option>
+                          <option value="03 Years">03 Years</option>
+                          <option value="04 Years">04 Years</option>
+                        </select>
+                      </div>
+
+                      {/* 7. OFFER DECLINE REASON */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#dc2626', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>OFFER DECLINE REASON</label>
+                        <input
+                          type="text"
+                          disabled={!canEditFinal}
+                          value={offerDeclineReason}
+                          onChange={(e) => setOfferDeclineReason(e.target.value)}
+                          placeholder="Enter Offer Decline Reason"
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff' }}
+                        />
+                      </div>
+
+                      {/* 8. ELIGIBLE FOR INCENTIVE - YES, NO */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>ELIGIBLE FOR INCENTIVE</label>
+                        <select
+                          disabled={!canEditFinal}
+                          value={eligibleForIncentive}
+                          onChange={(e) => setEligibleForIncentive(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                        >
+                          <option value="YES">YES</option>
+                          <option value="NO">NO</option>
+                        </select>
+                      </div>
+
+                      {/* USER REMARK */}
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                          <MessageSquare size={14} /> USER REMARK (Employee / Partner Remark)
+                        </label>
+                        <textarea
+                          disabled={isLockedStatus}
+                          value={userRemark}
+                          onChange={(e) => handleUserRemarkChange(e.target.value)}
+                          placeholder="Enter user remark / notes..."
+                          rows={2}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #93c5fd', fontSize: '13px', background: isLockedStatus ? '#f8fafc' : '#eff6ff', fontWeight: 600, color: '#1e3a8a' }}
+                        />
+                      </div>
+
+                      {/* BANK REMARK */}
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>BANK REMARK</label>
+                        <textarea
+                          disabled={!canEditFinal}
+                          value={(() => {
+                            const u = userRemark && String(userRemark).trim() !== '' && String(userRemark).trim().toUpperCase() !== 'NA' && String(userRemark).trim().toUpperCase() !== 'N/A' ? String(userRemark) : '';
+                            const b = bankRemark && String(bankRemark).trim() !== '' && String(bankRemark).trim().toUpperCase() !== 'NA' && String(bankRemark).trim().toUpperCase() !== 'N/A' ? String(bankRemark) : '';
+                            if (u) return u;
+                            if (b) return b;
+                            return 'NA';
+                          })()}
+                          onChange={(e) => handleBankRemarkChange(e.target.value)}
+                          placeholder="NA"
+                          rows={3}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff' }}
+                        />
+                      </div>
+                    </>
+                  ) : isLoc ? (
+                    <>
+                      {/* FINAL BANK STAGE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>FINAL BANK STAGE</label>
+                        <select
+                          id="loc-eoc-final-bank-stage"
+                          disabled={!canEditFinal}
+                          value={finalBankStage || 'DECLINE'}
+                          onChange={(e) => setFinalBankStage(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                        >
+                          <option value="DECLINE">DECLINE</option>
+                          <option value="DISBURSEMENT">DISBURSEMENT</option>
+                          <option value="DISBURSEMENT PENDING">DISBURSEMENT PENDING</option>
+                          <option value="IN PROCESS">IN PROCESS</option>
+                        </select>
+                      </div>
+
+                      {/* 3. DISBURSEMENT COMPLETED */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>DISBURSEMENT COMPLETED</label>
+                        <select
+                          id="loc-eoc-disbursement-completed"
+                          disabled={!canEditFinal}
+                          value={disbursementCompleted || 'None'}
+                          onChange={(e) => setDisbursementCompleted(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                        >
+                          <option value="None">None</option>
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                      </div>
+
+                      {/* 4. Disbursement Date */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>Disbursement Date</label>
+                        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                          <input
+                            id="loc-eoc-disbursement-date"
+                            type="text"
+                            placeholder="DD/MM/YYYY"
+                            maxLength={10}
+                            disabled={!canEditFinal}
+                            value={disbursementDateDisplay}
+                            onChange={(e) => {
+                              const formatted = formatDateInput(e.target.value);
+                              setDisbursementDateDisplay(formatted);
+                              setDisbursementDate(formatDateToYyyyMmDd(formatted));
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '10px 40px 10px 12px',
+                              borderRadius: '8px',
+                              border: '1px solid #cbd5e1',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              background: !canEditFinal ? '#f8fafc' : '#fff'
+                            }}
+                          />
+                          <input
+                            type="date"
+                            id="loc-eoc-disbursement-date-picker"
+                            disabled={!canEditFinal}
+                            value={formatDateToYyyyMmDd(disbursementDateDisplay) || ''}
+                            onChange={(e) => {
+                              const iso = e.target.value;
+                              setDisbursementDate(iso);
+                              setDisbursementDateDisplay(formatDateToDdMmYyyy(iso));
+                            }}
+                            style={{
+                              position: 'absolute',
+                              right: '8px',
+                              width: '28px',
+                              height: '28px',
+                              opacity: 0,
+                              cursor: canEditFinal ? 'pointer' : 'default',
+                              zIndex: 2
+                            }}
+                            aria-label="Pick disbursement date"
+                          />
+                          <Calendar
+                            size={18}
+                            style={{
+                              position: 'absolute',
+                              right: '12px',
+                              color: '#64748b',
+                              pointerEvents: 'none',
+                              zIndex: 1
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* 5. FINAL LOAN DISBURSED */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>FINAL LOAN DISBURSED</label>
+                        <input
+                          type="text"
+                          disabled={!canEditFinal}
+                          value={finalLoanDisbursed}
+                          onChange={(e) => setFinalLoanDisbursed(e.target.value)}
+                          placeholder="Enter Final Loan Disbursed Amount"
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                        />
+                      </div>
+
+                      {/* 6. FINAL LOAN TENURE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>FINAL LOAN TENURE</label>
+                        <select
+                          disabled={!canEditFinal}
+                          value={finalLoanTenure}
+                          onChange={(e) => setFinalLoanTenure(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                        >
+                          <option value="6 Months">6 Months</option>
+                          <option value="1 Year">1 Year</option>
+                          <option value="2 Years">2 Years</option>
+                          <option value="3 Years">3 Years</option>
+                          <option value="4 Years">4 Years</option>
+                          <option value="5 Years">5 Years</option>
+                        </select>
+                      </div>
+
+                      {/* 7. DECLINE REASON */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#dc2626', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>DECLINE REASON</label>
+                        <input
+                          type="text"
+                          disabled={!canEditFinal}
+                          value={offerDeclineReason}
+                          onChange={(e) => setOfferDeclineReason(e.target.value)}
+                          placeholder="Enter Decline Reason"
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff' }}
+                        />
+                      </div>
+
+                      {/* 8. ELIGIBLE FOR INCENTIVE - YES, NO */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>ELIGIBLE FOR INCENTIVE</label>
+                        <select
+                          disabled={!canEditFinal}
+                          value={eligibleForIncentive}
+                          onChange={(e) => setEligibleForIncentive(e.target.value)}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                        >
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                      </div>
+
+                      {/* USER REMARK */}
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                          <MessageSquare size={14} /> USER REMARK (Employee / Partner Remark)
+                        </label>
+                        <textarea
+                          disabled={isLockedStatus}
+                          value={userRemark}
+                          onChange={(e) => handleUserRemarkChange(e.target.value)}
+                          placeholder="Enter user remark / notes..."
+                          rows={2}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #93c5fd', fontSize: '13px', background: isLockedStatus ? '#f8fafc' : '#eff6ff', fontWeight: 600, color: '#1e3a8a' }}
+                        />
+                      </div>
+
+                      {/* BANK REMARK */}
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>BANK REMARK</label>
+                        <textarea
+                          disabled={!canEditFinal}
+                          value={(() => {
+                            const u = userRemark && String(userRemark).trim() !== '' && String(userRemark).trim().toUpperCase() !== 'NA' && String(userRemark).trim().toUpperCase() !== 'N/A' ? String(userRemark) : '';
+                            const b = bankRemark && String(bankRemark).trim() !== '' && String(bankRemark).trim().toUpperCase() !== 'NA' && String(bankRemark).trim().toUpperCase() !== 'N/A' ? String(bankRemark) : '';
+                            if (u) return u;
+                            if (b) return b;
+                            return 'NA';
+                          })()}
+                          onChange={(e) => handleBankRemarkChange(e.target.value)}
+                          placeholder="NA"
+                          rows={3}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff' }}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* 1. FINAL BANK STAGE / CARD APPROVE */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                          {isSbi ? '1. FINAL BANK STAGE' : '1. FINAL CARD APPROVE'}
+                        </label>
+                    <select
+                      disabled={!canEditFinal}
+                      value={finalStatus || 'None'}
+                      onChange={(e) => setFinalStatus(e.target.value)}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                    >
+                      {isSbi ? (
+                        <>
+                          <option value="None">None</option>
+                          <option value="Approved">Approved</option>
+                          <option value="In Process">In Process</option>
+                          <option value="Decline">Decline</option>
+                          <option value="Technical Error">Technical Error</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="None">None</option>
+                          <option value="approve">approve</option>
+                          <option value="decline">decline</option>
+                          <option value="in process">in process</option>
+                        </>
+                      )}
+                      {finalStatus && !['None', 'Approved', 'In Process', 'Decline', 'Technical Error', 'approve', 'decline', 'in process', ''].includes(finalStatus) && (
+                        <option value={finalStatus}>{finalStatus}</option>
+                      )}
+                    </select>
+                  </div>
+
+                  {/* 2. APP FILE GENERATED / DIGITAL CARD ISSUED */}
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                      {isSbi ? '2. APP FILE GENERATED' : '2. DIGITAL CARD ISSUED'}
+                    </label>
+                    {isSbi ? (
+                      <select
+                        disabled={!canEditFinal}
+                        value={appFileGenerated || 'None'}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setAppFileGenerated(val);
+                          if (val === 'Yes') {
+                            setFinalStatus('Approved');
+                          } else if (val === 'No') {
+                            setFinalStatus('Decline');
+                          }
+                        }}
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                      >
+                        <option value="None">None</option>
+                        <option value="Yes">Yes</option>
+                        <option value="No">No</option>
+                        {appFileGenerated && !['None', 'Yes', 'No', ''].includes(appFileGenerated) && (
+                          <option value={appFileGenerated}>{appFileGenerated}</option>
+                        )}
+                      </select>
+                    ) : (
+                      <select
+                        disabled={!canEditFinal}
+                        value={digitalCardIssued || 'None'}
+                        onChange={(e) => setDigitalCardIssued(e.target.value)}
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                      >
+                        <option value="None">None</option>
+                        <option value="yes">yes</option>
+                        <option value="no">no</option>
+                        {digitalCardIssued && !['None', 'yes', 'no', ''].includes(digitalCardIssued) && (
+                          <option value={digitalCardIssued}>{digitalCardIssued}</option>
+                        )}
+                      </select>
+                    )}
+                  </div>
+
+                  {/* 🏦 BANK CURRENT LEAD STATUS (ONLY FOR HDFC BANK & TATA CO-BRAND HDFC IN FINAL FORM) */}
+                  {(isHdfcBank || isTataCobrandHdfc) && (
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                        BANK CURRENT LEAD STATUS
+                      </label>
+                      <select
+                        disabled={!canEditFinal}
+                        value={bankCurrentLeadStatus || 'None'}
+                        onChange={(e) => setBankCurrentLeadStatus(e.target.value)}
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                      >
+                        <option value="None">None</option>
+                        <option value="Final DAP API">Final DAP API</option>
+                        <option value="Submission Completed">Submission Completed</option>
+                        <option value="IPA Failed">IPA Failed</option>
+                        <option value="UI_STAGE_initial_consent">UI_STAGE_initial_consent</option>
+                        <option value="Demog Check Completed">Demog Check Completed</option>
+                        <option value="IPA Success">IPA Success</option>
+                        <option value="PAN Status Check Failed">PAN Status Check Failed</option>
+                        <option value="Dedupe Check Completed">Dedupe Check Completed</option>
+                        <option value="IDCOM Failed">IDCOM Failed</option>
+                        <option value="Employment Details Submission Failed">Employment Details Submission Failed</option>
+                        <option value="Demog Check Failed">Demog Check Failed</option>
+                        <option value="eKYC OTP Failed">eKYC OTP Failed</option>
+                        <option value="Other Details Submission">Other Details Submission</option>
+                        <option value="Failed">Failed</option>
+                        <option value="UI_STAGE_approved_offers">UI_STAGE_approved_offers</option>
+                        {bankCurrentLeadStatus && !['None', 'Final DAP API', 'Submission Completed', 'IPA Failed', 'UI_STAGE_initial_consent', 'Demog Check Completed', 'IPA Success', 'PAN Status Check Failed', 'Dedupe Check Completed', 'IDCOM Failed', 'Employment Details Submission Failed', 'Demog Check Failed', 'eKYC OTP Failed', 'Other Details Submission', 'Failed', 'UI_STAGE_approved_offers', ''].includes(bankCurrentLeadStatus) && (
+                          <option value={bankCurrentLeadStatus}>{bankCurrentLeadStatus}</option>
+                        )}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* 🏦 HDFC DECLINE CODE (ONLY FOR HDFC BANK CREDIT CARD IN FINAL FORM WHEN STATUS IS DECLINE) */}
+                  {isHdfcCcApp && (String(finalStatus || '').toLowerCase().includes('decline') || String(finalStatus || '').toLowerCase().includes('reject')) && (
+                    <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '14px', background: '#fef2f2', border: '1.5px solid #fecaca', borderRadius: '12px', padding: '16px' }}>
+                      
+                      {/* DUAL DECLINE CODE SELECTORS: 1. PRIMARY DECLINE CODE & 2. SECONDARY DECLINE CODE */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+                        {/* 1. PRIMARY DECLINE CODE */}
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#dc2626', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                            <AlertTriangle size={15} /> 1. PRIMARY DECLINE CODE (HDFC CREDIT CARD) *
+                          </label>
+                          <select
+                            disabled={!canEditFinal}
+                            value={primaryDeclineCode || declineCode || 'None'}
+                            onChange={(e) => {
+                              const selectedCode = e.target.value;
+                              setPrimaryDeclineCode(selectedCode);
+                              setDeclineCode(selectedCode);
+                              if (selectedCode === 'None' || selectedCode === '') {
+                                setDeclineRemark('');
+                              } else {
+                                const info = getHdfcDeclineCodeInfo(selectedCode);
+                                if (info?.type) {
+                                  setDeclineRemark(info.type);
+                                  setDeclineReason(info.type);
+                                }
+                              }
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '11px 14px',
+                              borderRadius: '8px',
+                              border: '1.5px solid #ef4444',
+                              fontSize: '13px',
+                              background: !canEditFinal ? '#f8fafc' : '#ffffff',
+                              fontWeight: 700,
+                              color: '#1e293b'
+                            }}
+                          >
+                            <option value="None">None</option>
+                            <option value="CIBIL decline">CIBIL decline</option>
+                            <optgroup label="Physical Curable (26 Codes)">
+                              {HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.PHYSICAL_CURABLE).map(c => (
+                                <option key={c.code} value={c.code}>
+                                  {c.code} - {c.type}
+                                </option>
+                              ))}
+                            </optgroup>
+                            <optgroup label="Digital Curable (17 Codes)">
+                              {HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.DIGITAL_CURABLE).map(c => (
+                                <option key={c.code} value={c.code}>
+                                  {c.code} - {c.type}
+                                </option>
+                              ))}
+                            </optgroup>
+                            <optgroup label="Email Curable (8 Codes)">
+                              {HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.EMAIL_CURABLE).map(c => (
+                                <option key={c.code} value={c.code}>
+                                  {c.code} - {c.type}
+                                </option>
+                              ))}
+                            </optgroup>
+                            {primaryDeclineCode && !['None', 'CIBIL decline', ...HDFC_DECLINE_CODES.map(c => c.code)].includes(primaryDeclineCode) && (
+                              <option value={primaryDeclineCode}>{primaryDeclineCode}</option>
+                            )}
+                          </select>
+                        </div>
+
+                        {/* 2. SECONDARY DECLINE CODE */}
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#475569', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                            2. SECONDARY DECLINE CODE (HDFC CREDIT CARD) (OPTIONAL)
+                          </label>
+                          <select
+                            disabled={!canEditFinal}
+                            value={secondaryDeclineCode || 'None'}
+                            onChange={(e) => {
+                              const selectedCode = e.target.value;
+                              setSecondaryDeclineCode(selectedCode);
+                              if (selectedCode === 'None' || selectedCode === '') {
+                                setSecondaryDeclineRemark('');
+                              } else {
+                                const info = getHdfcDeclineCodeInfo(selectedCode);
+                                if (info?.type) {
+                                  setSecondaryDeclineRemark(info.type);
+                                }
+                              }
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '11px 14px',
+                              borderRadius: '8px',
+                              border: '1.5px solid #cbd5e1',
+                              fontSize: '13px',
+                              background: !canEditFinal ? '#f8fafc' : '#ffffff',
+                              fontWeight: 700,
+                              color: '#1e293b'
+                            }}
+                          >
+                            <option value="None">None</option>
+                            <option value="CIBIL decline">CIBIL decline</option>
+                            <optgroup label="Physical Curable (26 Codes)">
+                              {HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.PHYSICAL_CURABLE).map(c => (
+                                <option key={c.code} value={c.code}>
+                                  {c.code} - {c.type}
+                                </option>
+                              ))}
+                            </optgroup>
+                            <optgroup label="Digital Curable (17 Codes)">
+                              {HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.DIGITAL_CURABLE).map(c => (
+                                <option key={c.code} value={c.code}>
+                                  {c.code} - {c.type}
+                                </option>
+                              ))}
+                            </optgroup>
+                            <optgroup label="Email Curable (8 Codes)">
+                              {HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.EMAIL_CURABLE).map(c => (
+                                <option key={c.code} value={c.code}>
+                                  {c.code} - {c.type}
+                                </option>
+                              ))}
+                            </optgroup>
+                            {secondaryDeclineCode && !['None', 'CIBIL decline', ...HDFC_DECLINE_CODES.map(c => c.code)].includes(secondaryDeclineCode) && (
+                              <option value={secondaryDeclineCode}>{secondaryDeclineCode}</option>
+                            )}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* READ-ONLY ALLOCATED CURING TEAM BANNER (GOVERNED BY PRIMARY DECLINE CODE) */}
+                      {(primaryDeclineCode || declineCode) && (primaryDeclineCode || declineCode) !== 'None' && (() => {
+                        const effectiveCode = primaryDeclineCode || declineCode;
+                        const codeInfo = getHdfcDeclineCodeInfo(effectiveCode);
+                        const curingDesig = codeInfo?.designation || getHdfcCuringDesignation(effectiveCode);
+                        const isCibil = String(effectiveCode).trim().toUpperCase() === 'CIBIL DECLINE';
+                        const badgeInfo = CURING_DESIGNATION_BADGES[curingDesig] || (isCibil ? {
+                          bg: '#fef2f2',
+                          border: '#fca5a5',
+                          text: '#991b1b',
+                          pillBg: '#dc2626',
+                          label: 'Non-Curable (CIBIL Decline)'
+                        } : {
+                          bg: '#f1f5f9',
+                          border: '#cbd5e1',
+                          text: '#475569',
+                          pillBg: '#64748b',
+                          label: 'Unassigned Curing'
+                        });
+
+                        const secInfo = secondaryDeclineCode && secondaryDeclineCode !== 'None' ? getHdfcDeclineCodeInfo(secondaryDeclineCode) : null;
+                        const secDesig = secInfo?.designation || getHdfcCuringDesignation(secondaryDeclineCode);
+
+                        return (
+                          <div style={{
+                            background: badgeInfo.bg,
+                            border: `1.5px solid ${badgeInfo.border}`,
+                            borderRadius: '10px',
+                            padding: '14px 18px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px'
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '12px', fontWeight: 800, color: '#334155', textTransform: 'uppercase' }}>
+                                  Allocated Curing Team:
+                                </span>
+                                <span style={{
+                                  background: badgeInfo.pillBg,
+                                  color: '#ffffff',
+                                  padding: '4px 12px',
+                                  borderRadius: '20px',
+                                  fontSize: '12px',
+                                  fontWeight: 800,
+                                  letterSpacing: '0.3px',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                                }}>
+                                  🛡️ {badgeInfo.label}
+                                </span>
+                              </div>
+                              <span style={{ fontSize: '12px', fontWeight: 800, color: '#64748b' }}>
+                                Primary Code: <strong style={{ color: badgeInfo.text, fontFamily: 'monospace', fontSize: '13px' }}>{effectiveCode}</strong>
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '13px', fontWeight: 700, color: badgeInfo.text }}>
+                              Primary Description: {codeInfo?.type || declineRemark || declineReason || '—'}
+                            </div>
+                            {secInfo && (
+                              <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#475569', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                <span>Secondary Code: <strong style={{ fontFamily: 'monospace', color: '#1e293b' }}>{secondaryDeclineCode}</strong> ({secInfo.type || secondaryDeclineRemark})</span>
+                                {secDesig && (
+                                  <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '10px', background: '#e2e8f0', color: '#334155', fontWeight: 700 }}>
+                                    {secInfo.designationLabel || secDesig}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            <div style={{ fontSize: '11.5px', color: '#64748b', fontWeight: 600 }}>
+                              {isCibil ? (
+                                <span>ℹ️ Application is declined due to <strong>CIBIL Bureau guidelines</strong> and does not route to curing operators.</span>
+                              ) : curingDesig === CURING_DESIGNATIONS.PHYSICAL_CURABLE ? (
+                                <span>ℹ️ Primary code is Physical Curable: Application will automatically display in the <strong>Physical Curable Operator</strong> panel in the Admin panel.</span>
+                              ) : (
+                                <span>ℹ️ Application will automatically route to <strong>{badgeInfo.label}</strong> operators in the Admin panel based on the Primary Decline Code.</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* DECLINE REASON / REMARK FIELDS */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#dc2626', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                            PRIMARY DECLINE REASON / REMARK
+                          </label>
+                          <input
+                            type="text"
+                            disabled={!canEditFinal}
+                            value={declineRemark || declineReason || ''}
+                            onChange={(e) => {
+                              setDeclineRemark(e.target.value);
+                              setDeclineReason(e.target.value);
+                            }}
+                            placeholder="Enter primary decline description or reason"
+                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#475569', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                            SECONDARY DECLINE REASON / REMARK (OPTIONAL)
+                          </label>
+                          <input
+                            type="text"
+                            disabled={!canEditFinal}
+                            value={secondaryDeclineRemark || ''}
+                            onChange={(e) => setSecondaryDeclineRemark(e.target.value)}
+                            placeholder="Enter secondary decline description or remark"
+                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff' }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 3. SBI IN PROCESS STAGE (Only for SBI applications) */}
+                  {isSbi && (
+                    <div>
+                      <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                        IN PROCESS STAGE
+                      </label>
+                      <select
+                        disabled={!canEditFinal}
+                        value={inProcessStage || 'None'}
+                        onChange={(e) => setInProcessStage(e.target.value)}
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                      >
+                        <option value="None">None</option>
+                        <option value="Dip call pending">Dip call pending</option>
+                        <option value="Dip appcode pending">Dip appcode pending</option>
+                        <option value="Soft decision - approve">Soft decision - approve</option>
+                        <option value="Fte pending">Fte pending</option>
+                        <option value="WCP PROCESS">WCP PROCESS</option>
+                        <option value="Stp manual process">Stp manual process</option>
+                        {inProcessStage && !['None', 'Dip call pending', 'Dip appcode pending', 'Dip appcode panding', 'Soft decision - approve', 'Soft disision - approve', 'Fte pending', 'WCP PROCESS', 'Stp manual process', ''].includes(inProcessStage) && (
+                          <option value={inProcessStage}>{inProcessStage}</option>
+                        )}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* 3. SBI Rejection Reason (Only shown when App File Generated is No for SBI) */}
+                  {isSbi && appFileGenerated === 'No' && (
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 800, color: '#dc2626', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                        * REJECTION REASON (Required when App File Generated is No)
+                      </label>
+                      <textarea
+                        disabled={!canEditFinal}
+                        value={declineReason || ''}
+                        onChange={(e) => setDeclineReason(e.target.value)}
+                        placeholder="Enter rejection reason for why app file was not generated..."
+                        rows={2}
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #ef4444', fontSize: '13px', background: !canEditFinal ? '#fef2f2' : '#fff', fontWeight: 600, color: '#dc2626' }}
+                      />
+                    </div>
+                  )}
+
+                  {/* 3. USER REMARK */}
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                      <MessageSquare size={14} /> USER REMARK (Employee / Partner Remark)
+                    </label>
+                    <textarea
+                      disabled={isLockedStatus}
+                      value={userRemark}
+                      onChange={(e) => handleUserRemarkChange(e.target.value)}
+                      placeholder="Enter user remark / notes..."
+                      rows={2}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #93c5fd', fontSize: '13px', background: isLockedStatus ? '#f8fafc' : '#eff6ff', fontWeight: 600, color: '#1e3a8a' }}
+                    />
+                  </div>
+
+                  {/* 4. BANK REMARK */}
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>4. BANK REMARK</label>
+                    <textarea
+                      disabled={!canEditFinal}
+                      value={(() => {
+                        const u = userRemark && String(userRemark).trim() !== '' && String(userRemark).trim().toUpperCase() !== 'NA' && String(userRemark).trim().toUpperCase() !== 'N/A' ? String(userRemark) : '';
+                        const b = bankRemark && String(bankRemark).trim() !== '' && String(bankRemark).trim().toUpperCase() !== 'NA' && String(bankRemark).trim().toUpperCase() !== 'N/A' ? String(bankRemark) : '';
+                        if (u) return u;
+                        if (b) return b;
+                        return 'NA';
+                      })()}
+                      onChange={(e) => handleBankRemarkChange(e.target.value)}
+                      placeholder="NA"
+                      rows={3}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff' }}
+                    />
+                  </div>
+                </>
+              )}
+
+            </div>
+
+                <div style={{
+                  display: 'flex',
+                  justify: 'flex-end',
+                  gap: '12px',
+                  marginTop: '20px',
+                  position: 'sticky',
+                  bottom: 0,
+                  background: '#ffffff',
+                  padding: '12px 0',
+                  borderTop: '1px solid #e2e8f0',
+                  zIndex: 20,
+                  boxShadow: '0 -6px 16px rgba(0,0,0,0.06)'
+                }}>
+                  {canEditFinal ? (
+                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveDetails('final')}
+                        disabled={actionLoading}
+                        style={{ background: '#0284c7', color: '#fff', border: 'none', padding: '12px 20px', borderRadius: '10px', fontWeight: 700, fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                      >
+                        <Save size={16} /> {actionLoading ? 'Saving...' : 'Save Final Status & Remarks'}
+                      </button>
+
+                      {(isFinalStatusOperator || isOpsHead || isSuperAdminOrAdmin) && currentStatus !== 'approved' && currentStatus !== 'super_admin_approved' && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setActionLoading(true);
+                              try {
+                                const targetId = application.app_number || application.id || application.application_id || application.lead_id;
+                                const res = await api.put(`/applications/${targetId}/verification`, {
+                                  status: 'approved',
+                                  final_status: 'Approved',
+                                  super_admin_remark: 'Approved by Final Status Operator / Admin',
+                                  bank_remark: bankRemark || 'Approved by Final Status Operator'
+                                });
+                                if (res.data?.success) {
+                                  alert('Application status updated to APPROVED successfully!');
+                                  setCurrentStatus('approved');
+                                  setFinalStatus('Approved');
+                                  await fetchData();
+                                  if (onRefresh) onRefresh();
+                                }
+                              } catch (err) {
+                                alert(err.response?.data?.message || 'Failed to approve application');
+                              } finally {
+                                setActionLoading(false);
+                              }
+                            }}
+                            disabled={actionLoading}
+                            style={{ background: '#16a34a', color: '#fff', border: 'none', padding: '12px 20px', borderRadius: '10px', fontWeight: 800, fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                          >
+                            <CheckCircle size={16} /> Approve Application
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!window.confirm('Are you sure you want to decline this application?')) return;
+                              setActionLoading(true);
+                              try {
+                                const targetId = application.app_number || application.id || application.application_id || application.lead_id;
+                                const res = await api.put(`/applications/${targetId}/verification`, {
+                                  status: 'rejected',
+                                  final_status: 'Declined',
+                                  decline_reason: declineReason || bankRemark || 'Declined by Final Status Operator',
+                                  bank_remark: bankRemark || 'Declined by Final Status Operator'
+                                });
+                                if (res.data?.success) {
+                                  alert('Application status updated to DECLINED successfully!');
+                                  setCurrentStatus('rejected');
+                                  setFinalStatus('Declined');
+                                  await fetchData();
+                                  if (onRefresh) onRefresh();
+                                }
+                              } catch (err) {
+                                alert(err.response?.data?.message || 'Failed to decline application');
+                              } finally {
+                                setActionLoading(false);
+                              }
+                            }}
+                            disabled={actionLoading}
+                            style={{ background: '#dc2626', color: '#fff', border: 'none', padding: '12px 20px', borderRadius: '10px', fontWeight: 800, fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                          >
+                            <XCircle size={16} /> Decline Application
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '12px', color: '#64748b', fontWeight: 600, padding: '8px 14px', background: '#f1f5f9', borderRadius: '8px', width: '100%', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                      <Lock size={13} /> Editing is disabled because application status is {currentStatus?.replace(/_/g, ' ')}.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ═════════ TAB 4: AUDIT LOG & OPERATOR HISTORY ═════════ */}
+          {activeTab === 'timeline' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              
+              {/* Section 1: Immutable Operator Audit Trail */}
+              {operatorHistory.length > 0 && (
+                <div style={{ background: '#f8fafc', borderRadius: '14px', padding: '20px', border: '1px solid #cbd5e1' }}>
+                  <h4 style={{ fontSize: '15px', fontWeight: 800, color: '#1e3a8a', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <ShieldCheck size={18} color="#2563eb" /> Immutable Operator Modification History
+                    </span>
+                    <span style={{ fontSize: '12px', fontWeight: 800, padding: '4px 10px', borderRadius: '12px', background: '#dbeafe', color: '#1e40af' }}>
+                      {operatorHistory.length} Record(s)
+                    </span>
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {operatorHistory.map((h, idx) => (
+                      <div key={h.id || idx} style={{ background: '#ffffff', borderRadius: '10px', padding: '12px 16px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontWeight: 800, color: '#0f172a', fontSize: '13px' }}>{h.operator_name || 'Operator'}</span>
+                            <span style={{ fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '4px', background: '#f1f5f9', color: '#475569' }}>
+                              {h.operator_code ? `Code: ${h.operator_code}` : h.operator_designation || h.operator_role}
+                            </span>
+                            <span style={{ fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '4px', background: h.action_type?.includes('APPROVED') ? '#dcfce7' : h.action_type?.includes('DECLINED') ? '#fee2e2' : '#e0f2fe', color: h.action_type?.includes('APPROVED') ? '#15803d' : h.action_type?.includes('DECLINED') ? '#b91c1c' : '#0369a1' }}>
+                              {h.action_type}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 600 }}>
+                            📅 {new Date(h.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} 🕒 {new Date(h.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
+                          </div>
+                        </div>
+                        {h.notes && <div style={{ fontSize: '12px', color: '#334155', marginTop: '6px', fontWeight: 600 }}>Note: {h.notes}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Section 2: Standard Application Activity Timeline */}
+              <div>
+                <h4 style={{ fontSize: '15px', fontWeight: 800, color: '#1e293b', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>Application Timeline &amp; Activity Log</span>
+                  <span style={{ fontSize: '12px', fontWeight: 800, padding: '4px 10px', borderRadius: '12px', background: '#FEF3C7', color: '#B45309' }}>
+                    🔄 Total Updates: {timeline.length > 0 ? timeline.length : (application?.update_count || 1)}
+                  </span>
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {timeline.length === 0 ? (
+                    <div style={{ color: '#94a3b8', fontSize: '13px', textAlign: 'center', padding: '24px' }}>No timeline events recorded yet.</div>
+                  ) : (
+                    timeline.map((event, idx) => (
+                      <div key={event.id || idx} style={{ display: 'flex', gap: '14px', padding: '12px 16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                        <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#ea580c', marginTop: '4px', flexShrink: 0 }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                            <div style={{ fontWeight: 800, fontSize: '13.5px', color: '#0f172a' }}>{event.title || event.event_type || 'Application Updated'}</div>
+                            <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 600 }}>
+                              📅 {new Date(event.performed_at || event.created_at || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} 🕒 {new Date(event.performed_at || event.created_at || Date.now()).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: '12.5px', color: '#475569', marginTop: '4px' }}>{event.description || event.remarks || event.activity || 'Application modified.'}</div>
+                          {event.performed_by_name && (
+                            <div style={{ fontSize: '11px', color: '#0284c7', marginTop: '4px', fontWeight: 600 }}>
+                              By: {event.performed_by_name}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+            </div>
+          )}
+          </>
+          )}
+
+        </div>
+      </div>
+
+      {/* ═══ SHARE BY ALL APPS MODAL POPUP ═══ */}
+      {showShareModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 20000,
+          background: 'rgba(15, 23, 42, 0.75)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justify: 'center',
+          padding: '16px'
+        }}>
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '16px',
+            width: '100%',
+            maxWidth: '460px',
+            padding: '24px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: '#eff6ff', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Share2 size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Send to Customer</h3>
+                  <p style={{ fontSize: '11px', color: '#64748b', margin: 0 }}>Share QD & Application link with customer</p>
+                </div>
+              </div>
+              <button onClick={() => setShowShareModal(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', padding: '6px', cursor: 'pointer', color: '#64748b' }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Share URL Box */}
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '12px', marginBottom: '16px' }}>
+              <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', marginBottom: '4px' }}>Customer Share Link</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input
+                  type="text"
+                  readOnly
+                  value={shareUrl}
+                  style={{ flex: 1, padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', background: '#ffffff', fontFamily: 'monospace', fontWeight: 600 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(shareUrl);
+                    setCopySuccess(true);
+                    setTimeout(() => setCopySuccess(false), 2000);
+                  }}
+                  style={{ background: copySuccess ? '#16a34a' : '#2563eb', color: '#ffffff', border: 'none', padding: '8px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}
+                >
+                  {copySuccess ? <Check size={14} /> : <Copy size={14} />}
+                  {copySuccess ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+            </div>
+
+            {/* Share Options Grid */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              
+              {/* Option 1: Native Share Sheet (Share by All Apps) */}
+              {navigator.share && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.share({
+                      title: 'GharKaPaisa Application',
+                      text: `Dear ${customerName || 'Customer'}, please click link to submit your Quick Details (QD) for ${application.product_name || 'application'}:`,
+                      url: shareUrl
+                    }).catch(() => {});
+                  }}
+                  style={{ width: '100%', padding: '12px', borderRadius: '10px', background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', color: '#fff', border: 'none', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(37,99,235,0.2)' }}
+                >
+                  <Share2 size={16} /> Share via All Apps (Native Share Sheet)
+                </button>
+              )}
+
+              {/* Option 2: WhatsApp Share */}
+              <button
+                type="button"
+                onClick={() => {
+                  const msg = encodeURIComponent(`Dear ${customerName || 'Customer'},\n\nPlease click the link below to submit your Quick Details (QD) for ${application.product_name || 'loan application'} with GharKaPaisa:\n\n${shareUrl}\n\nThank you!`);
+                  const phone = customerMobile ? `91${customerMobile.replace(/\D/g, '').slice(-10)}` : '';
+                  window.open(`https://api.whatsapp.com/send?phone=${phone}&text=${msg}`, '_blank');
+                }}
+                style={{ width: '100%', padding: '12px', borderRadius: '10px', background: '#25D366', color: '#fff', border: 'none', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              >
+                <MessageSquare size={16} /> Share via WhatsApp
+              </button>
+
+              {/* Option 3: Mobile SMS App Share */}
+              <button
+                type="button"
+                onClick={() => {
+                  const msg = encodeURIComponent(`Dear ${customerName || 'Customer'}, click link to submit your details for ${application.product_name || 'application'}: ${shareUrl}`);
+                  const phone = customerMobile ? customerMobile.replace(/\D/g, '').slice(-10) : '';
+                  window.open(`sms:${phone}?body=${msg}`, '_blank');
+                }}
+                style={{ width: '100%', padding: '12px', borderRadius: '10px', background: '#0284c7', color: '#fff', border: 'none', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              >
+                <Smartphone size={16} /> Send via Mobile SMS App
+              </button>
+
+              {/* Option 4: Dispatch Automatic SMS via MSG91 Gateway */}
+              <button
+                type="button"
+                onClick={handleSendSmsApi}
+                disabled={smsSending}
+                style={{ width: '100%', padding: '12px', borderRadius: '10px', background: '#ea580c', color: '#fff', border: 'none', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              >
+                <Send size={16} /> {smsSending ? 'Sending SMS...' : 'Dispatch Automated SMS (MSG91)'}
+              </button>
+
+            </div>
+
+            <div style={{ marginTop: '16px', textAlign: 'right' }}>
+              <button type="button" onClick={() => setShowShareModal(false)} style={{ background: '#f1f5f9', border: 'none', padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, color: '#475569', cursor: 'pointer' }}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default AdminDocumentVerificationModal;

@@ -1,0 +1,55 @@
+import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { usePartnerStore } from '../../../app/store/partnerStore';
+import { useTheme } from '../../../contexts/ThemeContext';
+import { useAuthStore } from '../../../app/store/authStore';
+import { getMe } from '../../../services/auth.api';
+import StyledDashboard from './PartnerDashboardComponent';
+
+export default function PartnerDashboard() {
+  const { t } = useTranslation();
+  const fetchProfile = usePartnerStore((state) => state.fetchProfile);
+  const profile = usePartnerStore((state) => state.profile);
+  const { C } = useTheme();
+  const [loading, setLoading] = useState(!profile);
+
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const freshPartner = await fetchProfile();
+        // Sync the fresh KYC status with the auth store user profile
+        try {
+          const freshUser = await getMe(true);
+          useAuthStore.getState().updateUser(freshUser);
+        } catch (authErr) {
+          console.warn("Failed to sync auth store on dashboard load:", authErr);
+        }
+      } catch (err) {
+        console.error("Failed to load profile", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    init();
+  }, [fetchProfile]);
+
+  if (loading) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "300px", gap: "12px" }}>
+        <span style={{
+          width: "24px", height: "24px", borderRadius: "50%",
+          border: `3px solid ${C.border}`,
+          borderTop: `3px solid ${C.teal}`,
+          animation: "spin 0.8s linear infinite",
+          display: "inline-block"
+        }} />
+        <div style={{ fontSize: "14px", color: C.textMid, fontWeight: 600 }}>{t('common.loading', 'Loading profile...')}</div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
+  return (
+    <StyledDashboard partner={profile} />
+  );
+}

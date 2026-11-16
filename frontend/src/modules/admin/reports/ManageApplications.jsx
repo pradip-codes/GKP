@@ -1,0 +1,2078 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import api from "../../../services/api";
+import { useTheme, makeS } from "../../../contexts/ThemeContext";
+import { Icons } from "../../../components/Icon/PartnerIcons";
+import { FileText, FileEdit, Building2, Clock, Search, CheckCircle2, Sparkles, XCircle, Layers, Eye, Download, ShieldCheck, Zap, Loader2, UserCheck, UserPlus } from 'lucide-react';
+import {
+  MdSearch, MdFilterList, MdDownload, MdAdd, MdHourglassEmpty, MdTrackChanges,
+  MdCheckCircle, MdCancel, MdChevronLeft, MdChevronRight, MdClose, MdMoreVert,
+  MdVisibility, MdHistory, MdDelete, MdExpandMore, MdChevronRight as MdChevronRightIcon
+} from 'react-icons/md';
+import { FaFileAlt, FaSlidersH } from 'react-icons/fa';
+import AdminDocumentVerificationModal from './AdminDocumentVerificationModal';
+import AssignSalesExecutiveModal from './AssignSalesExecutiveModal';
+import ExportApplicationsModal from '../../../components/Admin/ExportApplicationsModal';
+import LoadingLogo from '../../../components/Loader/LoadingLogo';
+import { useAuthStore } from '../../../app/store/authStore';
+import { useLocalStorageCache } from '../../../hooks/useLocalStorageCache';
+import {
+  CURING_DESIGNATION_BADGES,
+  getHdfcCuringDesignation
+} from '../../../constants/hdfcDeclineCodes';
+
+export default function ManageApplications() {
+  const { C, isDark } = useTheme();
+  const S = makeS(C);
+
+  const user = useAuthStore((state) => state.user);
+  const userRole = (user?.role || '').toUpperCase();
+  const userDesignation = (user?.designation || '').toUpperCase();
+  const isSuperAdmin = userRole === 'SUPER_ADMIN' || userRole === 'SUPERADMIN';
+  const isSalesExecUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+  const isAdministrativeOperatorUser = (
+    ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'OPERATOR', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'BACKEND OPERATOR'].some(t => userDesignation.includes(t) || userRole === t)
+  ) && !isSalesExecUser;
+  const isPanCheckerUser = ['PAN CHECKER', 'PAN_CHECKER'].includes(userDesignation) || ['PAN CHECKER', 'PAN_CHECKER'].includes(userRole);
+  const isRemarkOperatorUser = ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userDesignation) || ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userRole);
+  const isQdOperatorUser = ['QD OPERATOR', 'QD_OPERATOR', 'QD CHECKER', 'QD_CHECKER'].includes(userDesignation) || ['QD OPERATOR', 'QD_OPERATOR', 'QD CHECKER', 'QD_CHECKER'].includes(userRole);
+  const isFinalStatusOperatorUser = ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userDesignation) || ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userRole);
+  const isQuerableOperatorUser = ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userDesignation) || ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userRole);
+  const isPhysicalCurableUser = ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userDesignation) || ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userRole);
+  const isDigitalCurableUser = ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userRole);
+  const isEmailCurableUser = ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userRole);
+  const isCurableOperatorUser = isPhysicalCurableUser || isDigitalCurableUser || isEmailCurableUser;
+  const isOpsOperator = [
+    'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'OPERATOR', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'BACKEND OPERATOR',
+    'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES EXECUTIVE', 'PAN_CHECKER', 'PAN CHECKER',
+    'QD_OPERATOR', 'QD OPERATOR', 'FINAL_STATUS_OPERATOR', 'FINAL STATUS OPERATOR',
+    'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR',
+    'PHYSICAL_CURABLE', 'PHYSICAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE',
+    'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR',
+    'EMAIL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR'
+  ].some(t => userRole === t || userRole.includes(t) || userDesignation.includes(t));
+  const isOpsHead = ['SUPER_ADMIN', 'ADMIN', 'OPERATIONS_HEAD', 'OPERATIONAL_HEAD'].includes(userRole) && !isOpsOperator;
+  const isOpsHeadOrSuperAdmin = isOpsHead || isOpsOperator;
+
+  // Verification Modal State
+  const [verifyModalApp, setVerifyModalApp] = useState(null);
+  const [verifyModalTab, setVerifyModalTab] = useState('qd');
+  const [assignModalApp, setAssignModalApp] = useState(null);
+
+  // Listing State
+  const [apps, setApps] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [allCount, setAllCount] = useState(0);
+  const [backendStatusCounts, setBackendStatusCounts] = useState(null);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState(() => isQuerableOperatorUser ? 'rejected' : "");
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [searchField, setSearchField] = useState("all");
+  const [dateRange, setDateRange] = useState("all");
+  const [processTypeFilter, setProcessTypeFilter] = useState("all");
+  const [sourceTypeFilter, setSourceTypeFilter] = useState("all");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const categoryParam = searchParams.get('category');
+
+  const assignedList = user?.assigned_banks?.length ? user.assigned_banks : (user?.permissions?.assigned_banks || []);
+  const hasLocEocAssigned = !!user?.has_loc_eoc || assignedList.some(b => (b.short_code || '').toUpperCase() === 'LOC_EOC' || b.is_loc_eoc || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(b.name || ''));
+  const isOnlyLocEocAssigned = hasLocEocAssigned && !assignedList.some(b => (b.short_code || '').toUpperCase() !== 'LOC_EOC' && !b.is_loc_eoc && !/loc[\s/_]*eoc|loan\s+on\s+card/i.test(b.name || ''));
+
+  const [partnerFilter, setPartnerFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [commFilter, setCommFilter] = useState("all");
+  const [bankFilter, setBankFilter] = useState("all");
+  const [banksList, setBanksList] = useState([]);
+  const [categoryFilter, setCategoryFilter] = useState(() => {
+    if (categoryParam) return categoryParam;
+    return "all";
+  });
+
+  // Detail / Review Modal State
+  const [selectedApp, setSelectedApp] = useState(null);
+  const [appDetail, setAppDetail] = useState(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [timelines, setTimelines] = useState([]);
+  const [superAdminRemark, setSuperAdminRemark] = useState("");
+  const [submittingApprove, setSubmittingApprove] = useState(false);
+
+  // Table row 3-dots action menu
+  const [actionMenuAppId, setActionMenuAppId] = useState(null);
+  const [claimingId, setClaimingId] = useState(null);
+
+  // Agent Lookup lists
+  const [partnersList, setPartnersList] = useState([]);
+  const [employeesList, setEmployeesList] = useState([]);
+  const abortControllerRef = useRef(null);
+
+  // Client-side cache for agents/partners/employees (10 minute TTL)
+  const { getCache, setCache, clearCache } = useLocalStorageCache('admin_app_', 10 * 60 * 1000);
+
+  useEffect(() => {
+    const fetchAgents = async () => {
+      try {
+        // Try cache first
+        const cachedPartners = getCache('partners');
+        const cachedEmployees = getCache('employees');
+        
+        if (cachedPartners && cachedEmployees) {
+          console.log('[Client Cache] Using cached agents data');
+          setPartnersList(cachedPartners);
+          setEmployeesList(cachedEmployees);
+          return;
+        }
+
+        const isAdminUser = ['ADMIN', 'SUPER_ADMIN'].includes(userRole);
+        const [pRes, eRes] = await Promise.all([
+          isAdminUser ? api.get('/admin/partners', { params: { limit: 1000 } }).catch(() => null) : Promise.resolve(null),
+          api.get('/employees', { params: { limit: 1000 } }).catch(() => null)
+        ]);
+
+        let pArr = pRes?.data?.data?.partners || pRes?.data?.data || pRes?.data?.partners || pRes?.data || [];
+        if (!Array.isArray(pArr) && typeof pArr === 'object') {
+          pArr = pArr.rows || Object.values(pArr).find(v => Array.isArray(v)) || [];
+        }
+        setPartnersList(Array.isArray(pArr) ? pArr : []);
+        setCache('partners', Array.isArray(pArr) ? pArr : []);
+
+        let eArr = eRes?.data?.data?.employees || eRes?.data?.data || eRes?.data?.employees || eRes?.data || [];
+        if (!Array.isArray(eArr) && typeof eArr === 'object') {
+          eArr = eArr.rows || Object.values(eArr).find(v => Array.isArray(v)) || [];
+        }
+        setEmployeesList(Array.isArray(eArr) ? eArr : []);
+        setCache('employees', Array.isArray(eArr) ? eArr : []);
+      } catch (err) {
+        console.error('Error fetching agents for filter:', err);
+      }
+    };
+    fetchAgents();
+
+    api.get('/banks')
+      .then(res => {
+        let bArr = res.data?.data || res.data || [];
+        if (!Array.isArray(bArr) && typeof bArr === 'object') {
+          bArr = bArr.banks || bArr.rows || [];
+        }
+        setBanksList(Array.isArray(bArr) ? bArr : []);
+      })
+      .catch(err => console.error('Failed to load banks for filter:', err));
+  }, []);
+
+  // Helper to mask last 6 digits of mobile number (e.g. 9876543210 -> 9876******)
+  const maskMobileNumber = (raw) => {
+    if (!raw) return '—';
+    const str = String(raw).trim();
+    if (str.length <= 6) return '******';
+    return str.slice(0, str.length - 6) + '******';
+  };
+
+  // Helper to check if a field has actual meaningful value and should be shown
+  const hasMeaningfulValue = (val) => {
+    if (val === null || val === undefined) return false;
+    const s = String(val).trim();
+    return s !== '' && s !== '—' && s !== '-' && s !== 'N/A' && s !== 'NA' && s !== 'null' && s !== 'undefined' && s !== '₹0' && s !== '0';
+  };
+
+  // Helper to format date as DD/MM/YYYY
+  const formatDisplayDate = (raw) => {
+    if (!raw) return '—';
+    try {
+      const dt = new Date(raw);
+      if (isNaN(dt.getTime())) return String(raw);
+      return dt.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    } catch (e) {
+      return String(raw);
+    }
+  };
+
+  // Helper to get formatted Referred By (Partner / Employee) Name
+  const getReferredByName = (app) => {
+    if (!app) return 'Direct / Customer Online';
+    if (app.employee_name || app.emp_code) {
+      const code = app.emp_code ? ` (${app.emp_code})` : '';
+      return `${app.employee_name || 'Employee'}${code}`;
+    }
+    const partnerName = `${app.partner_first_name || app.Partner_first_name || ''} ${app.partner_last_name || app.Partner_last_name || ''}`.trim() || app.partner_name || app.partner_company_name;
+    if (partnerName || app.partner_code || app.Partner_code) {
+      const code = (app.partner_code || app.Partner_code) ? ` (${app.partner_code || app.Partner_code})` : '';
+      return `${partnerName || 'Partner'}${code}`;
+    }
+    return 'Direct / Customer Online';
+  };
+
+  // Helper to detect HDFC Bank EMI on Credit Card / Check Loan Application
+  const isHdfcCheckLoanApplication = (app) => {
+    if (!app) return false;
+    const cat = String(app.category || app.product_category || '').toLowerCase().trim();
+    const subCat = String(app.sub_category || '').toLowerCase().trim();
+    const prod = String(app.product_name || app.product?.name || '').toLowerCase().trim();
+    const bank = String(app.bank_name || app.bank?.name || app.bank_code || '').toLowerCase().trim();
+
+    const isHdfc = bank.includes('hdfc') || prod.includes('hdfc');
+    const isLocEocCategory = ['loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loc', 'eoc', 'loan_on_card', 'card_on_loan'].includes(cat) ||
+                             ['loc_eoc', 'loc', 'eoc', 'smart_emi', 'loan_on_credit_card', 'loan_on_card'].includes(subCat);
+    const isLocEocProduct = prod.includes('emi on credit card') || prod.includes('smart emi') || prod.includes('smartemi') ||
+                            prod.includes('instant & jumbo') || prod.includes('insta') || prod.includes('jumbo') ||
+                            prod.includes('loan on card') || prod.includes('loan on credit card');
+
+    if (cat === 'loc_eoc' && prod.includes('emi on credit card') && bank.includes('hdfc')) return true;
+    if (prod.includes('hdfc bank emi on credit card')) return true;
+
+    return isHdfc && (isLocEocCategory || isLocEocProduct);
+  };
+
+  const isLocEocApp = (app) => {
+    if (!app) return false;
+    const cat = String(app.category || '').toLowerCase();
+    const subCat = String(app.sub_category || '').toLowerCase();
+    const pName = String(app.product_name || '').toLowerCase();
+    return ['loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loc', 'eoc', 'loan_on_card', 'card_on_loan'].includes(cat) ||
+      ['loc', 'eoc', 'loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loan_on_card', 'card_on_loan'].includes(subCat) ||
+      /insta\s*loan|jumbo\s*loan|instant\s*(&|and)?\s*jumbo\s*loan|instant\s*loan|smart\s*emi|smartemi|loan\s*on\s*card|loan\s*on\s*credit\s*card|emi\s*on\s*credit\s*card|emi\s*on\s*card|encash|dial\s*a\s*draft/i.test(pName);
+  };
+
+  const fetchApplications = async () => {
+    // Abort previous in-flight request to prevent race conditions or pool saturation
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setLoading(true);
+    setErr("");
+    try {
+      const res = await api.get("/applications", {
+        signal: controller.signal,
+        params: {
+          page,
+          limit,
+          search: search.trim() || undefined,
+          status: status || undefined,
+          process_by: processTypeFilter !== 'all' ? processTypeFilter : undefined,
+          category: categoryFilter !== 'all' ? categoryFilter : undefined,
+          bank_id: bankFilter !== 'all' ? bankFilter : undefined,
+        },
+      });
+      if (res.data?.success) {
+        const fetchedTotal = res.data.pagination?.total || res.data.data.length;
+        setApps(res.data.data);
+        setTotal(fetchedTotal);
+        if (res.data.status_counts) {
+          setBackendStatusCounts(res.data.status_counts);
+        }
+        if (!status && !search) {
+          setAllCount(fetchedTotal);
+        }
+
+      }
+    } catch (e) {
+      if (e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED' || e?.isCanceled) {
+        return; // Request was aborted cleanly for subsequent fetch; do not show error
+      }
+      console.error('Error fetching applications in ManageApplications:', e);
+      const errMsg = e.response?.data?.message || e.message || "Failed to load applications";
+      setErr(errMsg);
+    } finally {
+      if (abortControllerRef.current === controller) {
+        setLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    fetchApplications();
+  }, [page, limit, status, processTypeFilter, categoryFilter, bankFilter]);
+
+  useEffect(() => {
+    const cat = searchParams.get('category');
+    if (cat && cat !== categoryFilter) {
+      setCategoryFilter(cat);
+      setPage(1);
+    }
+  }, [searchParams]);
+
+  const handleSearchSubmit = (e) => {
+    e.preventDefault();
+    setPage(1);
+    fetchApplications();
+  };
+
+  const clearAllFilters = () => {
+    setSearch("");
+    setSearchField("all");
+    setStatus("");
+    setStatusFilter("all");
+    setCommFilter("all");
+    setCategoryFilter("all");
+    setBankFilter("all");
+    setDateRange("all");
+    setProcessTypeFilter("all");
+    setSourceTypeFilter("all");
+    setPartnerFilter("");
+    setPage(1);
+  };
+
+  const handleViewDetails = async (app) => {
+    setSelectedApp(app);
+    setAppDetail(app);
+    setLoadingDetail(true);
+    setSuperAdminRemark(app?.ops_remark || app?.operational_remarks || app?.processing_remark || app?.remarks || "");
+    setTimelines([]);
+    const targetId = app?.id || app?.application_id || app?.app_number || app?.lead_id;
+    try {
+      const [res, tRes] = await Promise.all([
+        targetId ? api.get(`/applications/${targetId}`).catch(() => null) : Promise.resolve(null),
+        targetId ? api.get(`/applications/${targetId}/timeline`).catch(() => null) : Promise.resolve(null)
+      ]);
+      if (res?.data?.success) {
+        const det = res.data.data;
+        const pd = det.physical_details || {};
+        const realAppId = det.app_number || det.id || app?.app_number || app?.id || det.application_id || app?.application_id;
+        const merged = { ...app, ...det, ...pd, real_id: realAppId, app_number: det.app_number || app?.app_number };
+        setAppDetail(merged);
+        if (det.ops_remark || det.operational_remarks || det.processing_remark || det.remarks || pd.ops_remark || pd.operational_remarks) {
+          setSuperAdminRemark(det.ops_remark || det.operational_remarks || det.processing_remark || det.remarks || pd.ops_remark || pd.operational_remarks);
+        }
+      }
+      if (tRes?.data?.success) {
+        setTimelines(tRes.data.data || []);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingDetail(false);
+    }
+  };
+
+  const handleApproveApplication = async (appId) => {
+    const targetId = appId || appDetail?.app_number || appDetail?.real_id || appDetail?.id || appDetail?.application_id || selectedApp?.app_number || selectedApp?.id || selectedApp?.application_id;
+    if (!targetId) {
+      alert("Application ID not found. Please refresh and try again.");
+      return;
+    }
+    setSubmittingApprove(true);
+    try {
+      const res = await api.put(`/applications/${targetId}/verification`, {
+        status: 'approved',
+        final_status: 'Approved',
+        super_admin_remark: superAdminRemark.trim() || 'Approved by Operations Head / Super Admin',
+        user_remark: superAdminRemark.trim() || 'Approved by Operations Head / Super Admin',
+        bank_remark: superAdminRemark.trim() || 'Approved by Operations Head / Super Admin'
+      });
+      if (res.data?.success) {
+        alert("Application status updated to APPROVED successfully!");
+        setSelectedApp(null);
+        setAppDetail(null);
+        fetchApplications();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || "Failed to approve application.");
+    } finally {
+      setSubmittingApprove(false);
+    }
+  };
+
+  const handleOperationalVerify = async (appId) => {
+    const targetId = appId || appDetail?.app_number || appDetail?.real_id || appDetail?.id || appDetail?.application_id || selectedApp?.app_number || selectedApp?.id || selectedApp?.application_id;
+    if (!targetId) {
+      alert("Application ID not found. Please refresh and try again.");
+      return;
+    }
+    setSubmittingApprove(true);
+    try {
+      const res = await api.put(`/applications/${targetId}/verification`, {
+        status: 'operational_verified',
+        final_status: 'Operational Verified',
+        ops_remark: superAdminRemark.trim() || 'Operational Verified by Administrative Operator',
+        super_admin_remark: superAdminRemark.trim() || 'Operational Verified by Administrative Operator',
+        user_remark: superAdminRemark.trim() || 'Operational Verified by Administrative Operator',
+        bank_remark: superAdminRemark.trim() || 'Operational Verified by Administrative Operator'
+      });
+      if (res.data?.success) {
+        alert("Application status updated to OPERATIONAL VERIFIED successfully!");
+        setSelectedApp(null);
+        setAppDetail(null);
+        fetchApplications();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || "Failed to verify application.");
+    } finally {
+      setSubmittingApprove(false);
+    }
+  };
+
+  const handleClaimRequest = async (app) => {
+    if (!app?.id) return;
+    const confirmMsg = `Do you want to claim Application #${app.app_number || app.id}? Once claimed, it will be assigned to your account and hidden from other Administrative Sales Operators.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setClaimingId(app.id);
+      let res;
+      const targetId = app.id || app.app_number;
+      try {
+        res = await api.post(`/applications/${encodeURIComponent(targetId)}/claim-request`);
+      } catch (firstErr) {
+        if (firstErr?.response?.status === 404) {
+          const fallbackId = (app.app_number && app.app_number !== targetId) ? app.app_number : targetId;
+          try {
+            res = await api.post(`/admin/applications/${encodeURIComponent(fallbackId)}/claim-request`);
+          } catch (secondErr) {
+            if (secondErr?.response?.status === 404) {
+              try {
+                if (app.app_number && app.app_number !== targetId) {
+                  res = await api.post(`/applications/${encodeURIComponent(app.app_number)}/claim-request`);
+                } else {
+                  throw secondErr;
+                }
+              } catch (thirdErr) {
+                if (thirdErr?.response?.status === 404) {
+                  res = await api.put(`/applications/${encodeURIComponent(targetId)}`, {
+                    claim_request: true,
+                    action: 'claim_request',
+                    sales_claimed_by: user?.id,
+                    sales_claimed_by_name: user?.full_name || user?.name || 'Sales Operator',
+                    sales_claimed_by_code: user?.user_code || user?.employee_id || '',
+                    sales_claimed_at: new Date().toISOString()
+                  });
+                } else {
+                  throw thirdErr;
+                }
+              }
+            } else {
+              throw secondErr;
+            }
+          }
+        } else {
+          throw firstErr;
+        }
+      }
+      if (res.data?.success) {
+        alert(res.data?.message || `Application #${app.app_number || app.id} claimed successfully!`);
+        const claimData = res.data?.data || {};
+        setApps(prev => prev.map(item => item.id === app.id ? {
+          ...item,
+          sales_claimed_by: claimData.sales_claimed_by || user?.id,
+          sales_claimed_by_name: claimData.sales_claimed_by_name || user?.full_name || user?.name || 'Sales Operator',
+          sales_claimed_by_code: claimData.sales_claimed_by_code || user?.user_code || user?.employee_id || '',
+          sales_claimed_at: claimData.sales_claimed_at || new Date().toISOString()
+        } : item));
+      } else {
+        alert(res.data?.message || 'Failed to claim application.');
+      }
+    } catch (err) {
+      console.error('Error claiming application:', err);
+      const errMsg = err?.response?.data?.message || err?.message || 'Failed to claim application.';
+      alert(errMsg);
+      if (err?.response?.status === 409) {
+        const conflictData = err?.response?.data || {};
+        setApps(prev => prev.map(item => item.id === app.id ? {
+          ...item,
+          sales_claimed_by: conflictData.claimed_by || 'already_claimed',
+          sales_claimed_by_name: conflictData.claimed_by_name || 'Another Operator',
+          sales_claimed_at: conflictData.claimed_at || item.sales_claimed_at
+        } : item));
+        fetchApplications();
+      }
+    } finally {
+      setClaimingId(null);
+    }
+  };
+
+  const STATUS_TABS = isQuerableOperatorUser ? [
+    { id: 'rejected', label: 'Assigned Bank Rejected Cases', color: '#ef4444', bg: '#ef444415' }
+  ] : isCurableOperatorUser ? [
+    { id: '', label: 'All Curable Applications', color: C.primary, bg: `${C.primary}15` },
+    { id: 'operational_verified', label: 'Operational Verified', color: '#8b5cf6', bg: '#8b5cf615' },
+    { id: 'rejected', label: 'Declined / Rejected', color: '#ef4444', bg: '#ef444415' },
+    { id: 'approved', label: 'Cured & Approved', color: '#10b981', bg: '#10b98115' },
+  ] : [
+    { id: '', label: 'All Applications', color: C.primary, bg: `${C.primary}15` },
+    { id: 'pending', label: 'Pending', color: '#f59e0b', bg: '#f59e0b15' },
+    { id: 'details_submitted', label: 'Details Submitted', color: '#3b82f6', bg: '#3b82f615' },
+    { id: 'operational_verified', label: 'Operational Verified', color: '#8b5cf6', bg: '#8b5cf615' },
+    { id: 'approved', label: 'Approved', color: '#10b981', bg: '#10b98115' },
+    { id: 'commission_received', label: 'Commission Received', color: '#16a34a', bg: '#16a34a15' },
+    { id: 'rejected', label: 'Rejected', color: '#ef4444', bg: '#ef444415' },
+    { id: 'cancelled', label: 'Cancelled', color: '#64748b', bg: '#64748b15' },
+  ];
+
+  // Calculate status counts
+  const statusCounts = (Array.isArray(apps) ? apps : []).reduce((acc, app) => {
+    let s = String(app?.status || '').toLowerCase();
+    let fs = String(app?.final_status || '').toLowerCase();
+    if (s === 'commission_released') s = 'commission_received';
+    if (s.includes('reject') || fs.includes('reject') || s.includes('decline') || fs.includes('decline')) {
+      acc['rejected'] = (acc['rejected'] || 0) + 1;
+    }
+    if (s.includes('decline') || fs.includes('decline')) {
+      acc['declined'] = (acc['declined'] || 0) + 1;
+    }
+    if (s.includes('cancel') || fs.includes('cancel')) {
+      acc['cancelled'] = (acc['cancelled'] || 0) + 1;
+    }
+    acc[s] = (acc[s] || 0) + 1;
+    return acc;
+  }, {});
+
+  const getStatusBadgeStyle = (st) => {
+    const s = String(st || '').toLowerCase();
+    switch (s) {
+      case 'pending': return { bg: '#f59e0b15', color: '#f59e0b', border: '#f59e0b40', label: 'Pending' };
+      case 'details_submitted': return { bg: '#3b82f615', color: '#3b82f6', border: '#3b82f640', label: 'Details Submitted' };
+      case 'operational_verified': return { bg: '#8b5cf615', color: '#8b5cf6', border: '#8b5cf640', label: 'Operational Verified' };
+      case 'approved': return { bg: '#10b98115', color: '#10b981', border: '#10b98140', label: 'Approved' };
+      case 'commission_released':
+      case 'commission_received': return { bg: '#16a34a15', color: '#16a34a', border: '#16a34a40', label: 'Commission Received' };
+      case 'rejected': return { bg: '#ef444415', color: '#ef4444', border: '#ef444440', label: 'Rejected' };
+      case 'declined':
+      case 'decline': return { bg: '#f43f5e15', color: '#f43f5e', border: '#f43f5e40', label: 'Declined' };
+      case 'cancelled':
+      case 'cancel':
+      case 'canceled': return { bg: '#64748b15', color: '#64748b', border: '#64748b40', label: 'Cancelled' };
+      default: return { bg: `${C.gold}15`, color: C.gold, border: `${C.gold}40`, label: st };
+    }
+  };
+
+  const getInitials = (name) => {
+    if (!name) return 'CU';
+    const parts = name.trim().split(' ');
+    if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    return name.substring(0, 2).toUpperCase();
+  };
+
+  const getAgentLabel = (app) => {
+    if (!app) return 'Direct';
+
+    const appPName = app.partner_name || app.partner_full_name || (app.partner_first_name ? `${app.partner_first_name} ${app.partner_last_name || ''}`.trim() : null);
+    const appEName = app.employee_name || app.employee_full_name || (app.employee_first_name ? `${app.employee_first_name} ${app.employee_last_name || ''}`.trim() : null);
+
+    const pCode = app.partner_code || app.Partner_code || app.partner_id;
+    const eCode = app.employee_code || app.emp_code || app.employee_id;
+
+    let pName = appPName;
+    if (!pName && pCode && partnersList.length > 0) {
+      const matchP = partnersList.find(p =>
+        (p.partner_code && p.partner_code === pCode) ||
+        (p.code && p.code === pCode) ||
+        (p.id && String(p.id) === String(pCode))
+      );
+      if (matchP) {
+        pName = matchP.full_name || matchP.name || matchP.partner_name || (`${matchP.first_name || ''} ${matchP.last_name || ''}`.trim());
+      }
+    }
+
+    let eName = appEName;
+    if (!eName && eCode && employeesList.length > 0) {
+      const matchE = employeesList.find(e =>
+        (e.employee_code && e.employee_code === eCode) ||
+        (e.emp_code && e.emp_code === eCode) ||
+        (e.code && e.code === eCode) ||
+        (e.id && String(e.id) === String(eCode))
+      );
+      if (matchE) {
+        eName = matchE.full_name || matchE.name || matchE.employee_name || (`${matchE.first_name || ''} ${matchE.last_name || ''}`.trim());
+      }
+    }
+
+    if (pName && pName.toLowerCase() !== 'partner') {
+      return `${pName} (${pCode || 'PAR'})`;
+    }
+
+    if (eName && eName.toLowerCase() !== 'employee') {
+      return `${eName} (${eCode || 'EMP'})`;
+    }
+
+    if (pCode) return `Partner ${pCode} (${pCode})`;
+    if (eCode) return `Employee ${eCode} (${eCode})`;
+    return 'Direct';
+  };
+
+  const renderProcessBadge = (app) => {
+    const processBy = app?.process_by || app?.source || '';
+    const proc = (processBy || '').toLowerCase();
+    let badgeText = 'Direct Link';
+    let badgeBg = '#F3E8FF';
+    let badgeColor = '#7E22CE';
+    let codeLabel = getAgentLabel(app);
+
+    if (proc.includes('share') || proc.includes('partner_share')) {
+      badgeText = 'Share Link';
+      badgeBg = '#E0F2FE';
+      badgeColor = '#0369A1';
+    } else if (proc.includes('punch') || proc.includes('manual')) {
+      badgeText = 'Punch Only';
+      badgeBg = '#CCFBF1';
+      badgeColor = '#0F766E';
+    }
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+        <span style={{ fontSize: '11px', fontWeight: 800, padding: '2px 6px', borderRadius: '4px', background: badgeBg, color: badgeColor, width: 'fit-content' }}>
+          {badgeText}
+        </span>
+        <span style={{ fontSize: '11px', fontWeight: 700, color: C.textLight }}>{codeLabel}</span>
+      </div>
+    );
+  };
+
+  const kpis = {
+    total: total || apps.length,
+    pending: backendStatusCounts?.pending ?? (Array.isArray(apps) ? apps : []).filter(a => ['submitted', 'pending', 'lead_created', 'created'].includes((a.status || '').toLowerCase())).length,
+    operationalVerified: backendStatusCounts?.operational_verified ?? backendStatusCounts?.under_review ?? (Array.isArray(apps) ? apps : []).filter(a => ['operational_verified', 'under_review', 'verification', 'in_progress', 'details_submitted'].includes((a.status || '').toLowerCase())).length,
+    approved: backendStatusCounts?.approved ?? (Array.isArray(apps) ? apps : []).filter(a => ['approved', 'super_admin_approved'].includes((a.status || '').toLowerCase())).length,
+    rejected: backendStatusCounts?.rejected ?? (Array.isArray(apps) ? apps : []).filter(a => ['rejected', 'declined', 'decline', 'technical_error'].includes((a.status || '').toLowerCase()) || String(a.final_status || '').toLowerCase().includes('reject') || String(a.final_status || '').toLowerCase().includes('decline')).length
+  };
+
+  const totalPages = Math.ceil((total || 1) / limit);
+
+  return (
+    <div style={{ fontFamily: 'Inter, sans-serif', paddingBottom: '100px' }}>
+
+      {/* ── 1. PAGE HEADER ── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '20px' }}>
+        <div>
+          <h2 style={{ fontSize: '24px', fontWeight: 900, color: C.text, margin: 0, letterSpacing: '-0.02em' }}>
+            {isPhysicalCurableUser ? 'Physical Curable Operations Queue' : isDigitalCurableUser ? 'Digital Curable Operations Queue' : isEmailCurableUser ? 'Email Curable Operations Queue' : isQuerableOperatorUser ? 'Querable Operator Applications Queue' : isPanCheckerUser ? 'PAN Checker Review Queue' : isRemarkOperatorUser ? 'Remark Operator Queue' : isQdOperatorUser ? 'QD Operator Queue' : 'Applications Management'}
+          </h2>
+          <p style={{ fontSize: '13px', color: C.textLight, margin: '4px 0 0 0' }}>
+            {isPhysicalCurableUser ? 'Review and cure HDFC physical curable declined applications (Document pickups, physical verifications).' : isDigitalCurableUser ? 'Review and cure HDFC digital curable declined applications (VKYC, customer link re-trigger).' : isEmailCurableUser ? 'Review and cure HDFC email curable declined applications (Bank underwriting appeals).' : isQuerableOperatorUser ? 'Review and manage assigned bank rejected applications.' : isPanCheckerUser ? 'Review and verify customer PAN details for assigned applications.' : isRemarkOperatorUser ? 'Review and update remarks for assigned bank applications.' : isQdOperatorUser ? 'Review assigned bank applications for QD form and remark details.' : 'Track, verify, update and manage operations for all submitted customer applications.'}
+          </p>
+          {(isQuerableOperatorUser || isCurableOperatorUser) && (
+            <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', fontWeight: 800, color: C.textLight }}>
+                  Account Assigned Category &amp; Banks:
+                </span>
+                {assignedList.length > 0 ? (
+                  assignedList.map((b, i) => {
+                    const isLoc = b.category === 'loc_eoc' || b.is_loc_eoc;
+                    const catLabel = isLoc ? 'LOC & EOC' : (b.category ? b.category.toUpperCase().replace('_', ' ') : 'Credit Card');
+                    return (
+                      <span
+                        key={b.id || i}
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: '8px',
+                          background: isLoc ? '#ECFDF5' : '#EFF6FF',
+                          color: isLoc ? '#047857' : '#1D4ED8',
+                          fontSize: '11.5px',
+                          fontWeight: 700,
+                          border: `1px solid ${isLoc ? '#A7F3D0' : '#BFDBFE'}`,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}
+                      >
+                        <span>🏦 {b.name || b.short_code || b.code || 'Bank'}</span>
+                        <span
+                          style={{
+                            fontSize: '9.5px',
+                            fontWeight: 800,
+                            padding: '1px 6px',
+                            borderRadius: '4px',
+                            background: isLoc ? '#059669' : '#2563EB',
+                            color: '#FFFFFF',
+                            letterSpacing: '0.02em'
+                          }}
+                        >
+                          {catLabel}
+                        </span>
+                      </span>
+                    );
+                  })
+                ) : isAdministrativeOperatorUser ? (
+                  <span style={{ fontSize: '11.5px', color: '#10B981', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    🌐 All Banks Operational Access
+                  </span>
+                ) : (
+                  <span style={{ fontSize: '11.5px', color: '#EF4444', fontWeight: 700 }}>
+                    No banks/categories assigned
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button
+            onClick={() => setIsExportModalOpen(true)}
+            style={{
+              padding: '9px 16px', borderRadius: '10px', background: C.card, color: C.text,
+              border: `1px solid ${C.border}`, fontSize: '13px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+            }}
+          >
+            <MdDownload size={18} />
+            <span>Export CSV</span>
+          </button>
+
+          {/* Filter button given to the right side of Export CSV */}
+          <button
+            type="button"
+            onClick={() => setIsFilterOpen(!isFilterOpen)}
+            style={{
+              padding: '9px 16px', borderRadius: '10px',
+              background: isFilterOpen ? `${C.teal}15` : C.card,
+              border: `1px solid ${isFilterOpen ? C.teal : C.border}`,
+              color: isFilterOpen ? C.teal : C.text, fontSize: '13px', fontWeight: 800,
+              display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              boxShadow: isFilterOpen ? `0 2px 8px ${C.teal}25` : 'none'
+            }}
+          >
+            <MdFilterList size={18} />
+            <span>Filter</span>
+            {isFilterOpen ? '▲' : '▼'}
+          </button>
+        </div>
+      </div>
+
+
+
+
+
+      {/* ── 2. TOP KPI SUMMARY CARDS ── */}
+      {isQuerableOperatorUser ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+          <div style={{ background: C.card, borderRadius: '14px', padding: '16px 18px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', fontWeight: 800, color: C.textLight, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Assigned Bank Rejected Cases</span>
+              <div style={{ width: '34px', height: '34px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <MdCancel size={20} />
+              </div>
+            </div>
+            <div style={{ marginTop: '12px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              <span style={{ fontSize: '28px', fontWeight: 900, color: '#EF4444' }}>
+                {total || 0}
+              </span>
+              <span style={{ fontSize: '11.5px', fontWeight: 700, color: C.textLight }}>Rejected Cases</span>
+            </div>
+          </div>
+        </div>
+      ) : !isPanCheckerUser && !isRemarkOperatorUser && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+
+          {/* Total Applications */}
+          <div style={{ background: C.card, borderRadius: '14px', padding: '14px 16px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: C.textLight }}>Total Applications</span>
+              <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(99, 102, 241, 0.1)', color: '#6366F1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <FaFileAlt size={16} />
+              </div>
+            </div>
+            <div style={{ marginTop: '10px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              <span style={{ fontSize: '24px', fontWeight: 900, color: C.text }}>{kpis.total.toLocaleString()}</span>
+            </div>
+          </div>
+
+          {/* Pending Review */}
+          <div style={{ background: C.card, borderRadius: '14px', padding: '14px 16px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: C.textLight }}>Pending Review</span>
+              <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(245, 158, 11, 0.1)', color: '#F59E0B', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <MdHourglassEmpty size={18} />
+              </div>
+            </div>
+            <div style={{ marginTop: '10px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              <span style={{ fontSize: '24px', fontWeight: 900, color: C.text }}>{kpis.pending}</span>
+            </div>
+          </div>
+
+          {/* Operational Verified */}
+          <div style={{ background: C.card, borderRadius: '14px', padding: '14px 16px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: C.textLight }}>Operational Verified</span>
+              <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(139, 92, 246, 0.1)', color: '#8B5CF6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <ShieldCheck size={18} />
+              </div>
+            </div>
+            <div style={{ marginTop: '10px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              <span style={{ fontSize: '24px', fontWeight: 900, color: C.text }}>{kpis.operationalVerified}</span>
+            </div>
+          </div>
+
+          {/* Approved */}
+          <div style={{ background: C.card, borderRadius: '14px', padding: '14px 16px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: C.textLight }}>Approved</span>
+              <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.1)', color: '#10B981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <MdCheckCircle size={18} />
+              </div>
+            </div>
+            <div style={{ marginTop: '10px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              <span style={{ fontSize: '24px', fontWeight: 900, color: C.text }}>{kpis.approved}</span>
+            </div>
+          </div>
+
+          {/* Rejected */}
+          <div style={{ background: C.card, borderRadius: '14px', padding: '14px 16px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: C.textLight }}>Rejected</span>
+              <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <MdCancel size={18} />
+              </div>
+            </div>
+            <div style={{ marginTop: '10px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              <span style={{ fontSize: '24px', fontWeight: 900, color: C.text }}>{kpis.rejected}</span>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* ── 2.5 CATEGORY QUICK TOGGLE PILLS (LOC & EOC SUPPORT) ── */}
+      {(hasLocEocAssigned || isSuperAdmin || isQuerableOperatorUser) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '12px', fontWeight: 800, color: C.textLight, marginRight: '4px' }}>
+            Category Scope:
+          </span>
+          <button
+            type="button"
+            onClick={() => { setCategoryFilter('all'); setPage(1); }}
+            style={{
+              padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer',
+              border: `1.5px solid ${categoryFilter === 'all' ? '#3B82F6' : C.border}`,
+              background: categoryFilter === 'all' ? '#EFF6FF' : C.card,
+              color: categoryFilter === 'all' ? '#1D4ED8' : C.text
+            }}
+          >
+            All Products
+          </button>
+          <button
+            type="button"
+            onClick={() => { setCategoryFilter('loc_eoc'); setPage(1); }}
+            style={{
+              padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 800, cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: '6px',
+              border: `1.5px solid ${['loc_eoc', 'loan_on_credit_card', 'smart_emi'].includes(categoryFilter) ? '#10B981' : C.border}`,
+              background: ['loc_eoc', 'loan_on_credit_card', 'smart_emi'].includes(categoryFilter) ? '#ECFDF5' : C.card,
+              color: ['loc_eoc', 'loan_on_credit_card', 'smart_emi'].includes(categoryFilter) ? '#047857' : C.text
+            }}
+          >
+            <span>💳 LOC &amp; EOC Applications</span>
+            <span style={{ fontSize: '10px', background: '#10B981', color: '#FFFFFF', padding: '1px 6px', borderRadius: '10px' }}>
+              LOC/EOC
+            </span>
+          </button>
+          {['loc_eoc', 'loan_on_credit_card', 'smart_emi'].includes(categoryFilter) && (
+            <div style={{ display: 'inline-flex', gap: '6px', marginLeft: '6px' }}>
+              <button
+                type="button"
+                onClick={() => { setCategoryFilter('loan_on_credit_card'); setPage(1); }}
+                style={{
+                  padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer',
+                  border: `1px solid ${categoryFilter === 'loan_on_credit_card' ? '#059669' : C.border}`,
+                  background: categoryFilter === 'loan_on_credit_card' ? '#D1FAE5' : 'transparent',
+                  color: categoryFilter === 'loan_on_credit_card' ? '#065F46' : C.textLight
+                }}
+              >
+                LOC Only (Insta / Jumbo)
+              </button>
+              <button
+                type="button"
+                onClick={() => { setCategoryFilter('smart_emi'); setPage(1); }}
+                style={{
+                  padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer',
+                  border: `1px solid ${categoryFilter === 'smart_emi' ? '#059669' : C.border}`,
+                  background: categoryFilter === 'smart_emi' ? '#D1FAE5' : 'transparent',
+                  color: categoryFilter === 'smart_emi' ? '#065F46' : C.textLight
+                }}
+              >
+                EOC Only (Smart EMI)
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── 3. STATUS FILTER TABS ── */}
+      {!isPanCheckerUser && !isRemarkOperatorUser && (
+        <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '8px', marginBottom: '16px' }}>
+          {STATUS_TABS.map((tab) => {
+            const isActive = status === tab.id;
+            const count = tab.id === ''
+              ? (backendStatusCounts?.all !== undefined ? backendStatusCounts.all : (allCount || total))
+              : (backendStatusCounts ? (backendStatusCounts[tab.id] || 0) : (statusCounts[tab.id] || 0));
+            return (
+              <button
+                key={tab.id}
+                onClick={() => { setStatus(tab.id); setPage(1); }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', borderRadius: '10px',
+                  background: isActive ? tab.color : C.card,
+                  color: isActive ? '#ffffff' : C.text,
+                  border: `1px solid ${isActive ? tab.color : C.border}`,
+                  fontWeight: 700, fontSize: '12.5px', cursor: 'pointer', whiteSpace: 'nowrap',
+                  transition: 'all 0.2s ease',
+                  boxShadow: isActive ? `0 4px 12px ${tab.color}35` : 'none'
+                }}
+              >
+                <span>{tab.label}</span>
+                <span style={{
+                  background: isActive ? 'rgba(255,255,255,0.25)' : tab.bg,
+                  color: isActive ? '#ffffff' : tab.color,
+                  padding: '2px 7px', borderRadius: '20px', fontSize: '11px', fontWeight: 800
+                }}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── 4. SEARCH & FILTERS BAR ── */}
+      <div style={{ background: C.card, borderRadius: '16px', padding: '16px', border: `1px solid ${C.border}`, marginBottom: '20px' }}>
+        <form onSubmit={handleSearchSubmit}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            {/* Search Target Field Selector */}
+            <select
+              value={searchField}
+              onChange={(e) => setSearchField(e.target.value)}
+              style={{
+                height: '40px', padding: '0 12px', borderRadius: '10px',
+                background: C.card, border: `1px solid ${C.border}`,
+                color: C.text, fontSize: '12.5px', fontWeight: 700, cursor: 'pointer'
+              }}
+            >
+              <option value="all">Search All Fields</option>
+              <option value="bank_app_no">Bank Application Number</option>
+              <option value="name">Customer Name</option>
+              <option value="mobile">Mobile Number</option>
+              <option value="app_number">Application ID</option>
+              <option value="pan">PAN Card</option>
+            </select>
+
+            {/* Main Input with Internal Search Arrow Button */}
+            <div style={{ flex: 1, minWidth: '220px', position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <input
+                style={{
+                  ...S.input,
+                  paddingLeft: '38px',
+                  paddingRight: search ? '76px' : '46px',
+                  height: '40px',
+                  fontSize: '13px',
+                  borderRadius: '10px',
+                  width: '100%'
+                }}
+                placeholder={`Search by ${searchField === 'name' ? 'customer name' : searchField === 'mobile' ? 'mobile number' : searchField === 'app_number' ? 'application ID' : searchField === 'bank_app_no' ? 'bank application number' : searchField === 'pan' ? 'PAN card' : 'bank application number, customer name, mobile, application ID, PAN'}...`}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <MdSearch style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: C.textLight, fontSize: '20px', pointerEvents: 'none' }} />
+              
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => { setSearch(''); fetchApplications(); }}
+                  style={{ position: 'absolute', right: '42px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: C.textLight, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                  title="Clear search"
+                >
+                  <MdClose size={18} />
+                </button>
+              )}
+
+              {/* Inside Arrow Search Button */}
+              <button
+                type="submit"
+                aria-label="Submit Search"
+                title="Search"
+                style={{
+                  position: 'absolute',
+                  right: '5px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '8px',
+                  background: C.teal,
+                  color: '#ffffff',
+                  border: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  boxShadow: '0 2px 6px rgba(13, 148, 136, 0.25)'
+                }}
+              >
+                <Icons.arrowRight size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* Row 2: Expandable Filter Drawer */}
+          {isFilterOpen && (
+            <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: `1px solid ${C.border}`, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+              
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Date Range</label>
+                <select style={{ ...S.input, height: '36px', fontSize: '12.5px' }} value={dateRange} onChange={e => setDateRange(e.target.value)}>
+                  <option value="all">All Time</option>
+                  <option value="today">Today</option>
+                  <option value="yesterday">Yesterday</option>
+                  <option value="last_7_days">Last 7 Days</option>
+                  <option value="last_30_days">Last 30 Days</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Process Type</label>
+                <select 
+                  style={{ ...S.input, height: '36px', fontSize: '12.5px' }} 
+                  value={processTypeFilter} 
+                  onChange={e => setProcessTypeFilter(e.target.value)}
+                >
+                  <option value="all">All Process Types</option>
+                  <option value="punch_only">Lead Punching (Punch Only)</option>
+                  <option value="share_link">Link Sharing (Share Link)</option>
+                  <option value="direct_link">Direct Online</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Product Category</label>
+                <select 
+                  style={{ ...S.input, height: '36px', fontSize: '12.5px' }} 
+                  value={categoryFilter} 
+                  onChange={e => { setCategoryFilter(e.target.value); setPage(1); }}
+                >
+                  <option value="all">All Categories</option>
+                  <option value="credit_card">Credit Card</option>
+                  <option value="loc_eoc">LOC/EOC</option>
+                  <option value="loan_on_credit_card">Loan on Credit Card (LOC)</option>
+                  <option value="smart_emi">Smart EMI on Credit Card (EOC)</option>
+                  <option value="personal_loan">Personal Loan</option>
+                  <option value="business_loan">Business Loan</option>
+                  <option value="insurance">Insurance</option>
+                  <option value="utility">Utility / Recharge</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Bank Partner</label>
+                <select 
+                  style={{ ...S.input, height: '36px', fontSize: '12.5px' }} 
+                  value={bankFilter} 
+                  onChange={e => { setBankFilter(e.target.value); setPage(1); }}
+                >
+                  <option value="all">All Banks</option>
+                  {(banksList.length > 0 ? banksList : assignedList).map(b => (
+                    <option key={b.id || b.bank_id} value={b.id || b.bank_id}>
+                      {b.name || b.bank_name || b.short_code} {b.short_code ? `(${b.short_code})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Source Type</label>
+                <select 
+                  style={{ ...S.input, height: '36px', fontSize: '12.5px' }} 
+                  value={sourceTypeFilter} 
+                  onChange={e => {
+                    const val = e.target.value;
+                    setSourceTypeFilter(val);
+                    if (val === 'partner') setPartnerFilter('ALL_PARTNERS');
+                    else if (val === 'employee') setPartnerFilter('ALL_EMPLOYEES');
+                    else if (val === 'all') setPartnerFilter('');
+                  }}
+                >
+                  <option value="all">All Sources (Partners &amp; Employees &amp; Direct)</option>
+                  <option value="partner">All Partners Only</option>
+                  <option value="employee">All Employees Only</option>
+                  <option value="customer">Customer Only</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Partner / Employee Agent</label>
+                <select
+                  style={{ ...S.input, height: '36px', fontSize: '12.5px' }}
+                  value={partnerFilter}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setPartnerFilter(val);
+                    if (val === 'ALL_PARTNERS') setSourceTypeFilter('partner');
+                    else if (val === 'ALL_EMPLOYEES') setSourceTypeFilter('employee');
+                  }}
+                >
+                  <option value="">All Partners &amp; Employees</option>
+                  <option value="ALL_PARTNERS">All Partners Only</option>
+                  <option value="ALL_EMPLOYEES">All Employees Only</option>
+                  
+                  {partnersList.length > 0 && (
+                    <optgroup label="── PARTNERS ──">
+                      {partnersList.map((p, idx) => {
+                        const code = p.partner_code || p.code || p.referral_code || p.id;
+                        const firstName = p.first_name || '';
+                        const lastName = p.last_name || '';
+                        const combined = `${firstName} ${lastName}`.trim();
+                        const name = p.full_name || p.name || p.partner_name || (combined.length > 0 ? combined : 'Partner');
+                        return (
+                          <option key={`p_${p.id || code || idx}`} value={code}>
+                            {name} ({code})
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                  )}
+
+                  {employeesList.length > 0 && (
+                    <optgroup label="── EMPLOYEES ──">
+                      {employeesList.map((e, idx) => {
+                        const code = e.employee_code || e.emp_code || e.code || e.id;
+                        const firstName = e.first_name || '';
+                        const lastName = e.last_name || '';
+                        const combined = `${firstName} ${lastName}`.trim();
+                        const name = e.full_name || e.name || e.employee_name || (combined.length > 0 ? combined : 'Employee');
+                        return (
+                          <option key={`e_${e.id || code || idx}`} value={code}>
+                            {name} ({code})
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Application Status</label>
+                <select style={{ ...S.input, height: '36px', fontSize: '12.5px' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+                  <option value="all">All Statuses</option>
+                  <option value="submitted">Details Submitted</option>
+                  <option value="under_review">Under Review</option>
+                  <option value="operational_verified">Operational Verified</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Commission Status</label>
+                <select style={{ ...S.input, height: '36px', fontSize: '12.5px' }} value={commFilter} onChange={e => setCommFilter(e.target.value)}>
+                  <option value="all">All Commission States</option>
+                  <option value="pending">Pending</option>
+                  <option value="released">Released</option>
+                  <option value="on_hold">On Hold</option>
+                </select>
+              </div>
+
+              <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+                <button type="button" onClick={clearAllFilters} style={{ padding: '6px 14px', borderRadius: '8px', background: 'transparent', border: `1px solid ${C.border}`, color: C.text, fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}>
+                  Clear Filters
+                </button>
+              </div>
+
+            </div>
+          )}
+        </form>
+      </div>
+
+      {/* ── 5. APPLICATIONS TABLE ── */}
+      {err && (
+        <div style={{ padding: "14px 18px", background: `${C.red}10`, border: `1px solid ${C.red}30`, borderRadius: "12px", color: C.red, marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+          <div>
+            <span style={{ fontWeight: 700, marginRight: '8px' }}>⚠️ Error:</span>
+            <span>{err}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => { setErr(""); fetchApplications(); }}
+            style={{ padding: "6px 14px", borderRadius: "8px", background: C.red, color: "#fff", border: "none", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      <div style={{ background: C.card, borderRadius: '16px', border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+        {loading ? (
+          <div style={{ padding: '60px 20px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            <LoadingLogo message="Loading applications..." />
+          </div>
+        ) : apps.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '60px 20px', color: C.textLight }}>
+            <FaFileAlt size={40} style={{ opacity: 0.3, marginBottom: '12px' }} />
+            <div style={{ fontWeight: 700, fontSize: '15px', color: C.text }}>No applications found</div>
+            <div style={{ fontSize: '13px', marginTop: '4px' }}>Try adjusting your search query or filters.</div>
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <thead>
+                <tr style={{ background: C.bgSecondary, borderBottom: `1px solid ${C.border}`, color: C.textLight, fontSize: '11.5px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  <th style={{ padding: '14px 16px' }}>App ID &amp; Date</th>
+                  {!isPanCheckerUser && !isRemarkOperatorUser && !isQdOperatorUser && <th style={{ padding: '14px 16px' }}>Customer</th>}
+                  {!isPanCheckerUser && !isQdOperatorUser && <th style={{ padding: '14px 16px' }}>Source &amp; Process</th>}
+                  {!isPanCheckerUser && !isRemarkOperatorUser && !isQdOperatorUser && <th style={{ padding: '14px 16px' }}>Product &amp; Bank</th>}
+                  {!isPanCheckerUser && !isRemarkOperatorUser && !isQdOperatorUser && <th style={{ padding: '14px 16px' }}>Status &amp; Commission</th>}
+                  <th style={{ padding: '14px 16px', textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody style={{ fontSize: '13px', color: C.text }}>
+                {apps.map((app) => {
+                  const badge = getStatusBadgeStyle(app.status);
+                  const formattedDate = app.created_at ? new Date(app.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A';
+                  const custName = app.customer_name || app.full_name || 'Customer';
+                  const isClaimedByCurrentUser = Boolean(app.sales_claimed_by && String(app.sales_claimed_by) === String(user?.id));
+                  const isClaimedByAnotherUser = Boolean(app.sales_claimed_by && !isClaimedByCurrentUser);
+
+                  return (
+                    <tr key={app.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                      
+                      {/* App ID & Date */}
+                      <td style={{ padding: '14px 16px' }}>
+                        <div style={{ fontWeight: 800, color: C.teal, fontFamily: 'monospace', fontSize: '12.5px' }}>
+                          {app.app_number || `APP${app.id}`}
+                        </div>
+                        {(app.bank_application_number || app.bank_ref_number) && (
+                          <div style={{ fontSize: '11px', color: C.teal, fontWeight: 700, marginTop: '2px', fontFamily: 'monospace' }}>
+                            Bank No: {app.bank_application_number || app.bank_ref_number}
+                          </div>
+                        )}
+                        {app.requery_date && (
+                          <div style={{ fontSize: '11px', color: '#6366f1', fontWeight: 800, marginTop: '2px' }}>
+                            📅 Re-QD: {new Date(app.requery_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          </div>
+                        )}
+                        <div style={{ fontSize: '11px', color: C.textLight, marginTop: '2px' }}>
+                          {formattedDate}
+                        </div>
+                        <div style={{ marginTop: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 6px', borderRadius: '4px', background: '#FEF3C7', color: '#92400E', fontSize: '10.5px', fontWeight: 800 }}>
+                          <span>🔄 Updates: {app.update_count ?? 1}</span>
+                        </div>
+                        {app.sales_claimed_by && (
+                          <div style={{ marginTop: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 6px', borderRadius: '4px', background: isClaimedByCurrentUser ? '#DCFCE7' : '#E0F2FE', color: isClaimedByCurrentUser ? '#166534' : '#0369A1', fontSize: '10.5px', fontWeight: 800 }}>
+                            <span>{isClaimedByCurrentUser ? '⚡ Claimed by You' : `👤 Claimed: ${app.sales_claimed_by_name || 'Operator'}`}</span>
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Customer Info */}
+                      {!isPanCheckerUser && !isRemarkOperatorUser && !isQdOperatorUser && (
+                        <td style={{ padding: '14px 16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: C.bgSecondary, color: C.primary, fontWeight: 800, fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${C.border}`, flexShrink: 0 }}>
+                              {getInitials(custName)}
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 800, color: C.text }}>{custName}</div>
+                              <div style={{ fontSize: '11px', color: C.textLight }}>
+                                {isAdministrativeOperatorUser ? maskMobileNumber(app.customer_mobile || app.mobile) : (app.customer_mobile || app.mobile || 'No Mobile')}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      )}
+
+                      {/* Source & Process */}
+                      {!isPanCheckerUser && !isQdOperatorUser && (
+                        <td style={{ padding: '14px 16px' }}>
+                          {renderProcessBadge(app)}
+                        </td>
+                      )}
+
+                      {/* Product & Bank */}
+                      {!isPanCheckerUser && !isRemarkOperatorUser && !isQdOperatorUser && (
+                        <td style={{ padding: '14px 16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 800, color: C.text }}>{app.bank_name || app.bank_code || 'Bank Partner'}</span>
+                            {isLocEocApp(app) ? (
+                              <span style={{
+                                fontSize: '10px', fontWeight: 800, background: '#ECFDF5', color: '#047857',
+                                border: '1px solid #A7F3D0', padding: '1px 6px', borderRadius: '4px', whiteSpace: 'nowrap'
+                              }}>
+                                {String(app.sub_category || '').toUpperCase() === 'EOC' || /smart\s*emi/i.test(app.product_name || '') ? 'EOC (Smart EMI)' : 'LOC (Loan on Card)'}
+                              </span>
+                            ) : (
+                              <span style={{
+                                fontSize: '10px', fontWeight: 800, background: '#EFF6FF', color: '#1D4ED8',
+                                border: '1px solid #BFDBFE', padding: '1px 6px', borderRadius: '4px', whiteSpace: 'nowrap'
+                              }}>
+                                {app.category && app.category !== 'credit_card' ? app.category.toUpperCase().replace('_', ' ') : 'Credit Card'}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '11px', color: C.textLight }}>{app.product_name || app.category || 'Financial Product'}</div>
+                        </td>
+                      )}
+
+                      {/* Status & Commission */}
+                      {!isPanCheckerUser && !isRemarkOperatorUser && !isQdOperatorUser && (
+                        <td style={{ padding: '14px 16px' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <span style={{
+                                display: "inline-block", padding: "3px 8px", borderRadius: "6px", fontSize: "10.5px", fontWeight: 800, textTransform: "uppercase", width: "fit-content",
+                                background: badge.bg, color: badge.color, border: `1px solid ${badge.border}`
+                              }}>
+                                {badge.label}
+                              </span>
+                              {(app.curing_designation || app.decline_code) && (() => {
+                                const desig = app.curing_designation || getHdfcCuringDesignation(app.decline_code);
+                                const badgeInfo = CURING_DESIGNATION_BADGES[desig];
+                                if (!badgeInfo) return null;
+                                return (
+                                  <span style={{
+                                    display: "inline-block", padding: "2px 6px", borderRadius: "4px", fontSize: "10px", fontWeight: 800,
+                                    background: badgeInfo.bg, color: badgeInfo.text, border: `1px solid ${badgeInfo.border}`
+                                  }}>
+                                    🛡️ {badgeInfo.label}
+                                  </span>
+                                );
+                              })()}
+                            </div>
+                            {app.decline_code && app.decline_code !== 'None' && (
+                              <div style={{ fontSize: '10.5px', color: '#dc2626', fontWeight: 700 }}>
+                                Decline Code: <strong>{app.decline_code}</strong>
+                              </div>
+                            )}
+                            <div style={{ fontSize: '11px', color: C.textLight, fontWeight: 700 }}>
+                              Comm: <span style={{ color: app.commission_released || app.commission_status === 'processed' ? '#059669' : C.textMid }}>₹{parseFloat(app.commission_amount || 0).toLocaleString('en-IN')} ({app.commission_released || app.commission_status === 'processed' ? 'Released' : 'Pending'})</span>
+                            </div>
+                          </div>
+                        </td>
+                      )}
+
+                      {/* Actions */}
+                      <td style={{ padding: '14px 16px', textAlign: 'right' }}>
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: "6px", alignItems: "center" }}>
+                          {isCurableOperatorUser ? (
+                            <>
+                              <button
+                                onClick={() => { setVerifyModalTab('remark'); setVerifyModalApp(app); }}
+                                style={{ background: "#ea580c15", border: "1px solid #ea580c40", color: "#ea580c", padding: "6px 10px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: 'center', gap: "4px" }}
+                                title="Open Bank Remark Form to cure application"
+                              >
+                                <FileEdit size={12} /> Cure / Remark
+                              </button>
+                              <button
+                                onClick={() => { setVerifyModalTab('final'); setVerifyModalApp(app); }}
+                                style={{ background: "#2563eb15", border: "1px solid #2563eb40", color: "#2563eb", padding: "6px 10px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                                title="Update Final Status"
+                              >
+                                <CheckCircle2 size={12} /> Final
+                              </button>
+                            </>
+                          ) : isQuerableOperatorUser ? (
+                            <button
+                              onClick={() => { setVerifyModalTab('remark'); setVerifyModalApp(app); }}
+                              style={{ background: "#ef444415", border: "1px solid #ef444440", color: "#ef4444", padding: "6px 12px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                              title="View Reject / Decline Details"
+                            >
+                              <Eye size={13} /> View Query
+                            </button>
+                          ) : isPanCheckerUser ? (
+                            <button
+                              onClick={() => { setVerifyModalTab('qd'); setVerifyModalApp(app); }}
+                              style={{ background: "#2563eb15", border: "1px solid #2563eb40", color: "#2563eb", padding: "6px 12px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                            >
+                              <ShieldCheck size={13} /> Review
+                            </button>
+                          ) : isRemarkOperatorUser ? (
+                            <button
+                              onClick={() => { setVerifyModalTab('remark'); setVerifyModalApp(app); }}
+                              style={{ background: "#ea580c15", border: "1px solid #ea580c40", color: "#ea580c", padding: "6px 10px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: 'center', gap: "4px" }}
+                              title="Open Bank Remark Form"
+                            >
+                              <FileEdit size={12} /> Remark Form
+                            </button>
+                          ) : isQdOperatorUser ? (
+                            <>
+                              <button
+                                onClick={() => { setVerifyModalTab('qd'); setVerifyModalApp(app); }}
+                                style={{ background: "#2563eb15", border: "1px solid #2563eb40", color: "#2563eb", padding: "6px 10px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                                title="Open Quick Details (QD) Form"
+                              >
+                                <FileText size={12} /> QD
+                              </button>
+                              <button
+                                onClick={() => { setVerifyModalTab('remark'); setVerifyModalApp(app); }}
+                                style={{ background: "#ea580c15", border: "1px solid #ea580c40", color: "#ea580c", padding: "6px 10px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: 'center', gap: "4px" }}
+                                title="Open Bank Remark Form"
+                              >
+                                <FileEdit size={12} /> Remark
+                              </button>
+                            </>
+                          ) : isSalesExecUser ? (
+                            <>
+                              {!app.sales_claimed_by ? (
+                                <button
+                                  onClick={() => handleClaimRequest(app)}
+                                  disabled={claimingId === app.id}
+                                  style={{ background: "#0284c7", border: "none", color: "#ffffff", padding: "6px 12px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 800, cursor: claimingId === app.id ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: "5px", boxShadow: "0 2px 6px rgba(2, 132, 199, 0.35)", whiteSpace: "nowrap" }}
+                                  title="Claim this application to work on it exclusively"
+                                >
+                                  {claimingId === app.id ? (
+                                    <>
+                                      <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Claiming...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Zap size={13} fill="#ffffff" /> Claim Request
+                                    </>
+                                  )}
+                                </button>
+                              ) : isClaimedByCurrentUser ? (
+                                <span
+                                  style={{ background: "#16a34a15", border: "1px solid #16a34a40", color: "#16a34a", padding: "5px 9px", borderRadius: "6px", fontSize: "11px", fontWeight: 800, display: "inline-flex", alignItems: "center", gap: "4px", whiteSpace: "nowrap" }}
+                                  title={`Claimed by you on ${app.sales_claimed_at ? new Date(app.sales_claimed_at).toLocaleString() : ''}`}
+                                >
+                                  <CheckCircle2 size={12} /> Claimed by You
+                                </span>
+                              ) : (
+                                <span
+                                  style={{ background: "#64748b15", border: "1px solid #64748b40", color: "#64748b", padding: "5px 9px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: "4px", whiteSpace: "nowrap" }}
+                                >
+                                  <UserCheck size={12} /> Claimed
+                                </span>
+                              )}
+                              <button
+                                disabled={isClaimedByAnotherUser}
+                                onClick={() => {
+                                  if (!app.sales_claimed_by) {
+                                    if (window.confirm(`You must claim Application #${app.app_number || app.id} before filling the QD form. Do you want to claim it now?`)) {
+                                      handleClaimRequest(app);
+                                    }
+                                    return;
+                                  }
+                                  setVerifyModalTab('qd');
+                                  setVerifyModalApp(app);
+                                }}
+                                style={{ background: "#2563eb15", border: "1px solid #2563eb40", color: "#2563eb", padding: "6px 10px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 700, cursor: isClaimedByAnotherUser ? "not-allowed" : "pointer", opacity: isClaimedByAnotherUser ? 0.5 : 1, display: "inline-flex", alignItems: "center", gap: "4px" }}
+                                title={isClaimedByAnotherUser ? "This application is claimed by another operator" : "Open Quick Details (QD) Form"}
+                              >
+                                <FileText size={12} /> QD Form
+                              </button>
+                              <button
+                                disabled={isClaimedByAnotherUser}
+                                onClick={() => {
+                                  if (!app.sales_claimed_by) {
+                                    if (window.confirm(`You must claim Application #${app.app_number || app.id} before filling the Remark form. Do you want to claim it now?`)) {
+                                      handleClaimRequest(app);
+                                    }
+                                    return;
+                                  }
+                                  setVerifyModalTab('remark');
+                                  setVerifyModalApp(app);
+                                }}
+                                style={{ background: "#ea580c15", border: "1px solid #ea580c40", color: "#ea580c", padding: "6px 10px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 700, cursor: isClaimedByAnotherUser ? "not-allowed" : "pointer", opacity: isClaimedByAnotherUser ? 0.5 : 1, display: "inline-flex", alignItems: 'center', gap: "4px" }}
+                                title={isClaimedByAnotherUser ? "This application is claimed by another operator" : "Open Bank Remark Form"}
+                              >
+                                <FileEdit size={12} /> Remark Form
+                              </button>
+                              <button
+                                onClick={() => setAssignModalApp(app)}
+                                style={{ background: "#8b5cf615", border: "1px solid #8b5cf640", color: "#8b5cf6", padding: "6px 10px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                                title="Assign this application to another Administrative Sales Executive"
+                              >
+                                <UserPlus size={12} /> Assign
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              {app.sales_claimed_by && (
+                                <span
+                                  style={{ background: "#0284c715", border: "1px solid #0284c740", color: "#0284c7", padding: "4px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: "4px", whiteSpace: "nowrap" }}
+                                  title={`Claimed by ${app.sales_claimed_by_name || 'Sales Operator'} (${app.sales_claimed_by_code || ''})`}
+                                >
+                                  <UserCheck size={11} /> {app.sales_claimed_by_name ? app.sales_claimed_by_name.split(' ')[0] : 'Claimed'}
+                                </span>
+                              )}
+                              {isOpsHeadOrSuperAdmin && (
+                                <button
+                                  onClick={() => handleViewDetails(app)}
+                                  style={{ background: "#7c3aed15", border: "1px solid #7c3aed40", color: "#7c3aed", padding: "6px 10px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                                >
+                                  <Eye size={12} /> Review
+                                </button>
+                              )}
+                              <button
+                                onClick={() => { setVerifyModalTab('qd'); setVerifyModalApp(app); }}
+                                style={{ background: "#2563eb15", border: "1px solid #2563eb40", color: "#2563eb", padding: "6px 10px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                                title="Open Quick Details (QD) Form"
+                              >
+                                <FileText size={12} /> QD Form
+                              </button>
+                              <button
+                                onClick={() => { setVerifyModalTab('remark'); setVerifyModalApp(app); }}
+                                style={{ background: "#ea580c15", border: "1px solid #ea580c40", color: "#ea580c", padding: "6px 10px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: 'center', gap: "4px" }}
+                                title="Open Bank Remark Form"
+                              >
+                                <FileEdit size={12} /> Remark Form
+                              </button>
+                              {!isSalesExecUser && !isQdOperatorUser && (
+                                <button
+                                  onClick={() => { setVerifyModalTab('final'); setVerifyModalApp(app); }}
+                                  style={{ background: "#16a34a15", border: "1px solid #16a34a40", color: "#16a34a", padding: "6px 10px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                                >
+                                  <Building2 size={12} /> Final
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </td>
+
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* ── PAGINATION BAR ── */}
+        <div style={{ padding: '14px 20px', background: C.bgSecondary, borderTop: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+
+          <div style={{ fontSize: '12.5px', color: C.textLight }}>
+            Showing <strong>{total === 0 ? 0 : (page - 1) * limit + 1}–{Math.min(page * limit, total)}</strong> of <strong>{total}</strong> applications
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+
+            {/* Items Per Page Select */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '12px', color: C.textLight }}>Per page:</span>
+              <select
+                value={limit}
+                onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }}
+                style={{ ...S.input, height: '32px', padding: '2px 8px', fontSize: '12px', borderRadius: '6px' }}
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </div>
+
+            {/* Page Navigation Buttons */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <button
+                disabled={page <= 1}
+                onClick={() => setPage(prev => Math.max(prev - 1, 1))}
+                style={{ width: '32px', height: '32px', borderRadius: '6px', border: `1px solid ${C.border}`, background: C.card, color: C.text, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: page <= 1 ? 'not-allowed' : 'pointer', opacity: page <= 1 ? 0.5 : 1 }}
+              >
+                <MdChevronLeft size={20} />
+              </button>
+
+              <span style={{ fontSize: '12px', fontWeight: 800, color: C.text, padding: '0 8px' }}>
+                Page {page} of {totalPages || 1}
+              </span>
+
+              <button
+                disabled={page >= totalPages}
+                onClick={() => setPage(prev => Math.min(prev + 1, totalPages))}
+                style={{ width: '32px', height: '32px', borderRadius: '6px', border: `1px solid ${C.border}`, background: C.card, color: C.text, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: page >= totalPages ? 'not-allowed' : 'pointer', opacity: page >= totalPages ? 0.5 : 1 }}
+              >
+                <MdChevronRight size={20} />
+              </button>
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+      {/* ── 360° REVIEW DETAIL MODAL ── */}
+      {selectedApp && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, width: "100%", height: "100%", zIndex: 10000,
+          background: "rgba(15, 23, 42, 0.75)", backdropFilter: "blur(5px)", display: "flex", justifyContent: "center", alignItems: "center", padding: "16px"
+        }}>
+          <div style={{
+            background: C.card, borderRadius: "20px", border: `1px solid ${C.border}`,
+            width: "100%", maxWidth: "850px", maxHeight: "92vh", overflowY: "auto", padding: "24px", position: "relative",
+            boxShadow: "0 25px 50px -12px rgba(0,0,0,0.35)"
+          }}>
+            {/* Close Button */}
+            <button
+              onClick={() => setSelectedApp(null)}
+              style={{ position: "absolute", top: "16px", right: "16px", background: "none", border: "none", color: C.textLight, cursor: "pointer" }}
+            >
+              <Icons.x size={20} />
+            </button>
+
+            {loadingDetail ? (
+              <div style={{ textAlign: "center", padding: "40px", color: C.textLight, fontWeight: 600 }}>Loading details...</div>
+            ) : appDetail ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+
+                {/* Header Summary */}
+                <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: '14px', marginRight: '40px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 800, background: `${C.primary}15`, color: C.primary, padding: '2px 8px', borderRadius: '4px', fontFamily: 'monospace' }}>
+                      {appDetail.app_number || appDetail.application_no || 'APP-REF'}
+                    </span>
+                    {isHdfcCheckLoanApplication(appDetail) && (
+                      <span style={{
+                        fontSize: '11.5px',
+                        fontWeight: 900,
+                        background: '#EFF6FF',
+                        color: '#1D4ED8',
+                        border: '1px solid #BFDBFE',
+                        padding: '2px 10px',
+                        borderRadius: '6px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        letterSpacing: '0.3px',
+                        textTransform: 'uppercase'
+                      }}>
+                        ⚡ View check loan application
+                      </span>
+                    )}
+                  </div>
+                  <h3 style={{ fontSize: '20px', fontWeight: 800, color: C.text, margin: '4px 0 2px' }}>
+                    {appDetail.customer_name || appDetail.full_name || 'Customer'}
+                  </h3>
+                  <p style={{ fontSize: '12.5px', color: C.textLight, margin: 0 }}>
+                    Category: <strong>{appDetail.category || 'loc_eoc'}</strong> • Product: <strong>{appDetail.product_name || 'Credit Card'}</strong> • Bank: <strong>{appDetail.bank_name || 'Partner Bank'}</strong>
+                  </p>
+                </div>
+
+                {/* Operational Verification & Status Upgrade Card */}
+                <div style={{ background: `${C.primary}08`, border: `1.5px solid ${C.primary}30`, padding: '16px', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ fontWeight: 800, fontSize: '14px', color: C.primary, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <CheckCircle2 size={18} /> Operational Verification &amp; Status Upgrade
+                    </div>
+                    <span style={{
+                      fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: '12px',
+                      background: (appDetail.status === 'approved' || appDetail.status === 'operational_verified') ? '#dcfce7' : '#ffedd5',
+                      color: (appDetail.status === 'approved' || appDetail.status === 'operational_verified') ? '#15803d' : '#c2410c',
+                      textTransform: 'uppercase'
+                    }}>
+                      Current Status: {(appDetail.status || 'pending').replace(/_/g, ' ')}
+                    </span>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 700, color: C.textLight, display: 'block', marginBottom: '4px' }}>Operational Remark / Approval Note</label>
+                    <textarea
+                      rows={2}
+                      placeholder="Enter remarks or approval notes..."
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: `1px solid ${C.border}`, fontSize: '13px', background: C.bgSecondary, color: C.text, boxSizing: 'border-box' }}
+                      value={superAdminRemark}
+                      onChange={e => setSuperAdminRemark(e.target.value)}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button
+                      disabled={submittingApprove}
+                      onClick={() => handleOperationalVerify(appDetail?.app_number || appDetail?.real_id || appDetail?.id)}
+                      style={{ background: '#7c3aed', color: '#ffffff', border: 'none', padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 800, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <CheckCircle2 size={16} /> {submittingApprove ? 'Processing...' : 'Mark Operational Verified'}
+                    </button>
+                    {isOpsHead && (
+                      <button
+                        disabled={submittingApprove}
+                        onClick={() => handleApproveApplication(appDetail?.app_number || appDetail?.real_id || appDetail?.id)}
+                        style={{ background: '#16a34a', color: '#ffffff', border: 'none', padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 800, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                      >
+                        <CheckCircle2 size={16} /> {submittingApprove ? 'Approving...' : 'Approve (Super Admin Approved)'}
+                      </button>
+                    )}
+                    {(() => {
+                      const isLocked = ['approved', 'super_admin_approved', 'sanctioned', 'commission_processing', 'commission_released', 'commission_received', 'disbursed', 'rejected', 'cancelled'].includes(String(appDetail?.status || '').toLowerCase());
+                      return (
+                        <button
+                          disabled={isLocked}
+                          onClick={() => {
+                            if (isLocked) return;
+                            const targetApp = appDetail;
+                            setSelectedApp(null);
+                            setVerifyModalTab('qd');
+                            setVerifyModalApp(targetApp);
+                          }}
+                          style={{
+                            background: isLocked ? '#f1f5f9' : '#2563eb15',
+                            border: `1px solid ${isLocked ? '#cbd5e1' : '#2563eb40'}`,
+                            color: isLocked ? '#94a3b8' : '#2563eb',
+                            padding: '8px 14px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 700,
+                            cursor: isLocked ? 'not-allowed' : 'pointer',
+                            opacity: isLocked ? 0.7 : 1
+                          }}
+                        >
+                          {isLocked ? 'Edit Details (Locked)' : 'Edit Details (Form 1 / 2 / 3)'}
+                        </button>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {isHdfcCheckLoanApplication(appDetail) ? (
+                  <>
+                    {/* Form 1 : Quick details */}
+                    <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '16px' }}>
+                      <h4 style={{ fontSize: '13.5px', fontWeight: 800, color: C.primary, margin: '0 0 12px', borderBottom: `1px solid ${C.border}`, paddingBottom: '6px' }}>
+                        Form 1 : Quick details
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', fontSize: '12.5px' }}>
+                        <div>
+                          <span style={{ color: C.textLight }}>1. Customer name:</span>{' '}
+                          <strong style={{ color: C.text }}>{appDetail.customer_name || appDetail.full_name || appDetail.pan_name || '—'}</strong>
+                        </div>
+                        <div>
+                          <span style={{ color: C.textLight }}>2. Mobile number:</span>{' '}
+                          <strong style={{ color: C.text, fontFamily: 'monospace' }}>
+                            {maskMobileNumber(appDetail.customer_mobile || appDetail.mobile || appDetail.aadhaar_linked_mobile)}
+                          </strong>
+                        </div>
+                        <div style={{ gridColumn: 'span 2' }}>
+                          <span style={{ color: C.textLight }}>3. Referred by (partner/employee) :</span>{' '}
+                          <strong style={{ color: C.text }}>"{getReferredByName(appDetail)}"</strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Form 2 : remark form */}
+                    <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '16px' }}>
+                      <h4 style={{ fontSize: '13.5px', fontWeight: 800, color: '#0d9488', margin: '0 0 12px', borderBottom: `1px solid ${C.border}`, paddingBottom: '6px' }}>
+                        Form 2 : remark form
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', fontSize: '12.5px' }}>
+                        <div>
+                          <span style={{ color: C.textLight }}>1. Insta/jumbo:</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            {appDetail.insta_jumbo_offer || appDetail.insta_jumbo || appDetail.physical_details?.insta_jumbo_offer || 'None'}
+                          </strong>
+                        </div>
+                        <div>
+                          <span style={{ color: C.textLight }}>2. Customer loan type:</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            {appDetail.customer_loan_type || appDetail.customer_loan_offer || appDetail.physical_details?.customer_loan_type || appDetail.physical_details?.customer_loan_offer || 'None'}
+                          </strong>
+                        </div>
+                        <div>
+                          <span style={{ color: C.textLight }}>3. Offer tenure:</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            {appDetail.offer_tenure || appDetail.physical_details?.offer_tenure || 'None'}
+                          </strong>
+                        </div>
+                        <div>
+                          <span style={{ color: C.textLight }}>4. Disbursement amount:</span>{' '}
+                          <strong style={{ color: '#16a34a', fontWeight: 800 }}>
+                            {(() => {
+                              const amt = appDetail.disbursement_amount ?? appDetail.disbursed_amount ?? appDetail.disbursed_smart_emi ?? appDetail.physical_details?.disbursement_amount ?? appDetail.physical_details?.disbursed_amount;
+                              if (amt !== null && amt !== undefined && amt !== '' && !isNaN(Number(amt)) && Number(amt) >= 0) {
+                                return `₹${parseFloat(amt).toLocaleString('en-IN')}`;
+                              }
+                              return '—';
+                            })()}
+                          </strong>
+                        </div>
+                        <div>
+                          <span style={{ color: C.textLight }}>5. Disbursement tenure:</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            {appDetail.disbursement_tenure || appDetail.disbursed_tenure || appDetail.disbursed_smart_emi_tenure || appDetail.physical_details?.disbursement_tenure || 'None'}
+                          </strong>
+                        </div>
+                        <div>
+                          <span style={{ color: C.textLight }}>6. Operational remark:</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            {appDetail.ops_remark || appDetail.processing_remark || appDetail.remarks || appDetail.operational_remarks || appDetail.user_remark || '—'}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Form 3 : final form */}
+                    <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '16px' }}>
+                      <h4 style={{ fontSize: '13.5px', fontWeight: 800, color: '#9333ea', margin: '0 0 12px', borderBottom: `1px solid ${C.border}`, paddingBottom: '6px' }}>
+                        Form 3 : final form
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', fontSize: '12.5px' }}>
+                        <div>
+                          <span style={{ color: C.textLight }}>1. Los NO:</span>{' '}
+                          <strong style={{ color: C.text, fontFamily: 'monospace' }}>
+                            {appDetail.los_no || appDetail.bank_ref_number || appDetail.bank_application_number || appDetail.physical_details?.los_no || '—'}
+                          </strong>
+                        </div>
+                        <div>
+                          <span style={{ color: C.textLight }}>2. Disbursement completed:</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            {appDetail.disbursement_completed || appDetail.physical_details?.disbursement_completed || 'None'}
+                          </strong>
+                        </div>
+                        <div>
+                          <span style={{ color: C.textLight }}>3. DISBURSEMENT date:</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            {formatDisplayDate(appDetail.disbursement_date || appDetail.disbursal_date || appDetail.physical_details?.disbursement_date || appDetail.physical_details?.disbursal_date)}
+                          </strong>
+                        </div>
+                        <div>
+                          <span style={{ color: C.textLight }}>4. Decline reason:</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            {appDetail.decline_reason || appDetail.offer_decline_reason || appDetail.physical_details?.decline_reason || '—'}
+                          </strong>
+                        </div>
+                        <div>
+                          <span style={{ color: C.textLight }}>5. User remark:</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            {appDetail.user_remark || appDetail.notes || appDetail.physical_details?.user_remark || '—'}
+                          </strong>
+                        </div>
+                        <div>
+                          <span style={{ color: C.textLight }}>6. Bank remark:</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            {(() => {
+                              const u = appDetail.user_remark || appDetail.notes || appDetail.physical_details?.user_remark;
+                              if (u && String(u).trim() !== '' && String(u).trim().toUpperCase() !== 'NA' && String(u).trim().toUpperCase() !== 'N/A') {
+                                return String(u).trim();
+                              }
+                              const b = appDetail.bank_remark || appDetail.physical_details?.bank_remark;
+                              if (b && String(b).trim() !== '' && String(b).trim().toUpperCase() !== 'NA' && String(b).trim().toUpperCase() !== 'N/A') {
+                                return String(b).trim();
+                              }
+                              return 'NA';
+                            })()}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Form 1: Quick Details */}
+                    <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '16px' }}>
+                      <h4 style={{ fontSize: '13.5px', fontWeight: 800, color: C.primary, margin: '0 0 12px', borderBottom: `1px solid ${C.border}`, paddingBottom: '6px' }}>
+                        Form 1: Quick Details
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', fontSize: '12.5px' }}>
+                        <div><span style={{ color: C.textLight }}>Customer Name:</span> <strong style={{ color: C.text }}>{appDetail.customer_name || appDetail.full_name || appDetail.pan_name || '—'}</strong></div>
+                        <div><span style={{ color: C.textLight }}>Mobile Number:</span> <strong style={{ color: C.text, fontFamily: 'monospace' }}>{maskMobileNumber(appDetail.customer_mobile || appDetail.mobile || appDetail.aadhaar_linked_mobile)}</strong></div>
+                        
+                        {hasMeaningfulValue(appDetail.customer_email || appDetail.email || appDetail.personal_email) && (
+                          <div><span style={{ color: C.textLight }}>Email Address:</span> <strong style={{ color: C.text }}>{appDetail.customer_email || appDetail.email || appDetail.personal_email}</strong></div>
+                        )}
+                        
+                        {hasMeaningfulValue(appDetail.pan_number || appDetail.pan) && (
+                          <div><span style={{ color: C.textLight }}>PAN Card Number:</span> <strong style={{ color: C.text, fontFamily: 'monospace' }}>{appDetail.pan_number || appDetail.pan}</strong></div>
+                        )}
+                        
+                        {hasMeaningfulValue(appDetail.dob || appDetail.date_of_birth) && (
+                          <div><span style={{ color: C.textLight }}>Date of Birth (DOB):</span> <strong style={{ color: C.text }}>{appDetail.dob || appDetail.date_of_birth}</strong></div>
+                        )}
+                        
+                        {hasMeaningfulValue(appDetail.aadhaar_number || appDetail.aadhaar_no) && (
+                          <div><span style={{ color: C.textLight }}>Aadhaar Number:</span> <strong style={{ color: C.text, fontFamily: 'monospace' }}>{appDetail.aadhaar_number || appDetail.aadhaar_no}</strong></div>
+                        )}
+                        
+                        {hasMeaningfulValue(appDetail.mother_name) && (
+                          <div><span style={{ color: C.textLight }}>Mother's Name:</span> <strong style={{ color: C.text }}>{appDetail.mother_name}</strong></div>
+                        )}
+                        
+                        {hasMeaningfulValue(appDetail.company_name || appDetail.employer_name) && (
+                          <div><span style={{ color: C.textLight }}>Employer / Company Name:</span> <strong style={{ color: C.text }}>{appDetail.company_name || appDetail.employer_name}</strong></div>
+                        )}
+                        
+                        {hasMeaningfulValue(appDetail.designation || appDetail.occupation) && (
+                          <div><span style={{ color: C.textLight }}>Occupation / Designation:</span> <strong style={{ color: C.text }}>{appDetail.designation || appDetail.occupation}</strong></div>
+                        )}
+                        
+                        {((appDetail.monthly_salary || appDetail.monthly_income) && Number(appDetail.monthly_salary || appDetail.monthly_income) > 0) && (
+                          <div><span style={{ color: C.textLight }}>Monthly Income / Salary:</span> <strong style={{ color: '#16a34a', fontWeight: 800 }}>₹{parseFloat(appDetail.monthly_salary || appDetail.monthly_income).toLocaleString('en-IN')}</strong></div>
+                        )}
+                        
+                        {hasMeaningfulValue([appDetail.address || appDetail.residential_address || appDetail.flat_no, appDetail.city, appDetail.state, appDetail.pincode].filter(Boolean).join(', ')) && (
+                          <div><span style={{ color: C.textLight }}>Residential Address:</span> <strong style={{ color: C.text }}>{[appDetail.address || appDetail.residential_address || appDetail.flat_no, appDetail.city, appDetail.state, appDetail.pincode].filter(Boolean).join(', ')}</strong></div>
+                        )}
+                        
+                        <div>
+                          <span style={{ color: C.textLight }}>Referred By (Partner / Employee):</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            "{getReferredByName(appDetail)}"
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Part 2: Operational Processing & Remark Form */}
+                    <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '16px' }}>
+                      <h4 style={{ fontSize: '13.5px', fontWeight: 800, color: '#0d9488', margin: '0 0 12px', borderBottom: `1px solid ${C.border}`, paddingBottom: '6px' }}>
+                        Part 2: Operational Processing &amp; Remark Form
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', fontSize: '12.5px' }}>
+                        <div><span style={{ color: C.textLight }}>Appcode Status:</span> <strong style={{ color: C.text }}>{appDetail.appcode_status || 'Appcode Pending'}</strong></div>
+                        <div><span style={{ color: C.textLight }}>Soft Approval Status:</span> <strong style={{ color: C.text }}>{appDetail.soft_approval_status || '—'}</strong></div>
+                        <div><span style={{ color: C.textLight }}>VKYC Stage:</span> <strong style={{ color: C.text }}>{appDetail.vkyc_stage || '—'}</strong></div>
+                        <div><span style={{ color: C.textLight }}>IQA Stage:</span> <strong style={{ color: C.text }}>{appDetail.iqa_stage || '—'}</strong></div>
+                        <div><span style={{ color: C.textLight }}>Dispatch Status:</span> <strong style={{ color: C.text }}>{appDetail.dispatch_status || '—'}</strong></div>
+                        <div><span style={{ color: C.textLight }}>Operational Remarks:</span> <strong style={{ color: C.text }}>{appDetail.ops_remark || appDetail.processing_remark || appDetail.remarks || '—'}</strong></div>
+                      </div>
+                    </div>
+
+                    {/* Part 3: Bank Remark & Final Form */}
+                    <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '16px' }}>
+                      <h4 style={{ fontSize: '13.5px', fontWeight: 800, color: '#9333ea', margin: '0 0 12px', borderBottom: `1px solid ${C.border}`, paddingBottom: '6px' }}>
+                        Part 3: Bank Remark &amp; Final Form
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', fontSize: '12.5px' }}>
+                        <div><span style={{ color: C.textLight }}>App / Bank Reference #:</span> <strong style={{ color: C.text, fontFamily: 'monospace' }}>{appDetail.bank_ref_number || appDetail.bank_application_number || appDetail.app_number || '—'}</strong></div>
+                        <div><span style={{ color: C.textLight }}>Applied Loan Amount:</span> <strong style={{ color: C.text }}>{(appDetail.loan_amount && Number(appDetail.loan_amount) > 0) ? `₹${parseFloat(appDetail.loan_amount).toLocaleString('en-IN')}` : '—'}</strong></div>
+                        <div><span style={{ color: C.textLight }}>Commission Amount / Status:</span> <strong style={{ color: C.text }}>{appDetail.commission_amount ? `₹${parseFloat(appDetail.commission_amount).toLocaleString('en-IN')}` : '₹500.00'} ({appDetail.commission_status || 'pending'})</strong></div>
+                        <div><span style={{ color: C.textLight }}>VKYC / Direct Web Link:</span> <strong style={{ color: C.text }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const link = appDetail.vkyc_url || appDetail.vkyc_link || appDetail.physical_details?.vkyc_url;
+                              if (link && String(link).trim() !== '' && String(link).toUpperCase() !== 'N/A' && String(link).toUpperCase() !== 'NA') {
+                                let targetUrl = String(link).trim();
+                                if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+                                  targetUrl = 'https://' + targetUrl;
+                                }
+                                window.open(targetUrl, '_blank', 'noopener,noreferrer');
+                              } else {
+                                alert("Link not assigned");
+                              }
+                            }}
+                            style={{ background: 'none', border: 'none', color: C.primary, fontWeight: 700, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                          >
+                            Open Link ↗
+                          </button>
+                        </strong></div>
+                        <div><span style={{ color: C.textLight }}>Final Status from Bank:</span> <strong style={{ color: C.text }}>{appDetail.final_status || 'pending'}</strong></div>
+                        {appDetail.decline_code && appDetail.decline_code !== 'None' && (
+                          <div>
+                            <span style={{ color: C.textLight }}>Decline Code:</span>{' '}
+                            <strong style={{ color: '#dc2626', fontFamily: 'monospace' }}>
+                              {appDetail.decline_code}
+                            </strong>
+                            {appDetail.decline_description && (
+                              <span style={{ fontSize: '11px', color: '#64748b', marginLeft: '6px' }}>
+                                ({appDetail.decline_description})
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {(appDetail.curing_designation || appDetail.decline_code) && (() => {
+                          const desig = appDetail.curing_designation || getHdfcCuringDesignation(appDetail.decline_code);
+                          const bInfo = CURING_DESIGNATION_BADGES[desig];
+                          if (!bInfo) return null;
+                          return (
+                            <div>
+                              <span style={{ color: C.textLight }}>Curing Team:</span>{' '}
+                              <span style={{
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                background: bInfo.bg,
+                                color: bInfo.text,
+                                border: `1px solid ${bInfo.border}`
+                              }}>
+                                🛡️ {bInfo.label}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                        <div><span style={{ color: C.textLight }}>Eligible for Re-QD:</span> <strong style={{ color: C.text }}>{appDetail.eligible_reqd || 'No'}</strong></div>
+                        <div>
+                          <span style={{ color: C.textLight }}>Bank Remark:</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            {(() => {
+                              const u = appDetail.user_remark || appDetail.notes || appDetail.physical_details?.user_remark;
+                              if (u && String(u).trim() !== '' && String(u).trim().toUpperCase() !== 'NA' && String(u).trim().toUpperCase() !== 'N/A') {
+                                return String(u).trim();
+                              }
+                              const b = appDetail.bank_remark || appDetail.physical_details?.bank_remark;
+                              if (b && String(b).trim() !== '' && String(b).trim().toUpperCase() !== 'NA' && String(b).trim().toUpperCase() !== 'N/A') {
+                                return String(b).trim();
+                              }
+                              return 'NA';
+                            })()}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Verification Lifecycle Log Stream */}
+                <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '16px' }}>
+                  <h4 style={{ fontSize: '13.5px', fontWeight: 800, color: C.text, margin: '0 0 12px', borderBottom: `1px solid ${C.border}`, paddingBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Verification Lifecycle Log</span>
+                    <span style={{ fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '4px', background: '#FEF3C7', color: '#92400E' }}>
+                      Updates: {timelines?.length || appDetail?.update_count || 1}
+                    </span>
+                  </h4>
+                  {timelines && timelines.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {timelines.map((t, idx) => (
+                        <div key={idx} style={{ padding: '10px 14px', borderRadius: '8px', background: C.card, border: `1px solid ${C.border}`, fontSize: '12px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', color: C.textLight, fontSize: '11px', marginBottom: '4px', flexWrap: 'wrap', gap: '4px' }}>
+                            <span style={{ fontWeight: 800, color: C.primary }}>{t.title || t.event_type || t.activity || 'Application Event'}</span>
+                            <span>📅 {new Date(t.performed_at || t.created_at || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} 🕒 {new Date(t.performed_at || t.created_at || Date.now()).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
+                          </div>
+                          <div style={{ fontWeight: 600, color: C.text }}>{t.description || t.remarks || t.activity || t.status}</div>
+                          {t.performed_by_name && (
+                            <div style={{ fontSize: '10.5px', color: C.teal, fontWeight: 700, marginTop: '2px' }}>By: {t.performed_by_name}</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '12px', color: C.textLight, fontStyle: 'italic' }}>No verification log events recorded yet.</div>
+                  )}
+                </div>
+
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* Verification Modal */}
+      {verifyModalApp && (
+        <AdminDocumentVerificationModal
+          application={verifyModalApp}
+          initialTab={verifyModalTab}
+          onClose={() => setVerifyModalApp(null)}
+          onRefresh={fetchApplications}
+        />
+      )}
+
+      {/* Assign Sales Executive Modal */}
+      {assignModalApp && (
+        <AssignSalesExecutiveModal
+          application={assignModalApp}
+          onClose={() => setAssignModalApp(null)}
+          onSuccess={() => {
+            setAssignModalApp(null);
+            fetchApplications();
+          }}
+        />
+      )}
+
+      {/* Export Applications Modal */}
+      <ExportApplicationsModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        defaultApplications={apps}
+        initialBank={bankFilter}
+        banksList={banksList.length > 0 ? banksList : assignedList}
+      />
+    </div>
+  );
+}

@@ -1,0 +1,1431 @@
+const { query } = require('../../config/database');
+const { getPaginationParams } = require('../../utils/helpers/helpers');
+const { success, created, error, notFound, paginate, forbidden } = require('../../utils/response/response');
+const { logAction } = require('../admin/audit.service.js');
+const s3Service = require('../../services/aws/s3.service.js');
+const uploadToS3 = s3Service.uploadToS3;
+const deleteFromS3 = s3Service.deleteFromS3;
+const getCloudFrontUrl = typeof s3Service.getCloudFrontUrl === 'function' ? s3Service.getCloudFrontUrl : ((url) => url);
+const appSettingsService = require('./application-settings.service');
+const { ensureBankDirectProcessLinksTable } = require('../../database/migrations/migrate_bank_direct_process_links');
+const logger = require('../../config/logger');
+
+// GET /products — list with filters
+const listProducts = async (req, res, next) => {
+  try {
+    await ensureBankDirectProcessLinksTable();
+    const { page, limit, offset } = getPaginationParams(req.query);
+    const {
+      category, bank_id, is_active, search, commission_enabled, featured, status,
+      trending, min_salary, max_salary, min_age, max_age, min_cibil,
+      occupation, employment_type, city, joining_fee_type, sort_by,
+      sub_category, is_popular
+    } = req.query;
+
+    let where = 'WHERE 1=1';
+    const values = [];
+    let idx = 1;
+
+    const userDesignation = String(req.user?.designation || req.user?.hierarchy_level || '').trim().toUpperCase();
+    const userRole = String(req.user?.role || '').trim().toUpperCase();
+    const isSalesExecUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+    if (isSalesExecUser && req.user?.id) {
+      where += ` AND (p.bank_id IN (SELECT bank_id FROM admin_bank_assignments WHERE admin_id = $${idx}) OR (EXISTS (SELECT 1 FROM admin_bank_assignments aba JOIN banks b ON b.id = aba.bank_id WHERE aba.admin_id = $${idx} AND (UPPER(b.short_code) = 'LOC_EOC' OR b.name ILIKE '%loc/eoc%' OR b.name ILIKE '%loan on card%')) AND p.category::text IN ('loc_eoc', 'loan_on_credit_card', 'smart_emi')))`;
+      values.push(req.user.id);
+      idx++;
+    }
+
+    if (is_active !== undefined && is_active !== 'all') {
+      where += ` AND p.is_active = $${idx++}`;
+      values.push(is_active === 'true' || is_active === true);
+    }
+
+    if (category) {
+      if (category.includes('%')) {
+        where += ` AND p.category::text ILIKE $${idx++}`;
+        values.push(category);
+        // Exclude specialized categories from generic wildcard searches (e.g. %card% should not match loc_eoc, loan_on_credit_card, or smart_emi)
+        where += ` AND COALESCE(p.category::text, '') NOT IN ('loan_on_credit_card', 'smart_emi', 'loc_eoc') AND COALESCE(p.sub_category, '') NOT ILIKE '%loan%credit%card%' AND COALESCE(p.sub_category, '') NOT ILIKE '%emi%card%'`;
+      } else if (category === 'loc_eoc' || category === 'LOC/EOC' || category === 'LOC_EOC') {
+        where += ` AND p.category::text = 'loc_eoc'`;
+      } else if (category === 'loan_on_credit_card') {
+        where += ` AND (p.category::text = 'loc_eoc' OR p.category::text = 'loan_on_credit_card') AND (COALESCE(p.sub_category, '') ILIKE 'LOC' OR p.sub_category ILIKE '%loan%credit%card%')`;
+      } else if (category === 'smart_emi') {
+        where += ` AND (p.category::text = 'loc_eoc' OR p.category::text = 'smart_emi') AND (COALESCE(p.sub_category, '') ILIKE 'EOC' OR p.sub_category ILIKE '%smart%emi%')`;
+      } else if (category === 'loans' || category === 'loan') {
+        where += ` AND p.category::text NOT IN ('loc_eoc', 'loan_on_credit_card', 'smart_emi') AND p.category::text ILIKE '%loan%'`;
+      } else {
+        where += ` AND p.category::text = $${idx++}`;
+        values.push(category);
+      }
+    }
+    if (bank_id) {
+      where += ` AND p.bank_id = $${idx++}`;
+      values.push(bank_id);
+    }
+    if (commission_enabled) {
+      where += ` AND p.commission_enabled = $${idx++}`;
+      values.push(commission_enabled === 'true' || commission_enabled === true);
+    }
+    if (featured) {
+      where += ` AND p.featured = $${idx++}`;
+      values.push(featured === 'true' || featured === true);
+    }
+    if (trending) {
+      where += ` AND (p.trending = $${idx} OR p.is_trending = $${idx})`;
+      values.push(trending === 'true' || trending === true);
+      idx++;
+    }
+    if (status) {
+      where += ` AND p.status = $${idx++}`;
+      values.push(status);
+    }
+    if (sub_category) {
+      where += ` AND p.sub_category = $${idx++}`;
+      values.push(sub_category);
+    }
+    if (is_popular === 'true' || is_popular === true) {
+      where += ` AND (COALESCE(p.is_recommended, false) = true OR COALESCE(p.featured, false) = true OR COALESCE(p.is_trending, false) = true)`;
+    }
+    if (search) {
+      where += ` AND (p.name ILIKE $${idx} OR COALESCE(b.name, '') ILIKE $${idx} OR COALESCE(p.rewards, '') ILIKE $${idx} OR COALESCE(p.cashback, '') ILIKE $${idx} OR COALESCE(p.description, '') ILIKE $${idx})`;
+      values.push(`%${search}%`);
+      idx++;
+    }
+
+    // Advanced eligibility filters
+    if (min_salary) {
+      where += ` AND (p.min_income IS NULL OR p.min_income <= $${idx++})`;
+      values.push(parseFloat(min_salary));
+    }
+    if (min_age) {
+      where += ` AND (p.min_age IS NULL OR p.min_age <= $${idx++})`;
+      values.push(parseInt(min_age));
+    }
+    if (max_age) {
+      where += ` AND (p.max_age IS NULL OR p.max_age >= $${idx++})`;
+      values.push(parseInt(max_age));
+    }
+    if (joining_fee_type === 'free') {
+      where += ` AND (p.annual_fee IS NULL OR LOWER(p.annual_fee) IN ('0', 'free', 'nil', 'waived', 'lifetime free', 'zero') OR p.is_lifetime_free = true)`;
+    }
+
+    // Sort options
+    let orderBy = 'ORDER BY COALESCE(p.display_order, 0) ASC, COALESCE(p.commission_value, 0) DESC';
+    if (sort_by === 'commission_high') orderBy = 'ORDER BY COALESCE(p.commission_value, 0) DESC';
+    if (sort_by === 'commission_low') orderBy = 'ORDER BY COALESCE(p.commission_value, 0) ASC';
+    if (sort_by === 'newest') orderBy = 'ORDER BY p.created_at DESC';
+    if (sort_by === 'popular') orderBy = 'ORDER BY COALESCE(p.approval_rate, 85) DESC, COALESCE(p.commission_value, 0) DESC';
+
+    const data = await query(`
+      SELECT p.*, b.name as bank_name, b.short_code as bank_code, b.logo_url as bank_logo, bdpl.direct_process_link as bank_direct_process_link,
+             COUNT(*) OVER() as full_count
+      FROM products p LEFT JOIN banks b ON b.id = p.bank_id LEFT JOIN bank_direct_process_links bdpl ON bdpl.bank_id = p.bank_id
+      ${where}
+      ${orderBy}
+      LIMIT $${idx} OFFSET $${idx + 1}
+    `, [...values, limit, offset]);
+
+    const totalCount = data.rows.length > 0 ? parseInt(data.rows[0].full_count) : 0;
+    const isPartnerOrAdmin = req.user && ['PARTNER', 'ADMIN', 'SUPER_ADMIN'].includes(req.user.role);
+
+    const sanitizedRows = data.rows.map(prod => {
+      const { full_count, ...prodData } = prod;
+
+      // Default metadata
+      prodData.hold_days = prodData.hold_days || 7;
+      prodData.approval_rate = prodData.approval_rate || 82;
+      if (prodData.image_url) prodData.image_url = getCloudFrontUrl(prodData.image_url);
+      if (prodData.bank_logo) prodData.bank_logo = getCloudFrontUrl(prodData.bank_logo);
+
+      if (!isPartnerOrAdmin) {
+        // Public Visitor View - Strip out commission and margin metrics
+        delete prodData.commission_value;
+        delete prodData.commission_type;
+        delete prodData.commission_enabled;
+        delete prodData.company_margin;
+        delete prodData.internal_notes;
+      }
+      return prodData;
+    });
+
+    const resolvedRows = await resolvePartnerCommissions(sanitizedRows, req);
+
+    return paginate(res, resolvedRows, totalCount, page, limit);
+  } catch (err) {
+    logger.error('listProducts error:', err);
+    next(err);
+  }
+};
+
+// GET /products/:id
+const getProduct = async (req, res, next) => {
+  try {
+    await ensureBankDirectProcessLinksTable();
+    const idOrSlug = req.params.id;
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);
+
+    let product;
+    if (isUUID) {
+      const { rows } = await query(`
+        SELECT p.*, b.name as bank_name, b.short_code as bank_code, b.logo_url as bank_logo, bdpl.direct_process_link as bank_direct_process_link
+        FROM products p LEFT JOIN banks b ON b.id = p.bank_id LEFT JOIN bank_direct_process_links bdpl ON bdpl.bank_id = p.bank_id WHERE p.id = $1
+      `, [idOrSlug]);
+      product = rows[0];
+    } else {
+      // Direct lookup by slug first
+      const { rows } = await query(`
+        SELECT p.*, b.name as bank_name, b.short_code as bank_code, b.logo_url as bank_logo, bdpl.direct_process_link as bank_direct_process_link
+        FROM products p LEFT JOIN banks b ON b.id = p.bank_id LEFT JOIN bank_direct_process_links bdpl ON bdpl.bank_id = p.bank_id 
+        WHERE LOWER(p.slug) = LOWER($1)
+        LIMIT 1
+      `, [idOrSlug]);
+      product = rows[0];
+
+      // Fallback to name-similarity matching
+      if (!product) {
+        const { rows: allActive } = await query(`
+          SELECT p.*, b.name as bank_name, b.short_code as bank_code, b.logo_url as bank_logo, bdpl.direct_process_link as bank_direct_process_link
+          FROM products p LEFT JOIN banks b ON b.id = p.bank_id LEFT JOIN bank_direct_process_links bdpl ON bdpl.bank_id = p.bank_id
+        `);
+        product = allActive.find(p => {
+          const nameClean = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const slugClean = idOrSlug.toLowerCase().replace(/[^a-z0-9]/g, '');
+          return nameClean === slugClean || nameClean.includes(slugClean) || slugClean.includes(nameClean);
+        });
+      }
+    }
+
+    if (!product) return notFound(res);
+
+    // Fetch sub-entities in parallel
+    const [faqsRes, videosRes, docsRes, offersRes, ratingsRes, featuresRes] = await Promise.all([
+      query(`SELECT id, question, answer, display_order FROM product_faq WHERE product_id = $1 AND is_active = true ORDER BY display_order`, [product.id]),
+      query(`SELECT id, title, youtube_url, video_url, thumbnail_url, duration, display_order FROM product_videos WHERE product_id = $1 AND is_active = true ORDER BY display_order`, [product.id]),
+      query(`SELECT id, title, document_type, file_url, file_size, display_order FROM product_documents WHERE product_id = $1 AND is_active = true ORDER BY display_order`, [product.id]),
+      query(`SELECT id, title, description, offer_type, discount_value, badge_text, banner_url, start_date, end_date FROM product_offers WHERE product_id = $1 AND is_active = true AND NOW() BETWEEN start_date AND end_date ORDER BY start_date DESC`, [product.id]),
+      query(`SELECT COALESCE(AVG(rating), 0) as avg_rating, COUNT(*) as total_reviews FROM product_ratings WHERE product_id = $1`, [product.id]),
+      query(`SELECT id, title, description, icon, display_order FROM product_features WHERE product_id = $1 ORDER BY display_order`, [product.id])
+    ]);
+
+    // Normalize CloudFront URLs for product images
+    if (product.image_url) product.image_url = getCloudFrontUrl(product.image_url);
+    if (product.banner_url) product.banner_url = getCloudFrontUrl(product.banner_url);
+    if (product.logo) product.logo = getCloudFrontUrl(product.logo);
+    if (product.banner) product.banner = getCloudFrontUrl(product.banner);
+    if (product.bank_logo) product.bank_logo = getCloudFrontUrl(product.bank_logo);
+
+    // Structure normalized sub-keys matching API spec
+    product.bank = {
+      id: product.bank_id,
+      name: product.bank_name,
+      short_code: product.bank_code,
+      direct_process_link: product.bank_direct_process_link || null,
+      logo_url: getCloudFrontUrl(product.bank_logo)
+    };
+
+    product.fees = product.fees_structure || {};
+    product.eligibility = product.eligibility_criteria || {};
+    product.features = (product.features_list && product.features_list.length > 0)
+      ? product.features_list
+      : (featuresRes.rows.length > 0 ? featuresRes.rows.map(f => ({ title: f.title, description: f.description, icon: f.icon })) : (Array.isArray(product.features) ? product.features : []));
+
+    product.benefits = Array.isArray(product.benefits_list) ? product.benefits_list : [];
+    product.documents = Array.isArray(product.required_documents) ? product.required_documents : (docsRes.rows.map(d => d.title || d.document_type));
+    product.compare = product.compare_specs || {};
+    product.faqs = faqsRes.rows;
+    product.gallery = [
+      ...(product.banner_url ? [{ id: 'banner', image_url: getCloudFrontUrl(product.banner_url), image_type: 'Banner' }] : []),
+      ...(product.image_url ? [{ id: 'card', image_url: getCloudFrontUrl(product.image_url), image_type: 'Card' }] : []),
+      ...offersRes.rows.map(o => ({ id: o.id, image_url: getCloudFrontUrl(o.banner_url), image_type: 'Offer', title: o.title }))
+    ];
+
+    product.videos = videosRes.rows;
+    product.active_offers = offersRes.rows;
+    product.avg_rating = parseFloat(ratingsRes.rows[0].avg_rating).toFixed(1);
+    product.total_reviews = parseInt(ratingsRes.rows[0].total_reviews);
+    product.structured_features = featuresRes.rows;
+
+    // Check if partner has bookmarked this product
+    if (req.partner?.id) {
+      const { rows: [bm] } = await query(
+        `SELECT id FROM partner_saved_products WHERE partner_id = $1 AND product_id = $2`,
+        [req.partner.id, product.id]
+      );
+      product.is_bookmarked = !!bm;
+    }
+
+    // Auto-track product view (fire and forget)
+    const viewIp = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip;
+    const viewUa = req.headers['user-agent'];
+    const { trackProductView } = require('./engagement.controller.js');
+    trackProductView(product.id, req.partner?.id || null, viewIp, viewUa).catch(() => { });
+
+    return success(res, product);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Schema is permanently provisioned via database migrations (migrate_runtime_ddl_cleanup.js).
+// Runtime DDL eliminated to prevent AccessExclusiveLock contention and connection pool exhaustion.
+const ensureProductColumns = async () => {
+  return;
+};
+
+// POST /products (Admin/Super Admin)
+const createProduct = async (req, res, next) => {
+  try {
+    await ensureProductColumns();
+    const body = req.body || {};
+    const {
+      bank_id, name, category, sub_category, description, commission_type, commission_value,
+      min_age, max_age, min_income, display_order, annual_fee, time_period,
+      short_description, logo, banner, image, commission_enabled, commission_amount,
+      override_percentage, featured, public_visible, partner_visible, eligibility_criteria,
+      documents_required, benefits, fees_charges, apply_button_text, seo_title,
+      seo_description, seo_keywords, priority, status, is_active,
+      card_network, card_variant, best_for, welcome_benefits, is_lifetime_free, badge, is_recommended, is_trending,
+      public_url, partner_url, joining_fee, processing_fee, interest_rate
+    } = body;
+    let image_url = body.image_url;
+    const safeJoiningFee = joining_fee !== undefined ? joining_fee : (body.joining_fee !== undefined ? body.joining_fee : null);
+    const safeProcessingFee = processing_fee !== undefined ? processing_fee : (body.processing_fee !== undefined ? body.processing_fee : null);
+    const safeInterestRate = interest_rate !== undefined ? interest_rate : (body.interest_rate !== undefined ? body.interest_rate : null);
+
+    // Handle features and eligibility parsing
+    let parsedFeatures = body.features;
+    if (typeof parsedFeatures === 'string') {
+      try { parsedFeatures = JSON.parse(parsedFeatures); } catch (e) {
+        return error(res, 'Features must be a valid JSON array', 400);
+      }
+    }
+
+    let parsedEligibility = req.body.eligibility;
+    if (typeof parsedEligibility === 'string') {
+      try { parsedEligibility = JSON.parse(parsedEligibility); } catch (e) {
+        return error(res, 'Eligibility must be a valid JSON object', 400);
+      }
+    }
+
+    if (req.file) {
+      const isS3Configured = !!process.env.AWS_S3_BUCKET;
+      if (isS3Configured) {
+        const { url } = await uploadToS3(req.file.buffer, req.file.originalname, 'products');
+        image_url = url;
+      }
+    }
+    if (image_url) image_url = getCloudFrontUrl(image_url);
+
+    // Bank existence check
+    const { rows: [bank] } = await query(`SELECT id FROM banks WHERE id = $1`, [bank_id]);
+    if (!bank) return error(res, 'Bank not found', 400);
+
+    const isCommEnabled = commission_enabled !== undefined ? (commission_enabled === 'true' || commission_enabled === true) : true;
+    const isFeatured = featured !== undefined ? (featured === 'true' || featured === true) : false;
+    const isPubVisible = public_visible !== undefined ? (public_visible === 'true' || public_visible === true) : true;
+    const isPartVisible = partner_visible !== undefined ? (partner_visible === 'true' || partner_visible === true) : true;
+    const isActive = is_active !== undefined ? (is_active === 'true' || is_active === true) : true;
+    const isLtf = is_lifetime_free !== undefined ? (is_lifetime_free === 'true' || is_lifetime_free === true) : false;
+    const isRec = is_recommended !== undefined ? (is_recommended === 'true' || is_recommended === true) : false;
+    const isTrend = is_trending !== undefined ? (is_trending === 'true' || is_trending === true) : false;
+
+    // Generate unique slug
+    let productSlug = req.body.slug;
+    if (!productSlug || !productSlug.trim()) {
+      productSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    }
+    const { rows: existingSlug } = await query(`SELECT id FROM products WHERE slug = $1`, [productSlug]);
+    if (existingSlug.length > 0) {
+      productSlug = `${productSlug}-${Date.now().toString().slice(-4)}`;
+    }
+
+    const { rows: [p] } = await query(`
+      INSERT INTO products (
+        bank_id, name, category, sub_category, description, features, eligibility, 
+        commission_type, commission_value, min_age, max_age, min_income, 
+        display_order, annual_fee, time_period, image_url,
+        short_description, logo, banner, image, commission_enabled, 
+        commission_amount, override_percentage, featured, public_visible, 
+        partner_visible, eligibility_criteria, documents_required, benefits, 
+        fees_charges, apply_button_text, seo_title, seo_description, seo_keywords,
+        priority, status, is_active, created_by, slug,
+        card_network, card_variant, best_for, welcome_benefits, is_lifetime_free, badge, is_recommended, is_trending,
+        public_url, partner_url, joining_fee, processing_fee, interest_rate
+      )
+      VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+        $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,
+        $40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52
+      ) RETURNING id
+    `, [
+      bank_id, name, category, sub_category || null, description, JSON.stringify(parsedFeatures || []),
+      JSON.stringify(parsedEligibility || {}), commission_type || 'fixed',
+      commission_value || 0, min_age || null, max_age || null, min_income || null, display_order || 0,
+      annual_fee || null, time_period || null, image_url || null,
+      short_description || null, logo || null, banner || null, image || null, isCommEnabled,
+      commission_amount || 0, override_percentage || 0, isFeatured, isPubVisible,
+      isPartVisible, eligibility_criteria || null, documents_required || null, benefits || null,
+      fees_charges || null, apply_button_text || 'Apply Now', seo_title || null, seo_description || null, seo_keywords || null,
+      priority || 0, status || 'Active', isActive, req.user?.id || null, productSlug,
+      card_network || null, card_variant || null, best_for || null, welcome_benefits || null, isLtf, badge || null, isRec, isTrend,
+      public_url || null, partner_url || null, safeJoiningFee || null, safeProcessingFee || null, safeInterestRate || null
+    ]);
+
+    await logAction(req, 'CREATE_PRODUCT', p.id, { name, category, commission_value });
+    return created(res, { product_id: p.id }, 'Product created');
+  } catch (err) {
+    next(err);
+  }
+};
+
+// PUT /products/:id (Admin)
+const updateProduct = async (req, res, next) => {
+  try {
+    await ensureProductColumns();
+    const { id } = req.params;
+    const body = req.body || {};
+    const {
+      bank_id, category, min_age, max_age, min_income, operation_head_id,
+      name, description, commission_type, commission_value, is_active, display_order,
+      annual_fee, time_period, short_description, logo, banner, image, commission_enabled,
+      commission_amount, override_percentage, featured, public_visible, partner_visible,
+      eligibility_criteria, documents_required, benefits, fees_charges, apply_button_text,
+      seo_title, seo_description, seo_keywords, priority, status,
+      public_url, partner_url, sub_category,
+      card_network, card_variant, best_for, welcome_benefits, badge,
+      joining_fee, processing_fee, interest_rate
+    } = body;
+    let image_url = body.image_url;
+    const safeJoiningFee = joining_fee !== undefined ? joining_fee : (body.joining_fee !== undefined ? body.joining_fee : null);
+    const safeProcessingFee = processing_fee !== undefined ? processing_fee : (body.processing_fee !== undefined ? body.processing_fee : null);
+    const safeInterestRate = interest_rate !== undefined ? interest_rate : (body.interest_rate !== undefined ? body.interest_rate : null);
+
+    const { rows: [existing] } = await query(`SELECT * FROM products WHERE id = $1`, [id]);
+    if (!existing) return notFound(res, 'Product not found');
+
+    let parsedFeatures = body.features;
+    if (typeof parsedFeatures === 'string') {
+      try { parsedFeatures = JSON.parse(parsedFeatures); } catch (e) {
+        return error(res, 'Features must be a valid JSON array', 400);
+      }
+    }
+
+    let parsedEligibility = body.eligibility;
+    if (typeof parsedEligibility === 'string') {
+      try { parsedEligibility = JSON.parse(parsedEligibility); } catch (e) {
+        return error(res, 'Eligibility must be a valid JSON object', 400);
+      }
+    }
+
+    if (req.file) {
+      const isS3Configured = !!process.env.AWS_S3_BUCKET;
+      if (isS3Configured) {
+        const { url } = await uploadToS3(req.file.buffer, req.file.originalname, 'products');
+        image_url = url;
+      }
+    }
+    if (image_url) image_url = getCloudFrontUrl(image_url);
+
+    const isCommEnabled = commission_enabled !== undefined ? (commission_enabled === 'true' || commission_enabled === true) : undefined;
+    const isFeatured = featured !== undefined ? (featured === 'true' || featured === true) : undefined;
+    const isPubVisible = public_visible !== undefined ? (public_visible === 'true' || public_visible === true) : undefined;
+    const isPartVisible = partner_visible !== undefined ? (partner_visible === 'true' || partner_visible === true) : undefined;
+    const isActive = is_active !== undefined ? (is_active === 'true' || is_active === true) : undefined;
+
+    // Generate/update unique slug
+    let productSlug = req.body.slug;
+    if (name && (!productSlug || !productSlug.trim())) {
+      productSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    }
+    if (productSlug) {
+      const { rows: existingSlug } = await query(`SELECT id FROM products WHERE slug = $1 AND id <> $2`, [productSlug, id]);
+      if (existingSlug.length > 0) {
+        productSlug = `${productSlug}-${Date.now().toString().slice(-4)}`;
+      }
+    }
+
+    const validBankId = (bank_id && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(bank_id)) ? bank_id : null;
+    const validOpHeadId = (operation_head_id && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(operation_head_id)) ? operation_head_id : null;
+
+    await query(`
+      UPDATE products SET
+        name = COALESCE($1, name),
+        description = COALESCE($2, description),
+        features = COALESCE($3, features),
+        eligibility = COALESCE($4, eligibility),
+        commission_type = COALESCE($5, commission_type),
+        commission_value = COALESCE($6, commission_value),
+        is_active = COALESCE($7, is_active),
+        display_order = COALESCE($8, display_order),
+        annual_fee = COALESCE($9, annual_fee),
+        time_period = COALESCE($10, time_period),
+        image_url = COALESCE($11, image_url),
+        short_description = COALESCE($12, short_description),
+        logo = COALESCE($13, logo),
+        banner = COALESCE($14, banner),
+        image = COALESCE($15, image),
+        commission_enabled = COALESCE($16, commission_enabled),
+        commission_amount = COALESCE($17, commission_amount),
+        override_percentage = COALESCE($18, override_percentage),
+        featured = COALESCE($19, featured),
+        public_visible = COALESCE($20, public_visible),
+        partner_visible = COALESCE($21, partner_visible),
+        eligibility_criteria = COALESCE($22, eligibility_criteria),
+        documents_required = COALESCE($23, documents_required),
+        benefits = COALESCE($24, benefits),
+        fees_charges = COALESCE($25, fees_charges),
+        apply_button_text = COALESCE($26, apply_button_text),
+        seo_title = COALESCE($27, seo_title),
+        seo_description = COALESCE($28, seo_description),
+        seo_keywords = COALESCE($29, seo_keywords),
+        priority = COALESCE($30, priority),
+        status = COALESCE($31, status),
+        card_network = COALESCE($32, card_network),
+        card_variant = COALESCE($33, card_variant),
+        best_for = COALESCE($34, best_for),
+        welcome_benefits = COALESCE($35, welcome_benefits),
+        is_lifetime_free = COALESCE($36, is_lifetime_free),
+        badge = COALESCE($37, badge),
+        is_recommended = COALESCE($38, is_recommended),
+        is_trending = COALESCE($39, is_trending),
+        public_url = COALESCE($40, public_url),
+        partner_url = COALESCE($41, partner_url),
+        bank_id = COALESCE($42, bank_id),
+        category = COALESCE($43, category),
+        min_age = COALESCE($44, min_age),
+        max_age = COALESCE($45, max_age),
+        min_income = COALESCE($46, min_income),
+        operation_head_id = COALESCE($47, operation_head_id),
+        joining_fee = COALESCE($48, joining_fee),
+        processing_fee = COALESCE($49, processing_fee),
+        interest_rate = COALESCE($50, interest_rate),
+        sub_category = COALESCE($51, sub_category),
+        updated_at = NOW()
+      WHERE id = $52
+    `, [
+      name || null,
+      description || null,
+      parsedFeatures ? JSON.stringify(parsedFeatures) : null,
+      parsedEligibility ? JSON.stringify(parsedEligibility) : null,
+      commission_type || null,
+      commission_value || null,
+      isActive,
+      display_order || null,
+      annual_fee || null,
+      time_period || null,
+      image_url !== undefined ? image_url : null,
+      short_description || null,
+      logo || null,
+      banner || null,
+      image || null,
+      isCommEnabled,
+      commission_amount || null,
+      override_percentage || null,
+      isFeatured,
+      isPubVisible,
+      isPartVisible,
+      eligibility_criteria || null,
+      documents_required || null,
+      benefits || null,
+      fees_charges || null,
+      apply_button_text || null,
+      seo_title || null,
+      seo_description || null,
+      seo_keywords || null,
+      priority || null,
+      status || null,
+      card_network || null,
+      card_variant || null,
+      best_for || null,
+      welcome_benefits || null,
+      req.body.is_lifetime_free !== undefined ? (req.body.is_lifetime_free === 'true' || req.body.is_lifetime_free === true) : null,
+      badge || null,
+      req.body.is_recommended !== undefined ? (req.body.is_recommended === 'true' || req.body.is_recommended === true) : null,
+      req.body.is_trending !== undefined ? (req.body.is_trending === 'true' || req.body.is_trending === true) : null,
+      public_url !== undefined ? public_url : null,
+      partner_url !== undefined ? partner_url : null,
+      validBankId,
+      category || null,
+      min_age ? parseInt(min_age) : null,
+      max_age ? parseInt(max_age) : null,
+      min_income ? parseFloat(min_income) : null,
+      validOpHeadId,
+      safeJoiningFee || null,
+      safeProcessingFee || null,
+      safeInterestRate || null,
+      sub_category || null,
+      id
+    ]);
+
+    await logAction(req, 'UPDATE_PRODUCT', id, { name, bank_id: validBankId, category, commission_value, is_active });
+    return success(res, {}, 'Product updated');
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /products/categories — grouped by category for home page
+const getProductsByCategory = async (req, res, next) => {
+  try {
+    await ensureBankDirectProcessLinksTable();
+    const { page, limit, offset } = getPaginationParams(req.query);
+    const [count, data] = await Promise.all([
+      query(`SELECT COUNT(*) FROM products p JOIN banks b ON b.id = p.bank_id WHERE p.is_active = true AND b.is_active = true AND b.status = 'Active'`),
+      query(`
+        SELECT p.id, p.name, p.category, p.commission_type, p.commission_value, p.features, p.eligibility, p.annual_fee, p.time_period,
+          b.name as bank_name, b.short_code as bank_code, b.logo_url as bank_logo
+        FROM products p JOIN banks b ON b.id = p.bank_id
+        WHERE p.is_active = true AND b.is_active = true AND b.status = 'Active'
+        ORDER BY p.category, p.display_order, p.commission_value DESC
+        LIMIT $1 OFFSET $2
+      `, [limit, offset])
+    ]);
+
+    // Group by category
+    const grouped = data.rows.reduce((acc, p) => {
+      if (!acc[p.category]) acc[p.category] = [];
+      acc[p.category].push(p);
+      return acc;
+    }, {});
+
+    return res.status(200).json({
+      success: true,
+      message: 'Success',
+      data: grouped,
+      pagination: {
+        total: parseInt(count.rows[0].count),
+        page,
+        limit,
+        totalPages: Math.ceil(parseInt(count.rows[0].count) / limit),
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /products/:id/commission (Super Admin — set commission)
+// Helper to dynamically resolve partner-specific / team-member-specific commission rates
+const resolvePartnerCommissions = async (productsList, req) => {
+  if (!productsList || productsList.length === 0) return productsList;
+
+  // Check if request is from an Employee user
+  const isEmployee = req?.user && ['EMPLOYEE', 'HR'].includes(req.user.role?.toUpperCase());
+  if (isEmployee) {
+    let empUuid = null;
+    if (req.user?.id || req.user?.employee_id || req.user?.mobile) {
+      const { rows: [emp] } = await query(
+        `SELECT id FROM employees WHERE user_id = $1 OR employee_id = $2 OR mobile_number = $3 LIMIT 1`,
+        [req.user.id || null, req.user.employee_id || '', req.user.mobile || '']
+      );
+      if (emp) empUuid = emp.id;
+    }
+
+    if (empUuid) {
+      const productIds = productsList.map(p => p.id).filter(Boolean);
+      let empLinksMap = {};
+      if (productIds.length > 0) {
+        const { rows: empLinks } = await query(
+          `SELECT product_id, incentive_amount, incentive_type, employee_referral_url, status
+           FROM employee_product_links
+           WHERE employee_id = $1 AND product_id = ANY($2::uuid[]) AND status = 'ACTIVE'`,
+          [empUuid, productIds]
+        );
+        empLinks.forEach(l => {
+          empLinksMap[l.product_id] = l;
+        });
+      }
+
+      return productsList.map(prod => {
+        const empLink = empLinksMap[prod.id];
+        if (empLink) {
+          const incVal = parseFloat(empLink.incentive_amount || 0);
+          const assignedUrl = empLink.employee_referral_url?.trim() || prod.partner_url || prod.public_url || '';
+          return {
+            ...prod,
+            commission_value: incVal,
+            commission_amount: incVal,
+            employee_incentive: incVal,
+            employee_referral_url: assignedUrl,
+            partner_url: assignedUrl || prod.partner_url,
+            application_url: assignedUrl || prod.application_url,
+            public_url: assignedUrl || prod.public_url,
+            redirect_url: assignedUrl || prod.redirect_url
+          };
+        } else {
+          const defaultInc = parseFloat(prod.commission_amount || prod.commission_value || 500);
+          return {
+            ...prod,
+            commission_value: defaultInc,
+            commission_amount: defaultInc,
+            employee_incentive: defaultInc
+          };
+        }
+      });
+    }
+  }
+
+  let partnerId = req?.partner?.id || req?.partner?.Partner_id;
+
+  if (!partnerId && req?.user && ['PARTNER', 'TEAM_MEMBER'].includes(req.user.role?.toUpperCase())) {
+    const { rows: [pProfile] } = await query(
+      `SELECT id FROM partner_profiles WHERE user_id = $1 LIMIT 1`,
+      [req.user.id]
+    );
+    if (pProfile) partnerId = pProfile.id;
+  }
+
+  const isPartnerOrTeam = req?.user && ['PARTNER', 'TEAM_MEMBER'].includes(req.user.role?.toUpperCase());
+
+  if (partnerId || isPartnerOrTeam) {
+    const productIds = productsList.map(p => p.id).filter(Boolean);
+    let rulesMap = {};
+
+    if (productIds.length > 0) {
+      let rulesQuery = `
+        SELECT product_id, partner_id, commission_type, commission_value
+        FROM commission_structures
+        WHERE product_id = ANY($1::uuid[])
+          AND (effective_from IS NULL OR effective_from <= CURRENT_DATE)
+          AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
+      `;
+      let queryParams = [productIds];
+
+      if (partnerId) {
+        rulesQuery += ` AND (partner_id = $2 OR partner_id IS NULL)`;
+        queryParams.push(partnerId);
+      } else {
+        rulesQuery += ` AND partner_id IS NULL`;
+      }
+
+      rulesQuery += ` ORDER BY partner_id DESC NULLS LAST, created_at DESC`;
+
+      const { rows: rules } = await query(rulesQuery, queryParams);
+
+      rules.forEach(r => {
+        if (!rulesMap[r.product_id]) {
+          rulesMap[r.product_id] = r;
+        }
+      });
+    }
+
+    return productsList.map(prod => {
+      const rule = rulesMap[prod.id];
+      if (rule) {
+        return {
+          ...prod,
+          commission_type: rule.commission_type || 'fixed',
+          commission_value: parseFloat(rule.commission_value || 0)
+        };
+      } else {
+        // Default to 0 payout for new partner or team member until Super Admin sets/changes it
+        return {
+          ...prod,
+          commission_value: 0
+        };
+      }
+    });
+  }
+
+  return productsList;
+};
+
+// POST /products/:id/commission (Super Admin — set commission)
+const setCommission = async (req, res, next) => {
+  try {
+    const { product_id, partner_id, Partner_id, commission_type, commission_value, effective_from, effective_to } = req.body;
+
+    if (effective_to && new Date(effective_from) > new Date(effective_to)) {
+      return error(res, 'effective_from cannot be greater than effective_to', 400);
+    }
+
+    const targetPartnerId = (partner_id && partner_id !== 'global') ? partner_id : ((Partner_id && Partner_id !== 'global') ? Partner_id : null);
+
+    if (targetPartnerId) {
+      await query(`DELETE FROM commission_structures WHERE product_id = $1 AND partner_id = $2`, [product_id, targetPartnerId]);
+    } else {
+      await query(`DELETE FROM commission_structures WHERE product_id = $1 AND partner_id IS NULL`, [product_id]);
+    }
+
+    await query(`
+      INSERT INTO commission_structures (product_id, partner_id, commission_type, commission_value, effective_from, effective_to, created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)
+    `, [product_id, targetPartnerId, commission_type || 'fixed', commission_value, effective_from || new Date(), effective_to || null, req.user.id]);
+
+    await logAction(req, 'SET_COMMISSION_RULE', product_id, { partner_id: targetPartnerId, commission_type, commission_value });
+
+    return created(res, {}, 'Commission structure set');
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /admin/commission-rules/bulk (Super Admin — set bulk commissions)
+const bulkSetCommission = async (req, res, next) => {
+  try {
+    const { product_ids, partner_ids, commission_type, commission_value, effective_from, effective_to } = req.body;
+
+    if (commission_value === undefined || commission_value === null) {
+      return error(res, 'commission_value is required', 400);
+    }
+
+    let targetProductIds = [];
+    if (product_ids === 'all' || !product_ids) {
+      const { rows: allProds } = await query(`SELECT id FROM products WHERE is_active = true OR status = 'Active'`);
+      targetProductIds = allProds.map(p => p.id);
+    } else if (Array.isArray(product_ids)) {
+      targetProductIds = product_ids;
+    } else {
+      targetProductIds = [product_ids];
+    }
+
+    let targetPartnerIds = [];
+    if (partner_ids === 'global') {
+      targetPartnerIds = [null];
+    } else if (partner_ids === 'all' || !partner_ids) {
+      const { rows: allPartners } = await query(`SELECT id FROM partner_profiles`);
+      targetPartnerIds = allPartners.map(p => p.id);
+    } else if (Array.isArray(partner_ids)) {
+      targetPartnerIds = partner_ids;
+    } else {
+      targetPartnerIds = [partner_ids];
+    }
+
+    const type = commission_type || 'fixed';
+    const val = parseFloat(commission_value);
+    const fromDate = effective_from || new Date().toISOString().split('T')[0];
+    const toDate = effective_to || null;
+    const userId = req.user.id;
+
+    for (const pId of targetProductIds) {
+      for (const partnerId of targetPartnerIds) {
+        if (partnerId) {
+          await query(`DELETE FROM commission_structures WHERE product_id = $1 AND partner_id = $2`, [pId, partnerId]);
+        } else {
+          await query(`DELETE FROM commission_structures WHERE product_id = $1 AND partner_id IS NULL`, [pId]);
+        }
+
+        await query(`
+          INSERT INTO commission_structures (product_id, partner_id, commission_type, commission_value, effective_from, effective_to, created_by)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `, [pId, partnerId, type, val, fromDate, toDate, userId]);
+      }
+    }
+
+    await logAction(req, 'BULK_SET_COMMISSION_RULE', targetProductIds[0] || null, {
+      productCount: targetProductIds.length,
+      partnerCount: targetPartnerIds.length,
+      commission_type: type,
+      commission_value: val
+    });
+
+    return created(res, {
+      applied_products: targetProductIds.length,
+      applied_partners: targetPartnerIds.length
+    }, `Commission rules updated for ${targetPartnerIds.length} partner(s) across ${targetProductIds.length} product(s).`);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /banks
+const listBanks = async (req, res, next) => {
+  try {
+    const userDesignation = String(req.user?.designation || req.user?.hierarchy_level || '').trim().toUpperCase();
+    const userRole = String(req.user?.role || '').trim().toUpperCase();
+    const isSalesExecUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+
+    if (isSalesExecUser && req.user?.id) {
+      const { rows } = await query(`
+        SELECT DISTINCT b.* FROM banks b
+        WHERE b.is_active = true
+        AND (
+          EXISTS (
+            SELECT 1 FROM admin_bank_assignments aba
+            WHERE aba.bank_id = b.id AND aba.admin_id = $1
+          )
+          OR (
+            (LOWER(COALESCE(b.short_code, '')) IN ('hdfc', 'sbi') OR LOWER(COALESCE(b.name, '')) LIKE '%hdfc%' OR LOWER(COALESCE(b.name, '')) LIKE '%sbi%' OR LOWER(COALESCE(b.name, '')) LIKE '%state bank of india%')
+            AND LOWER(COALESCE(b.name, '')) NOT LIKE '%tata%'
+            AND LOWER(COALESCE(b.short_code, '')) NOT LIKE '%tata%'
+          )
+        )
+        ORDER BY b.name
+      `, [req.user.id]);
+      return success(res, rows);
+    }
+
+    const { rows } = await query(`SELECT * FROM banks WHERE is_active = true ORDER BY name`);
+    return success(res, rows);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /products/cards
+const getCards = async (req, res, next) => {
+  try {
+    await ensureBankDirectProcessLinksTable();
+    const { page, limit, offset } = getPaginationParams(req.query);
+    const [count, data] = await Promise.all([
+      query(`SELECT COUNT(*) FROM products p LEFT JOIN banks b ON b.id = p.bank_id LEFT JOIN bank_direct_process_links bdpl ON bdpl.bank_id = p.bank_id WHERE (p.is_active = true OR p.status = 'Active') AND p.category IN ('credit_card', 'co_branded_card', 'fd_card')`),
+      query(`
+        SELECT p.*, b.name as bank_name, b.short_code as bank_code, b.logo_url as bank_logo, bdpl.direct_process_link as bank_direct_process_link
+        FROM products p LEFT JOIN banks b ON b.id = p.bank_id LEFT JOIN bank_direct_process_links bdpl ON bdpl.bank_id = p.bank_id
+        WHERE (p.is_active = true OR p.status = 'Active') AND p.category IN ('credit_card', 'co_branded_card', 'fd_card')
+        ORDER BY COALESCE(p.display_order, 0) ASC, COALESCE(p.commission_value, 0) DESC
+        LIMIT $1 OFFSET $2
+      `, [limit, offset])
+    ]);
+    const resolvedRows = await resolvePartnerCommissions(data.rows, req);
+    return paginate(res, resolvedRows, parseInt(count.rows[0].count), page, limit);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /products/loans
+const getLoans = async (req, res, next) => {
+  try {
+    await ensureBankDirectProcessLinksTable();
+    const { page, limit, offset } = getPaginationParams(req.query);
+    const [count, data] = await Promise.all([
+      query(`SELECT COUNT(*) FROM products p LEFT JOIN banks b ON b.id = p.bank_id LEFT JOIN bank_direct_process_links bdpl ON bdpl.bank_id = p.bank_id WHERE (p.is_active = true OR p.status = 'Active') AND p.category IN ('personal_loan', 'business_loan', 'home_loan', 'instant_loan', 'used_car_loan', 'education_loan')`),
+      query(`
+        SELECT p.*, b.name as bank_name, b.short_code as bank_code, b.logo_url as bank_logo, bdpl.direct_process_link as bank_direct_process_link
+        FROM products p LEFT JOIN banks b ON b.id = p.bank_id LEFT JOIN bank_direct_process_links bdpl ON bdpl.bank_id = p.bank_id
+        WHERE (p.is_active = true OR p.status = 'Active') AND p.category IN ('personal_loan', 'business_loan', 'home_loan', 'instant_loan', 'used_car_loan', 'education_loan')
+        ORDER BY COALESCE(p.display_order, 0) ASC, COALESCE(p.commission_value, 0) DESC
+        LIMIT $1 OFFSET $2
+      `, [limit, offset])
+    ]);
+    const resolvedRows = await resolvePartnerCommissions(data.rows, req);
+    return paginate(res, resolvedRows, parseInt(count.rows[0].count), page, limit);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /products/insurance
+const getInsurance = async (req, res, next) => {
+  try {
+    await ensureBankDirectProcessLinksTable();
+    const { page, limit, offset } = getPaginationParams(req.query);
+    const [count, data] = await Promise.all([
+      query(`SELECT COUNT(*) FROM products p LEFT JOIN banks b ON b.id = p.bank_id LEFT JOIN bank_direct_process_links bdpl ON bdpl.bank_id = p.bank_id WHERE (p.is_active = true OR p.status = 'Active') AND p.category IN ('health_insurance', 'life_insurance', 'general_insurance')`),
+      query(`
+        SELECT p.*, b.name as bank_name, b.short_code as bank_code, b.logo_url as bank_logo, bdpl.direct_process_link as bank_direct_process_link
+        FROM products p LEFT JOIN banks b ON b.id = p.bank_id LEFT JOIN bank_direct_process_links bdpl ON bdpl.bank_id = p.bank_id
+        WHERE (p.is_active = true OR p.status = 'Active') AND p.category IN ('health_insurance', 'life_insurance', 'general_insurance')
+        ORDER BY COALESCE(p.display_order, 0) ASC, COALESCE(p.commission_value, 0) DESC
+        LIMIT $1 OFFSET $2
+      `, [limit, offset])
+    ]);
+    const resolvedRows = await resolvePartnerCommissions(data.rows, req);
+    return paginate(res, resolvedRows, parseInt(count.rows[0].count), page, limit);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// DELETE /products/:id (Admin / Super Admin)
+const deleteProduct = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const { rows: [existing] } = await query(
+      `SELECT * FROM products WHERE id = $1`,
+      [id]
+    );
+
+    if (!existing) {
+      return notFound(res, 'Product not found');
+    }
+
+    // Unlink non-critical referencing tables to clean up orphaned assignments
+    await query(`DELETE FROM employee_product_links WHERE product_id = $1`, [id]).catch(() => { });
+    await query(`DELETE FROM commission_structures WHERE product_id = $1`, [id]).catch(() => { });
+    await query(`DELETE FROM partner_saved_products WHERE product_id = $1`, [id]).catch(() => { });
+    await query(`DELETE FROM product_faq WHERE product_id = $1`, [id]).catch(() => { });
+    await query(`DELETE FROM product_videos WHERE product_id = $1`, [id]).catch(() => { });
+    await query(`DELETE FROM product_documents WHERE product_id = $1`, [id]).catch(() => { });
+    await query(`DELETE FROM product_offers WHERE product_id = $1`, [id]).catch(() => { });
+    await query(`DELETE FROM product_features WHERE product_id = $1`, [id]).catch(() => { });
+    await query(`DELETE FROM product_application_settings WHERE product_id = $1`, [id]).catch(() => { });
+
+    // Check if there are customer applications referencing this product
+    const { rows: [{ appCount }] } = await query(
+      `SELECT COUNT(*)::int as "appCount" FROM applications WHERE product_id = $1`,
+      [id]
+    ).catch(() => ({ rows: [{ appCount: 0 }] }));
+
+    if (appCount > 0) {
+      // Soft Delete / Archive product to preserve historical application audit trails
+      await query(
+        `UPDATE products SET is_active = false, status = 'Archived', updated_at = NOW() WHERE id = $1`,
+        [id]
+      );
+      await logAction(req, 'SOFT_DELETE_PRODUCT', id, { name: existing.name, reason: 'Archived due to existing customer applications' });
+      return success(res, { soft_deleted: true }, 'Product archived and marked inactive to preserve historical application records.');
+    }
+
+    // Safe to delete leads and product if no applications exist
+    await query(`DELETE FROM leads WHERE product_id = $1`, [id]).catch(() => { });
+    await query(`DELETE FROM products WHERE id = $1`, [id]);
+
+    // Log action
+    await logAction(req, 'DELETE_PRODUCT', id, { name: existing.name });
+
+    return success(res, {}, 'Product deleted successfully');
+  } catch (err) {
+    if (err.message.includes('violates foreign key constraint')) {
+      // Safe fallback: Archive product if any constraint prevents hard deletion
+      await query(
+        `UPDATE products SET is_active = false, status = 'Archived', updated_at = NOW() WHERE id = $1`,
+        [req.params.id]
+      ).catch(() => { });
+      return success(res, { soft_deleted: true }, 'Product archived and marked inactive to preserve linked system records.');
+    }
+    next(err);
+  }
+};
+
+const listCommissionRules = async (req, res, next) => {
+  try {
+    const { rows } = await query(`
+      SELECT 
+        cs.*, 
+        p.name as product_name,
+        p.category as product_category,
+        ap.first_name, 
+        ap.last_name, 
+        ap.partner_code
+      FROM commission_structures cs
+      JOIN products p ON p.id = cs.product_id
+      LEFT JOIN partner_profiles ap ON ap.id = cs.partner_id
+      ORDER BY cs.created_at DESC
+    `);
+    return success(res, rows);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const deleteCommissionRule = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { rows: [rule] } = await query(`SELECT * FROM commission_structures WHERE id = $1`, [id]);
+    if (!rule) {
+      return notFound(res, 'Commission rule not found');
+    }
+
+    await query(`DELETE FROM commission_structures WHERE id = $1`, [id]);
+
+    await logAction(req, 'DELETE_COMMISSION_RULE', rule.product_id, { partner_id: rule.partner_id || rule.partner_id });
+
+    return success(res, {}, 'Commission rule deleted successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+const getApplicationSettings = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { rows: [product] } = await query(`SELECT * FROM products WHERE id = $1`, [id]);
+    if (!product) {
+      return notFound(res, 'Product not found');
+    }
+    const settings = await appSettingsService.getSettings(id);
+    return success(res, settings);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const upsertApplicationSettings = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { rows: [product] } = await query(`SELECT * FROM products WHERE id = $1`, [id]);
+    if (!product) {
+      return notFound(res, 'Product not found');
+    }
+    const oldSettings = await appSettingsService.getSettings(id);
+    const newSettings = await appSettingsService.upsertSettings(id, req.body, req.user.id);
+    await logAction(req, 'UPDATE_APPLICATION_SETTINGS', id, { before: oldSettings, after: newSettings });
+    return success(res, newSettings, 'Application settings updated successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+const deleteApplicationSettings = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { rows: [product] } = await query(`SELECT * FROM products WHERE id = $1`, [id]);
+    if (!product) {
+      return notFound(res, 'Product not found');
+    }
+    const deleted = await appSettingsService.deleteSettings(id);
+    await logAction(req, 'DELETE_APPLICATION_SETTINGS', id);
+    return success(res, {}, 'Application settings deleted successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+const resolveApplication = async (req, res, next) => {
+  try {
+    await ensureBankDirectProcessLinksTable();
+    const idOrSlug = req.params.id;
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);
+
+    let product;
+    if (isUUID) {
+      const { rows } = await query(`SELECT p.*, b.name as bank_name, bdpl.direct_process_link as bank_direct_process_link FROM products p LEFT JOIN banks b ON p.bank_id = b.id LEFT JOIN bank_direct_process_links bdpl ON bdpl.bank_id = p.bank_id WHERE p.id = $1`, [idOrSlug]);
+      product = rows[0];
+    } else {
+      const cleanSlug = idOrSlug.replace(/-/g, ' ').trim();
+      const { rows } = await query(`SELECT p.*, b.name as bank_name, bdpl.direct_process_link as bank_direct_process_link FROM products p LEFT JOIN banks b ON p.bank_id = b.id LEFT JOIN bank_direct_process_links bdpl ON bdpl.bank_id = p.bank_id WHERE p.name ILIKE $1 OR p.category::text = $1`, [cleanSlug]);
+      product = rows[0];
+    }
+
+    if (!product) {
+      return success(res, {
+        application_type: 'internal_form',
+        application_url: null,
+        provider_name: null,
+        open_type: 'same_tab'
+      });
+    }
+
+    // Prioritize bank-specific Direct Process link when process_type === 'direct_bank'
+    if (String(req.query?.process_type || '').toLowerCase() === 'direct_bank' && product.bank_direct_process_link?.trim()) {
+      return success(res, {
+        application_type: 'external_url',
+        application_url: product.bank_direct_process_link.trim(),
+        direct_process_link: product.bank_direct_process_link.trim(),
+        provider_name: product.bank_name || 'Bank Direct Process',
+        open_type: 'new_tab',
+        button_text: product.button_text || 'Apply Now'
+      });
+    }
+
+    // Prioritize dynamic links from product link management system
+    if (product.public_url || product.partner_url) {
+      const isPartner = req.user && req.user.role && req.user.role.toUpperCase() === 'PARTNER';
+      const buttonText = product.button_text || 'Apply Now';
+      const openType = product.redirect_type === 'same_tab' ? 'same_tab' : 'new_tab';
+
+      if (isPartner) {
+        // Authenticated partner flow
+        const partnerCode = req.partner?.partner_code || req.partner?.partner_code || '';
+        const host = req.get('host');
+        const trackingUrl = `${req.protocol}://${host}/redirect/${product.category}?id=${product.id}&partner=${partnerCode}`;
+
+        return success(res, {
+          application_type: 'external_url',
+          application_url: trackingUrl,
+          provider_name: product.bank_name || 'GKP Partner Link',
+          open_type: openType,
+          button_text: buttonText
+        });
+      } else {
+        // Public user flow (hide partner info, no commission)
+        return success(res, {
+          application_type: 'external_url',
+          application_url: product.public_url || product.partner_url,
+          provider_name: product.bank_name || 'GKP Public Link',
+          open_type: openType,
+          button_text: buttonText
+        });
+      }
+    }
+
+    const settings = await appSettingsService.getSettings(product.id);
+
+    if (settings.status === 'inactive') {
+      return forbidden(res, 'This product application method is currently inactive');
+    }
+
+    const isPartner = req.user && req.user.role && req.user.role.toUpperCase() === 'PARTNER';
+    if (isPartner) {
+      if (!settings.partner_enabled) {
+        return forbidden(res, 'This application method is not available to partners for this product');
+      }
+    } else {
+      if (!settings.customer_enabled) {
+        return forbidden(res, 'This application method is not available to customers for this product');
+      }
+    }
+
+    if (settings.track_clicks) {
+      let finalIp = req.ip || req.headers['x-forwarded-for'] || req.connection?.remoteAddress || req.socket?.remoteAddress;
+      if (finalIp && finalIp.includes('::ffff:')) {
+        finalIp = finalIp.split('::ffff:')[1];
+      }
+      appSettingsService.logClick({
+        productId: product.id,
+        partnerId: req.partner?.id || null,
+        customerId: req.user?.id || null,
+        applicationType: settings.application_type,
+        ipAddress: finalIp,
+        userAgent: req.headers['user-agent']
+      }).catch(err => logger.error('resolveApplication logClick failed:', err.message));
+    }
+
+    return success(res, {
+      application_type: settings.application_type,
+      application_url: settings.application_url,
+      provider_name: settings.provider_name,
+      open_type: settings.open_type
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const getClickAnalytics = async (req, res, next) => {
+  try {
+    const { product_id } = req.query;
+    const analytics = await appSettingsService.getClickAnalytics(product_id);
+    return success(res, analytics);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const updateStatus = async (req, res, next) => {
+  try {
+    const { id, is_active, status, public_visible, partner_visible } = req.body;
+    if (!id) return error(res, 'Product ID is required', 400);
+
+    await query(`
+      UPDATE products SET
+        is_active = COALESCE($1, is_active),
+        status = COALESCE($2, status),
+        public_visible = COALESCE($3, public_visible),
+        partner_visible = COALESCE($4, partner_visible),
+        updated_at = NOW()
+      WHERE id = $5
+    `, [is_active, status, public_visible, partner_visible, id]);
+
+    await logAction(req, 'UPDATE_PRODUCT_STATUS', id, { status, public_visible, partner_visible });
+    return success(res, {}, 'Product status and visibility updated successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+const updateFeatured = async (req, res, next) => {
+  try {
+    const { id, featured, priority, display_order } = req.body;
+    if (!id) return error(res, 'Product ID is required', 400);
+
+    await query(`
+      UPDATE products SET
+        featured = COALESCE($1, featured),
+        priority = COALESCE($2, priority),
+        display_order = COALESCE($3, display_order),
+        updated_at = NOW()
+      WHERE id = $4
+    `, [featured, priority, display_order, id]);
+
+    await logAction(req, 'UPDATE_PRODUCT_FEATURED', id, { featured, priority, display_order });
+    return success(res, {}, 'Product featured settings updated successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+const duplicateProduct = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { rows: [original] } = await query(`SELECT * FROM products WHERE id = $1`, [id]);
+    if (!original) return error(res, 'Product not found', 404);
+
+    const newName = `${original.name} (Copy)`;
+    const newSlug = `${original.slug || 'product'}-copy-${Date.now().toString().slice(-4)}`;
+
+    const { rows: [duplicated] } = await query(`
+      INSERT INTO products (
+        bank_id, name, category, sub_category, description, image_url, thumbnail_url, banner_url,
+        fees_structure, eligibility_criteria, commissions_json, features_list, benefits_list,
+        required_documents, compare_specs, visibility, seo_metadata, is_active, status, slug
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+      RETURNING *
+    `, [
+      original.bank_id,
+      newName,
+      original.category,
+      original.sub_category,
+      original.description,
+      original.image_url,
+      original.thumbnail_url,
+      original.banner_url,
+      original.fees_structure || {},
+      original.eligibility_criteria || {},
+      original.commissions_json || {},
+      original.features_list || [],
+      original.benefits_list || [],
+      original.required_documents || [],
+      original.compare_specs || {},
+      original.visibility || {},
+      original.seo_metadata || {},
+      original.is_active,
+      original.status,
+      newSlug
+    ]);
+
+    await logAction(req, 'DUPLICATE_PRODUCT', duplicated.id, { original_id: id, name: newName });
+    return created(res, duplicated, 'Product duplicated successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /products/seed-new-banks (Seeds products for TATA HDFC, TATA SBI, AU Bank, and SMB Bank)
+const seedNewBanksProducts = async (req, res, next) => {
+  try {
+    const { NEW_BANK_CARDS } = require('../../database/seeds/seed-new-banks');
+    let inserted = 0;
+    let updated = 0;
+
+    for (const card of NEW_BANK_CARDS) {
+      const cardSlug = card.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      const fees = {
+        joining_fee: card.joining_fee || 'As per policy',
+        annual_fee: card.annual_fee || 'As per policy',
+        interest_rate: card.interest_rate || '3.49% p.m.'
+      };
+      const compareSpecs = {
+        joining_fee: fees.joining_fee,
+        annual_fee: fees.annual_fee,
+        rewards: card.short_description,
+        lounge_access: (card.features || []).some(f => String(f).toLowerCase().includes('lounge')) ? 'Available' : 'Not Included',
+        fuel_surcharge: (card.features || []).some(f => String(f).toLowerCase().includes('fuel')) ? '1% Waiver' : 'Standard'
+      };
+      const commissions = { partner_commission: 1500, sub_partner_commission: 300, super_partner_commission: 200, admin_commission: 500 };
+      const visibility = { show_on_website: true, show_in_partner: true, is_featured: card.priority === 1, is_popular: card.priority <= 2 };
+      const seoMetadata = { meta_title: card.seo_title || card.name, meta_description: card.seo_description || card.short_description, slug: cardSlug };
+      const docsArray = card.documents_required ? card.documents_required.split(',').map(d => d.trim()) : ['PAN Card', 'Aadhaar Card'];
+
+      const result = await query(`
+        INSERT INTO products (
+          bank_id, name, category, description, features, eligibility,
+          commission_type, commission_value, min_age, max_age, min_income,
+          display_order, annual_fee, short_description, benefits,
+          fees_charges, eligibility_criteria, documents_required,
+          apply_button_text, seo_title, seo_description, seo_keywords,
+          priority, status, is_active, public_visible, partner_visible,
+          featured, commission_enabled, slug,
+          sub_category, joining_fee, interest_rate, rewards, cashback,
+          lounge_access, fuel_surcharge, compare_specs, fees_structure,
+          commissions_json, features_list, benefits_list, required_documents,
+          visibility, seo_metadata, image_url, partner_url, public_url
+        ) VALUES (
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
+          $31,$32,$33,$34,$35,$36,$37,
+          $38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48
+        )
+        ON CONFLICT (bank_id, name) DO UPDATE SET
+          category = EXCLUDED.category,
+          sub_category = EXCLUDED.sub_category,
+          description = EXCLUDED.description,
+          features = EXCLUDED.features,
+          eligibility = EXCLUDED.eligibility,
+          display_order = EXCLUDED.display_order,
+          annual_fee = EXCLUDED.annual_fee,
+          short_description = EXCLUDED.short_description,
+          benefits = EXCLUDED.benefits,
+          fees_charges = EXCLUDED.fees_charges,
+          eligibility_criteria = EXCLUDED.eligibility_criteria,
+          documents_required = EXCLUDED.documents_required,
+          seo_title = EXCLUDED.seo_title,
+          seo_description = EXCLUDED.seo_description,
+          seo_keywords = EXCLUDED.seo_keywords,
+          priority = EXCLUDED.priority,
+          slug = EXCLUDED.slug,
+          joining_fee = EXCLUDED.joining_fee,
+          interest_rate = EXCLUDED.interest_rate,
+          rewards = EXCLUDED.rewards,
+          cashback = EXCLUDED.cashback,
+          lounge_access = EXCLUDED.lounge_access,
+          fuel_surcharge = EXCLUDED.fuel_surcharge,
+          compare_specs = EXCLUDED.compare_specs,
+          fees_structure = EXCLUDED.fees_structure,
+          commissions_json = EXCLUDED.commissions_json,
+          features_list = EXCLUDED.features_list,
+          benefits_list = EXCLUDED.benefits_list,
+          required_documents = EXCLUDED.required_documents,
+          visibility = EXCLUDED.visibility,
+          seo_metadata = EXCLUDED.seo_metadata,
+          image_url = COALESCE(EXCLUDED.image_url, products.image_url),
+          partner_url = COALESCE(EXCLUDED.partner_url, products.partner_url),
+          public_url = COALESCE(EXCLUDED.public_url, products.public_url),
+          is_active = true,
+          status = 'Active'
+        RETURNING (xmin = 0) AS is_insert
+      `, [
+        card.bank_id, card.name, card.category, card.description, JSON.stringify(card.features || []), JSON.stringify(card.eligibility || {}),
+        'fixed', 500, card.min_age || null, card.max_age || null, card.min_income || null,
+        card.display_order || 0, fees.annual_fee, card.short_description || null, card.benefits || null,
+        card.fees_charges || null, card.eligibility_criteria || null, card.documents_required || null,
+        'Apply Now', card.seo_title || null, card.seo_description || null, card.seo_keywords || null,
+        card.priority || 0, 'Active', true, true, true,
+        card.priority === 1, true, cardSlug,
+        card.sub_category, fees.joining_fee, fees.interest_rate, card.short_description || null, card.short_description || null,
+        compareSpecs.lounge_access, compareSpecs.fuel_surcharge, JSON.stringify(compareSpecs), JSON.stringify(fees),
+        JSON.stringify(commissions), JSON.stringify(card.features || []), JSON.stringify(card.benefits ? [{ title: 'Key Benefits', description: card.benefits }] : []), JSON.stringify(docsArray),
+        JSON.stringify(visibility), JSON.stringify(seoMetadata), card.image_url || null, card.partner_url || null, card.public_url || null
+      ]);
+
+      if (result.rows[0]?.is_insert) inserted++; else updated++;
+    }
+
+    return success(res, { inserted, updated }, 'Products seeded successfully for TATA HDFC, TATA SBI, AU Bank, and SMB Bank');
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /products/seed-cibil-personal-loans
+const seedCibilPersonalLoans = async (req, res, next) => {
+  try {
+    const { seedCibilPersonalLoanProducts } = require('../../database/seeds/seed-cibil-personal-loans');
+    const result = await seedCibilPersonalLoanProducts();
+    return success(res, result, 'CIBIL Personal Loan products seeded successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = {
+  listProducts,
+  getProduct,
+  createProduct,
+  updateProduct,
+  getProductsByCategory,
+  setCommission,
+  listBanks,
+  getCards,
+  getLoans,
+  getInsurance,
+  deleteProduct,
+  listCommissionRules,
+  deleteCommissionRule,
+  getApplicationSettings,
+  upsertApplicationSettings,
+  deleteApplicationSettings,
+  resolveApplication,
+  getClickAnalytics,
+  updateStatus,
+  updateFeatured,
+  duplicateProduct,
+  bulkSetCommission,
+  seedNewBanksProducts,
+  seedCibilPersonalLoans
+};
+

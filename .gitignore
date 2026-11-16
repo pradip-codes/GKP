@@ -1,0 +1,34 @@
+node_modules/
+dist/
+.env
+.DS_Store
+build/
+logs/
+*.log
+scratch/
+.agents/
+skills-lock.json
+# Firebase service account private key — NEVER commit
+backend/firebase-service-account.json
+
+# Internal Documentation & Reports
+documentation/
+**/docs/
+!backend/docs/
+!backend/docs/**
+*.md
+!/README.md
+!/MOBILE_VS_WEBSITE_IMPLEMENTATION_AUDIT.md
+!backend/docs/*.md
+*.docx
+*.pdf
+*.xlsx
+
+# Gradle & Build caches
+.gradle/
+**/.gradle/
+**/android/.gradle/
+**/android/app/build/
+**/android/build/
+.expo/
+.vscode/

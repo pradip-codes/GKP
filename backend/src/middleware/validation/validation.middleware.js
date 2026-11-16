@@ -1,0 +1,143 @@
+/**
+ * validation.middleware.js
+ * ─────────────────────────────────────────────────────────────────────────
+ * Backend validation for authentication and business profile inputs.
+ */
+const { body, param, query, validationResult } = require('express-validator');
+const { error } = require('../../utils/response/response');
+
+// Run validation and return errors
+const validate = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return error(res, 'Validation failed', 422, errors.array().map(e => ({ field: e.path || e.param, message: e.msg })));
+  }
+  next();
+};
+
+const isOptionalFieldValid = (pattern, msg) => {
+  return (value) => {
+    if (value === undefined || value === null) {
+      return true;
+    }
+    const strVal = String(value).trim();
+    if (strVal === '' || strVal === 'null' || strVal === 'undefined') {
+      return true;
+    }
+    if (!pattern.test(strVal)) {
+      throw new Error(msg);
+    }
+    return true;
+  };
+};
+
+// ── Registration: business/bank profile fields ─────────────────────────────
+const registerRules = [
+  body('email')
+    .trim()
+    .toLowerCase()
+    .isEmail().withMessage('Valid email is required'),
+  body('mobile')
+    .customSanitizer(val => String(val || '').replace(/\D/g, '').slice(-10))
+    .matches(/^[6-9]\d{9}$/).withMessage('Valid 10-digit mobile number is required'),
+  body('first_name')
+    .customSanitizer((val, { req }) => {
+      if (val && String(val).trim()) return String(val).trim();
+      const fallback = req.body.fullName || req.body.full_name || req.body.name || '';
+      return String(fallback).trim().split(' ')[0] || '';
+    })
+    .notEmpty().withMessage('First name required'),
+  body('last_name').optional({ checkFalsy: true }).trim(),
+  body('aadhaar').custom(isOptionalFieldValid(/^\d{12}$/, 'Valid 12-digit Aadhaar number required')),
+  body('pan').custom(isOptionalFieldValid(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i, 'Valid PAN number required')),
+  body('current_address').optional({ checkFalsy: true }).trim(),
+  body('pincode').custom(isOptionalFieldValid(/^\d{6}$/, 'Valid 6-digit Pincode required')),
+  body('bank_name').optional({ checkFalsy: true }).trim(),
+  body('account_number').optional({ checkFalsy: true }).trim(),
+  body('ifsc_code').custom(isOptionalFieldValid(/^[A-Z]{4}0[A-Z0-9]{6}$/i, 'Valid IFSC code required')),
+  body('account_holder_name').optional({ checkFalsy: true }).trim(),
+  body('company_name').optional({ checkFalsy: true }).trim(),
+  body('company_type').optional({ checkFalsy: true }).trim(),
+  body('gst_number').custom(isOptionalFieldValid(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/i, 'Valid GST number required')),
+  body('business_location').optional({ checkFalsy: true }).trim(),
+];
+
+// ── Application validators ─────────────────────────────────────────────────
+const applicationRules = [
+  body('product_id').isUUID().withMessage('Valid product ID required'),
+  body('customer.full_name').trim().notEmpty().withMessage('Customer name required'),
+  body('customer.mobile').matches(/^[6-9]\d{9}$/).withMessage('Valid customer mobile required'),
+  body('customer.pan_number').optional()
+    .matches(/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/).withMessage('Valid PAN required'),
+  body('customer.monthly_income').optional().isNumeric().withMessage('Monthly income must be a number'),
+  body('customer.employment_type').optional()
+    .isIn(['salaried', 'self_employed', 'business']).withMessage('Invalid employment type'),
+];
+
+// ── Withdrawal validators ──────────────────────────────────────────────────
+const withdrawalRules = [
+  body('amount').isFloat({ min: 100, max: 500000 }).withMessage('Amount must be between ₹100 and ₹5,00,000'),
+];
+
+// ── Commission structure validators ───────────────────────────────────────
+const commissionRules = [
+  body('product_id').isUUID().withMessage('Valid product ID required'),
+  body('commission_value').isFloat({ min: 0 }).withMessage('Commission value must be positive'),
+  body('commission_type').isIn(['fixed', 'percentage']).withMessage('Type must be fixed or percentage'),
+  body('effective_from').isDate().withMessage('Valid date required'),
+  body('effective_to').optional().isDate().withMessage('Valid end date required')
+    .custom((val, { req }) => {
+      if (val && new Date(val) <= new Date(req.body.effective_from)) {
+        throw new Error('effective_to must be after effective_from');
+      }
+      return true;
+    }),
+];
+
+// ── Product Application Settings validators ────────────────────────────────
+const applicationSettingsRules = [
+  body('application_type')
+    .isIn(['internal_form', 'external_url', 'affiliate_url', 'api_integration'])
+    .withMessage('Invalid application type'),
+  body('application_url')
+    .custom((value, { req }) => {
+      if (req.body.application_type !== 'internal_form') {
+        if (!value) {
+          throw new Error('Application URL is required for this application type');
+        }
+        if (!/^https?:\/\//i.test(value)) {
+          throw new Error('Application URL must start with http:// or https://');
+        }
+      }
+      return true;
+    }),
+  body('open_type')
+    .optional()
+    .isIn(['same_tab', 'new_tab'])
+    .withMessage('Invalid open type'),
+  body('partner_enabled')
+    .optional()
+    .isBoolean()
+    .withMessage('partner_enabled must be a boolean'),
+  body('customer_enabled')
+    .optional()
+    .isBoolean()
+    .withMessage('customer_enabled must be a boolean'),
+  body('track_clicks')
+    .optional()
+    .isBoolean()
+    .withMessage('track_clicks must be a boolean'),
+  body('status')
+    .optional()
+    .isIn(['active', 'inactive'])
+    .withMessage('Invalid status'),
+];
+
+module.exports = {
+  validate,
+  registerRules,
+  applicationRules,
+  withdrawalRules,
+  commissionRules,
+  applicationSettingsRules,
+};

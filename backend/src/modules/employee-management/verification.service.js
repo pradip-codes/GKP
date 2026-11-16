@@ -1,0 +1,503 @@
+const { query } = require('../../config/database');
+const logger = require('../../config/logger');
+const { createNotification } = require('../notifications/service');
+const { getSignedDownloadUrl } = require('../../services/aws/s3.service');
+const {
+  DOCUMENT_TYPES,
+  normalizeDocumentType,
+  isVideoDocument,
+  isBankDocument,
+  isAadhaarDocument,
+  isPanDocument,
+  isFaceBiometricDocument
+} = require('../../constants/documentTypes');
+
+// Helper to convert raw S3 URLs/Keys into presigned S3 download URLs
+const resolveS3Url = async (urlOrKey) => {
+  if (!urlOrKey || typeof urlOrKey !== 'string') return urlOrKey;
+  if (urlOrKey.includes('X-Amz-Signature') || urlOrKey.includes('X-Amz-Algorithm')) {
+    return urlOrKey;
+  }
+  let key = urlOrKey;
+  if (key.includes('.amazonaws.com/')) {
+    key = key.split('.amazonaws.com/')[1];
+  } else if (key.startsWith('http://') || key.startsWith('https://')) {
+    const parts = key.split('/');
+    key = parts.slice(3).join('/');
+  }
+  key = key.replace(/^\//, '');
+  if (!key) return urlOrKey;
+
+  try {
+    const signedUrl = await getSignedDownloadUrl(key, 86400); // 24 hours
+    return signedUrl;
+  } catch (err) {
+    return urlOrKey;
+  }
+};
+
+const REQUIRED_DOC_TYPES = [
+  { type: DOCUMENT_TYPES.PAN, label: 'PAN Card' },
+  { type: DOCUMENT_TYPES.AADHAAR, label: 'Aadhaar Card' },
+  { type: DOCUMENT_TYPES.BANK_PROOF, label: 'Bank Account Proof' }
+];
+
+/**
+ * Calculates complete employee verification state dynamically.
+ */
+async function calculateEmployeeVerificationState(employeeId) {
+  // 1. Fetch Employee record
+  const empRes = await query(`
+    SELECT e.*, u.id as user_id, NULL as user_profile_photo_url
+    FROM employees e
+    LEFT JOIN users u ON u.id = e.user_id
+    WHERE e.id = $1
+  `, [employeeId]);
+
+  if (empRes.rows.length === 0) {
+    throw new Error('Employee not found');
+  }
+  const employee = empRes.rows[0];
+
+  // 2. Fetch Joining details for Information Verification
+  const joiningRes = await query(`
+    SELECT * FROM employee_joining_details WHERE employee_id = $1 ORDER BY created_at DESC LIMIT 1
+  `, [employeeId]);
+  const joining = joiningRes.rows[0] || null;
+
+  let infoStatus = 'PENDING'; // 'VERIFIED', 'REQUIRES_UPDATE', 'PENDING'
+  if (joining) {
+    if (joining.form_status === 'APPROVED' || joining.reviewed_by) {
+      infoStatus = 'VERIFIED';
+    } else if (joining.form_status === 'REJECTED') {
+      infoStatus = 'REQUIRES_UPDATE';
+    } else if (joining.form_status === 'SUBMITTED') {
+      infoStatus = 'UNDER_REVIEW';
+    }
+  }
+
+  // 3. Fetch KYC details
+  const kycRes = await query(`
+    SELECT * FROM employee_kyc WHERE employee_id = $1 ORDER BY created_at DESC LIMIT 1
+  `, [employeeId]);
+  const kyc = kycRes.rows[0] || null;
+
+  // 4. Fetch Employee Documents
+  const docsRes = await query(`
+    SELECT * FROM employee_documents WHERE employee_id = $1 ORDER BY created_at DESC
+  `, [employeeId]);
+
+  const docsMap = {};
+  for (const d of docsRes.rows) {
+    const rawT = String(d.document_type || '').toLowerCase().trim();
+    const normT = normalizeDocumentType(rawT);
+    if (normT && !docsMap[normT]) {
+      docsMap[normT] = d;
+    }
+    if (rawT && !docsMap[rawT]) {
+      docsMap[rawT] = d;
+    }
+  }
+
+  // Map each required document type
+  const documents = [];
+  const missingItems = [];
+  const underReviewItems = [];
+  let approvedDocsCount = 0;
+
+  for (const docDef of REQUIRED_DOC_TYPES) {
+    const dType = docDef.type;
+    const docRow = docsMap[dType];
+
+    let docStatus = 'NOT_STARTED'; // 'NOT_STARTED', 'UNDER_REVIEW', 'APPROVED', 'REJECTED'
+    let fileUrl = null;
+    let fileName = null;
+    let rejectionReason = null;
+    let uploadedAt = null;
+
+    if (docRow) {
+      const st = String(docRow.verification_status || '').toUpperCase();
+      if (st === 'APPROVED' || st === 'VERIFIED') docStatus = 'APPROVED';
+      else if (st === 'REJECTED') docStatus = 'REJECTED';
+      else docStatus = 'UNDER_REVIEW';
+
+      fileUrl = await resolveS3Url(docRow.document_url);
+      fileName = docRow.document_file_name;
+      rejectionReason = docRow.rejection_reason || null;
+      uploadedAt = docRow.created_at;
+    } else {
+      // Check fallback legacy fields in employee_kyc
+      if (isPanDocument(dType) && kyc && (kyc.pan_document_url || kyc.pan_number)) {
+        fileUrl = await resolveS3Url(kyc.pan_document_url);
+        rejectionReason = kyc.pan_rejection_reason || null;
+        if (kyc.pan_verified || kyc.pan_status === 'VERIFIED') docStatus = 'APPROVED';
+        else if (kyc.pan_status === 'REJECTED') docStatus = 'REJECTED';
+        else if (kyc.pan_document_url) docStatus = 'UNDER_REVIEW';
+      } else if (isAadhaarDocument(dType) && kyc && (kyc.aadhaar_document_url || kyc.aadhaar_number)) {
+        fileUrl = await resolveS3Url(kyc.aadhaar_document_url);
+        rejectionReason = kyc.aadhaar_rejection_reason || null;
+        if (kyc.aadhaar_verified || kyc.aadhaar_status === 'VERIFIED') docStatus = 'APPROVED';
+        else if (kyc.aadhaar_status === 'REJECTED') docStatus = 'REJECTED';
+        else if (kyc.aadhaar_document_url) docStatus = 'UNDER_REVIEW';
+      } else if (isBankDocument(dType) && kyc && (kyc.bank_document_url || kyc.bank_account_number)) {
+        fileUrl = await resolveS3Url(kyc.bank_document_url);
+        rejectionReason = kyc.bank_rejection_reason || null;
+        if (kyc.bank_verified || kyc.bank_status === 'VERIFIED') docStatus = 'APPROVED';
+        else if (kyc.bank_status === 'REJECTED') docStatus = 'REJECTED';
+        else if (kyc.bank_document_url) docStatus = 'UNDER_REVIEW';
+      }
+    }
+
+    if (docStatus === 'APPROVED') {
+      approvedDocsCount++;
+    } else if (docStatus === 'REJECTED') {
+      missingItems.push({
+        type: dType,
+        label: docDef.label,
+        status: 'REJECTED',
+        reason: rejectionReason || 'Document rejected during review',
+        text: `${docDef.label} – Rejected${rejectionReason ? ' (' + rejectionReason + ')' : ''}`
+      });
+    } else if (docStatus === 'UNDER_REVIEW') {
+      underReviewItems.push({
+        type: dType,
+        label: docDef.label,
+        status: 'UNDER_REVIEW',
+        text: `${docDef.label} – Under Review`
+      });
+    } else {
+      missingItems.push({
+        type: dType,
+        label: docDef.label,
+        status: 'NOT_UPLOADED',
+        text: `${docDef.label} – Not Uploaded`
+      });
+    }
+
+    documents.push({
+      type: dType,
+      label: docDef.label,
+      status: docStatus,
+      file_url: fileUrl,
+      file_name: fileName,
+      rejection_reason: rejectionReason,
+      uploaded_at: uploadedAt
+    });
+  }
+
+  // 5. Fetch Video Verification details
+  const termsRes = await query(`
+    SELECT * FROM employee_terms_acceptance WHERE employee_id = $1 ORDER BY accepted_at DESC LIMIT 1
+  `, [employeeId]);
+  const terms = termsRes.rows[0] || null;
+
+  // Also check employee_documents for video
+  const videoDocRes = await query(`
+    SELECT * FROM employee_documents 
+    WHERE employee_id = $1 AND (LOWER(document_type) = 'terms_video' OR LOWER(document_type) = 'video' OR LOWER(document_type) = 'video_verification')
+    ORDER BY created_at DESC LIMIT 1
+  `, [employeeId]);
+  const videoDoc = videoDocRes.rows[0] || null;
+
+  let videoStatus = 'NOT_COMPLETED'; // 'NOT_COMPLETED', 'UNDER_REVIEW', 'VERIFIED', 'REJECTED'
+  let videoUrl = null;
+  let videoNotes = null;
+
+  if (terms) {
+    videoUrl = await resolveS3Url(terms.video_url);
+    videoNotes = terms.verification_notes || null;
+    const vSt = String(terms.verification_status || '').toUpperCase();
+
+    if (vSt === 'VERIFIED' || vSt === 'APPROVED') {
+      videoStatus = 'VERIFIED';
+    } else if (vSt === 'REJECTED') {
+      videoStatus = 'REJECTED';
+    } else if (terms.video_url) {
+      videoStatus = 'UNDER_REVIEW';
+    }
+  }
+
+  if (videoDoc) {
+    if (!videoUrl && videoDoc.document_url) {
+      videoUrl = await resolveS3Url(videoDoc.document_url);
+    }
+    const docSt = String(videoDoc.verification_status || '').toUpperCase();
+    if (docSt === 'APPROVED' || docSt === 'VERIFIED') {
+      videoStatus = 'VERIFIED';
+    } else if (docSt === 'REJECTED') {
+      videoStatus = 'REJECTED';
+      videoNotes = videoDoc.rejection_reason || videoNotes;
+    } else if (videoDoc.document_url && videoStatus === 'NOT_COMPLETED') {
+      videoStatus = 'UNDER_REVIEW';
+    }
+  }
+
+  if (videoStatus === 'UNDER_REVIEW') {
+    underReviewItems.push({
+      type: 'video',
+      label: 'Video Verification',
+      status: 'UNDER_REVIEW',
+      text: 'Video Verification – Under Review'
+    });
+  } else if (videoStatus === 'REJECTED' || videoStatus === 'NOT_COMPLETED') {
+    missingItems.push({
+      type: 'video',
+      label: 'Video Verification',
+      status: videoStatus,
+      reason: videoNotes || null,
+      text: `Video Verification – ${videoStatus === 'REJECTED' ? 'Rejected' : 'Not Completed'}`
+    });
+  }
+
+  // Do not include Personal Information - Pending Review in reminders/verification lists unless it explicitly requires update
+  if (infoStatus === 'REQUIRES_UPDATE') {
+    missingItems.push({
+      type: 'information',
+      label: 'Personal Information',
+      status: infoStatus,
+      text: `Personal Information – Requires Update`
+    });
+  }
+
+  // 6. Fetch Face Biometric Reference Template & Admin Review Status
+  let bioRes;
+  try {
+    bioRes = await query(`
+      SELECT id, status, s3_key, s3_bucket, version,
+             COALESCE(to_jsonb(b)->>'admin_review_status', 'PENDING') as admin_review_status,
+             to_jsonb(b)->>'admin_review_notes' as admin_review_notes,
+             (to_jsonb(b)->>'admin_reviewed_at')::timestamptz as admin_reviewed_at,
+             created_at 
+      FROM employee_biometric_templates b
+      WHERE employee_id = $1 
+      ORDER BY (CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END), created_at DESC LIMIT 1
+    `, [employeeId]);
+  } catch (err) {
+    bioRes = await query(`
+      SELECT id, status, s3_key, s3_bucket, version, created_at 
+      FROM employee_biometric_templates 
+      WHERE employee_id = $1 
+      ORDER BY (CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END), created_at DESC LIMIT 1
+    `, [employeeId]).catch(() => ({ rows: [] }));
+  }
+
+  const activeBio = bioRes.rows[0] || null;
+  let hasBiometricReference = !!activeBio;
+  let biometricStatus = 'NOT_COMPLETED';
+  let bioReviewNotes = null;
+
+  let faceImageUrl = null;
+  if (activeBio?.s3_key) {
+    faceImageUrl = await resolveS3Url(activeBio.s3_key);
+  }
+
+  // Fallback: check docsRes.rows for any face document if faceImageUrl not found yet
+  if (!faceImageUrl && Array.isArray(docsRes.rows)) {
+    const faceDoc = docsRes.rows.find(d => {
+      const t = String(d.document_type || '').toLowerCase().trim();
+      return ['face', 'face_biometric', 'biometric', 'face_verification', 'face_reference', 'selfie'].includes(t) || t.includes('face');
+    });
+    if (faceDoc) {
+      const rawKey = faceDoc.document_url || faceDoc.document_key || faceDoc.file_url || faceDoc.s3_key;
+      if (rawKey) {
+        faceImageUrl = await resolveS3Url(rawKey);
+        hasBiometricReference = true;
+      }
+    }
+  }
+
+  if (hasBiometricReference) {
+    bioReviewNotes = activeBio?.admin_review_notes || null;
+    const adminRev = String(activeBio?.admin_review_status || '').toUpperCase();
+    if (adminRev === 'REJECTED' || adminRev === 'FLAGGED') {
+      biometricStatus = 'REJECTED';
+      missingItems.push({
+        type: 'face_biometric',
+        label: 'Face Biometric Verification',
+        status: 'REJECTED',
+        reason: bioReviewNotes || 'Face biometric enrollment rejected or flagged by admin',
+        text: `Face Biometric Verification – Rejected${bioReviewNotes ? ' (' + bioReviewNotes + ')' : ''}`
+      });
+    } else if (adminRev === 'APPROVED') {
+      biometricStatus = 'VERIFIED';
+    } else {
+      // Enrolled by employee, awaiting admin review or ready for attendance
+      biometricStatus = 'UNDER_REVIEW';
+      underReviewItems.push({
+        type: 'face_biometric',
+        label: 'Face Biometric Verification',
+        status: 'UNDER_REVIEW',
+        text: 'Face Biometric Verification – Under Review'
+      });
+    }
+  } else {
+    missingItems.push({
+      type: 'face_biometric',
+      label: 'Face Biometric Verification',
+      status: 'NOT_COMPLETED',
+      text: 'Face Biometric Verification – Pending'
+    });
+  }
+
+  // Overall Status
+  const totalRequiredDocs = REQUIRED_DOC_TYPES.length;
+  const isAllDocsApproved = approvedDocsCount === totalRequiredDocs;
+  const isVideoVerified = videoStatus === 'VERIFIED';
+  const isInfoVerified = infoStatus === 'VERIFIED';
+
+  let overallStatus = 'PENDING';
+  if (videoStatus === 'REJECTED' || missingItems.some(i => i.status === 'REJECTED')) {
+    overallStatus = 'REJECTED';
+  } else if ((isAllDocsApproved && isVideoVerified) || (employee.activation_status === 'APPROVED' && videoStatus !== 'REJECTED')) {
+    overallStatus = 'VERIFIED';
+  } else if (approvedDocsCount > 0 || videoStatus === 'UNDER_REVIEW' || underReviewItems.length > 0) {
+    overallStatus = 'UNDER_REVIEW';
+  }
+
+  // Update employee record if changed
+  if (overallStatus === 'VERIFIED') {
+    await query(`
+      UPDATE employees 
+      SET activation_status = 'APPROVED', employee_status = 'ACTIVE'
+      WHERE id = $1
+    `, [employeeId]).catch(() => {});
+  } else if (overallStatus === 'REJECTED') {
+    await query(`
+      UPDATE employees 
+      SET activation_status = 'REJECTED'
+      WHERE id = $1
+    `, [employeeId]).catch(() => {});
+  } else if (overallStatus === 'UNDER_REVIEW') {
+    await query(`
+      UPDATE employees 
+      SET activation_status = 'PENDING'
+      WHERE id = $1
+    `, [employeeId]).catch(() => {});
+  }
+
+  if (kyc) {
+    await query(`
+      UPDATE employee_kyc 
+      SET kyc_status = $2 
+      WHERE id = $1
+    `, [kyc.id, overallStatus]).catch(() => {});
+  }
+
+  // Extract & resolve employee profile photo (strictly uploaded profile photo)
+  const photoDoc = docsRes.rows.find(d => {
+    const t = String(d.document_type || '').toLowerCase().trim();
+    return ['photo', 'photograph', 'profile_photo', 'passport_photo', 'avatar'].includes(t);
+  });
+  const rawPhotoKey = employee.profile_photo_url || employee.user_profile_photo_url || photoDoc?.document_url || null;
+  const resolvedProfilePhoto = rawPhotoKey ? await resolveS3Url(rawPhotoKey) : null;
+
+  return {
+    employee_id: employeeId,
+    employee_code: employee.employee_id,
+    full_name: employee.full_name,
+    profile_photo_url: resolvedProfilePhoto,
+    overall_status: overallStatus,
+    information_status: infoStatus,
+    documents_summary: `${approvedDocsCount}/${totalRequiredDocs}`,
+    approved_docs_count: approvedDocsCount,
+    total_docs_count: totalRequiredDocs,
+    video_status: videoStatus,
+    video_url: videoUrl,
+    video_notes: videoNotes,
+    face_status: biometricStatus,
+    face_biometric_status: biometricStatus,
+    has_biometric_reference: hasBiometricReference,
+    biometric_enrolled_at: activeBio?.created_at || null,
+    biometric_template: activeBio ? {
+      id: activeBio.id,
+      version: activeBio.version || 1,
+      status: activeBio.status,
+      admin_review_status: activeBio.admin_review_status || 'PENDING',
+      admin_review_notes: activeBio.admin_review_notes || null,
+      admin_reviewed_at: activeBio.admin_reviewed_at || null,
+      image_url: faceImageUrl
+    } : null,
+    documents,
+    missing_items: missingItems,
+    under_review_items: underReviewItems,
+    missing_document_names: missingItems.map(m => m.text),
+    under_review_document_names: underReviewItems.map(u => u.text),
+    joining_details: joining
+  };
+}
+
+/**
+ * Creates a reminder and sends notification to employee
+ */
+async function sendVerificationReminder(employeeId, sentByUserId = null, customNote = null) {
+  const empRes = await query(`SELECT e.*, u.id as user_id FROM employees e LEFT JOIN users u ON u.id = e.user_id WHERE e.id = $1`, [employeeId]);
+  if (empRes.rows.length === 0) {
+    throw new Error('Employee not found');
+  }
+  const employee = empRes.rows[0];
+
+  const state = await calculateEmployeeVerificationState(employeeId);
+  const allMissing = state.missing_items || [];
+
+  // Exclude items that are already uploaded and under review — only ask for items requiring employee action!
+  const actionRequiredItems = allMissing.filter(item => 
+    item.status === 'NOT_UPLOADED' || item.status === 'NOT_COMPLETED' || item.status === 'REJECTED' || item.status === 'REQUIRES_UPDATE'
+  );
+
+  if (actionRequiredItems.length === 0) {
+    return {
+      success: false,
+      message: 'All documents have been uploaded and are currently under review by HR / Super Admin. No reminder needed at this time.'
+    };
+  }
+
+  // Format clean list of missing/rejected document names requiring employee action
+  const cleanMissingNames = actionRequiredItems.map(item => item.label);
+
+  const defaultMsg = customNote || `Please complete your employee verification. The following items require your immediate action: ${cleanMissingNames.join(', ')}`;
+
+  // Ensure employee_verification_reminders table exists
+  await query(`
+    CREATE TABLE IF NOT EXISTS employee_verification_reminders (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+      sent_by UUID,
+      message TEXT NOT NULL,
+      missing_documents JSONB DEFAULT '[]'::jsonb,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    )
+  `).catch(e => logger.warn('Reminders table auto-create warning:', e.message));
+
+  // 1. Insert into employee_verification_reminders
+  const { rows: [reminder] } = await query(`
+    INSERT INTO employee_verification_reminders (employee_id, sent_by, message, missing_documents)
+    VALUES ($1, $2, $3, $4::jsonb)
+    RETURNING *
+  `, [employeeId, sentByUserId, defaultMsg, JSON.stringify(cleanMissingNames)]);
+
+  // 2. Dispatch in-app notification to employee
+  if (employee.user_id) {
+    await createNotification(
+      employee.user_id,
+      '⚠ Employee Verification Reminder',
+      `Reminder: Please complete your verification. Pending fields: ${cleanMissingNames.join(', ')}`,
+      'warning',
+      '/employee/verification',
+      { category: 'kyc', priority: 'high' }
+    );
+  }
+
+  return {
+    success: true,
+    message: `Verification reminder sent to ${employee.full_name} for fields: ${cleanMissingNames.join(', ')}`,
+    reminder,
+    missing_documents: cleanMissingNames
+  };
+}
+
+module.exports = {
+  REQUIRED_DOC_TYPES,
+  calculateEmployeeVerificationState,
+  sendVerificationReminder
+};
+

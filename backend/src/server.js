@@ -1,0 +1,745 @@
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+
+// ── Environment Variable Startup Validation ────────────────────
+const logger = require('./config/logger');
+const requiredEnvVars = ['JWT_SECRET'];
+const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingEnvVars.length > 0) {
+  logger.error(`CRITICAL STARTUP ERROR: Missing required environment variables: ${missingEnvVars.join(', ')}`);
+  if (process.env.NODE_ENV === 'production') {
+    process.exit(1);
+  }
+}
+
+// Log feature configuration warnings
+if (!process.env.AWS_S3_BUCKET) {
+  logger.warn('[STARTUP NOTICE] AWS_S3_BUCKET not set — S3 file storage uploads will fail closed');
+}
+if (!process.env.AWS_REGION) {
+  logger.info('[STARTUP NOTICE] AWS_REGION default set to ap-south-1');
+}
+
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const { globalLimiter, walletWithdrawLimiter, applicationSubmitLimiter, adminActionLimiter } = require('./middleware/rate-limit/rateLimit.middleware.js');
+const fs = require('fs');
+const xss = require('xss-clean');
+const mongoSanitize = require('express-mongo-sanitize');
+const cookieParser = require('cookie-parser');
+
+// Register process exception handlers early
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught Exception:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled Rejection:', reason);
+  process.exit(1);
+});
+
+const { notFoundHandler, errorHandler } = require('./middleware/error/error.middleware.js');
+const { compressionMiddleware } = require('./middleware/compression.middleware.js');
+const db = require('./config/database');
+
+// Ensure logs directory exists
+const logsDir = path.join(__dirname, '../logs');
+if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+
+const app = express();
+app.set('trust proxy', true);
+
+const envOrigins = (process.env.FRONTEND_URL || '').split(',').map(o => o.trim()).filter(Boolean);
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:4173",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5173",
+  "https://gharkapaisa.in",
+  "https://www.gharkapaisa.in",
+  "https://admin.gharkapaisa.in",
+  "https://api.gharkapaisa.in",
+  "https://gharkapaisa.pages.dev",
+  "https://main.gharkapaisa.pages.dev",
+  ...envOrigins
+];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) {
+      return callback(null, true);
+    }
+    const normalizedOrigin = origin.trim().toLowerCase();
+    try {
+      const hostname = new URL(normalizedOrigin).hostname;
+      if (
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === 'gharkapaisa.in' ||
+        hostname.endsWith('.gharkapaisa.in') ||
+        hostname === 'gharkapaisa.pages.dev' ||
+        hostname.endsWith('.gharkapaisa.pages.dev') ||
+        hostname.endsWith('.pages.dev')
+      ) {
+        return callback(null, true);
+      }
+    } catch (e) {}
+    if (allowedOrigins.includes(normalizedOrigin)) {
+      return callback(null, true);
+    }
+    logger.warn(`CORS blocked for origin: ${origin}`);
+    return callback(null, false);
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Device-Id',
+    'x-device-id',
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'Access-Control-Request-Method',
+    'Access-Control-Request-Headers'
+  ],
+  exposedHeaders: ['Content-Range', 'X-Content-Range', 'Authorization'],
+  credentials: true,
+  maxAge: 86400,
+  optionsSuccessStatus: 200,
+};
+
+// ── Force HTTPS in Production (Exempt /health for ELB health checks) ──
+app.use((req, res, next) => {
+  if (req.path === '/health' || req.originalUrl === '/health' || req.url === '/health') {
+    return next();
+  }
+  if (process.env.NODE_ENV === 'production' && req.protocol === 'http' && req.headers['x-forwarded-proto'] !== 'https') {
+    return res.redirect(301, `https://${req.headers.host}${req.originalUrl}`);
+  }
+  next();
+});
+
+// ── CORS & Security Middleware ─────────────────────────────────
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+app.use(compressionMiddleware);
+
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'", "https:", "data:"],
+      frameAncestors: ["'self'", "https://www.google.com", "https://*.msg91.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://verify.msg91.com", "https://www.google.com"],
+      objectSrc: ["'none'"],
+      imgSrc: ["'self'", "data:", "https:"],
+    },
+  },
+  hsts: {
+    maxAge: 31536000, // 1 year
+    includeSubDomains: true,
+    preload: true,
+  },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  noSniff: true,
+  xssFilter: true,
+  ieNoOpen: true
+}));
+
+// Catch malformed URI requests gracefully (e.g., bot/scanner probes with invalid % encoding)
+app.use((req, res, next) => {
+  try {
+    decodeURIComponent(req.path);
+    next();
+  } catch (err) {
+    logger.warn(`Malformed URI request blocked: ${req.method} ${req.originalUrl || req.url}`, { ip: req.ip });
+    return res.status(400).json({ success: false, message: 'Invalid URL encoding in request path' });
+  }
+});
+
+// ── Body Parsing ───────────────────────────────────────────────
+// Capture raw text for JSON payloads (10mb limit for safety)
+app.use(express.text({ type: 'application/json', limit: '10mb' }));
+
+// Middleware to clean and parse malformed JSON bodies
+app.use((req, res, next) => {
+  if (req.is('application/json') && typeof req.body === 'string') {
+    const raw = req.body;
+    req.rawBody = raw;
+    try {
+      req.body = JSON.parse(raw);
+    } catch (parseErr) {
+      return res.status(400).json({ success: false, message: 'Malformed JSON payload' });
+    }
+  }
+  next();
+});
+
+// Parse URL‑encoded bodies and cookies
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cookieParser());
+
+// Global rate limiter (placed after body parsing so req.body is populated for key generation & auth bypass)
+app.use(globalLimiter);
+
+// ── Data Sanitization ──────────────────────────────────────────
+// Data sanitization against NoSQL query injection (allowDots: true preserves dotted query parameters like hub.mode)
+app.use(mongoSanitize({ allowDots: true }));
+// Data sanitization against XSS
+app.use(xss());
+
+// ── Logging ────────────────────────────────────────────────────
+// Disable detailed request logging in production for security and performance
+if (process.env.NODE_ENV !== 'production') {
+  app.use(morgan('combined', {
+    stream: { write: (msg) => logger.http(msg.trim()) },
+    skip: (req) => req.url === '/health',
+  }));
+}
+
+// ── Health Check ───────────────────────────────────────────────
+const { getValkeyStatus, closeValkeyClients } = require('./config/redis');
+const cache = require('./services/cache.service');
+
+app.get('/health', async (req, res) => {
+  try {
+    await db.query('SELECT 1');
+    res.json({
+      status: 'ok',
+      service: 'GharKaPaisa Backend API',
+      version: '1.0.0',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV,
+      database: 'connected',
+      socket_adapter: getValkeyStatus() ? 'ready' : 'not_ready',
+      cache: cache.isEnabled() ? 'enabled' : 'disabled',
+      pool: {
+        total: db.pool.totalCount,
+        idle: db.pool.idleCount,
+        waiting: db.pool.waitingCount,
+      }
+    });
+  } catch (err) {
+    logger.error('Health check failed: DB error', { error: err.message });
+    res.status(503).json({
+      status: 'error',
+      service: 'GharKaPaisa Backend API',
+      version: '1.0.0',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV,
+      database: 'disconnected',
+      socket_adapter: getValkeyStatus() ? 'ready' : 'not_ready',
+      error: err.message,
+      pool: {
+        total: db.pool ? db.pool.totalCount : 0,
+        idle: db.pool ? db.pool.idleCount : 0,
+        waiting: db.pool ? db.pool.waitingCount : 0,
+      }
+    });
+  }
+});
+
+// ── Top-level Redirect Routes ──────────────────────────────────
+const redirectCtrl = require('./modules/products/link-management.controller.js');
+app.get('/redirect/:productId', redirectCtrl.handleRedirect);
+app.get('/r/:partnerCode/:productId', redirectCtrl.handleRedirect);
+
+// ── Public Unauthenticated Endpoints ───────────────────────────
+const partnerCtrl = require('./modules/partner/partner.controller.js');
+const walletCtrl = require('./modules/wallet/controller.js');
+app.post('/api/v1/partner/referral-click', partnerCtrl.invitePartnerClick);
+app.post('/api/v1/razorpay/webhook', walletCtrl.handleRazorpayWebhook);
+app.post('/api/v1/webhooks/razorpay', walletCtrl.handleRazorpayWebhook);
+
+// ── Static Files (Generated Reports, Uploads & Documents) ────────────
+const staticOptions = {
+  maxAge: '7d',
+  etag: true,
+  lastModified: true,
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+    } else if (/\.(js|css|webp|avif|png|jpe?g|svg|woff2?|ttf|eot)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+    }
+  }
+};
+app.use('/reports', express.static(path.join(__dirname, '../public/reports'), staticOptions));
+app.use('/uploads', express.static(path.join(__dirname, '../public/uploads'), staticOptions));
+
+// Serve frontend production build if present with optimal browser caching
+const frontendBuildPath = path.join(__dirname, '../../frontend/build');
+if (fs.existsSync(frontendBuildPath)) {
+  app.use(express.static(frontendBuildPath, staticOptions));
+}
+
+// ── API Routes ─────────────────────────────────────────────────
+const apiRouter = require('./routes/index');
+const messengerRoute = require('./modules/messenger/messenger.routes.js');
+const attendanceEnrollmentRoute = require('./modules/attendance-enrollment/attendance-enrollment.routes.js');
+const attendanceVerificationRoute = require('./modules/attendance-verification/attendance-verification.routes.js');
+const attendanceAdminRoute = require('./modules/attendance-admin/attendance-admin.routes.js');
+const attendanceRoute = require('./modules/attendance/attendance.routes.js');
+const bulkSmsRoute = require('./modules/bulk-sms/bulk-sms.routes.js');
+app.use('/api/v1/attendance/enrollment', attendanceEnrollmentRoute);
+app.use('/api/v1/attendance-enrollment', attendanceEnrollmentRoute);
+app.use('/api/v1/attendance/verification', attendanceVerificationRoute);
+app.use('/api/v1/attendance-verification', attendanceVerificationRoute);
+app.use('/api/v1/attendance/admin', attendanceAdminRoute);
+app.use('/attendance/admin', attendanceAdminRoute);
+app.use('/api/v1/attendance', attendanceRoute);
+app.use('/attendance/verification', attendanceVerificationRoute);
+app.use('/attendance-verification', attendanceVerificationRoute);
+app.use('/attendance', attendanceRoute);
+app.use('/api/v1/admin/bulk-sms', bulkSmsRoute);
+app.use('/api/v1/super-admin/bulk-sms', bulkSmsRoute);
+app.use('/admin/bulk-sms', bulkSmsRoute);
+app.use('/super-admin/bulk-sms', bulkSmsRoute);
+app.use('/api/v1', apiRouter);
+app.use('/team', apiRouter);
+app.use('/messenger', messengerRoute);
+app.use('/api/v1/messenger', messengerRoute);
+
+// Top-level aliases for applications endpoints (ensures claim-request resolves with or without /api/v1)
+const { applicationRouter } = require('./modules/crm/route.js');
+app.use('/applications', applicationRouter);
+app.use('/admin/applications', applicationRouter);
+
+// ── Test Routes ────────────────────────────────────────────────
+if (process.env.NODE_ENV !== 'production' && process.env.ENABLE_TEST_EMAIL_ROUTE === 'true') {
+  const testEmailRoutes = require('./routes/settings/testEmail.routes.js');
+  app.use('/api/test-email', testEmailRoutes);
+}
+
+// ── Socket.IO Engine Route Delegation ──────────────────────────
+const handleSocketIoRequest = (req, res) => {
+  if (io && io.engine) {
+    req.url = (req.originalUrl || req.url).replace(/^\/api\/v1\/socket\.io/, '/socket.io');
+    io.engine.handleRequest(req, res);
+  } else {
+    res.status(503).json({ success: false, message: 'Socket server initializing' });
+  }
+};
+
+app.use('/socket.io', handleSocketIoRequest);
+app.use('/api/v1/socket.io', (req, res) => {
+  req.url = req.url.replace(/^\/api\/v1\/socket\.io/, '/socket.io');
+  handleSocketIoRequest(req, res);
+});
+
+// ── Error Handling ─────────────────────────────────────────────
+app.use(notFoundHandler);
+app.use(errorHandler);
+
+// ── Start Server ───────────────────────────────────────────────
+const PORT = process.env.PORT || 5000;
+let server;
+let io;
+
+const startServer = async () => {
+  try {
+    // Verify DB connectivity before listening
+    await db.query('SELECT 1');
+    logger.info('Database connection verified successfully.');
+
+    // Initialize Redis cache client
+    await cache.initCacheClient();
+
+    // Database migration execution on startup (controlled via AUTO_MIGRATE flag in production)
+    if (process.env.AUTO_MIGRATE === 'true' || process.env.NODE_ENV !== 'production') {
+      const { migrate } = require('./database/migrations/migrate.js');
+      await migrate();
+    } else {
+      logger.info('Skipping automatic startup migration in production (AUTO_MIGRATE != true).');
+    }
+
+    // Always ensure has_loc_eoc column exists on users table on boot
+    try {
+      await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS has_loc_eoc BOOLEAN DEFAULT FALSE`);
+    } catch (locErr) {
+      logger.warn('LOC/EOC user column auto migration note:', locErr.message);
+    }
+
+    // Always ensure category & is_active columns & constraint exist on admin_bank_assignments on boot
+    try {
+      await db.query(`ALTER TABLE admin_bank_assignments ADD COLUMN IF NOT EXISTS category VARCHAR(50) NOT NULL DEFAULT 'credit_card'`);
+      await db.query(`ALTER TABLE admin_bank_assignments ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`);
+      await db.query(`ALTER TABLE banks ADD COLUMN IF NOT EXISTS operation_head_id UUID REFERENCES users(id) ON DELETE SET NULL`);
+      await db.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS operation_head_id UUID REFERENCES users(id) ON DELETE SET NULL`);
+      await db.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS joining_fee VARCHAR(255)`);
+      await db.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS processing_fee VARCHAR(255)`);
+      await db.query(`
+        DO $$
+        BEGIN
+          -- 1. Deduplicate any existing duplicate assignments so unique constraint creation succeeds
+          DELETE FROM admin_bank_assignments a
+          USING admin_bank_assignments b
+          WHERE a.id > b.id
+            AND a.admin_id = b.admin_id
+            AND a.bank_id = b.bank_id;
+
+          -- 2. Ensure unique constraint on (admin_id, bank_id) exists for backward compatibility with ON CONFLICT (admin_id, bank_id)
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'admin_bank_assignments_admin_id_bank_id_key') THEN
+            ALTER TABLE admin_bank_assignments ADD CONSTRAINT admin_bank_assignments_admin_id_bank_id_key UNIQUE (admin_id, bank_id);
+          END IF;
+
+          -- 3. Ensure modern unique constraint on (admin_id, bank_id, category) exists
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'admin_bank_assignments_admin_bank_category_key') THEN
+            ALTER TABLE admin_bank_assignments ADD CONSTRAINT admin_bank_assignments_admin_bank_category_key UNIQUE (admin_id, bank_id, category);
+          END IF;
+        END $$;
+      `);
+    } catch (abaErr) {
+      logger.warn('admin_bank_assignments category auto migration note:', abaErr.message);
+    }
+
+    // Always ensure LOC/EOC category and remark columns exist on boot
+    try {
+      const { migrateLocEocCategory } = require('./database/migrations/migrate_loc_eoc_category.js');
+      await migrateLocEocCategory();
+    } catch (locEocBootErr) {
+      logger.warn('LOC/EOC category boot migration note:', locEocBootErr.message);
+    }
+
+    // Always ensure messenger module tables exist on boot
+    try {
+      const migrateMessenger = require('./database/migrations/migrate_messenger.js');
+      await migrateMessenger();
+    } catch (mErr) {
+      logger.warn('Messenger auto migration note:', mErr.message);
+    }
+
+    // Always ensure contests module tables exist on boot
+    try {
+      const migrateContests = require('./database/migrations/migrate_contests.js');
+      await migrateContests();
+    } catch (cErr) {
+      logger.warn('Contest auto migration note:', cErr.message);
+    }
+
+    // Always ensure WhatsApp module tables & default templates exist on boot
+    try {
+      const { migrateWhatsApp } = require('./database/migrations/migrate_whatsapp.js');
+      await migrateWhatsApp();
+    } catch (wErr) {
+      logger.warn('WhatsApp auto migration note:', wErr.message);
+    }
+
+    // Always ensure Application Operator History table & audit columns exist on boot
+    try {
+      const { migrateOperatorHistory } = require('./database/migrations/migrate_operator_history.js');
+      await migrateOperatorHistory();
+    } catch (opErr) {
+      logger.warn('Operator History auto migration note:', opErr.message);
+    }
+
+    // Always ensure Biometric Enrollment & Environment Reference tables exist on boot
+    try {
+      const { migrateBiometricEnrollment } = require('./database/migrations/migrate_biometric_enrollment_phase2.js');
+      await migrateBiometricEnrollment();
+      const { migrateKycBiometricEnrollmentPhase6_9 } = require('./database/migrations/migrate_kyc_biometric_enrollment_phase6_9.js');
+      await migrateKycBiometricEnrollmentPhase6_9();
+    } catch (bErr) {
+      logger.warn('Biometric Enrollment auto migration note:', bErr.message);
+    }
+
+    // Always ensure Attendance Verification Phase 3 session tables exist on boot
+    try {
+      const { migrateAttendanceVerificationPhase3 } = require('./database/migrations/migrate_attendance_verification_phase3.js');
+      await migrateAttendanceVerificationPhase3();
+    } catch (vErr) {
+      logger.warn('Attendance Verification Phase 3 auto migration note:', vErr.message);
+    }
+
+    // Always ensure Employee Attendance Phase 4 table exists on boot
+    try {
+      const { migrateEmployeeAttendancePhase4 } = require('./database/migrations/migrate_employee_attendance_phase4.js');
+      await migrateEmployeeAttendancePhase4();
+    } catch (aErr) {
+      logger.warn('Employee Attendance Phase 4 auto migration note:', aErr.message);
+    }
+
+    // Always ensure Loan on Credit Card & Smart EMI products are seeded on boot
+    try {
+      const { seedSmartEmiAndLoccProducts } = require('./database/seeds/seed-smart-emi-locc.js');
+      await seedSmartEmiAndLoccProducts();
+    } catch (emiErr) {
+      logger.warn('Smart EMI / LOCC auto seed note:', emiErr.message);
+    }
+
+    // Always ensure CIBIL-Based Personal Loan products (3 Bank + 7 Finance) are seeded on boot
+    try {
+      const { seedCibilPersonalLoanProducts } = require('./database/seeds/seed-cibil-personal-loans.js');
+      await seedCibilPersonalLoanProducts();
+    } catch (plErr) {
+      logger.warn('CIBIL Personal Loan auto seed note:', plErr.message);
+    }
+
+    // Always ensure CRM Application Performance & Schema Alignment columns exist on boot
+    try {
+      const { migrateCrmApplicationPerformance } = require('./database/migrations/migrate_crm_application_performance.js');
+      await migrateCrmApplicationPerformance();
+    } catch (crmErr) {
+      logger.warn('CRM Application Performance auto migration note:', crmErr.message);
+    }
+
+    // Always ensure CRM Application query optimization indexes exist on boot
+    try {
+      const { migrateApplicationQueryIndexes } = require('./database/migrations/migrate_application_query_indexes.js');
+      await migrateApplicationQueryIndexes();
+    } catch (idxErr) {
+      logger.warn('Application query indexes auto migration note:', idxErr.message);
+    }
+
+    // Always ensure Bulk SMS tables exist on boot
+    try {
+      const migrateBulkSms = require('./database/migrations/migrate_bulk_sms.js');
+      await migrateBulkSms();
+    } catch (smsErr) {
+      logger.warn('Bulk SMS auto migration note:', smsErr.message);
+    }
+
+    // Always ensure HDFC Curing Designations & Decline Code schema exists on boot
+    try {
+      const { migrateHdfcCuringDesignations } = require('./database/migrations/migrate_hdfc_curing_designations.js');
+      await migrateHdfcCuringDesignations();
+    } catch (curingErr) {
+      logger.warn('HDFC Curing Designations auto migration note:', curingErr.message);
+    }
+
+    // Always ensure Sales Operator Claim columns exist on boot
+    try {
+      const { migrateSalesOperatorClaim } = require('./database/migrations/migrate_sales_operator_claim.js');
+      await migrateSalesOperatorClaim();
+    } catch (claimErr) {
+      logger.warn('Sales Operator Claim auto migration note:', claimErr.message);
+    }
+
+    // Always ensure Application Employee Assignment schema exists on boot
+    try {
+      const { migrateApplicationEmployeeAssignment } = require('./database/migrations/migrate_application_employee_assignment.js');
+      await migrateApplicationEmployeeAssignment();
+    } catch (assignErr) {
+      logger.warn('Application Employee Assignment auto migration note:', assignErr.message);
+    }
+
+    // Always ensure Account Activation / Deactivation Lifecycle schema exists on boot
+    try {
+      const { ensureAccountStatusSchema } = require('./modules/super-admin/accountStatus.service.js');
+      await ensureAccountStatusSchema();
+    } catch (accErr) {
+      logger.warn('Account status schema boot migration note:', accErr.message);
+    }
+
+    // Always ensure Working Hours Phase 2 schema exists on boot
+    try {
+      const { ensureWorkingHoursTables } = require('./modules/auth/workingHours.service.js');
+      await ensureWorkingHoursTables();
+    } catch (whErr) {
+      logger.warn('Working hours boot migration note:', whErr.message);
+    }
+
+    // Always ensure Employee Dashboard performance indexes exist on boot
+    try {
+      const migrateEmployeeDashboardPerformanceIndexes = require('./database/migrations/migrate_employee_dashboard_performance_indexes.js');
+      await migrateEmployeeDashboardPerformanceIndexes();
+    } catch (empIdxErr) {
+      logger.warn('Employee Dashboard performance indexes boot note:', empIdxErr.message);
+    }
+
+    // Initialize scheduled CRON jobs
+    const { initReportJobs } = require('./jobs/report.job.js');
+    initReportJobs();
+
+    const http = require('http');
+    const { Server } = require('socket.io');
+    const messengerSocket = require('./socket/messengerSocket');
+
+    server = http.createServer(app);
+    const allowedOrigins = process.env.CORS_ORIGIN 
+      ? process.env.CORS_ORIGIN.split(',').map(o => o.trim()).filter(Boolean)
+      : [
+          'https://gharkapaisa.in',
+          'https://www.gharkapaisa.in',
+          'https://admin.gharkapaisa.in',
+          'https://api.gharkapaisa.in',
+          'https://gharkapaisa.pages.dev',
+          'https://main.gharkapaisa.pages.dev',
+          'http://localhost:5173',
+          'http://localhost:5174',
+          'http://localhost:3000',
+          'http://localhost:4173'
+        ];
+
+    io = new Server(server, {
+      path: '/socket.io',
+      transports: ['websocket', 'polling'],
+      cors: {
+        origin: (origin, callback) => {
+          if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+            callback(null, true);
+          } else {
+            callback(null, true); // Fallback allow
+          }
+        },
+        methods: ['GET', 'POST'],
+        credentials: true
+      }
+    });
+
+    // Also support WebSocket upgrades on /api/v1/socket.io
+    server.on('upgrade', (req, socket, head) => {
+      if (req.url && req.url.startsWith('/api/v1/socket.io')) {
+        req.url = req.url.replace('/api/v1/socket.io', '/socket.io');
+        if (io && io.engine) {
+          io.engine.handleUpgrade(req, socket, head);
+        }
+      }
+    });
+
+    messengerSocket.init(io);
+
+    server.listen(PORT, () => {
+      logger.info(`
+      ╔════════════════════════════════════════╗
+      ║  GharKaPaisa API Server Running        ║
+      ║  Port    : ${PORT}                        ║
+      ║  Env     : ${(process.env.NODE_ENV || 'development').padEnd(12)}            ║
+      ║  Base URL: /api/v1 (behind reverse proxy) ║
+      ╚════════════════════════════════════════╝
+      `);
+
+
+      // Initialize Daily Reminder Engine timer (runs once every 24 hours)
+      setInterval(async () => {
+        try {
+          const { processDailyReminderEngine } = require('./modules/notifications/service.js');
+          await processDailyReminderEngine();
+        } catch (err) {
+          logger.error('Daily Reminder Engine timer error:', err.message);
+        }
+      }, 24 * 60 * 60 * 1000);
+
+      // Initialize Commission Hold Release Job timer (runs every 6 hours and on startup)
+      const runCommissionRelease = async () => {
+        try {
+          const { processCommissionHoldReleases } = require('./jobs/commissionHoldRelease.job.js');
+          await processCommissionHoldReleases();
+        } catch (err) {
+          logger.error('Commission Hold Release Job timer error:', err.message);
+        }
+      };
+      runCommissionRelease();
+      setInterval(runCommissionRelease, 6 * 60 * 60 * 1000);
+
+      // Initialize 24-Hour Messenger Message & File Purge Job timer (runs every 15 minutes and on startup)
+      const runMessengerPurge = async () => {
+        try {
+          const { purgeExpiredMessengerMessages } = require('./jobs/messengerPurge.job.js');
+          await purgeExpiredMessengerMessages();
+        } catch (err) {
+          logger.error('Messenger 24-Hour Purge Job error:', err.message);
+        }
+      };
+      runMessengerPurge();
+      setInterval(runMessengerPurge, 15 * 60 * 1000);
+
+      // Initialize 48-Hour Notification Purge Job timer (runs every 5 minutes and on startup for all panels)
+      const runNotificationPurge = async () => {
+        try {
+          const { purgeExpiredNotifications } = require('./jobs/notificationPurge.job.js');
+          await purgeExpiredNotifications();
+        } catch (err) {
+          logger.error('48-Hour Notification Purge Job error:', err.message);
+        }
+      };
+      runNotificationPurge();
+      setInterval(runNotificationPurge, 5 * 60 * 1000);
+
+      // Initialize Scheduled Announcement Auto-Publisher (runs every minute and on startup)
+      const runAnnouncementScheduler = async () => {
+        try {
+          const { processScheduledAnnouncements } = require('./jobs/announcementScheduler.job.js');
+          await processScheduledAnnouncements();
+        } catch (err) {
+          logger.error('Announcement Scheduler Job error:', err.message);
+        }
+      };
+      runAnnouncementScheduler();
+      setInterval(runAnnouncementScheduler, 60 * 1000);
+
+      // Initialize Account Activation/Deactivation Lifecycle Scheduler (runs every minute and on startup)
+      const runAccountScheduler = async () => {
+        try {
+          const { processAccountStatusScheduler } = require('./jobs/accountScheduler.job.js');
+          await processAccountStatusScheduler();
+        } catch (err) {
+          logger.error('Account Scheduler Job error:', err.message);
+        }
+      };
+      runAccountScheduler();
+      setInterval(runAccountScheduler, 60 * 1000);
+    });
+  } catch (err) {
+    logger.error('Failed to start server due to database connectivity issue:', err);
+    process.exit(1);
+  }
+};
+
+startServer();
+
+// Graceful shutdown handling
+const gracefulShutdown = (signal) => {
+  logger.info(`${signal} received. Shutting down gracefully...`);
+
+  // Force exit after 10s if hung
+  const timeoutId = setTimeout(() => {
+    logger.warn('Forced shutdown due to timeout during cleanup.');
+    process.exit(1);
+  }, 10000);
+
+  // Unref the timeout so it doesn't keep the process alive
+  timeoutId.unref();
+
+  if (server) {
+    server.close(async () => {
+      logger.info('HTTP server closed.');
+      try {
+        await closeValkeyClients();
+        await db.pool.end();
+        logger.info('Database connection pool closed.');
+        clearTimeout(timeoutId);
+        process.exit(0);
+      } catch (err) {
+        logger.error('Error closing database connection pool / Valkey:', err);
+        process.exit(1);
+      }
+    });
+  } else {
+    (async () => {
+      try {
+        await closeValkeyClients();
+        await db.pool.end();
+        logger.info('Database connection pool closed.');
+        clearTimeout(timeoutId);
+        process.exit(0);
+      } catch (err) {
+        logger.error('Error closing database connection pool / Valkey:', err);
+        process.exit(1);
+      }
+    })();
+  }
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+module.exports = app;

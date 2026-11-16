@@ -1,0 +1,74 @@
+import { create } from 'zustand';
+import api from '../../services/api';
+
+export const usePartnerStore = create((set) => ({
+  profile: null,
+  applications: [],
+  customers: [],
+  isLoading: false,
+  error: null,
+  
+  fetchProfile: async () => {
+    set({ isLoading: true, error: null });
+    try {
+      const response = await api.get('/partner/profile');
+      set({ profile: response.data.data, isLoading: false });
+      return response.data.data;
+    } catch (error) {
+      set({ error: error.response?.data?.message || 'Failed to fetch profile', isLoading: false });
+      throw error;
+    }
+  },
+  
+  fetchApplications: async (params = {}) => {
+    set({ isLoading: true, error: null });
+    try {
+      const response = await api.get('/applications', { params });
+      set({ applications: response.data.data, isLoading: false });
+      return response.data;
+    } catch (error) {
+      set({ error: error.response?.data?.message || 'Failed to fetch applications', isLoading: false });
+      throw error;
+    }
+  },
+
+  fetchCustomers: async (params = {}) => {
+    set({ isLoading: true, error: null });
+    try {
+      const response = await api.get('/partner/customers', { params });
+      set({ customers: response.data.data, isLoading: false });
+      return response.data.data;
+    } catch (error) {
+      set({ error: error.response?.data?.message || 'Failed to fetch customers', isLoading: false });
+      throw error;
+    }
+  },
+
+  createCustomer: async (customerData) => {
+    set({ isLoading: true, error: null });
+    try {
+      const response = await api.post('/partner/customers', customerData);
+      const updatedCustomers = await api.get('/partner/customers');
+      set({ customers: updatedCustomers.data.data, isLoading: false });
+      return response.data.data;
+    } catch (error) {
+      set({ error: error.response?.data?.message || 'Failed to create customer', isLoading: false });
+      throw error;
+    }
+  },
+
+  updateCustomer: async (id, customerData) => {
+    set({ isLoading: true, error: null });
+    try {
+      const response = await api.put(`/customers/${id}`, customerData);
+      const updatedCustomers = await api.get('/partner/customers');
+      set({ customers: updatedCustomers.data.data, isLoading: false });
+      return response.data.data;
+    } catch (error) {
+      set({ error: error.response?.data?.message || 'Failed to update customer', isLoading: false });
+      throw error;
+    }
+  },
+
+  clearData: () => set({ profile: null, applications: [], customers: [], error: null })
+}));

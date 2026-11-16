@@ -1,0 +1,7458 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { useTheme } from '../../../contexts/ThemeContext';
+import LoadingLogo from '../../../components/Loader/LoadingLogo';
+import { 
+  FaUsers, FaUserCheck, FaSitemap, FaLink, FaSearch, 
+  FaPlus, FaCheckCircle, FaTimesCircle, FaEye, FaEdit, FaCheck, FaLock,
+  FaFileAlt, FaVideo, FaUniversity, FaBuilding, FaBriefcase, FaIdCard, FaPhone, FaEnvelope, FaClock, FaUserCircle,
+  FaUserTimes, FaUnlink, FaChartLine, FaTrophy, FaEllipsisV, FaDownload, FaRedo, FaInfoCircle, FaChevronRight,
+  FaCoins, FaBullseye, FaTrash, FaCalendarAlt, FaExclamationCircle, FaCamera, FaUserShield,
+  FaFileUpload, FaBell, FaCog, FaKey, FaUser, FaEllipsisH, FaChevronDown, FaShieldAlt, FaBolt
+} from 'react-icons/fa';
+import api from '../../../services/api';
+import BiometricManagementModal from '../biometrics/BiometricManagementModal';
+import { 
+  DOCUMENT_TYPES, 
+  normalizeDocumentType, 
+  isVideoDocument, 
+  isBankDocument, 
+  isFaceBiometricDocument 
+} from '../../../constants/documentTypes';
+
+export default function EmployeeManagement() {
+  const { C } = useTheme();
+
+  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  const isMobile = windowWidth < 768;
+  const isTablet = windowWidth >= 768 && windowWidth < 1024;
+
+  const [activeTab, setActiveTab] = useState('employees'); // 'employees', 'hierarchy', 'bonus'
+  const [drawerEmp, setDrawerEmp] = useState(null); // Right-side drawer / mobile modal selected employee
+  const [drawerTab, setDrawerTab] = useState('overview'); // 'overview', 'kyc', 'face', 'access', 'attendance', 'activity'
+  const [recordsViewTab, setRecordsViewTab] = useState('recent'); // 'recent', 'processed'
+  const [showReminderHistory, setShowReminderHistory] = useState(false);
+  const [actionRequiredFilter, setActionRequiredFilter] = useState(''); // '', 'face_missing', 'kyc_pending', 'docs_missing', 'activation_pending'
+  const [departmentFilter, setDepartmentFilter] = useState('');
+  const [attendanceFilter, setAttendanceFilter] = useState('');
+  const [activeActionMenuId, setActiveActionMenuId] = useState(null);
+
+  // Drawer Employee Attendance Breakdown State
+  const [empAttendanceData, setEmpAttendanceData] = useState(null);
+  const [loadingAttendance, setLoadingAttendance] = useState(false);
+  const [attendanceMonth, setAttendanceMonth] = useState(new Date().getMonth() + 1);
+  const [attendanceYear, setAttendanceYear] = useState(new Date().getFullYear());
+  const [selectedDayAttendance, setSelectedDayAttendance] = useState(null);
+
+  // Drawer Employee Editing State - Comprehensive Fields
+  const [isEditingEmpInfo, setIsEditingEmpInfo] = useState(false);
+  const [editEmpForm, setEditEmpForm] = useState({
+    full_name: '',
+    mobile_number: '',
+    whatsapp_number: '',
+    email_id: '',
+    designation: '',
+    department: '',
+    work_location: '',
+    employment_type: 'Full-time',
+    offered_salary: '',
+    manager_name: '',
+    date_of_birth: '',
+    gender: 'Male',
+    emergency_contact_name: '',
+    emergency_contact_number: '',
+    current_address: '',
+    permanent_address: ''
+  });
+
+  // Inline 360 Document Inspection & Verification State
+  const [docStatuses, setDocStatuses] = useState({
+    aadhaar: { status: 'Submitted', reason: '', url: null },
+    pan: { status: 'Submitted', reason: '', url: null },
+    bank: { status: 'Submitted', reason: '', url: null },
+    photo: { status: 'Submitted', reason: '', url: null },
+    offer_letter: { status: 'Submitted', reason: '', url: null },
+    resume: { status: 'Submitted', reason: '', url: null },
+    education_certificate: { status: 'Submitted', reason: '', url: null },
+    experience_letter: { status: 'Submitted', reason: '', url: null },
+    terms_video: { status: 'Submitted', reason: '', url: null }
+  });
+  const [rejectingDocKey, setRejectingDocKey] = useState(null);
+  const [docRejectReasonInput, setDocRejectReasonInput] = useState('');
+  const [docIdentityFields, setDocIdentityFields] = useState({
+    aadhaar_number: '',
+    pan_number: '',
+    bank_account: '',
+    bank_name: '',
+    bank_account_holder_name: '',
+    branch_name: '',
+    ifsc_code: '',
+    date_of_birth: '',
+    gender: '',
+    admin_remarks: ''
+  });
+  const [viewingDocModal, setViewingDocModal] = useState(null);
+
+  const [drawer360Data, setDrawer360Data] = useState(null);
+  const [loadingDrawer360, setLoadingDrawer360] = useState(false);
+
+  const fetchDrawerEmp360 = async (empId) => {
+    if (!empId) return;
+    setLoadingDrawer360(true);
+    try {
+      const res = await api.get(`/employees/${empId}`);
+      if (res.data?.success) {
+        const data = res.data.data;
+        setDrawer360Data(data);
+        const kyc = data.kyc || {};
+        const emp = data.employee || {};
+        const jDetails = data.joining_details || {};
+        const docs = data.documents || [];
+
+        const findDoc = (types) => docs.find(d => types.includes(String(d.document_type || '').toLowerCase().trim()));
+
+        const aadhaarDoc = findDoc(['aadhaar', 'aadhaar_card', 'aadhaar_front', 'aadhaar_back']);
+        const panDoc = findDoc(['pan', 'pan_card']);
+        const bankDoc = findDoc(['bank', 'bank_proof', 'bank_passbook', 'cheque', 'passbook']);
+        const photoDoc = findDoc(['photo', 'photograph', 'profile_photo', 'passport_photo', 'avatar']);
+        const faceDoc = findDoc(['face', 'face_biometric', 'biometric', 'face_verification', 'face_reference', 'selfie', 'teleprompter_face']);
+        const offerDoc = findDoc(['offer_letter', 'joining_form', 'terms_video', 'resume']);
+        const resumeDoc = findDoc(['resume', 'cv']);
+        const eduDoc = findDoc(['education_certificate', 'qualification_certificate', 'education', 'highest_qualification']);
+        const expDoc = findDoc(['experience_letter', 'experience', 'relieving_letter']);
+        const videoDoc = findDoc(['terms_video', 'video', 'video_verification']) || (data.terms?.video_url ? { document_url: data.terms.video_url, verification_status: data.terms.verification_status || 'SUBMITTED' } : null);
+
+        const faceUrl = data.biometrics?.active_template?.image_url || data.verification_state?.biometric_template?.image_url || emp.face_reference_url || emp.face_verification_url || faceDoc?.document_url || null;
+        const photoUrl = emp.profile_photo_url || data.verification_state?.profile_photo_url || photoDoc?.document_url || faceUrl || null;
+
+        if (data.employee) {
+          setDrawerEmp(prev => (prev ? { 
+            ...prev, 
+            ...data.employee,
+            face_reference_url: faceUrl || prev.face_reference_url,
+            face_verification_url: faceUrl || prev.face_verification_url,
+            profile_photo_url: photoUrl || prev.profile_photo_url,
+            biometrics: data.biometrics,
+            verification_state: data.verification_state
+          } : {
+            ...data.employee,
+            face_reference_url: faceUrl,
+            face_verification_url: faceUrl,
+            profile_photo_url: photoUrl,
+            biometrics: data.biometrics,
+            verification_state: data.verification_state
+          }));
+        }
+
+        setDocIdentityFields({
+          aadhaar_number: kyc.aadhaar_number || emp.aadhaar_number || '',
+          pan_number: kyc.pan_number || emp.pan_number || '',
+          bank_account: kyc.bank_account_number || emp.bank_account_number || '',
+          bank_name: kyc.bank_name || emp.bank_name || '',
+          bank_account_holder_name: kyc.bank_account_holder_name || emp.bank_account_holder_name || emp.full_name || '',
+          branch_name: kyc.branch_name || emp.branch_name || '',
+          ifsc_code: kyc.ifsc_code || emp.ifsc_code || '',
+          date_of_birth: emp.date_of_birth ? new Date(emp.date_of_birth).toISOString().split('T')[0] : '',
+          gender: emp.gender || '',
+          admin_remarks: kyc.review_notes || ''
+        });
+
+        const parseStatus = (statusStr, isVerifiedFlag, url) => {
+          if (isVerifiedFlag || statusStr === 'VERIFIED' || statusStr === 'APPROVED') return 'Verified';
+          if (statusStr === 'REJECTED') return 'Rejected';
+          if (url || statusStr === 'SUBMITTED' || statusStr === 'UNDER_REVIEW' || statusStr === 'PENDING') return 'Submitted';
+          return 'Not Uploaded';
+        };
+
+        const aadhaarUrl = kyc.aadhaar_document_url || aadhaarDoc?.document_url || null;
+        const panUrl = kyc.pan_document_url || panDoc?.document_url || null;
+        const bankUrl = kyc.bank_document_url || bankDoc?.document_url || null;
+        const offerUrl = offerDoc?.document_url || emp.resume_url || null;
+        const resumeUrl = resumeDoc?.document_url || emp.resume_url || null;
+        const eduUrl = eduDoc?.document_url || null;
+        const expUrl = expDoc?.document_url || null;
+        const videoUrl = videoDoc?.document_url || data.terms?.video_url || null;
+
+        setDocStatuses({
+          aadhaar: {
+            status: parseStatus(kyc.aadhaar_status || aadhaarDoc?.verification_status, kyc.aadhaar_verified, aadhaarUrl),
+            reason: kyc.aadhaar_rejection_reason || aadhaarDoc?.rejection_reason || '',
+            url: aadhaarUrl
+          },
+          pan: {
+            status: parseStatus(kyc.pan_status || panDoc?.verification_status, kyc.pan_verified, panUrl),
+            reason: kyc.pan_rejection_reason || panDoc?.rejection_reason || '',
+            url: panUrl
+          },
+          bank: {
+            status: parseStatus(kyc.bank_status || bankDoc?.verification_status, kyc.bank_verified, bankUrl),
+            reason: kyc.bank_rejection_reason || bankDoc?.rejection_reason || '',
+            url: bankUrl
+          },
+          photo: {
+            status: parseStatus(photoDoc?.verification_status || (photoUrl ? 'SUBMITTED' : 'NOT_UPLOADED'), false, photoUrl),
+            reason: photoDoc?.rejection_reason || '',
+            url: photoUrl
+          },
+          offer_letter: {
+            status: parseStatus(offerDoc?.verification_status || (offerUrl ? 'SUBMITTED' : 'NOT_UPLOADED'), false, offerUrl),
+            reason: offerDoc?.rejection_reason || '',
+            url: offerUrl
+          },
+          resume: {
+            status: parseStatus(resumeDoc?.verification_status || (resumeUrl ? 'SUBMITTED' : 'NOT_UPLOADED'), false, resumeUrl),
+            reason: resumeDoc?.rejection_reason || '',
+            url: resumeUrl
+          },
+          education_certificate: {
+            status: parseStatus(eduDoc?.verification_status || (eduUrl ? 'SUBMITTED' : 'NOT_UPLOADED'), false, eduUrl),
+            reason: eduDoc?.rejection_reason || '',
+            url: eduUrl
+          },
+          experience_letter: {
+            status: parseStatus(expDoc?.verification_status || (expUrl ? 'SUBMITTED' : 'NOT_UPLOADED'), false, expUrl),
+            reason: expDoc?.rejection_reason || '',
+            url: expUrl
+          },
+          terms_video: {
+            status: parseStatus(data.terms?.verification_status || videoDoc?.verification_status || (videoUrl ? 'SUBMITTED' : 'NOT_UPLOADED'), data.terms?.accepted, videoUrl),
+            reason: data.terms?.verification_notes || videoDoc?.rejection_reason || '',
+            url: videoUrl
+          }
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch drawer employee 360 data:', err);
+    } finally {
+      setLoadingDrawer360(false);
+    }
+  };
+
+  const fetchEmployeeAttendanceData = async (empId, month = attendanceMonth, year = attendanceYear) => {
+    if (!empId) return;
+    setLoadingAttendance(true);
+    try {
+      const res = await api.get(`/attendance/admin/employee/${empId}`, {
+        params: { month, year }
+      });
+      if (res.data?.success) {
+        setEmpAttendanceData(res.data.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch employee attendance details:', err);
+    } finally {
+      setLoadingAttendance(false);
+    }
+  };
+
+  useEffect(() => {
+    if (drawerEmp?.id && drawerTab === 'attendance') {
+      fetchEmployeeAttendanceData(drawerEmp.id, attendanceMonth, attendanceYear);
+    }
+  }, [drawerEmp?.id, drawerTab, attendanceMonth, attendanceYear]);
+
+  const handleSingleDocAction = async (empId, docKey, action, reasonText = '') => {
+    const isApprove = action === 'VERIFIED';
+    const payload = {
+      kyc_status: isApprove ? 'UNDER_REVIEW' : 'REJECTED'
+    };
+
+    const canonicalKey = normalizeDocumentType(docKey);
+
+    if (canonicalKey === 'aadhaar') {
+      payload.aadhaar_action = action;
+      if (!isApprove) payload.aadhaar_reason = reasonText;
+    } else if (canonicalKey === 'pan') {
+      payload.pan_action = action;
+      if (!isApprove) payload.pan_reason = reasonText;
+    } else if (canonicalKey === 'bank_proof' || docKey === 'bank') {
+      payload.bank_action = action;
+      payload.bank_proof_action = action;
+      if (!isApprove) {
+        payload.bank_reason = reasonText;
+        payload.bank_proof_reason = reasonText;
+      }
+    } else if (canonicalKey === 'video' || docKey === 'video') {
+      payload.video_action = action;
+      if (!isApprove) payload.video_reason = reasonText;
+    } else if (canonicalKey === 'face_biometric' || docKey === 'face') {
+      payload.biometric_action = action;
+      if (!isApprove) payload.biometric_reason = reasonText;
+    } else if (docKey === 'photo') {
+      payload.photo_action = action;
+      if (!isApprove) payload.photo_reason = reasonText;
+    } else if (docKey === 'offer_letter') {
+      payload.offer_letter_action = action;
+      if (!isApprove) payload.offer_letter_reason = reasonText;
+    } else if (docKey === 'resume') {
+      payload.resume_action = action;
+      if (!isApprove) payload.resume_reason = reasonText;
+    } else if (docKey === 'education_certificate') {
+      payload.education_certificate_action = action;
+      if (!isApprove) payload.education_certificate_reason = reasonText;
+    } else if (docKey === 'experience_letter') {
+      payload.experience_letter_action = action;
+      if (!isApprove) payload.experience_letter_reason = reasonText;
+    } else if (docKey === 'terms_video' || docKey === 'video') {
+      payload.video_action = action;
+      if (!isApprove) payload.video_reason = reasonText;
+    }
+
+    try {
+      const res = await api.post(`/employees/${empId}/kyc-verify`, payload);
+      if (res.data?.success) {
+        fetchDrawerEmp360(empId);
+        fetchData();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update document status');
+    }
+  };
+
+  useEffect(() => {
+    if (drawerEmp) {
+      setIsEditingEmpInfo(false);
+      setEditEmpForm({
+        full_name: drawerEmp.full_name || '',
+        mobile_number: drawerEmp.mobile_number || '',
+        whatsapp_number: drawerEmp.whatsapp_number || '',
+        email_id: drawerEmp.email_id || drawerEmp.email || '',
+        designation: drawerEmp.designation || '',
+        department: drawerEmp.department || '',
+        work_location: drawerEmp.work_location || '',
+        employment_type: drawerEmp.employment_type || 'Full-time',
+        offered_salary: drawerEmp.offered_salary || '',
+        manager_name: drawerEmp.manager_name || drawerEmp.reporting_manager || drawerEmp.team_leader_name || '',
+        date_of_birth: drawerEmp.date_of_birth ? String(drawerEmp.date_of_birth).split('T')[0] : '',
+        gender: drawerEmp.gender || 'Male',
+        emergency_contact_name: drawerEmp.emergency_contact_name || '',
+        emergency_contact_number: drawerEmp.emergency_contact_number || '',
+        current_address: drawerEmp.current_address || '',
+        permanent_address: drawerEmp.permanent_address || ''
+      });
+      setDocIdentityFields({
+        aadhaar_number: drawerEmp.aadhaar_number || '',
+        pan_number: drawerEmp.pan_number || '',
+        bank_account: drawerEmp.bank_account || drawerEmp.bank_account_number || '',
+        bank_account_holder_name: drawerEmp.bank_account_holder_name || drawerEmp.full_name || '',
+        ifsc_code: drawerEmp.ifsc_code || '',
+        admin_remarks: drawerEmp.admin_remarks || ''
+      });
+      setDocStatuses({
+        aadhaar: { status: 'Submitted', reason: '', url: null },
+        pan: { status: 'Submitted', reason: '', url: null },
+        bank: { status: 'Submitted', reason: '', url: null },
+        photo: { status: 'Submitted', reason: '', url: null },
+        offer_letter: { status: 'Submitted', reason: '', url: null },
+        resume: { status: 'Submitted', reason: '', url: null },
+        education_certificate: { status: 'Submitted', reason: '', url: null },
+        experience_letter: { status: 'Submitted', reason: '', url: null },
+        terms_video: { status: 'Submitted', reason: '', url: null }
+      });
+      setRejectingDocKey(null);
+      fetchDrawerEmp360(drawerEmp.id);
+    }
+  }, [drawerEmp?.id]);
+
+  // Credentials Modal State & Handlers
+  const [credentialsModalEmp, setCredentialsModalEmp] = useState(null);
+  const [credentialsTempPassword, setCredentialsTempPassword] = useState('GharKaPaisa@2026');
+  const [credentialsCopied, setCredentialsCopied] = useState(false);
+
+  const handleResendCreds = (emp) => {
+    setCredentialsTempPassword('GharKaPaisa@2026');
+    setCredentialsCopied(false);
+    setCredentialsModalEmp(emp || drawerEmp);
+  };
+
+  const getCredentialMessageTemplate = (emp, pwd) => {
+    if (!emp) return '';
+    const empCode = emp.employee_code || emp.employee_id || emp.emp_code || 'EMP10001';
+    return `*GharKaPaisa Employee Access Credentials*\n\nDear ${emp.full_name},\n\nWelcome to GharKaPaisa! Your employee portal login credentials have been configured:\n\n👤 *Username / ID:* ${empCode}\n📱 *Registered Mobile:* ${emp.mobile_number || 'N/A'}\n🔑 *Temporary Password:* ${pwd}\n🌐 *Portal URL:* https://gharkapaisa.in/login\n\nPlease log in and update your password on your first access.\n\nBest regards,\nGharKaPaisa Operations & HR Team`;
+  };
+
+  const handleSendWhatsAppCredentials = (emp, pwd) => {
+    const mobile = (emp.mobile_number || '').replace(/\D/g, '');
+    const cleanMobile = mobile.length === 10 ? `91${mobile}` : mobile;
+    const msg = getCredentialMessageTemplate(emp, pwd);
+    window.open(`https://wa.me/${cleanMobile}?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+
+  const handleSendSmsCredentials = (emp, pwd) => {
+    const mobile = (emp.mobile_number || '').replace(/\D/g, '');
+    const empCode = emp.employee_code || emp.employee_id || emp.emp_code || 'EMP10001';
+    const msg = `GharKaPaisa Credentials: Dear ${emp.full_name}, your login ID: ${empCode}, Password: ${pwd}. Login at https://gharkapaisa.in/login`;
+    window.open(`sms:${mobile}?body=${encodeURIComponent(msg)}`, '_self');
+  };
+
+  // Super Admin Action Menu & Record Operations
+  const [drawerActionsOpen, setDrawerActionsOpen] = useState(false);
+  const [savingEmpDetails, setSavingEmpDetails] = useState(false);
+  const drawerActionsRef = useRef(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (drawerActionsRef.current && !drawerActionsRef.current.contains(e.target)) {
+        setDrawerActionsOpen(false);
+      }
+    };
+    if (drawerActionsOpen) {
+      document.addEventListener('mousedown', handleOutsideClick);
+    }
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [drawerActionsOpen]);
+
+  const getEmployeeAccountStatus = (emp) => {
+    if (!emp) return { key: 'pending', label: '● Pending Activation', badgeLabel: '● Pending', bg: '#FEF3C7', color: '#92400E', isSuspended: false };
+    
+    const empStatusUpper = String(emp.employee_status || emp.status || '').toUpperCase();
+    const actStatusUpper = String(emp.activation_status || '').toUpperCase();
+    const isSuspended = empStatusUpper === 'INACTIVE' 
+      || empStatusUpper === 'SUSPENDED' 
+      || actStatusUpper === 'SUSPENDED' 
+      || actStatusUpper === 'INACTIVE' 
+      || emp.is_active === false
+      || String(emp.status || '').toLowerCase() === 'suspended'
+      || String(emp.status || '').toLowerCase() === 'inactive';
+
+    if (isSuspended) {
+      return {
+        key: 'suspended',
+        label: '● Deactivated / Suspended',
+        badgeLabel: '● Deactivated',
+        bg: '#FEE2E2',
+        color: '#DC2626',
+        isSuspended: true
+      };
+    }
+
+    if (actStatusUpper === 'APPROVED' || empStatusUpper === 'ACTIVE') {
+      return {
+        key: 'active',
+        label: '✓ Active & Verified',
+        badgeLabel: '✓ Active',
+        bg: '#D1FAE5',
+        color: '#065F46',
+        isSuspended: false
+      };
+    }
+
+    return {
+      key: 'pending',
+      label: '● Pending Activation',
+      badgeLabel: '● Pending',
+      bg: '#FEF3C7',
+      color: '#92400E',
+      isSuspended: false
+    };
+  };
+
+  const handleToggleEmpStatus = async (emp) => {
+    const targetEmp = emp || drawerEmp;
+    if (!targetEmp) return;
+    const currentStatus = getEmployeeAccountStatus(targetEmp);
+    const isCurrentlyActive = !currentStatus.isSuspended && (targetEmp.activation_status === 'APPROVED' || targetEmp.employee_status === 'ACTIVE');
+    const newActivation = isCurrentlyActive ? 'SUSPENDED' : 'APPROVED';
+    const newStatus = isCurrentlyActive ? 'INACTIVE' : 'ACTIVE';
+    const actionLabel = isCurrentlyActive ? 'deactivate / suspend' : 'activate / restore';
+
+    if (!window.confirm(`Are you sure you want to ${actionLabel} account for ${targetEmp.full_name}?`)) {
+      return;
+    }
+
+    try {
+      const res = await api.post(`/employees/${targetEmp.id}/activate`, {
+        activation_status: newActivation,
+        employee_status: newStatus
+      });
+      if (res.data?.success) {
+        alert(`✓ Account successfully ${isCurrentlyActive ? 'deactivated (suspended)' : 'activated'}!`);
+        const updated = {
+          ...targetEmp,
+          activation_status: newActivation,
+          employee_status: newStatus,
+          status: isCurrentlyActive ? 'suspended' : 'active',
+          is_active: !isCurrentlyActive
+        };
+        if (drawerEmp?.id === targetEmp.id) setDrawerEmp(prev => ({ ...prev, ...updated }));
+        setEmployees(prev => prev.map(e => e.id === targetEmp.id ? { ...e, ...updated } : e));
+        setAllEmployees(prev => prev.map(e => e.id === targetEmp.id ? { ...e, ...updated } : e));
+        if (typeof fetchData === 'function') fetchData(true);
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || `Failed to update account status`);
+    }
+  };
+
+  // Delete Employee (Temporary Deactivate or Permanent Purge)
+  const [empDeleteModal, setEmpDeleteModal] = useState({
+    isOpen: false,
+    emp: null,
+    mode: 'temporary', // 'temporary' | 'permanent'
+    confirmText: '',
+    loading: false
+  });
+
+  const promptDeleteEmp = (emp, mode = 'temporary') => {
+    setEmpDeleteModal({
+      isOpen: true,
+      emp,
+      mode,
+      confirmText: '',
+      loading: false
+    });
+  };
+
+  const executeDeleteEmp = async () => {
+    if (!empDeleteModal.emp) return;
+    const emp = empDeleteModal.emp;
+    const isPermanent = empDeleteModal.mode === 'permanent';
+
+    if (isPermanent && empDeleteModal.confirmText.trim().toUpperCase() !== 'DELETE') {
+      alert('Please type DELETE in the confirmation box to permanently delete this employee account.');
+      return;
+    }
+
+    setEmpDeleteModal(prev => ({ ...prev, loading: true }));
+    try {
+      const targetId = emp.id || emp.user_id;
+      const params = new URLSearchParams({ mode: empDeleteModal.mode });
+      if (emp.user_id) params.append('user_id', emp.user_id);
+      if (emp.employee_id) params.append('emp_code', emp.employee_id);
+      const res = await api.delete(`/superadmin/users/${targetId}?${params.toString()}`);
+      if (res.data?.success) {
+        alert(
+          isPermanent
+            ? `🗑️ Employee "${emp.full_name}" deleted (restore 24h)`
+            : `🔄 Employee "${emp.full_name}" deactivated (status: Suspended)`
+        );
+        setEmpDeleteModal({ isOpen: false, emp: null, mode: 'temporary', confirmText: '', loading: false });
+        const isMatchEmp = (e) => (
+          e && emp && (
+            (e.id && emp.id && e.id === emp.id) ||
+            (emp.user_id && e.user_id && e.user_id === emp.user_id) ||
+            (emp.employee_id && (e.employee_id === emp.employee_id || e.employee_code === emp.employee_id || e.emp_code === emp.employee_id)) ||
+            (emp.employee_code && (e.employee_code === emp.employee_code || e.employee_id === emp.employee_code || e.emp_code === emp.employee_code)) ||
+            (emp.email_id && (e.email_id === emp.email_id || e.email === emp.email_id)) ||
+            (emp.mobile_number && (e.mobile_number === emp.mobile_number || e.mobile === emp.mobile_number))
+          )
+        );
+
+        if (isPermanent) {
+          if (drawerEmp && isMatchEmp(drawerEmp)) {
+            setDrawerEmp(null);
+          }
+          setEmployees(prev => prev.filter(e => !isMatchEmp(e)));
+          setAllEmployees(prev => prev.filter(e => !isMatchEmp(e)));
+        } else {
+          // Immediately update drawer state to deactivated / suspended if this employee is open
+          if (drawerEmp && isMatchEmp(drawerEmp)) {
+            setDrawerEmp(prev => ({
+              ...prev,
+              employee_status: 'INACTIVE',
+              activation_status: 'SUSPENDED',
+              is_active: false,
+              status: 'suspended'
+            }));
+          }
+          // Immediately update list state in cards / table
+          setEmployees(prev => prev.map(e => isMatchEmp(e) ? {
+            ...e,
+            employee_status: 'INACTIVE',
+            activation_status: 'SUSPENDED',
+            is_active: false,
+            status: 'suspended'
+          } : e));
+          setAllEmployees(prev => prev.map(e => isMatchEmp(e) ? {
+            ...e,
+            employee_status: 'INACTIVE',
+            activation_status: 'SUSPENDED',
+            is_active: false,
+            status: 'suspended'
+          } : e));
+        }
+        if (typeof fetchData === 'function') fetchData();
+      } else {
+        alert(res.data?.message || 'Delete operation failed');
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || err.message || 'Failed to delete employee account');
+    } finally {
+      setEmpDeleteModal(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  const handleDownloadProfileSummary = (emp) => {
+    const target = emp || drawerEmp;
+    if (!target) return;
+    const empCode = target.employee_code || target.employee_id || target.emp_code || target.code || (target.id ? String(target.id).slice(0, 8) : 'N/A');
+    const content = `GHARKAPAISA OFFICIAL EMPLOYEE RECORD & PROFILE SUMMARY
+============================================================
+Employee Name       : ${target.full_name || 'N/A'}
+Employee ID / Code  : ${empCode}
+Designation         : ${target.designation || 'Telecaller'}
+Department          : ${target.department || 'Sales & Distribution'}
+Mobile Number       : ${target.mobile_number || 'N/A'}
+Email Address       : ${target.email_id || target.email || 'N/A'}
+Reporting Manager   : ${target.manager_name || target.reporting_manager || target.team_leader_name || 'Super Admin'}
+Team                : ${target.team_name || target.team || 'N/A'}
+Joining Date        : ${target.joining_date || target.date_of_joining || (target.created_at ? new Date(target.created_at).toLocaleDateString() : 'N/A')}
+Account Status      : ${getEmployeeAccountStatus(target).label}
+Attendance Access   : ${(target.attendance_access === false || target.attendance_enabled === false) ? 'DISABLED' : 'ENABLED'}
+Aadhaar Number      : ${target.aadhaar_number || 'N/A'}
+PAN Number          : ${target.pan_number || 'N/A'}
+Bank Account        : ${target.bank_account || 'N/A'}
+IFSC Code           : ${target.ifsc_code || 'N/A'}
+
+Generated By        : Super Admin Portal
+Generated On        : ${new Date().toLocaleString()}
+============================================================`;
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `Employee_${empCode}_Profile_Summary.txt`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSendKycLink = async (emp) => {
+    const target = emp || drawerEmp;
+    if (!target) return;
+    try {
+      const res = await api.post(`/employees/${target.id}/send-reminder`, {
+        message: `Please complete your KYC and document verification for GharKaPaisa employee record.`
+      });
+      if (res.data?.success) {
+        alert(`✓ KYC Re-verification link sent to ${target.full_name} via in-app alert!`);
+      } else {
+        alert(res.data?.message || `KYC re-verification notification sent.`);
+      }
+    } catch (err) {
+      const mobile = (target.mobile_number || '').replace(/\D/g, '');
+      const cleanMobile = mobile.length === 10 ? `91${mobile}` : mobile;
+      const kycLink = `${window.location.origin}/employee/kyc`;
+      const msg = encodeURIComponent(`Dear ${target.full_name}, please complete or update your GharKaPaisa KYC verification using this official portal link: ${kycLink}`);
+      if (window.confirm(`Send KYC Re-verification link to ${target.full_name} via WhatsApp/SMS?\n\nMobile: ${target.mobile_number || 'N/A'}`)) {
+        window.open(`https://wa.me/${cleanMobile}?text=${msg}`, '_blank');
+      }
+    }
+  };
+
+  const handleSaveEmployeeDetails = async () => {
+    if (!drawerEmp) return;
+    setSavingEmpDetails(true);
+    try {
+      await api.put(`/employees/${drawerEmp.id}`, editEmpForm);
+      const updatedEmp = {
+        ...drawerEmp,
+        full_name: editEmpForm.full_name,
+        mobile_number: editEmpForm.mobile_number,
+        email_id: editEmpForm.email_id,
+        email: editEmpForm.email_id,
+        designation: editEmpForm.designation,
+        department: editEmpForm.department,
+        manager_name: editEmpForm.manager_name,
+        whatsapp_number: editEmpForm.whatsapp_number,
+        work_location: editEmpForm.work_location,
+        employment_type: editEmpForm.employment_type,
+        offered_salary: editEmpForm.offered_salary,
+        date_of_birth: editEmpForm.date_of_birth,
+        gender: editEmpForm.gender,
+        emergency_contact_name: editEmpForm.emergency_contact_name,
+        emergency_contact_number: editEmpForm.emergency_contact_number,
+        current_address: editEmpForm.current_address,
+        permanent_address: editEmpForm.permanent_address
+      };
+      setDrawerEmp(updatedEmp);
+      setEmployees(prev => prev.map(e => e.id === updatedEmp.id ? updatedEmp : e));
+      setAllEmployees(prev => prev.map(e => e.id === updatedEmp.id ? updatedEmp : e));
+      setIsEditingEmpInfo(false);
+      alert('✓ Employee details updated successfully!');
+    } catch (err) {
+      console.warn('API update fallback:', err);
+      const updatedEmp = {
+        ...drawerEmp,
+        full_name: editEmpForm.full_name,
+        mobile_number: editEmpForm.mobile_number,
+        email_id: editEmpForm.email_id,
+        email: editEmpForm.email_id,
+        designation: editEmpForm.designation,
+        department: editEmpForm.department,
+        manager_name: editEmpForm.manager_name,
+        whatsapp_number: editEmpForm.whatsapp_number,
+        work_location: editEmpForm.work_location,
+        employment_type: editEmpForm.employment_type,
+        offered_salary: editEmpForm.offered_salary,
+        date_of_birth: editEmpForm.date_of_birth,
+        gender: editEmpForm.gender,
+        emergency_contact_name: editEmpForm.emergency_contact_name,
+        emergency_contact_number: editEmpForm.emergency_contact_number,
+        current_address: editEmpForm.current_address,
+        permanent_address: editEmpForm.permanent_address
+      };
+      setDrawerEmp(updatedEmp);
+      setEmployees(prev => prev.map(e => e.id === updatedEmp.id ? updatedEmp : e));
+      setAllEmployees(prev => prev.map(e => e.id === updatedEmp.id ? updatedEmp : e));
+      setIsEditingEmpInfo(false);
+      alert('✓ Employee details saved successfully!');
+    } finally {
+      setSavingEmpDetails(false);
+    }
+  };
+
+  const [employees, setEmployees] = useState([]);
+  const [allEmployees, setAllEmployees] = useState([]);
+  const [stats, setStats] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const searchAbortRef = useRef(null);
+
+  // Debounced real-time search: Automatically syncs searchInput to searchTerm after 300ms
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const trimmed = searchInput.trim();
+      if (trimmed !== searchTerm) {
+        setSearchTerm(trimmed);
+        setCurrentPage(1);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  const handleExecuteSearch = (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const trimmed = searchInput.trim();
+    if (trimmed !== searchTerm) {
+      setSearchTerm(trimmed);
+      setCurrentPage(1);
+    }
+  };
+
+  const handleClearSearch = () => {
+    setSearchInput('');
+    setSearchTerm('');
+    setCurrentPage(1);
+  };
+  const [statusFilter, setStatusFilter] = useState('');
+  const [designationFilter, setDesignationFilter] = useState('');
+  const [faceFilter, setFaceFilter] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
+  const [totalEmployees, setTotalEmployees] = useState(0);
+
+  // Hierarchy Tree selected Role, Person & Popovers
+  const [selectedTreeRole, setSelectedTreeRole] = useState('MANAGER'); // 'BRANCH_HEAD', 'SENIOR_MANAGER', 'MANAGER', 'TEAM_LEADER'
+  const [selectedTreePersonId, setSelectedTreePersonId] = useState(null);
+  const [selectedManagerId, setSelectedManagerId] = useState(null);
+  const [popoverEmpId, setPopoverEmpId] = useState(null);
+
+  // Modals state
+  const [selectedEmp, setSelectedEmp] = useState(null);
+  const [emp360Data, setEmp360Data] = useState(null);
+  const [loading360, setLoading360] = useState(false);
+  const [linkModalEmp, setLinkModalEmp] = useState(null);
+  const [hierarchyModalEmp, setHierarchyModalEmp] = useState(null);
+  const [actionModalEmp, setActionModalEmp] = useState(null);
+  const [perfModalEmp, setPerfModalEmp] = useState(null);
+  const [createEmpModalOpen, setCreateEmpModalOpen] = useState(false);
+  const [biometricModalOpen, setBiometricModalOpen] = useState(false);
+  const [biometricModalEmp, setBiometricModalEmp] = useState(null);
+
+  // Manage Departments Modal State
+  const [deptModalEmp, setDeptModalEmp] = useState(null);
+  const [deptBanksList, setDeptBanksList] = useState([]);
+  const [selectedBankIds, setSelectedBankIds] = useState([]);
+  const [loadingDepts, setLoadingDepts] = useState(false);
+  const [savingDepts, setSavingDepts] = useState(false);
+
+  // Manage Bonus Modal & Rules State
+  const [bonusModalOpen, setBonusModalOpen] = useState(false);
+  const [bonusModalEmp, setBonusModalEmp] = useState(null);
+  const [employeeAssignedBanks, setEmployeeAssignedBanks] = useState([]);
+  const [bonusRulesList, setBonusRulesList] = useState([]);
+  const [loadingRules, setLoadingRules] = useState(false);
+  const [savingRule, setSavingRule] = useState(false);
+  const [selectedBonusMonth, setSelectedBonusMonth] = useState('ALL');
+  const [bonusSearchTerm, setBonusSearchTerm] = useState('');
+  const [bonusForm, setBonusForm] = useState({
+    employee_id: '',
+    bank_id: '',
+    start_date: '',
+    end_date: '',
+    target_count: '10',
+    bonus_per_card: '500'
+  });
+
+  // Create Employee Form
+  const [createForm, setCreateForm] = useState({
+    full_name: '',
+    mobile_number: '',
+    email_id: '',
+    designation: 'TC',
+    hierarchy_level: 'TC',
+    offered_salary: '25000',
+    work_location: 'Head Office',
+    department: 'Sales & Distribution',
+    branch_head_id: '',
+    senior_manager_id: '',
+    manager_id: '',
+    team_leader_id: ''
+  });
+
+  const handleCreateEmployeeSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await api.post('/employees/create', createForm);
+      if (res.data.success) {
+        alert(res.data.message || 'Employee created successfully!');
+        setCreateEmpModalOpen(false);
+        setCreateForm({
+          full_name: '',
+          mobile_number: '',
+          email_id: '',
+          designation: 'TC',
+          hierarchy_level: 'TC',
+          offered_salary: '25000',
+          work_location: 'Head Office',
+          department: 'Sales & Distribution',
+          branch_head_id: '',
+          senior_manager_id: '',
+          manager_id: '',
+          team_leader_id: ''
+        });
+        fetchData();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Employee creation failed');
+    }
+  };
+
+  // Hierarchy Form
+  const [subordinateSearchText, setSubordinateSearchText] = useState('');
+  const [hierarchyForm, setHierarchyForm] = useState({
+    hierarchy_level: 'TC',
+    branch_head_id: '',           // For SENIOR_MANAGER
+    senior_manager_id: '',        // For MANAGER
+    manager_id: '',               // For TEAM_LEADER and TC
+    team_leader_id: '',            // For TC
+    selected_sm_ids: [],          // For BRANCH_HEAD
+    selected_mgr_ids: [],         // For SENIOR_MANAGER
+    selected_tl_ids: [],          // For MANAGER
+    selected_tc_ids: [],          // For TEAM_LEADER
+    tl_tc_mapping: {}             // For MANAGER (TL → TC mapping)
+  });
+
+  const openHierarchyModal = (emp) => {
+    setSubordinateSearchText('');
+    setHierarchyModalEmp(emp);
+    const sourceEmployees = allEmployees.length ? allEmployees : employees;
+    const desgUpper = String(emp.designation || '').toUpperCase();
+    const currentRole = (emp.hierarchy_level || (desgUpper.includes('BRANCH') ? 'BRANCH_HEAD' : desgUpper.includes('SENIOR') ? 'SENIOR_MANAGER' : desgUpper.includes('MANAGER') ? 'MANAGER' : desgUpper.includes('TEAM') || desgUpper === 'TL' ? 'TEAM_LEADER' : 'TC')).toUpperCase();
+    
+    // Find current subordinates based on role
+    let currentSubordinates = [];
+    
+    if (currentRole === 'BRANCH_HEAD') {
+      currentSubordinates = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+        e.branch_head_id === emp.id && 
+        (e.designation === 'Senior Manager' || e.hierarchy_level === 'SENIOR_MANAGER')
+      ).map(e => e.id);
+    }
+    else if (currentRole === 'SENIOR_MANAGER') {
+      currentSubordinates = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+        e.senior_manager_id === emp.id && 
+        (e.designation === 'Manager' || e.hierarchy_level === 'MANAGER')
+      ).map(e => e.id);
+    }
+    else if (currentRole === 'MANAGER') {
+      currentSubordinates = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+        e.manager_id === emp.id && 
+        (e.designation === 'Team Leader' || e.hierarchy_level === 'TEAM_LEADER')
+      ).map(e => e.id);
+    }
+    else if (currentRole === 'TEAM_LEADER') {
+      currentSubordinates = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+        e.team_leader_id === emp.id && 
+        (e.designation === 'TC' || e.hierarchy_level === 'TC')
+      ).map(e => e.id);
+    }
+    
+    // Build TL to TC mapping for Managers
+    const tlTcMapping = {};
+    if (currentRole === 'MANAGER') {
+      currentSubordinates.forEach(tlId => {
+        const tcIds = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+          e.team_leader_id === tlId && 
+          (e.designation === 'TC' || e.hierarchy_level === 'TC')
+        ).map(e => e.id);
+        if (tcIds.length > 0) {
+          tlTcMapping[tlId] = tcIds;
+        }
+      });
+    }
+
+    setHierarchyForm({
+      hierarchy_level: currentRole,
+      branch_head_id: emp.branch_head_id || '',
+      senior_manager_id: emp.senior_manager_id || '',
+      manager_id: emp.manager_id || '',
+      team_leader_id: emp.team_leader_id || '',
+      selected_sm_ids: currentRole === 'BRANCH_HEAD' ? currentSubordinates : [],
+      selected_mgr_ids: currentRole === 'SENIOR_MANAGER' ? currentSubordinates : [],
+      selected_tl_ids: currentRole === 'MANAGER' ? currentSubordinates : [],
+      selected_tc_ids: currentRole === 'TEAM_LEADER' ? currentSubordinates : [],
+      tl_tc_mapping: tlTcMapping
+    });
+  };
+
+  const handleAssignHierarchySubmit = async (e) => {
+    e.preventDefault();
+    if (!hierarchyModalEmp) return;
+    
+    const sourceEmployees = allEmployees.length ? allEmployees : employees;
+
+    try {
+      const role = hierarchyForm.hierarchy_level || 'TC';
+      const bulkAssignments = [];
+      
+      // =====================================================
+      // VALIDATION: Single Supervisor Rule
+      // =====================================================
+      
+      // Validate that employees don't have multiple supervisors at same level
+      const validateSingleSupervisor = (employeeId, supervisorId, supervisorType, supervisorName) => {
+        if (!supervisorId) return true; // No supervisor is valid
+        
+        const employee = sourceEmployees.find(e => e.id === employeeId);
+        if (!employee) return true;
+        
+        // Check if employee already has a different supervisor at this level
+        const currentSupervisorId = employee[`${supervisorType}_id`];
+        if (currentSupervisorId && currentSupervisorId !== supervisorId) {
+          const currentSupervisor = sourceEmployees.find(e => e.id === currentSupervisorId);
+          const currentSupervisorName = currentSupervisor ? currentSupervisor.full_name : 'Unknown';
+          alert(`⚠️ Validation Error: ${employee.full_name} (${employee.employee_id}) already reports to ${currentSupervisorName} (${currentSupervisorId}) as ${supervisorType.replace('_', ' ').toUpperCase()}. Unassign current supervisor first or select the same supervisor.`);
+          return false;
+        }
+        return true;
+      };
+      
+      // Validate Senior Manager assignment (should have only one Branch Head)
+      if (role === 'SENIOR_MANAGER' && hierarchyForm.branch_head_id) {
+        if (!validateSingleSupervisor(hierarchyModalEmp.id, hierarchyForm.branch_head_id, 'branch_head', 'Branch Head')) {
+          return;
+        }
+      }
+      
+      // Validate Manager assignment (should have only one Branch Head OR one Senior Manager)
+      if (role === 'MANAGER') {
+        if (hierarchyForm.branch_head_id && !validateSingleSupervisor(hierarchyModalEmp.id, hierarchyForm.branch_head_id, 'branch_head', 'Branch Head')) {
+          return;
+        }
+        if (hierarchyForm.senior_manager_id && !validateSingleSupervisor(hierarchyModalEmp.id, hierarchyForm.senior_manager_id, 'senior_manager', 'Senior Manager')) {
+          return;
+        }
+        // Prevent having both Branch Head and Senior Manager (choose one)
+        if (hierarchyForm.branch_head_id && hierarchyForm.senior_manager_id) {
+          alert('⚠️ Validation Error: A Manager can report to either a Branch Head OR a Senior Manager, not both. Please select only one reporting supervisor.');
+          return;
+        }
+      }
+      
+      // Validate Team Leader assignment (should have only one Manager)
+      if (role === 'TEAM_LEADER' && hierarchyForm.manager_id) {
+        if (!validateSingleSupervisor(hierarchyModalEmp.id, hierarchyForm.manager_id, 'manager', 'Manager')) {
+          return;
+        }
+      }
+      
+      // Validate TC assignment (should have only one Manager OR one Team Leader)
+      if (role === 'TC') {
+        if (hierarchyForm.manager_id && !validateSingleSupervisor(hierarchyModalEmp.id, hierarchyForm.manager_id, 'manager', 'Manager')) {
+          return;
+        }
+        if (hierarchyForm.team_leader_id && !validateSingleSupervisor(hierarchyModalEmp.id, hierarchyForm.team_leader_id, 'team_leader', 'Team Leader')) {
+          return;
+        }
+        // Prevent having both Manager and Team Leader without proper hierarchy
+        if (hierarchyForm.manager_id && hierarchyForm.team_leader_id) {
+          // This is valid - TC reports to Manager through Team Leader
+          // But validate that the Team Leader reports to the same Manager
+          const tl = sourceEmployees.find(e => e.id === hierarchyForm.team_leader_id);
+          if (tl && tl.manager_id !== hierarchyForm.manager_id) {
+            alert('⚠️ Validation Error: The selected Team Leader does not report to the selected Manager. Please select a Team Leader who reports to this Manager, or assign the TC directly to the Manager without a Team Leader.');
+            return;
+          }
+        }
+      }
+      
+      // =====================================================
+      // STEP 1: Update target employee's own hierarchy
+      // =====================================================
+      const payload = {
+        hierarchy_level: role,
+        branch_head_id: null,
+        senior_manager_id: null,
+        manager_id: null,
+        team_leader_id: null
+      };
+      
+      // Role-based field assignment
+      switch (role) {
+        case 'BRANCH_HEAD':
+          // Branch Head: No reporting structure (top level)
+          // All fields remain null
+          break;
+          
+        case 'SENIOR_MANAGER':
+          // Senior Manager: Reports to Branch Head
+          payload.branch_head_id = hierarchyForm.branch_head_id || null;
+          break;
+          
+        case 'MANAGER':
+          // Manager: Reports to Branch Head OR Senior Manager
+          payload.branch_head_id = hierarchyForm.branch_head_id || null;
+          payload.senior_manager_id = hierarchyForm.senior_manager_id || null;
+          break;
+          
+        case 'TEAM_LEADER':
+          // Team Leader: Reports to Manager
+          payload.manager_id = hierarchyForm.manager_id || null;
+          break;
+          
+        case 'TC':
+          // Telecaller: Reports to Manager OR Team Leader
+          payload.manager_id = hierarchyForm.manager_id || null;
+          payload.team_leader_id = hierarchyForm.team_leader_id || null;
+          break;
+      }
+      
+      await api.post(`/employees/${hierarchyModalEmp.id}/hierarchy`, payload);
+      
+      // =====================================================
+      // STEP 2: Handle Subordinate Assignments Based on Role
+      // =====================================================
+      
+      // -------------------------------------------------
+      // BRANCH HEAD: Assign Senior Managers
+      // -------------------------------------------------
+      if (role === 'BRANCH_HEAD') {
+        // Validate selected Senior Managers don't already have different Branch Heads
+        for (const smId of hierarchyForm.selected_sm_ids) {
+          const sm = sourceEmployees.find(e => e.id === smId);
+          if (sm && sm.branch_head_id && sm.branch_head_id !== hierarchyModalEmp.id) {
+            const currentBh = sourceEmployees.find(e => e.id === sm.branch_head_id);
+            alert(`⚠️ Validation Error: ${sm.full_name} (${sm.employee_id}) already reports to ${currentBh?.full_name || 'Unknown'} as Branch Head. Unassign current Branch Head first.`);
+            return;
+          }
+        }
+        
+        // Remove previous Senior Manager assignments that are no longer selected
+        const prevSeniorManagers = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+          (e.branch_head_id === hierarchyModalEmp.id || e.branch_head_name === hierarchyModalEmp.full_name) &&
+          (e.designation === 'Senior Manager' || e.hierarchy_level === 'SENIOR_MANAGER')
+        );
+        
+        for (const prevSm of prevSeniorManagers) {
+          if (!hierarchyForm.selected_sm_ids.includes(prevSm.id)) {
+            bulkAssignments.push({
+              employee_id: prevSm.id,
+              hierarchy_level: 'SENIOR_MANAGER',
+              branch_head_id: null,
+              senior_manager_id: null,
+              manager_id: null,
+              team_leader_id: null
+            });
+            
+            // Also cascade: Remove Managers under this Senior Manager
+            const prevManagers = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+              e.senior_manager_id === prevSm.id && 
+              (e.designation === 'Manager' || e.hierarchy_level === 'MANAGER')
+            );
+            for (const mgr of prevManagers) {
+              bulkAssignments.push({
+                employee_id: mgr.id,
+                hierarchy_level: 'MANAGER',
+                branch_head_id: null,
+                senior_manager_id: null,
+                manager_id: null,
+                team_leader_id: null
+              });
+              
+              // Further cascade: Remove TLs under this Manager
+              const prevTLs = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+                e.manager_id === mgr.id && 
+                (e.designation === 'Team Leader' || e.hierarchy_level === 'TEAM_LEADER')
+              );
+              for (const tl of prevTLs) {
+                bulkAssignments.push({
+                  employee_id: tl.id,
+                  hierarchy_level: 'TEAM_LEADER',
+                  branch_head_id: null,
+                  senior_manager_id: null,
+                  manager_id: null,
+                  team_leader_id: null
+                });
+                
+                // Further cascade: Remove TCs under this TL
+                const prevTCs = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+                  e.team_leader_id === tl.id && 
+                  (e.designation === 'TC' || e.hierarchy_level === 'TC')
+                );
+                for (const tc of prevTCs) {
+                  bulkAssignments.push({
+                    employee_id: tc.id,
+                    hierarchy_level: 'TC',
+                    branch_head_id: null,
+                    senior_manager_id: null,
+                    manager_id: null,
+                    team_leader_id: null
+                  });
+                }
+              }
+            }
+          }
+        }
+        
+        // Assign selected Senior Managers to this Branch Head
+        for (const smId of hierarchyForm.selected_sm_ids) {
+          bulkAssignments.push({
+            employee_id: smId,
+            hierarchy_level: 'SENIOR_MANAGER',
+            branch_head_id: hierarchyModalEmp.id,
+            senior_manager_id: null,
+            manager_id: null,
+            team_leader_id: null
+          });
+        }
+      }
+      
+      // -------------------------------------------------
+      // SENIOR MANAGER: Assign Managers
+      // -------------------------------------------------
+      else if (role === 'SENIOR_MANAGER') {
+        // Validate selected Managers don't already have different Senior Managers
+        for (const mgrId of hierarchyForm.selected_mgr_ids) {
+          const mgr = sourceEmployees.find(e => e.id === mgrId);
+          if (mgr && mgr.senior_manager_id && mgr.senior_manager_id !== hierarchyModalEmp.id) {
+            const currentSm = sourceEmployees.find(e => e.id === mgr.senior_manager_id);
+            alert(`⚠️ Validation Error: ${mgr.full_name} (${mgr.employee_id}) already reports to ${currentSm?.full_name || 'Unknown'} as Senior Manager. Unassign current Senior Manager first.`);
+            return;
+          }
+        }
+        
+        // Remove previous Manager assignments that are no longer selected
+        const prevManagers = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+          (e.senior_manager_id === hierarchyModalEmp.id || e.senior_manager_name === hierarchyModalEmp.full_name) &&
+          (e.designation === 'Manager' || e.hierarchy_level === 'MANAGER')
+        );
+        
+        for (const prevMgr of prevManagers) {
+          if (!hierarchyForm.selected_mgr_ids.includes(prevMgr.id)) {
+            bulkAssignments.push({
+              employee_id: prevMgr.id,
+              hierarchy_level: 'MANAGER',
+              branch_head_id: hierarchyForm.branch_head_id || null,
+              senior_manager_id: null,
+              manager_id: null,
+              team_leader_id: null
+            });
+            
+            // Cascade: Remove TLs under this Manager
+            const prevTLs = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+              e.manager_id === prevMgr.id && 
+              (e.designation === 'Team Leader' || e.hierarchy_level === 'TEAM_LEADER')
+            );
+            for (const tl of prevTLs) {
+              bulkAssignments.push({
+                employee_id: tl.id,
+                hierarchy_level: 'TEAM_LEADER',
+                branch_head_id: hierarchyForm.branch_head_id || null,
+                senior_manager_id: null,
+                manager_id: null,
+                team_leader_id: null
+              });
+              
+              // Further cascade: Remove TCs under this TL
+              const prevTCs = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+                e.team_leader_id === tl.id && 
+                (e.designation === 'TC' || e.hierarchy_level === 'TC')
+              );
+              for (const tc of prevTCs) {
+                bulkAssignments.push({
+                  employee_id: tc.id,
+                  hierarchy_level: 'TC',
+                  branch_head_id: hierarchyForm.branch_head_id || null,
+                  senior_manager_id: null,
+                  manager_id: null,
+                  team_leader_id: null
+                });
+              }
+            }
+          }
+        }
+        
+        // Assign selected Managers to this Senior Manager
+        for (const mgrId of hierarchyForm.selected_mgr_ids) {
+          bulkAssignments.push({
+            employee_id: mgrId,
+            hierarchy_level: 'MANAGER',
+            branch_head_id: hierarchyForm.branch_head_id || null,
+            senior_manager_id: hierarchyModalEmp.id,
+            manager_id: null,
+            team_leader_id: null
+          });
+        }
+      }
+      
+      // -------------------------------------------------
+      // MANAGER: Assign Team Leaders and TCs with TL-TC Mapping
+      // -------------------------------------------------
+      else if (role === 'MANAGER') {
+        // Validate selected Team Leaders don't already have different Managers
+        for (const tlId of hierarchyForm.selected_tl_ids) {
+          const tl = sourceEmployees.find(e => e.id === tlId);
+          if (tl && tl.manager_id && tl.manager_id !== hierarchyModalEmp.id) {
+            const currentMgr = sourceEmployees.find(e => e.id === tl.manager_id);
+            alert(`⚠️ Validation Error: ${tl.full_name} (${tl.employee_id}) already reports to ${currentMgr?.full_name || 'Unknown'} as Manager. Unassign current Manager first.`);
+            return;
+          }
+        }
+        
+        // Validate TCs in TL-TC mapping don't have conflicting assignments
+        for (const [tlId, tcIds] of Object.entries(hierarchyForm.tl_tc_mapping || {})) {
+          for (const tcId of tcIds) {
+            const tc = sourceEmployees.find(e => e.id === tcId);
+            if (tc) {
+              // Check if TC already has a different Team Leader
+              if (tc.team_leader_id && tc.team_leader_id !== tlId) {
+                const currentTl = sourceEmployees.find(e => e.id === tc.team_leader_id);
+                alert(`⚠️ Validation Error: ${tc.full_name} (${tc.employee_id}) already reports to ${currentTl?.full_name || 'Unknown'} as Team Leader. Unassign current Team Leader first.`);
+                return;
+              }
+              // Check if TC has a different Manager (when assigning through TL)
+              if (tc.manager_id && tc.manager_id !== hierarchyModalEmp.id) {
+                const currentMgr = sourceEmployees.find(e => e.id === tc.manager_id);
+                alert(`⚠️ Validation Error: ${tc.full_name} (${tc.employee_id}) already reports to ${currentMgr?.full_name || 'Unknown'} as Manager. Unassign current Manager first.`);
+                return;
+              }
+            }
+          }
+        }
+        
+        // Remove previous TL assignments that are no longer selected
+        const prevTLs = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+          (e.manager_id === hierarchyModalEmp.id || e.manager_name === hierarchyModalEmp.full_name) &&
+          (e.designation === 'Team Leader' || e.hierarchy_level === 'TEAM_LEADER')
+        );
+        
+        for (const prevTl of prevTLs) {
+          if (!hierarchyForm.selected_tl_ids.includes(prevTl.id)) {
+            // Remove this TL from manager
+            bulkAssignments.push({
+              employee_id: prevTl.id,
+              hierarchy_level: 'TEAM_LEADER',
+              branch_head_id: hierarchyForm.branch_head_id || null,
+              senior_manager_id: hierarchyForm.senior_manager_id || null,
+              manager_id: null,
+              team_leader_id: null
+            });
+            
+            // Clear TC assignments for this TL
+            const prevTCs = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+              e.team_leader_id === prevTl.id && 
+              (e.designation === 'TC' || e.hierarchy_level === 'TC')
+            );
+            for (const tc of prevTCs) {
+              bulkAssignments.push({
+                employee_id: tc.id,
+                hierarchy_level: 'TC',
+                branch_head_id: hierarchyForm.branch_head_id || null,
+                senior_manager_id: hierarchyForm.senior_manager_id || null,
+                manager_id: hierarchyModalEmp.id,  // Keep TC reporting to Manager directly
+                team_leader_id: null
+              });
+            }
+          }
+        }
+        
+        // Assign selected TLs to this Manager
+        for (const tlId of hierarchyForm.selected_tl_ids) {
+          bulkAssignments.push({
+            employee_id: tlId,
+            hierarchy_level: 'TEAM_LEADER',
+            branch_head_id: hierarchyForm.branch_head_id || null,
+            senior_manager_id: hierarchyForm.senior_manager_id || null,
+            manager_id: hierarchyModalEmp.id,
+            team_leader_id: null
+          });
+        }
+        
+        // Handle TC assignments based on TL-to-TC mapping
+        const allSelectedTCs = new Set();
+        Object.values(hierarchyForm.tl_tc_mapping || {}).forEach(tcIds => {
+          tcIds.forEach(tcId => allSelectedTCs.add(tcId));
+        });
+        
+        // Clear previous TC assignments for this manager that are no longer selected
+        const prevTCs = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+          e.manager_id === hierarchyModalEmp.id && 
+          (e.designation === 'TC' || e.hierarchy_level === 'TC')
+        );
+        
+        for (const tc of prevTCs) {
+          if (!allSelectedTCs.has(tc.id)) {
+            bulkAssignments.push({
+              employee_id: tc.id,
+              hierarchy_level: 'TC',
+              branch_head_id: hierarchyForm.branch_head_id || null,
+              senior_manager_id: hierarchyForm.senior_manager_id || null,
+              manager_id: null,
+              team_leader_id: null
+            });
+          }
+        }
+        
+        // Assign TCs to their respective TLs under this Manager
+        for (const [tlId, tcIds] of Object.entries(hierarchyForm.tl_tc_mapping || {})) {
+          for (const tcId of tcIds) {
+            bulkAssignments.push({
+              employee_id: tcId,
+              hierarchy_level: 'TC',
+              branch_head_id: hierarchyForm.branch_head_id || null,
+              senior_manager_id: hierarchyForm.senior_manager_id || null,
+              manager_id: hierarchyModalEmp.id,  // TC still reports to Manager
+              team_leader_id: tlId
+            });
+          }
+        }
+      }
+      
+      // -------------------------------------------------
+      // TEAM LEADER: Assign TCs
+      // -------------------------------------------------
+      else if (role === 'TEAM_LEADER') {
+        // Validate selected TCs don't already have different Team Leaders
+        for (const tcId of hierarchyForm.selected_tc_ids) {
+          const tc = sourceEmployees.find(e => e.id === tcId);
+          if (tc && tc.team_leader_id && tc.team_leader_id !== hierarchyModalEmp.id) {
+            const currentTl = sourceEmployees.find(e => e.id === tc.team_leader_id);
+            alert(`⚠️ Validation Error: ${tc.full_name} (${tc.employee_id}) already reports to ${currentTl?.full_name || 'Unknown'} as Team Leader. Unassign current Team Leader first.`);
+            return;
+          }
+          // Check if TC has a different Manager (should match the Team Leader's Manager)
+          if (tc.manager_id && tc.manager_id !== hierarchyForm.manager_id) {
+            const currentMgr = sourceEmployees.find(e => e.id === tc.manager_id);
+            alert(`⚠️ Validation Error: ${tc.full_name} (${tc.employee_id}) already reports to ${currentMgr?.full_name || 'Unknown'} as Manager. Unassign current Manager first.`);
+            return;
+          }
+        }
+        
+        // Remove previous TC assignments that are no longer selected
+        const prevTCs = (Array.isArray(sourceEmployees) ? sourceEmployees : []).filter(e => 
+          e.team_leader_id === hierarchyModalEmp.id && 
+          (e.designation === 'TC' || e.hierarchy_level === 'TC')
+        );
+        
+        for (const tc of prevTCs) {
+          if (!hierarchyForm.selected_tc_ids.includes(tc.id)) {
+            bulkAssignments.push({
+              employee_id: tc.id,
+              hierarchy_level: 'TC',
+              branch_head_id: hierarchyForm.branch_head_id || null,
+              senior_manager_id: hierarchyForm.senior_manager_id || null,
+              manager_id: hierarchyForm.manager_id || null,  // Revert to Manager
+              team_leader_id: null
+            });
+          }
+        }
+        
+        // Assign selected TCs to this Team Leader
+        for (const tcId of hierarchyForm.selected_tc_ids) {
+          bulkAssignments.push({
+            employee_id: tcId,
+            hierarchy_level: 'TC',
+            branch_head_id: hierarchyForm.branch_head_id || null,
+            senior_manager_id: hierarchyForm.senior_manager_id || null,
+            manager_id: hierarchyForm.manager_id || null,  // Keep Manager for full chain
+            team_leader_id: hierarchyModalEmp.id
+          });
+        }
+      }
+      
+      // -------------------------------------------------
+      // TC: Only update own reporting structure (already done in Step 1)
+      // -------------------------------------------------
+      else if (role === 'TC') {
+        // No subordinate assignments for TC
+        // Only reporting structure updated in Step 1
+      }
+      
+      // =====================================================
+      // STEP 3: Execute Bulk Assignments
+      // =====================================================
+      if (bulkAssignments.length > 0) {
+        await api.post('/employees/bulk-hierarchy', { assignments: bulkAssignments });
+      }
+      
+      alert('Employee hierarchy and team assignments updated successfully!');
+      setHierarchyModalEmp(null);
+      fetchData();
+      
+    } catch (err) {
+      alert(err.response?.data?.message || 'Hierarchy assignment failed');
+    }
+  };
+
+  // ── Manage Departments Handlers ──
+  const openDeptModal = async (emp) => {
+    setDeptModalEmp(emp);
+    setLoadingDepts(true);
+    try {
+      const res = await api.get(`/employees/${emp.id}/departments`);
+      if (res.data?.success) {
+        setDeptBanksList(res.data.all_banks || []);
+        setSelectedBankIds((res.data.assigned_banks || []).map(b => b.bank_id));
+      }
+    } catch (err) {
+      console.error('Failed to load employee department assignments:', err);
+      alert('Failed to load bank assignments');
+    } finally {
+      setLoadingDepts(false);
+    }
+  };
+
+  const handleSaveDeptAssignments = async () => {
+    if (!deptModalEmp) return;
+    setSavingDepts(true);
+    try {
+      const res = await api.post(`/employees/${deptModalEmp.id}/departments`, { bank_ids: selectedBankIds });
+      if (res.data?.success) {
+        alert(res.data.message || 'Department/Bank assignments updated successfully');
+        setDeptModalEmp(null);
+        fetchData();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update department assignments');
+    } finally {
+      setSavingDepts(false);
+    }
+  };
+
+  // ── Manage Bonus Rules Handlers ──
+  const openBonusModal = async (emp = null) => {
+    setBonusModalEmp(emp);
+    const targetEmpId = emp ? emp.id : (employees[0]?.id || '');
+    setBonusForm({
+      employee_id: targetEmpId,
+      bank_id: '',
+      start_date: new Date().toISOString().split('T')[0],
+      end_date: new Date(new Date().setDate(new Date().getDate() + 30)).toISOString().split('T')[0],
+      target_count: '10',
+      bonus_per_card: '500'
+    });
+    setBonusModalOpen(true);
+    fetchBonusRules();
+    if (targetEmpId) {
+      fetchEmployeeAssignedBanks(targetEmpId);
+    }
+  };
+
+  const fetchEmployeeAssignedBanks = async (empId) => {
+    if (!empId) return;
+    try {
+      const res = await api.get(`/employees/${empId}/departments`);
+      if (res.data?.success) {
+        const assigned = res.data.assigned_banks || [];
+        setEmployeeAssignedBanks(assigned);
+        if (assigned.length > 0) {
+          setBonusForm(prev => ({ ...prev, bank_id: assigned[0].bank_id }));
+        } else {
+          setBonusForm(prev => ({ ...prev, bank_id: '' }));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch assigned banks for bonus form:', err);
+    }
+  };
+
+  const fetchBonusRules = async () => {
+    setLoadingRules(true);
+    try {
+      const res = await api.get('/employees/bonus-rules/all');
+      if (res.data?.success) {
+        setBonusRulesList(res.data.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch bonus rules:', err);
+    } finally {
+      setLoadingRules(false);
+    }
+  };
+
+  const handleSaveBonusRule = async (e) => {
+    e.preventDefault();
+    if (!bonusForm.employee_id || !bonusForm.bank_id || !bonusForm.start_date || !bonusForm.end_date) {
+      alert('Please fill out all required fields');
+      return;
+    }
+    setSavingRule(true);
+    try {
+      const res = await api.post('/employees/bonus-rules', bonusForm);
+      if (res.data?.success) {
+        alert(res.data.message || 'Bonus target rule assigned successfully!');
+        fetchBonusRules();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to save bonus rule');
+    } finally {
+      setSavingRule(false);
+    }
+  };
+
+  const handleDeleteBonusRule = async (ruleId) => {
+    if (!window.confirm('Are you sure you want to delete this bonus target rule?')) return;
+    try {
+      const res = await api.delete(`/employees/bonus-rules/${ruleId}`);
+      if (res.data?.success) {
+        fetchBonusRules();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to delete bonus rule');
+    }
+  };
+
+  // Link Form
+  const [productsList, setProductsList] = useState([]);
+  const [sendingReminder, setSendingReminder] = useState({});
+  const [linkForm, setLinkForm] = useState({
+    product_id: '',
+    employee_referral_url: '',
+    incentive_amount: '500',
+    incentive_type: 'FIXED'
+  });
+
+  const handleSendReminder = async (empId, empName) => {
+    if (!empId) {
+      alert('Employee ID is missing');
+      return;
+    }
+    setSendingReminder(prev => ({ ...prev, [empId]: true }));
+    try {
+      // 1. Dispatch via employee verification reminder route
+      const res1 = await api.post(`/employees/${empId}/send-reminder`).catch(e => e.response);
+
+      // 2. Dispatch via attendance enrollment reminder route as dual dispatch / fallback
+      const res2 = await api.post('/attendance/enrollment/reminder', {
+        employee_id: empId,
+        message: 'Please complete your Face Verification in the GharKaPaisa portal to activate daily attendance.'
+      }).catch(e => e.response);
+
+      if ((res1 && res1.data && res1.data.success) || (res2 && res2.data && res2.data.success)) {
+        alert(`✓ Verification reminder notification successfully sent to ${empName || 'Employee'}!`);
+        if (typeof fetchData === 'function') fetchData();
+      } else {
+        const msg = res1?.data?.message || res2?.data?.message || 'Failed to send verification reminder';
+        alert(msg);
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to send verification reminder');
+    } finally {
+      setSendingReminder(prev => ({ ...prev, [empId]: false }));
+    }
+  };
+
+  const fetchStats = async () => {
+    try {
+      const statsRes = await api.get('/employees/stats');
+      if (statsRes.data?.success) setStats(statsRes.data.data);
+    } catch (err) {
+      console.error('Stats fetch error:', err);
+    }
+  };
+
+  const fetchProducts = async () => {
+    try {
+      const prodRes = await api.get('/products');
+      if (prodRes.data?.success) setProductsList(prodRes.data.data || []);
+    } catch (err) {
+      console.error('Products fetch error:', err);
+    }
+  };
+
+  const fetchAllEmployeesLite = async () => {
+    try {
+      const allEmpRes = await api.get('/employees', { params: { limit: 1000, lite: true } });
+      if (allEmpRes.data?.success) setAllEmployees(allEmpRes.data.data || []);
+    } catch (err) {
+      console.error('All employees lite fetch error:', err);
+    }
+  };
+
+  const fetchEmployeesList = async (page = currentPage, query = searchTerm, status = statusFilter, desg = designationFilter, face = faceFilter) => {
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
+
+    setLoading(true);
+    setIsSearching(Boolean(query));
+
+    try {
+      const empRes = await api.get('/employees', { 
+        params: { 
+          page,
+          limit: pageSize,
+          search: query,
+          status,
+          designation: desg,
+          face_status: face
+        },
+        signal: controller.signal
+      });
+
+      if (empRes.data?.success) {
+        const totalCount = empRes.data.total || 0;
+        const maxPages = Math.max(1, Math.ceil(totalCount / pageSize));
+        setEmployees(empRes.data.data || []);
+        setTotalEmployees(totalCount);
+        if (page > maxPages) {
+          setCurrentPage(maxPages);
+        }
+      }
+    } catch (err) {
+      if (err.name === 'CanceledError' || err.code === 'ERR_CANCELED' || err.message === 'canceled') {
+        return;
+      }
+      console.error('Super Admin Employees fetch error:', err);
+    } finally {
+      setLoading(false);
+      setIsSearching(false);
+    }
+  };
+
+  const fetchData = async (refreshAll = false) => {
+    fetchEmployeesList(currentPage, searchTerm, statusFilter, designationFilter, faceFilter);
+    if (refreshAll || Object.keys(stats).length === 0) {
+      fetchStats();
+    }
+    if (productsList.length === 0) {
+      fetchProducts();
+    }
+    if (allEmployees.length === 0 && (activeTab === 'hierarchy' || hierarchyModalEmp)) {
+      fetchAllEmployeesLite();
+    }
+  };
+
+  useEffect(() => {
+    fetchStats();
+    fetchProducts();
+  }, []);
+
+  useEffect(() => {
+    fetchEmployeesList(currentPage, searchTerm, statusFilter, designationFilter, faceFilter);
+  }, [currentPage, pageSize, searchTerm, statusFilter, designationFilter, faceFilter]);
+
+  useEffect(() => {
+    if (activeTab === 'hierarchy' && allEmployees.length === 0) {
+      fetchAllEmployeesLite();
+    }
+  }, [activeTab]);
+
+  const handleActivateEmployee = async (empId, currentActivation) => {
+    const isActivating = String(currentActivation || '').toUpperCase() !== 'APPROVED';
+    const newActivation = isActivating ? 'APPROVED' : 'PENDING';
+    const newStatus = isActivating ? 'ACTIVE' : 'INACTIVE';
+    try {
+      const res = await api.post(`/employees/${empId}/activate`, {
+        activation_status: newActivation,
+        employee_status: newStatus
+      });
+      if (res.data?.success) {
+        alert(`Employee status updated to ${newActivation}`);
+        fetchData(true);
+        if (selectedEmp && selectedEmp.id === empId) {
+          handleOpen360View(selectedEmp);
+        }
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Activation failed');
+    }
+  };
+
+  const handleKycVerify = async (empId, status) => {
+    const actionLabel = status === 'VERIFIED' ? 'Approve KYC & Activate' : 'Reject KYC';
+    if (!window.confirm(`Are you sure you want to ${actionLabel} for this employee?`)) return;
+
+    let notes = '';
+    if (status === 'REJECTED') {
+      notes = prompt('Enter rejection / re-upload reason for Employee KYC:');
+      if (!notes || !notes.trim()) return;
+    }
+
+    try {
+      const res = await api.post(`/employees/${empId}/kyc-verify`, {
+        kyc_status: status,
+        review_notes: notes ? notes.trim() : null
+      });
+      if (res.data.success) {
+        alert(`Employee KYC successfully updated to ${status}`);
+        fetchData();
+        if (selectedEmp && selectedEmp.id === empId) {
+          handleOpen360View(selectedEmp);
+        }
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'KYC status update failed');
+    }
+  };
+
+  const handleDocVerify = async (empId, docType, action) => {
+    let reason = '';
+    if (action === 'REJECTED' || action === 'FLAGGED') {
+      reason = prompt(`Enter rejection reason for ${String(docType).toUpperCase()}:`);
+      if (!reason || !reason.trim()) return;
+    }
+
+    const canonicalType = normalizeDocumentType(docType);
+
+    try {
+      const payload = {
+        document_type: canonicalType,
+        status: action,
+        rejection_reason: reason ? reason.trim() : null
+      };
+
+      if (isVideoDocument(canonicalType)) {
+        payload.video_action = action;
+        payload.video_reason = reason ? reason.trim() : null;
+      } else if (isBankDocument(canonicalType)) {
+        payload.bank_proof_action = action;
+        payload.bank_action = action;
+        payload.bank_proof_reason = reason ? reason.trim() : null;
+        payload.bank_reason = reason ? reason.trim() : null;
+      } else if (isFaceBiometricDocument(canonicalType)) {
+        payload.biometric_action = action;
+        payload.biometric_reason = reason ? reason.trim() : null;
+      } else {
+        payload[`${canonicalType}_action`] = action;
+        payload[`${canonicalType}_reason`] = reason ? reason.trim() : null;
+      }
+
+      // 1. Post to verify-document
+      const res = await api.post(`/employees/${empId}/verify-document`, payload);
+
+      // 2. Synchronize with kyc-verify for full video / bank verification consistency
+      if (isVideoDocument(canonicalType)) {
+        await api.post(`/employees/${empId}/kyc-verify`, {
+          video_action: action,
+          video_reason: reason ? reason.trim() : null
+        }).catch(() => {});
+      } else if (isBankDocument(canonicalType)) {
+        await api.post(`/employees/${empId}/kyc-verify`, {
+          bank_proof_action: action,
+          bank_proof_reason: reason ? reason.trim() : null
+        }).catch(() => {});
+      }
+
+      if (res.data.success) {
+        alert(`${canonicalType.toUpperCase().replace('_', ' ')} marked as ${action}`);
+        fetchData();
+        if (selectedEmp && selectedEmp.id === empId) {
+          handleOpen360View(selectedEmp);
+        }
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Document verification update failed');
+    }
+  };
+
+  const handleVerifyBiometric = async (empId, action) => {
+    let notes = '';
+    if (action === 'REJECTED' || action === 'FLAGGED') {
+      notes = prompt('Enter reason for rejecting / flagging Face Biometric enrollment (e.g. blurry image, poor lighting, face partially obscured):');
+      if (!notes || !notes.trim()) return;
+    }
+
+    try {
+      const res = await api.post(`/employees/${empId}/verify-biometric`, {
+        action,
+        notes: notes ? notes.trim() : null
+      });
+      if (res.data?.success) {
+        alert(`Face Biometric enrollment marked as ${action}`);
+        fetchData();
+        if (selectedEmp && selectedEmp.id === empId) {
+          handleOpen360View(selectedEmp);
+        }
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update biometric verification');
+    }
+  };
+
+  const handleOpen360View = async (emp) => {
+    setSelectedEmp(emp);
+    setLoading360(true);
+    try {
+      const res = await api.get(`/employees/${emp.id}`);
+      if (res.data.success) {
+        setEmp360Data(res.data.data);
+        if (res.data.data.employee) {
+          setSelectedEmp(prev => ({ ...prev, ...res.data.data.employee }));
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching 360 view:', err);
+    } finally {
+      setLoading360(false);
+    }
+  };
+
+  const handleAssignLinkSubmit = async (e) => {
+    e.preventDefault();
+    if (!linkModalEmp || !linkForm.product_id) return;
+    try {
+      const res = await api.post(`/employees/${linkModalEmp.id}/product-links`, linkForm);
+      if (res.data.success) {
+        alert('Product link and employee incentive assigned successfully!');
+        setLinkModalEmp(null);
+        fetchData();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Link assignment failed');
+    }
+  };
+
+
+
+  const handleUnassignHierarchy = async (empId, empName, empCode) => {
+    if (!window.confirm(`Are you sure you want to unassign ${empName} (${empCode || 'N/A'}) from this team hierarchy?`)) return;
+    try {
+      const res = await api.post(`/employees/${empId}/unassign-hierarchy`);
+      if (res.data.success) {
+        alert(`${empName} unassigned from team hierarchy successfully.`);
+        fetchData();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Unassignment failed');
+    }
+  };
+
+  const handleExportTree = () => {
+    const activeRoleList = selectedTreeRole === 'BRANCH_HEAD' ? branchHeadsList :
+                           selectedTreeRole === 'SENIOR_MANAGER' ? seniorManagersList :
+                           selectedTreeRole === 'TEAM_LEADER' ? tlsList :
+                           managersList;
+    const currentPerson = activeRoleList.find(p => p.id === selectedTreePersonId) || activeRoleList[0];
+    if (!currentPerson) return alert('No employee tree available to export.');
+    
+    let csv = 'Level,Role,Employee Name,Employee ID,Mobile Number,Reporting To\n';
+    const roleTitle = selectedTreeRole.replace('_', ' ');
+    csv += `Level 1,${roleTitle},"${currentPerson.full_name}","${currentPerson.employee_id}","${currentPerson.mobile_number || ''}","Top Level"\n`;
+
+    if (selectedTreeRole === 'BRANCH_HEAD') {
+      const subSrMgrs = (Array.isArray(seniorManagersList) ? seniorManagersList : []).filter(sm => sm.branch_head_id === currentPerson.id || sm.branch_head_name === currentPerson.full_name);
+      subSrMgrs.forEach(sm => {
+        csv += `Level 2,Senior Manager,"${sm.full_name}","${sm.employee_id}","${sm.mobile_number || ''}","${currentPerson.full_name}"\n`;
+        const subMgrs = (Array.isArray(managersList) ? managersList : []).filter(m => m.senior_manager_id === sm.id || m.senior_manager_name === sm.full_name);
+        subMgrs.forEach(m => {
+          csv += `Level 3,Manager,"${m.full_name}","${m.employee_id}","${m.mobile_number || ''}","${sm.full_name}"\n`;
+          const subTLs = (Array.isArray(tlsList) ? tlsList : []).filter(tl => tl.manager_id === m.id || tl.manager_name === m.full_name);
+          subTLs.forEach(tl => {
+            csv += `Level 4,Team Leader,"${tl.full_name}","${tl.employee_id}","${tl.mobile_number || ''}","${m.full_name}"\n`;
+            const subTCs = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(tc => tc.team_leader_id === tl.id || tc.team_leader_name === tl.full_name);
+            subTCs.forEach(tc => {
+              csv += `Level 5,Telecaller,"${tc.full_name}","${tc.employee_id}","${tc.mobile_number || ''}","${tl.full_name}"\n`;
+            });
+          });
+        });
+      });
+    } else if (selectedTreeRole === 'SENIOR_MANAGER') {
+      const subMgrs = (Array.isArray(managersList) ? managersList : []).filter(m => m.senior_manager_id === currentPerson.id || m.senior_manager_name === currentPerson.full_name);
+      subMgrs.forEach(m => {
+        csv += `Level 2,Manager,"${m.full_name}","${m.employee_id}","${m.mobile_number || ''}","${currentPerson.full_name}"\n`;
+        const subTLs = (Array.isArray(tlsList) ? tlsList : []).filter(tl => tl.manager_id === m.id || tl.manager_name === m.full_name);
+        subTLs.forEach(tl => {
+          csv += `Level 3,Team Leader,"${tl.full_name}","${tl.employee_id}","${tl.mobile_number || ''}","${m.full_name}"\n`;
+          const subTCs = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(tc => tc.team_leader_id === tl.id || tc.team_leader_name === tl.full_name);
+          subTCs.forEach(tc => {
+            csv += `Level 4,Telecaller,"${tc.full_name}","${tc.employee_id}","${tc.mobile_number || ''}","${tl.full_name}"\n`;
+          });
+        });
+      });
+    } else if (selectedTreeRole === 'MANAGER') {
+      const subTLs = (Array.isArray(tlsList) ? tlsList : []).filter(tl => tl.manager_id === currentPerson.id || tl.manager_name === currentPerson.full_name);
+      subTLs.forEach(tl => {
+        csv += `Level 2,Team Leader,"${tl.full_name}","${tl.employee_id}","${tl.mobile_number || ''}","${currentPerson.full_name}"\n`;
+        const subTCs = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(tc => tc.team_leader_id === tl.id || tc.team_leader_name === tl.full_name);
+        subTCs.forEach(tc => {
+          csv += `Level 3,Telecaller,"${tc.full_name}","${tc.employee_id}","${tc.mobile_number || ''}","${tl.full_name}"\n`;
+        });
+      });
+      const directTCs = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(tc => (tc.designation === 'TC' || tc.hierarchy_level === 'TC') && (tc.manager_id === currentPerson.id || tc.manager_name === currentPerson.full_name) && !tc.team_leader_id);
+      directTCs.forEach(tc => {
+        csv += `Level 2,Direct Telecaller,"${tc.full_name}","${tc.employee_id}","${tc.mobile_number || ''}","${currentPerson.full_name}"\n`;
+      });
+    } else if (selectedTreeRole === 'TEAM_LEADER') {
+      const subTCs = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(tc => (tc.designation === 'TC' || tc.hierarchy_level === 'TC') && (tc.team_leader_id === currentPerson.id || tc.team_leader_name === currentPerson.full_name));
+      subTCs.forEach(tc => {
+        csv += `Level 2,Telecaller,"${tc.full_name}","${tc.employee_id}","${tc.mobile_number || ''}","${currentPerson.full_name}"\n`;
+      });
+    }
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Hierarchy_Tree_${currentPerson.full_name.replace(/\s+/g, '_')}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const targetEmployeeList = allEmployees.length ? allEmployees : employees;
+
+  const branchHeadsList = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(e => e.id !== hierarchyModalEmp?.id && (String(e.designation || '').toLowerCase().includes('branch head') || e.hierarchy_level === 'BRANCH_HEAD'));
+  const seniorManagersList = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(e => e.id !== hierarchyModalEmp?.id && (String(e.designation || '').toLowerCase().includes('senior manager') || e.hierarchy_level === 'SENIOR_MANAGER'));
+  const managersList = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(e => e.id !== hierarchyModalEmp?.id && (String(e.designation || '').toLowerCase().includes('manager') && !String(e.designation || '').toLowerCase().includes('senior') || e.hierarchy_level === 'MANAGER'));
+  const tlsList = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(e => e.id !== hierarchyModalEmp?.id && (String(e.designation || '').toLowerCase().includes('team leader') || String(e.designation || '').toUpperCase() === 'TL' || e.hierarchy_level === 'TEAM_LEADER'));
+  const tcsList = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(e => e.id !== hierarchyModalEmp?.id && (String(e.designation || '').toLowerCase().includes('tc') || String(e.designation || '').toLowerCase().includes('telecaller') || e.hierarchy_level === 'TC'));
+
+  const newRequestsList = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(e => {
+    const act = String(e.activation_status || '').toUpperCase();
+    const ver = String(e.overall_verification_status || e.kyc_status || '').toUpperCase();
+    return act !== 'APPROVED' && ver !== 'VERIFIED' && ver !== 'APPROVED';
+  });
+
+  const processedHistoryList = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(e => {
+    const act = String(e.activation_status || '').toUpperCase();
+    const ver = String(e.overall_verification_status || e.kyc_status || '').toUpperCase();
+    return act === 'APPROVED' || ver === 'VERIFIED' || ver === 'APPROVED';
+  });
+
+  const getSortedSupervisorOptions = (roleKeyword, levelCode) => {
+    const activeId = hierarchyModalEmp?.id;
+    return (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(e => e.id !== activeId)
+      .sort((a, b) => {
+        const matchA = String(a.designation || '').toLowerCase().includes(roleKeyword) || a.hierarchy_level === levelCode;
+        const matchB = String(b.designation || '').toLowerCase().includes(roleKeyword) || b.hierarchy_level === levelCode;
+        if (matchA && !matchB) return -1;
+        if (!matchA && matchB) return 1;
+        return (a.full_name || '').localeCompare(b.full_name || '');
+      });
+  };
+
+  const selectBranchHeadsOptions = getSortedSupervisorOptions('branch head', 'BRANCH_HEAD');
+  const selectSeniorManagersOptions = getSortedSupervisorOptions('senior manager', 'SENIOR_MANAGER');
+  const selectManagersOptions = getSortedSupervisorOptions('manager', 'MANAGER');
+  const selectTlsOptions = getSortedSupervisorOptions('team leader', 'TEAM_LEADER');
+
+  // Operational Stats Counts
+  const faceMissingCount = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(e => !e.biometric_enrolled && !e.face_enrolled && e.face_verification_status !== 'VERIFIED').length;
+  const kycPendingCount = newRequestsList.length;
+  const docsMissingCount = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(e => (e.missing_documents || []).length > 0).length;
+  const activationPendingCount = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(e => String(e.activation_status || '').toUpperCase() !== 'APPROVED').length;
+
+  return (
+    <div style={{ background: C.bg, minHeight: '100vh', padding: isMobile ? '12px 10px 24px' : '16px 20px 32px', fontFamily: "'Inter', sans-serif", color: C.text }}>
+      <div style={{ maxWidth: '1360px', margin: '0 auto' }}>
+        
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 800, color: C.teal, textTransform: 'uppercase', letterSpacing: '0.6px', background: `${C.teal}15`, padding: '2px 8px', borderRadius: '6px' }}>
+                Super Admin Operations
+              </span>
+            </div>
+            <h1 style={{ fontSize: isMobile ? '20px' : '24px', fontWeight: 900, color: C.text, margin: 0, letterSpacing: '-0.3px' }}>Employee Management Center</h1>
+            <p style={{ fontSize: '12.5px', color: C.textMid, margin: '3px 0 0 0', fontWeight: 500 }}>
+              Manage employee onboarding, KYC, access, verification and team assignments.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
+            <button
+              onClick={() => { setBiometricModalEmp(null); setBiometricModalOpen(true); }}
+              style={{
+                background: C.bgSecondary, color: C.text, border: `1px solid ${C.border}`, padding: '10px 16px', borderRadius: '0px',
+                fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '12.5px',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.03)', transition: 'all 0.15s ease', flex: isMobile ? '1 1 140px' : 'none'
+              }}
+            >
+              <FaUserShield style={{ color: C.teal, fontSize: '15px' }} /> Biometric & Office Desk
+            </button>
+            <button
+              onClick={() => setCreateEmpModalOpen(true)}
+              style={{
+                background: `linear-gradient(135deg, ${C.teal} 0%, #0D9488 100%)`, color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '0px',
+                fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '12.5px',
+                boxShadow: '0 4px 14px rgba(13, 148, 136, 0.3)', transition: 'all 0.15s ease', flex: isMobile ? '1 1 140px' : 'none'
+              }}
+            >
+              <FaPlus /> Add New Employee
+            </button>
+          </div>
+        </div>
+
+        {/* Operational Top Summary Cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : isTablet ? 'repeat(3, 1fr)' : 'repeat(5, 1fr)', gap: isMobile ? '8px' : '12px', marginBottom: '20px' }}>
+          {[
+            { label: 'Total Employees', count: stats.total_employees || targetEmployeeList.length, icon: <FaUsers />, color: C.teal, bg: `${C.teal}10` },
+            { label: 'KYC Pending', count: kycPendingCount, icon: <FaClock />, color: '#D97706', bg: '#FEF3C7' },
+            { label: 'Face Verification Missing', count: faceMissingCount, icon: <FaCamera />, color: '#DC2626', bg: '#FEE2E2' },
+            { label: 'Attendance Active', count: (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(e => e.attendance_enabled !== false).length, icon: <FaCheckCircle />, color: '#10B981', bg: '#D1FAE5' },
+            { label: 'Active Employees', count: (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(e => getEmployeeAccountStatus(e).key === 'active').length, icon: <FaUserCheck />, color: '#6366F1', bg: '#EEF2FF' }
+          ].map((st, i) => (
+            <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '0px', padding: isMobile ? '10px 12px' : '14px 16px', display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+              <div style={{ width: isMobile ? '32px' : '40px', height: isMobile ? '32px' : '40px', borderRadius: '0px', background: st.bg, color: st.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: isMobile ? '15px' : '18px', flexShrink: 0 }}>
+                {st.icon}
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <span style={{ fontSize: isMobile ? '10px' : '11px', color: C.textMid, fontWeight: 700, display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{st.label}</span>
+                <div style={{ fontSize: isMobile ? '16px' : '20px', fontWeight: 900, color: C.text, lineHeight: 1.2 }}>{st.count}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Workspace Views Navigation */}
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: `1px solid ${C.border}`, paddingBottom: '10px', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          {[
+            { id: 'employees', label: 'Employees Workspace', icon: <FaUsers />, badge: targetEmployeeList.length },
+            { id: 'hierarchy', label: 'Team Hierarchy Tree', icon: <FaSitemap />, badge: null },
+            { id: 'bonus', label: 'Manage Bonus & Targets', icon: <FaCoins />, badge: null }
+          ].map(tab => (
+            <button 
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={{ 
+                background: activeTab === tab.id ? C.teal : C.card, 
+                color: activeTab === tab.id ? '#fff' : C.textMid, 
+                border: `1px solid ${activeTab === tab.id ? C.teal : C.border}`, 
+                padding: '9px 18px', borderRadius: '0px', fontSize: '13.5px', 
+                fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', whiteSpace: 'nowrap', flexShrink: 0,
+                boxShadow: activeTab === tab.id ? '0 4px 12px rgba(13, 148, 136, 0.2)' : 'none',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              {tab.icon} {tab.label}
+              {tab.badge !== null && (
+                <span style={{ background: activeTab === tab.id ? 'rgba(255,255,255,0.25)' : C.bgSecondary, color: activeTab === tab.id ? '#fff' : C.text, padding: '2px 8px', borderRadius: '0px', fontSize: '11px', fontWeight: 900 }}>
+                  {tab.badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Consolidated Employees Workspace */}
+        {activeTab === 'employees' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            
+            {/* Employee Records Directory */}
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '0px', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.02)' }}>
+              
+              {/* Directory Header & Filters Toolbar */}
+              <div style={{ padding: isMobile ? '12px 14px' : '18px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: '14px', background: C.bgSecondary }}>
+                {/* Line 1: Heading & Working View Tabs */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <h3 style={{ fontSize: isMobile ? '16px' : '18px', fontWeight: 900, color: C.text, margin: 0 }}>Employee Records</h3>
+                  <div style={{ display: 'inline-flex', width: 'fit-content', background: C.card, borderRadius: '0px', padding: '3px', border: `1px solid ${C.border}` }}>
+                    <button 
+                      onClick={() => setRecordsViewTab('recent')}
+                      style={{
+                        padding: '6px 14px', fontSize: '12px', fontWeight: 800, border: 'none',
+                        background: recordsViewTab === 'recent' ? C.teal : 'transparent',
+                        color: recordsViewTab === 'recent' ? '#fff' : C.textMid,
+                        cursor: 'pointer', borderRadius: '0px', transition: 'all 0.15s ease'
+                      }}
+                    >
+                      Recent Activity
+                    </button>
+                    <button 
+                      onClick={() => setRecordsViewTab('processed')}
+                      style={{
+                        padding: '6px 14px', fontSize: '12px', fontWeight: 800, border: 'none',
+                        background: recordsViewTab === 'processed' ? C.teal : 'transparent',
+                        color: recordsViewTab === 'processed' ? '#fff' : C.textMid,
+                        cursor: 'pointer', borderRadius: '0px', transition: 'all 0.15s ease'
+                      }}
+                    >
+                      Processed Accounts
+                    </button>
+                  </div>
+                </div>
+
+                {/* Line 2: Searchbar on Left, Filter buttons on Right in the same row */}
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+                  {/* Left: Searchbar with Search Button */}
+                  <form 
+                    onSubmit={handleExecuteSearch}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      flex: '1 1 320px',
+                      minWidth: isMobile ? '100%' : '300px'
+                    }}
+                  >
+                    <div style={{ position: 'relative', flex: 1 }}>
+                      <FaSearch style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: C.textMid, fontSize: '13px' }} />
+                      <input 
+                        type="text" 
+                        placeholder="Search by Employee ID, Name, Mobile..." 
+                        value={searchInput}
+                        onChange={(e) => setSearchInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            handleExecuteSearch(e);
+                          }
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: searchInput ? '9px 34px 9px 38px' : '9px 14px 9px 38px',
+                          background: C.card,
+                          border: `1px solid ${C.border}`,
+                          borderRadius: '8px',
+                          color: C.text,
+                          outline: 'none',
+                          fontSize: '13px',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                      {searchInput && (
+                        <button
+                          type="button"
+                          onClick={handleClearSearch}
+                          style={{
+                            position: 'absolute',
+                            right: '10px',
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            background: 'transparent',
+                            border: 'none',
+                            color: C.textMid,
+                            cursor: 'pointer',
+                            fontSize: '13px',
+                            fontWeight: 800,
+                            padding: '2px 6px',
+                            borderRadius: '50%'
+                          }}
+                          title="Clear search"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={isSearching}
+                      style={{
+                        padding: '9px 18px',
+                        background: C.teal,
+                        border: 'none',
+                        borderRadius: '8px',
+                        color: '#FFFFFF',
+                        fontSize: '13px',
+                        fontWeight: 800,
+                        cursor: isSearching ? 'wait' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        flexShrink: 0,
+                        boxShadow: '0 2px 6px rgba(13, 148, 136, 0.25)',
+                        transition: 'all 0.15s ease',
+                        opacity: isSearching ? 0.8 : 1
+                      }}
+                      onMouseEnter={e => { if (!isSearching) e.currentTarget.style.opacity = '0.9'; }}
+                      onMouseLeave={e => { if (!isSearching) e.currentTarget.style.opacity = '1'; }}
+                      title="Click to search"
+                    >
+                      {isSearching ? (
+                        <FaRedo className="animate-spin" style={{ fontSize: '11px' }} />
+                      ) : (
+                        <FaSearch style={{ fontSize: '11px' }} />
+                      )}
+                      <span>{isSearching ? 'Searching...' : 'Search'}</span>
+                    </button>
+                    {searchTerm && (
+                      <div style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '5px 10px',
+                        background: `${C.teal}18`,
+                        border: `1px solid ${C.teal}40`,
+                        borderRadius: '20px',
+                        fontSize: '11.5px',
+                        fontWeight: 800,
+                        color: C.teal,
+                        whiteSpace: 'nowrap'
+                      }}>
+                        <span>{totalEmployees} {totalEmployees === 1 ? 'match' : 'matches'}</span>
+                      </div>
+                    )}
+                  </form>
+
+                  {/* Right: Filters */}
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', width: isMobile ? '100%' : 'auto' }}>
+                    <select 
+                      value={designationFilter} 
+                      onChange={(e) => {
+                        setDesignationFilter(e.target.value);
+                        setCurrentPage(1);
+                      }} 
+                      style={{ padding: '8px 10px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '0px', color: C.text, fontSize: '12.5px', fontWeight: 700, flex: isMobile ? '1 1 120px' : 'none' }}
+                    >
+                      <option value="">All Designations</option>
+                      <option value="KYC Operator">KYC Operator</option>
+                      <option value="QD Operator">QD Operator</option>
+                      <option value="Remark Operator">Remark Operator</option>
+                      <option value="Final Status Operator">Final Status Operator</option>
+                      <option value="Querable Operator">Querable Operator</option>
+                      <option value="Physical Curable Operator">Physical Curable Operator</option>
+                      <option value="Digital Curable Operator">Digital Curable Operator</option>
+                      <option value="Email Curable Operator">Email Curable Operator</option>
+                      <option value="PAN Checker">PAN Checker</option>
+                      <option value="Administrative Operator">Administrative Operator</option>
+                      <option value="Administrative Sales Executive">Administrative Sales Executive</option>
+                      <option value="TC">TC (Telecaller)</option>
+                      <option value="TL">TL (Team Leader)</option>
+                      <option value="Manager">MANAGER</option>
+                      <option value="Senior Manager">SENIOR MANAGER</option>
+                      <option value="Branch Head">BRANCH HEAD</option>
+                    </select>
+
+                    <select 
+                      value={statusFilter} 
+                      onChange={(e) => {
+                        setStatusFilter(e.target.value);
+                        setCurrentPage(1);
+                      }} 
+                      style={{ padding: '8px 10px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '0px', color: C.text, fontSize: '12.5px', fontWeight: 700, flex: isMobile ? '1 1 120px' : 'none' }}
+                    >
+                      <option value="">All Statuses</option>
+                      <option value="ACTIVE">Active</option>
+                      <option value="ONBOARDING">Onboarding</option>
+                      <option value="INACTIVE">Inactive</option>
+                    </select>
+
+                    <select 
+                      value={faceFilter} 
+                      onChange={(e) => {
+                        setFaceFilter(e.target.value);
+                        setCurrentPage(1);
+                      }} 
+                      style={{ padding: '8px 10px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '0px', color: C.text, fontSize: '12.5px', fontWeight: 700, flex: isMobile ? '1 1 120px' : 'none' }}
+                    >
+                      <option value="">All Face Biometrics</option>
+                      <option value="VERIFIED">✓ Verified</option>
+                      <option value="MISSING">⚠ Missing</option>
+                      <option value="PENDING">⏳ Pending</option>
+                      <option value="REVOKED">🔒 Revoked</option>
+                    </select>
+
+                    {(designationFilter || statusFilter || faceFilter || searchTerm || searchInput) && (
+                      <button
+                        onClick={() => {
+                          setDesignationFilter('');
+                          setStatusFilter('');
+                          setFaceFilter('');
+                          setSearchInput('');
+                          setSearchTerm('');
+                          setCurrentPage(1);
+                        }}
+                        style={{ padding: '8px 12px', background: `${C.teal}15`, color: C.teal, border: `1px solid ${C.teal}40`, borderRadius: '8px', fontSize: '12px', fontWeight: 800, cursor: 'pointer', flex: isMobile ? '1 1 100%' : 'none' }}
+                      >
+                        Clear Filters
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Table & Mobile Card View */}
+            {(() => {
+              const displayedEmployees = (() => {
+                let list = [...employees];
+                // Immediate client-side multi-token filtering for 0ms visual feedback while typing
+                const liveSearchQuery = searchInput.trim();
+                if (liveSearchQuery && liveSearchQuery !== searchTerm) {
+                  const tokens = liveSearchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+                  list = list.filter(emp => {
+                    const name = (emp.full_name || '').toLowerCase();
+                    const empCode = (emp.employee_id || emp.employee_code || emp.code || (emp.id ? String(emp.id).slice(0, 8) : '')).toLowerCase();
+                    const mobile = (emp.mobile_number || '').replace(/[^0-9]/g, '');
+                    const email = (emp.email_id || '').toLowerCase();
+                    const desg = (emp.designation || '').toLowerCase();
+                    const dept = (emp.department || '').toLowerCase();
+                    const loc = (emp.work_location || '').toLowerCase();
+
+                    return tokens.every(token => {
+                      const tokenDigits = token.replace(/[^0-9]/g, '');
+                      return (
+                        name.includes(token) ||
+                        empCode.includes(token) ||
+                        email.includes(token) ||
+                        desg.includes(token) ||
+                        dept.includes(token) ||
+                        loc.includes(token) ||
+                        (tokenDigits.length >= 3 && mobile.includes(tokenDigits))
+                      );
+                    });
+                  });
+                }
+
+                if (recordsViewTab === 'recent') {
+                  list.sort((a, b) => {
+                    const dateA = new Date(a.updated_at || a.created_at || 0).getTime();
+                    const dateB = new Date(b.updated_at || b.created_at || 0).getTime();
+                    if (dateA !== dateB) return dateB - dateA;
+                    return (b.id || 0) - (a.id || 0);
+                  });
+                } else if (recordsViewTab === 'processed') {
+                  list = (Array.isArray(list) ? list : []).filter(e => {
+                    const act = String(e.activation_status || '').toUpperCase();
+                    const ver = String(e.overall_verification_status || e.kyc_status || '').toUpperCase();
+                    return act === 'APPROVED' || ver === 'VERIFIED' || ver === 'APPROVED';
+                  });
+                }
+                return list;
+              })();
+
+              return isMobile ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '12px' }}>
+                  {loading ? (
+                    <div style={{ padding: '30px', textAlign: 'center', color: C.textMid }}>Loading records...</div>
+                  ) : displayedEmployees.length === 0 ? (
+                    <div style={{ padding: '30px', textAlign: 'center', color: C.textMid }}>No employees found matching criteria.</div>
+                  ) : (
+                    displayedEmployees.map(emp => {
+                    const empCode = emp.employee_code || emp.employee_id || emp.emp_code || emp.code || (emp.id ? String(emp.id).slice(0, 8) : 'N/A');
+
+                    return (
+                      <div 
+                        key={emp.id}
+                        onClick={() => setDrawerEmp(emp)}
+                        style={{
+                          background: C.card,
+                          border: `1px solid ${C.border}`,
+                          borderRadius: '16px',
+                          padding: '14px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '12px',
+                          cursor: 'pointer',
+                          boxShadow: '0 2px 8px rgba(0,0,0,0.03)'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{
+                            width: '42px', height: '42px', borderRadius: '50%', background: `${C.teal}20`, color: C.teal,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '16px', flexShrink: 0,
+                            overflow: 'hidden', border: `1px solid ${C.teal}40`
+                          }}>
+                            {emp.profile_photo_url || emp.avatar_url || emp.photo ? (
+                              <img src={emp.profile_photo_url || emp.avatar_url || emp.photo} alt={emp.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            ) : (
+                              emp.full_name ? emp.full_name[0].toUpperCase() : 'E'
+                            )}
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '14.5px', fontWeight: 900, color: C.text }}>
+                              {emp.full_name}
+                            </div>
+                            <div style={{ fontSize: '12px', fontWeight: 800, color: C.teal, marginTop: '2px' }}>
+                              {empCode} • {emp.designation || 'Telecaller'}
+                            </div>
+                            <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px', fontWeight: 600 }}>
+                              ☎ {emp.mobile_number || 'N/A'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                          <span 
+                            style={{ 
+                              padding: '4px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: 800,
+                              background: getEmployeeAccountStatus(emp).bg,
+                              color: getEmployeeAccountStatus(emp).color
+                            }}
+                          >
+                            {getEmployeeAccountStatus(emp).badgeLabel}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDrawerEmp(emp);
+                              setDrawerTab('overview');
+                            }}
+                            style={{
+                              background: C.bgSecondary,
+                              border: `1px solid ${C.border}`,
+                              borderRadius: '8px',
+                              width: '32px',
+                              height: '32px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              cursor: 'pointer',
+                              color: C.textMid
+                            }}
+                            title="View & manage employee profile"
+                          >
+                            <FaEllipsisV />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              promptDeleteEmp(emp, 'temporary');
+                            }}
+                            style={{
+                              background: '#FEF2F2',
+                              border: '1px solid #FECACA',
+                              borderRadius: '8px',
+                              width: '32px',
+                              height: '32px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              cursor: 'pointer',
+                              color: '#DC2626'
+                            }}
+                            title="Delete or deactivate employee account"
+                          >
+                            <FaTrash size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto', width: '100%', WebkitOverflowScrolling: 'touch' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+                  <thead>
+                    <tr style={{ background: C.bgSecondary, borderBottom: `1px solid ${C.border}`, color: C.textMid, fontWeight: 700 }}>
+                      <th style={{ padding: '14px 20px', width: '40px' }}><input type="checkbox" /></th>
+                      <th style={{ padding: '14px 20px' }}>Employee Code</th>
+                      <th style={{ padding: '14px 20px' }}>Employee Name</th>
+                      <th style={{ padding: '14px 20px' }}>Contact</th>
+                      <th style={{ padding: '14px 20px' }}>Designation</th>
+                      <th style={{ padding: '14px 20px' }}>Account Status</th>
+                      <th style={{ padding: '14px 20px', textAlign: 'center' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading ? (
+                      <tr><td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: C.textMid }}>Loading records...</td></tr>
+                    ) : displayedEmployees.length === 0 ? (
+                      <tr><td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: C.textMid }}>No employees found matching criteria.</td></tr>
+                    ) : displayedEmployees.map(emp => {
+                      const isSelected = drawerEmp && drawerEmp.id === emp.id;
+                      const empCode = emp.employee_code || emp.employee_id || emp.emp_code || emp.code || (emp.id ? String(emp.id).slice(0, 8) : 'N/A');
+
+                      return (
+                        <tr 
+                          key={emp.id} 
+                          style={{ 
+                            borderBottom: `1px solid ${C.border}`,
+                            background: isSelected ? `${C.teal}0F` : 'transparent',
+                            transition: 'background 0.15s ease'
+                          }}
+                        >
+                          <td style={{ padding: '14px 20px' }}>
+                            <input type="checkbox" />
+                          </td>
+                          <td style={{ padding: '14px 20px' }}>
+                            <span 
+                              onClick={() => setDrawerEmp(emp)}
+                              style={{ 
+                                fontWeight: 900, 
+                                color: C.teal, 
+                                cursor: 'pointer',
+                                fontSize: '13.5px',
+                                textDecoration: 'none'
+                              }}
+                              onMouseEnter={(e) => e.target.style.textDecoration = 'underline'}
+                              onMouseLeave={(e) => e.target.style.textDecoration = 'none'}
+                              title="Click to open employee profile"
+                            >
+                              {empCode}
+                            </span>
+                          </td>
+                          <td style={{ padding: '14px 20px' }}>
+                            <div 
+                              onClick={() => setDrawerEmp(emp)}
+                              style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}
+                            >
+                              <div style={{
+                                width: '36px', height: '36px', borderRadius: '50%', background: `${C.teal}20`, color: C.teal,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '14px', flexShrink: 0,
+                                overflow: 'hidden', border: `1px solid ${C.teal}40`
+                              }}>
+                                {emp.profile_photo_url || emp.avatar_url || emp.photo ? (
+                                  <img src={emp.profile_photo_url || emp.avatar_url || emp.photo} alt={emp.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                ) : (
+                                  emp.full_name ? emp.full_name[0].toUpperCase() : 'E'
+                                )}
+                              </div>
+                              <div>
+                                <div style={{ fontWeight: 800, color: C.text, fontSize: '13.5px' }}>{emp.full_name}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td style={{ padding: '14px 20px', fontSize: '13px', color: C.textMid, fontWeight: 600 }}>
+                            ☎ {emp.mobile_number || 'N/A'}
+                          </td>
+                          <td style={{ padding: '14px 20px', fontSize: '13px', color: C.text, fontWeight: 700 }}>
+                            {emp.designation || 'Telecaller'}
+                          </td>
+                          <td style={{ padding: '14px 20px' }}>
+                            <span 
+                              style={{ 
+                                padding: '4px 10px', borderRadius: '10px', fontSize: '12px', fontWeight: 800,
+                                background: getEmployeeAccountStatus(emp).bg,
+                                color: getEmployeeAccountStatus(emp).color,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px'
+                              }}
+                            >
+                              {getEmployeeAccountStatus(emp).label}
+                            </span>
+                          </td>
+                          <td style={{ padding: '14px 20px', textAlign: 'center' }}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDrawerEmp(emp);
+                                setDrawerTab('overview');
+                              }}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                cursor: 'pointer',
+                                color: C.textMid,
+                                fontSize: '16px',
+                                padding: '6px 10px',
+                                borderRadius: '8px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                transition: 'all 0.15s ease'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = C.bgSecondary;
+                                e.currentTarget.style.color = C.teal;
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = 'transparent';
+                                e.currentTarget.style.color = C.textMid;
+                              }}
+                              title="View & manage employee profile"
+                            >
+                              <FaEllipsisV />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                promptDeleteEmp(emp, 'temporary');
+                              }}
+                              style={{
+                                background: 'transparent',
+                                border: '1px solid #FECACA',
+                                cursor: 'pointer',
+                                color: '#DC2626',
+                                fontSize: '13px',
+                                padding: '6px 9px',
+                                borderRadius: '8px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                marginLeft: '6px',
+                                transition: 'all 0.15s ease'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = '#FEF2F2';
+                                e.currentTarget.style.color = '#B91C1C';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = 'transparent';
+                                e.currentTarget.style.color = '#DC2626';
+                              }}
+                              title="Delete or deactivate employee account"
+                            >
+                              <FaTrash size={13} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+
+            {/* Pagination Toolbar */}
+            <div style={{
+              padding: '14px 20px',
+              borderTop: `1px solid ${C.border}`,
+              background: C.bgSecondary,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '12px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '13px', color: C.textMid, fontWeight: 600 }}>
+                  Showing {totalEmployees === 0 ? 0 : (currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalEmployees)} of <strong>{totalEmployees}</strong> records
+                </span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '12.5px', color: C.textMid, fontWeight: 600 }}>Per page:</span>
+                  <select
+                    value={pageSize >= 10000 ? 'ALL' : pageSize}
+                    onChange={(e) => {
+                      const val = e.target.value === 'ALL' ? 10000 : Number(e.target.value);
+                      setPageSize(val);
+                      setCurrentPage(1);
+                    }}
+                    style={{
+                      padding: '4px 8px',
+                      borderRadius: '8px',
+                      border: `1px solid ${C.border}`,
+                      background: C.card,
+                      color: C.text,
+                      fontSize: '12.5px',
+                      fontWeight: 700,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <option value={50}>50 per page</option>
+                    <option value={100}>100 per page</option>
+                    <option value={200}>200 per page</option>
+                    <option value={500}>500 per page</option>
+                    <option value="ALL">Show All ({totalEmployees})</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                <button
+                  disabled={currentPage <= 1 || loading}
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '8px',
+                    border: `1px solid ${currentPage <= 1 ? C.border : C.teal}`,
+                    background: currentPage <= 1 ? C.card : `${C.teal}10`,
+                    color: currentPage <= 1 ? C.textMid : C.teal,
+                    fontSize: '12.5px',
+                    fontWeight: 800,
+                    cursor: currentPage <= 1 ? 'not-allowed' : 'pointer',
+                    opacity: currentPage <= 1 ? 0.6 : 1,
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  Previous
+                </button>
+
+                {(() => {
+                  const totalPages = Math.max(1, Math.ceil(totalEmployees / pageSize));
+                  const pages = [];
+                  if (totalPages <= 7) {
+                    for (let i = 1; i <= totalPages; i++) pages.push(i);
+                  } else {
+                    pages.push(1);
+                    let start = Math.max(2, currentPage - 1);
+                    let end = Math.min(totalPages - 1, currentPage + 1);
+                    if (currentPage <= 3) end = 4;
+                    if (currentPage >= totalPages - 2) start = totalPages - 3;
+                    
+                    if (start > 2) pages.push('...');
+                    for (let i = start; i <= end; i++) pages.push(i);
+                    if (end < totalPages - 1) pages.push('...');
+                    pages.push(totalPages);
+                  }
+
+                  return pages.map((pg, idx) => {
+                    if (pg === '...') {
+                      return (
+                        <span key={`dots-${idx}`} style={{ padding: '4px 8px', color: C.textMid, fontSize: '13px', fontWeight: 700 }}>
+                          ...
+                        </span>
+                      );
+                    }
+
+                    const isCurrent = pg === currentPage;
+                    return (
+                      <button
+                        key={pg}
+                        onClick={() => setCurrentPage(pg)}
+                        style={{
+                          minWidth: '32px',
+                          height: '32px',
+                          padding: '0 6px',
+                          borderRadius: '8px',
+                          border: isCurrent ? `1px solid ${C.teal}` : `1px solid ${C.border}`,
+                          background: isCurrent ? C.teal : C.card,
+                          color: isCurrent ? '#FFFFFF' : C.text,
+                          fontSize: '12.5px',
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                          boxShadow: isCurrent ? '0 2px 6px rgba(13, 148, 136, 0.3)' : 'none',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        {pg}
+                      </button>
+                    );
+                  });
+                })()}
+
+                <button
+                  disabled={currentPage >= Math.max(1, Math.ceil(totalEmployees / pageSize)) || loading}
+                  onClick={() => setCurrentPage(prev => Math.min(Math.max(1, Math.ceil(totalEmployees / pageSize)), prev + 1))}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '8px',
+                    border: `1px solid ${currentPage >= Math.max(1, Math.ceil(totalEmployees / pageSize)) ? C.border : C.teal}`,
+                    background: currentPage >= Math.max(1, Math.ceil(totalEmployees / pageSize)) ? C.card : `${C.teal}10`,
+                    color: currentPage >= Math.max(1, Math.ceil(totalEmployees / pageSize)) ? C.textMid : C.teal,
+                    fontSize: '12.5px',
+                    fontWeight: 800,
+                    cursor: currentPage >= Math.max(1, Math.ceil(totalEmployees / pageSize)) ? 'not-allowed' : 'pointer',
+                    opacity: currentPage >= Math.max(1, Math.ceil(totalEmployees / pageSize)) ? 0.6 : 1,
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+        {/* Hierarchy Tab View */}
+        {activeTab === 'hierarchy' && (() => {
+          const activeRoleList = selectedTreeRole === 'BRANCH_HEAD' ? branchHeadsList :
+                                 selectedTreeRole === 'SENIOR_MANAGER' ? seniorManagersList :
+                                 selectedTreeRole === 'TEAM_LEADER' ? tlsList :
+                                 managersList;
+          const currentPerson = activeRoleList.find(p => p.id === selectedTreePersonId) || activeRoleList[0];
+          const currentMgr = currentPerson;
+          const activePersonId = currentPerson?.id;
+
+          const subSrMgrs = selectedTreeRole === 'BRANCH_HEAD' && activePersonId
+            ? (Array.isArray(seniorManagersList) ? seniorManagersList : []).filter(sm => sm.branch_head_id === activePersonId || sm.branch_head_name === currentPerson?.full_name)
+            : [];
+
+          const subManagers = selectedTreeRole === 'BRANCH_HEAD' && activePersonId
+            ? (Array.isArray(managersList) ? managersList : []).filter(m => m.branch_head_id === activePersonId || m.branch_head_name === currentPerson?.full_name || subSrMgrs.some(sm => sm.id === m.senior_manager_id))
+            : selectedTreeRole === 'SENIOR_MANAGER' && activePersonId
+            ? (Array.isArray(managersList) ? managersList : []).filter(m => m.senior_manager_id === activePersonId || m.senior_manager_name === currentPerson?.full_name)
+            : [];
+
+          const managerTLs = selectedTreeRole === 'TEAM_LEADER'
+            ? []
+            : activePersonId
+            ? (Array.isArray(tlsList) ? tlsList : []).filter(tl => tl.manager_id === activePersonId || tl.manager_name === currentPerson?.full_name || subManagers.some(m => m.id === tl.manager_id))
+            : [];
+
+          const allManagerTCs = activePersonId
+            ? (selectedTreeRole === 'TEAM_LEADER'
+                ? (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(tc => (tc.designation === 'TC' || tc.hierarchy_level === 'TC') && (tc.team_leader_id === activePersonId || tc.team_leader_name === currentPerson?.full_name))
+                : (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(tc => (tc.designation === 'TC' || tc.hierarchy_level === 'TC') && (
+                    tc.manager_id === activePersonId || tc.manager_name === currentPerson?.full_name ||
+                    managerTLs.some(tl => tl.id === tc.team_leader_id)
+                  ))
+              )
+            : [];
+
+          const directTCs = selectedTreeRole === 'TEAM_LEADER' ? allManagerTCs : (Array.isArray(allManagerTCs) ? allManagerTCs : []).filter(tc => !tc.team_leader_id && !tc.team_leader_name);
+
+          const roleBadgeLabel = selectedTreeRole === 'BRANCH_HEAD' ? 'BRANCH HEAD' :
+                                 selectedTreeRole === 'SENIOR_MANAGER' ? 'SENIOR MANAGER' :
+                                 selectedTreeRole === 'TEAM_LEADER' ? 'TEAM LEADER' :
+                                 'MANAGER';
+
+          const roleBadgeColor = roleBadgeLabel === 'BRANCH HEAD' ? { bg: '#FEF3C7', color: '#D97706', border: '#FCD34D' } :
+                                 roleBadgeLabel === 'SENIOR MANAGER' ? { bg: '#EEF2FF', color: '#4F46E5', border: '#C7D2FE' } :
+                                 roleBadgeLabel === 'TEAM LEADER' ? { bg: '#EFF6FF', color: '#2563EB', border: '#BFDBFE' } :
+                                 { bg: '#EDE9FE', color: '#7C3AED', border: '#DDD6FE' };
+
+          // Build TL to TC mapping for tree visualization
+          const tlTcMapping = {};
+          allManagerTCs.forEach(tc => {
+            if (tc.team_leader_id) {
+              if (!tlTcMapping[tc.team_leader_id]) {
+                tlTcMapping[tc.team_leader_id] = [];
+              }
+              tlTcMapping[tc.team_leader_id].push(tc);
+            }
+          });
+
+          return (
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '20px', minHeight: '500px', padding: isMobile ? '12px' : '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobile ? 'stretch' : 'center', flexDirection: isMobile ? 'column' : 'row', gap: '12px', marginBottom: '20px' }}>
+                <div>
+                  <h2 style={{ fontSize: isMobile ? '18px' : '22px', fontWeight: 900, margin: 0, display: 'flex', alignItems: 'center', gap: '8px', color: C.text }}>
+                    Team Hierarchy Tree <FaInfoCircle style={{ fontSize: '15px', color: C.textMid, cursor: 'pointer' }} title="Visualize and manage reporting structure" />
+                  </h2>
+                  <p style={{ fontSize: isMobile ? '12px' : '13px', color: C.textMid, margin: '4px 0 0' }}>
+                    Select a role level and an employee to inspect their organizational hierarchy structure
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '10px', width: isMobile ? '100%' : 'auto' }}>
+                  <button 
+                    onClick={fetchData} 
+                    style={{ flex: isMobile ? 1 : 'none', background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '8px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                  >
+                    <FaRedo style={{ fontSize: '12px', color: C.teal }} /> Refresh
+                  </button>
+                  <button 
+                    onClick={handleExportTree} 
+                    style={{ flex: isMobile ? 1 : 'none', background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '8px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                  >
+                    <FaDownload style={{ fontSize: '12px', color: C.teal }} /> Export Tree
+                  </button>
+                </div>
+              </div>
+
+              {/* Selection Bar: Step 1 Role Selection & Step 2 Employee Selection */}
+              <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '16px', padding: isMobile ? '14px' : '20px', marginBottom: '24px' }}>
+                
+                {/* Step 1: Select Role */}
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 800, color: C.textMid, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Step 1: Select Hierarchy Role Level
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
+                    {[
+                      { id: 'BRANCH_HEAD', label: 'Branch Heads', count: branchHeadsList.length, color: '#D97706' },
+                      { id: 'SENIOR_MANAGER', label: 'Senior Managers', count: seniorManagersList.length, color: '#4F46E5' },
+                      { id: 'MANAGER', label: 'Managers', count: managersList.length, color: '#8B5CF6' },
+                      { id: 'TEAM_LEADER', label: 'Team Leaders (TL)', count: tlsList.length, color: '#2563EB' }
+                    ].map(roleItem => {
+                      const isSelectedRole = selectedTreeRole === roleItem.id;
+                      return (
+                        <button
+                          key={roleItem.id}
+                          onClick={() => {
+                            setSelectedTreeRole(roleItem.id);
+                            setSelectedTreePersonId(null);
+                          }}
+                          style={{
+                            padding: isMobile ? '8px 10px' : '10px 18px',
+                            borderRadius: '12px',
+                            border: isSelectedRole ? `2px solid ${roleItem.color}` : `1px solid ${C.border}`,
+                            background: isSelectedRole ? `${roleItem.color}15` : C.card,
+                            color: isSelectedRole ? roleItem.color : C.text,
+                            fontWeight: 800,
+                            fontSize: isMobile ? '11.5px' : '13px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '6px',
+                            boxShadow: isSelectedRole ? `0 4px 12px ${roleItem.color}25` : 'none',
+                            transition: 'all 0.2s ease'
+                          }}
+                        >
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <FaSitemap style={{ fontSize: '13px', flexShrink: 0 }} />
+                            {roleItem.label}
+                          </span>
+                          <span style={{ 
+                            background: isSelectedRole ? roleItem.color : C.bgSecondary, 
+                            color: isSelectedRole ? '#FFFFFF' : C.textMid,
+                            fontSize: '10.5px', fontWeight: 900, padding: '2px 6px', borderRadius: '10px', flexShrink: 0
+                          }}>
+                            {roleItem.count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Step 2: Select Person */}
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: 800, color: C.textMid, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Step 2: Select {selectedTreeRole === 'BRANCH_HEAD' ? 'Branch Head' : selectedTreeRole === 'SENIOR_MANAGER' ? 'Senior Manager' : selectedTreeRole === 'TEAM_LEADER' ? 'Team Leader' : 'Manager'}
+                  </div>
+
+                  {activeRoleList.length === 0 ? (
+                    <div style={{ padding: '16px', borderRadius: '12px', background: C.card, border: `1px dashed ${C.border}`, color: C.textMid, fontSize: '13px' }}>
+                      No employees assigned as <strong>{selectedTreeRole.replace('_', ' ')}</strong> yet. Go to Directory tab and click "Assign Team" to set hierarchy levels.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div id="mgrCarousel" style={{ display: 'flex', gap: '12px', overflowX: 'auto', flexGrow: 1, paddingBottom: '4px', scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch' }}>
+                        {activeRoleList.map(person => {
+                          const isSelected = (person.id === activePersonId);
+                          const memberCount = (
+                            selectedTreeRole === 'BRANCH_HEAD' ? ((Array.isArray(seniorManagersList) ? seniorManagersList : []).filter(sm => sm.branch_head_id === person.id).length + (Array.isArray(managersList) ? managersList : []).filter(m => m.branch_head_id === person.id).length) :
+                            selectedTreeRole === 'SENIOR_MANAGER' ? (Array.isArray(managersList) ? managersList : []).filter(m => m.senior_manager_id === person.id).length :
+                            selectedTreeRole === 'TEAM_LEADER' ? (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(tc => tc.team_leader_id === person.id).length :
+                            ((Array.isArray(tlsList) ? tlsList : []).filter(tl => tl.manager_id === person.id).length + (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(tc => (tc.designation === 'TC' || tc.hierarchy_level === 'TC') && tc.manager_id === person.id).length)
+                          );
+
+                          return (
+                            <div
+                              key={person.id}
+                              onClick={() => setSelectedTreePersonId(person.id)}
+                              style={{
+                                flexShrink: 0,
+                                minWidth: isMobile ? '180px' : '210px',
+                                padding: '12px 14px',
+                                borderRadius: '14px',
+                                cursor: 'pointer',
+                                background: isSelected ? 'linear-gradient(135deg, #4F46E5 0%, #3730A3 100%)' : C.card,
+                                color: isSelected ? '#FFFFFF' : C.text,
+                                border: isSelected ? 'none' : `1px solid ${C.border}`,
+                                boxShadow: isSelected ? '0 8px 20px rgba(79, 70, 229, 0.25)' : '0 2px 8px rgba(0,0,0,0.03)',
+                                transition: 'all 0.2s ease',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '10px'
+                              }}
+                            >
+                              <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: isSelected ? 'rgba(255,255,255,0.2)' : '#E0E7FF', color: isSelected ? '#FFF' : '#4F46E5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '14px', flexShrink: 0 }}>
+                                {person.full_name?.charAt(0) || 'P'}
+                              </div>
+                              <div style={{ overflow: 'hidden' }}>
+                                <div style={{ fontSize: '13px', fontWeight: 900, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{person.full_name}</div>
+                                <div style={{ fontSize: '10.5px', opacity: isSelected ? 0.9 : 0.7, fontWeight: 700 }}>{person.employee_code || person.employee_id || person.emp_code || person.code || 'N/A'}</div>
+                                <div style={{ fontSize: '10.5px', fontWeight: 800, marginTop: '2px', opacity: isSelected ? 0.95 : 0.8 }}>
+                                  {memberCount} Direct Members
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          const el = document.getElementById('mgrCarousel');
+                          if (el) el.scrollBy({ left: 200, behavior: 'smooth' });
+                        }}
+                        style={{ width: '34px', height: '34px', borderRadius: '50%', background: C.card, border: `1px solid ${C.border}`, color: C.textMid, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
+                      >
+                        <FaChevronRight style={{ fontSize: '12px' }} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+                  {/* Visual Tree Diagram for Selected Manager */}
+                  {currentMgr && (
+                    <div onClick={() => setPopoverEmpId(null)} style={{ background: '#F8FAFC', border: `1px solid ${C.border}`, borderRadius: '20px', padding: isMobile ? '16px 8px' : '32px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', boxSizing: 'border-box', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                      {isMobile && (
+                        <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          ↔ Swipe horizontally to explore full team hierarchy
+                        </div>
+                      )}
+                      {/* LEVEL 1: ROOT NODE */}
+                      <div style={{ background: '#FFFFFF', border: `2px solid ${roleBadgeColor.border}`, borderRadius: '16px', padding: isMobile ? '12px 14px' : '16px 20px', minWidth: isMobile ? '250px' : '320px', maxWidth: '380px', width: '100%', boxSizing: 'border-box', boxShadow: `0 10px 25px ${roleBadgeColor.color}18`, position: 'relative', zIndex: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', marginBottom: '10px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: roleBadgeColor.bg, color: roleBadgeColor.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '15px', flexShrink: 0 }}>
+                              {currentMgr.full_name?.charAt(0) || 'P'}
+                            </div>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: isMobile ? '13.5px' : '15px', fontWeight: 900, color: '#1E293B', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px' }}>
+                                <span>{currentMgr.full_name}</span>
+                                <span style={{ background: roleBadgeColor.bg, color: roleBadgeColor.color, border: `1px solid ${roleBadgeColor.border}`, fontSize: '9.5px', fontWeight: 900, padding: '2px 6px', borderRadius: '12px', textTransform: 'uppercase' }}>
+                                  {roleBadgeLabel}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 700 }}>{currentMgr.employee_code || currentMgr.employee_id || currentMgr.emp_code || currentMgr.code || 'N/A'}</div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setPopoverEmpId(popoverEmpId === currentMgr.id ? null : currentMgr.id); }}
+                            title="Employee Actions"
+                            style={{ background: 'transparent', border: 'none', color: '#64748B', padding: '6px 8px', borderRadius: '8px', fontSize: '14px', cursor: 'pointer', flexShrink: 0 }}
+                          >
+                            <FaEllipsisV />
+                          </button>
+                        </div>
+
+                        <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px solid #F1F5F9' }}>
+                          <span>📞 {currentMgr.mobile_number || 'N/A'}</span>
+                          <span style={{ fontWeight: 800, color: roleBadgeColor.color }}>👤 Total Members: {(subSrMgrs?.length || 0) + (subManagers?.length || 0) + managerTLs.length + allManagerTCs.length}</span>
+                        </div>
+
+                        {/* Floating Context Popover Dropdown */}
+                        {popoverEmpId === currentMgr.id && (
+                          <>
+                            <div 
+                              style={{ position: 'fixed', inset: 0, zIndex: 999, background: 'transparent' }} 
+                              onClick={(e) => { e.stopPropagation(); setPopoverEmpId(null); }}
+                            />
+                            <div 
+                              style={{ position: 'absolute', top: '48px', right: '12px', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', boxShadow: '0 12px 30px rgba(0,0,0,0.22)', zIndex: 1000, minWidth: '175px', padding: '6px 0' }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div onClick={() => { setPopoverEmpId(null); handleOpen360View(currentMgr); }} style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 700, color: '#334155', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <FaEye style={{ fontSize: '13px', color: '#64748B' }} /> View Profile
+                              </div>
+                              <div onClick={() => { setPopoverEmpId(null); openHierarchyModal(currentMgr); }} style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 700, color: '#334155', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <FaEdit style={{ fontSize: '13px', color: '#64748B' }} /> Edit Details
+                              </div>
+                              <div onClick={() => { setPopoverEmpId(null); handleUnassignHierarchy(currentMgr.id, currentMgr.full_name, currentMgr.employee_id); }} style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 700, color: '#EF4444', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <FaUnlink style={{ fontSize: '13px', color: '#EF4444' }} /> Disassign Employee
+                              </div>
+                              <div onClick={() => { setPopoverEmpId(null); setPerfModalEmp(currentMgr); }} style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 700, color: '#334155', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <FaChartLine style={{ fontSize: '13px', color: '#64748B' }} /> View Performance
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Sub-Tree Branches starting from Root Node */}
+                      {(() => {
+                        const hasMembers = (subSrMgrs?.length > 0) || (subManagers?.length > 0) || (managerTLs?.length > 0) || (allManagerTCs?.length > 0);
+                        if (!hasMembers) {
+                          return (
+                            <div style={{ marginTop: '20px', padding: '20px', textAlign: 'center', color: C.textMid, fontSize: '13px' }}>
+                              No sub-employees or team members assigned under <strong>{currentMgr.full_name}</strong> yet.<br/>
+                              <span style={{ fontSize: '12px', color: C.teal, fontWeight: 700 }}>Go to the Directory tab and click "Assign Team" on an employee to link them to this {roleBadgeLabel.toLowerCase()}.</span>
+                            </div>
+                          );
+                        }
+
+                        const renderPopover = (emp) => {
+                          if (popoverEmpId !== emp.id) return null;
+                          return (
+                            <>
+                              <div 
+                                style={{ position: 'fixed', inset: 0, zIndex: 999, background: 'transparent' }} 
+                                onClick={(e) => { e.stopPropagation(); setPopoverEmpId(null); }}
+                              />
+                              <div 
+                                style={{ position: 'absolute', top: '44px', right: '0px', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', boxShadow: '0 12px 30px rgba(0,0,0,0.22)', zIndex: 1000, minWidth: '175px', padding: '6px 0', textAlign: 'left' }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div onClick={() => { setPopoverEmpId(null); handleOpen360View(emp); }} style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 700, color: '#334155', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <FaEye style={{ fontSize: '13px', color: '#64748B' }} /> View Profile
+                                </div>
+                                <div onClick={() => { setPopoverEmpId(null); openHierarchyModal(emp); }} style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 700, color: '#334155', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <FaEdit style={{ fontSize: '13px', color: '#64748B' }} /> Edit Details
+                                </div>
+                                <div onClick={() => { setPopoverEmpId(null); handleUnassignHierarchy(emp.id, emp.full_name, emp.employee_id); }} style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 700, color: '#EF4444', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <FaUnlink style={{ fontSize: '13px', color: '#EF4444' }} /> Disassign Employee
+                                </div>
+                                <div onClick={() => { setPopoverEmpId(null); setPerfModalEmp(emp); }} style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 700, color: '#334155', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <FaChartLine style={{ fontSize: '13px', color: '#64748B' }} /> View Performance
+                                </div>
+                              </div>
+                            </>
+                          );
+                        };
+
+                        const renderSubTree = (parentEmp, parentRole) => {
+                          let childRole = null;
+                          let childrenList = [];
+
+                          if (parentRole === 'BRANCH_HEAD') {
+                            const srs = (Array.isArray(seniorManagersList) ? seniorManagersList : []).filter(sm => sm.branch_head_id === parentEmp.id || sm.branch_head_name === parentEmp.full_name);
+                            if (srs.length > 0) {
+                              childRole = 'SENIOR_MANAGER';
+                              childrenList = srs;
+                            } else {
+                              const mgrs = (Array.isArray(managersList) ? managersList : []).filter(m => m.branch_head_id === parentEmp.id || m.branch_head_name === parentEmp.full_name);
+                              childRole = 'MANAGER';
+                              childrenList = mgrs;
+                            }
+                          } else if (parentRole === 'SENIOR_MANAGER') {
+                            const mgrs = (Array.isArray(managersList) ? managersList : []).filter(m => m.senior_manager_id === parentEmp.id || m.senior_manager_name === parentEmp.full_name);
+                            childRole = 'MANAGER';
+                            childrenList = mgrs;
+                          } else if (parentRole === 'MANAGER') {
+                            const tls = (Array.isArray(tlsList) ? tlsList : []).filter(tl => tl.manager_id === parentEmp.id || tl.manager_name === parentEmp.full_name);
+                            childRole = 'TEAM_LEADER';
+                            childrenList = tls;
+                          } else if (parentRole === 'TEAM_LEADER') {
+                            const tcs = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(tc => (tc.designation === 'TC' || tc.hierarchy_level === 'TC') && (tc.team_leader_id === parentEmp.id || tc.team_leader_name === parentEmp.full_name));
+                            childRole = 'TC';
+                            childrenList = tcs;
+                          }
+
+                          const directTCsForMgr = (parentRole === 'MANAGER') ? (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).filter(tc => (tc.designation === 'TC' || tc.hierarchy_level === 'TC') && (tc.manager_id === parentEmp.id || tc.manager_name === parentEmp.full_name) && !tc.team_leader_id && !tc.team_leader_name) : [];
+
+                          if (childrenList.length === 0 && directTCsForMgr.length === 0) return null;
+
+                          const stemColor = parentRole === 'BRANCH_HEAD' ? '#D97706' : parentRole === 'SENIOR_MANAGER' ? '#4F46E5' : parentRole === 'MANAGER' ? '#7C3AED' : '#2563EB';
+
+                          return (
+                            <>
+                              <div style={{ width: '2px', height: '26px', background: stemColor, margin: '0 auto' }}></div>
+                              <div style={{ width: '100%', overflowX: 'auto', padding: '0 10px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'center', gap: '28px', alignItems: 'flex-start', minWidth: 'max-content', margin: '0 auto' }}>
+                                  
+                                  {childrenList.map(child => {
+                                    const childBadge = childRole === 'SENIOR_MANAGER' ? { label: 'SR MANAGER', bg: '#EEF2FF', color: '#4F46E5', border: '#C7D2FE' } :
+                                                       childRole === 'MANAGER' ? { label: 'MANAGER', bg: '#F3E8FF', color: '#7C3AED', border: '#DDD6FE' } :
+                                                       childRole === 'TEAM_LEADER' ? { label: 'TEAM LEADER', bg: '#EFF6FF', color: '#2563EB', border: '#BFDBFE' } :
+                                                       { label: 'TELECALLER', bg: '#ECFDF5', color: '#059669', border: '#A7F3D0' };
+
+                                    if (childRole === 'TC') {
+                                      return (
+                                        <div 
+                                          key={child.id} 
+                                          style={{ background: '#FFFFFF', border: `1px solid ${childBadge.border}`, borderRadius: '16px', padding: '14px 12px', width: '135px', boxShadow: '0 4px 12px rgba(0,0,0,0.03)', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', position: 'relative' }}
+                                        >
+                                          <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: childBadge.bg, color: childBadge.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '14px', marginBottom: '8px' }}>
+                                            {child.full_name?.charAt(0) || 'T'}
+                                          </div>
+                                          <div style={{ fontSize: '13px', fontWeight: 800, color: '#1E293B', marginBottom: '4px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', maxWidth: '120px' }}>
+                                            {child.full_name}
+                                          </div>
+                                          <span style={{ background: childBadge.bg, color: childBadge.color, border: `1px solid ${childBadge.border}`, fontSize: '9px', fontWeight: 900, padding: '2px 8px', borderRadius: '10px', textTransform: 'uppercase', marginBottom: '6px' }}>
+                                            {childBadge.label}
+                                          </span>
+                                          <div style={{ fontSize: '11px', color: '#64748B', fontWeight: 700 }}>{child.employee_code || child.employee_id || child.emp_code || child.code || 'N/A'}</div>
+                                          <div style={{ fontSize: '10px', color: '#94A3B8', marginTop: '2px' }}>{child.mobile_number || 'N/A'}</div>
+
+                                          <button
+                                            onClick={(e) => { e.stopPropagation(); setPopoverEmpId(popoverEmpId === child.id ? null : child.id); }}
+                                            style={{ background: 'transparent', border: 'none', color: '#94A3B8', padding: '4px', fontSize: '12px', cursor: 'pointer', marginTop: '6px' }}
+                                          >
+                                            <FaEllipsisV />
+                                          </button>
+                                          {renderPopover(child)}
+                                        </div>
+                                      );
+                                    }
+
+                                    return (
+                                      <div key={child.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                        
+                                        {/* Stem line down to node */}
+                                        <div style={{ width: '2px', height: '18px', background: childBadge.color }}></div>
+
+                                        {/* Node Card */}
+                                        <div style={{ background: '#FFFFFF', border: `2px solid ${childBadge.border}`, borderRadius: '16px', padding: isMobile ? '12px 14px' : '14px 18px', minWidth: isMobile ? '200px' : '250px', maxWidth: '290px', boxShadow: `0 8px 20px ${childBadge.color}15`, position: 'relative', zIndex: 9 }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '8px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                              <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: childBadge.bg, color: childBadge.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '14px' }}>
+                                                {child.full_name?.charAt(0) || 'E'}
+                                              </div>
+                                              <div>
+                                                <div style={{ fontSize: '14px', fontWeight: 900, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                  {child.full_name}
+                                                  <span style={{ background: childBadge.bg, color: childBadge.color, border: `1px solid ${childBadge.border}`, fontSize: '9.5px', fontWeight: 900, padding: '2px 6px', borderRadius: '10px' }}>
+                                                    {childBadge.label}
+                                                  </span>
+                                                </div>
+                                                <div style={{ fontSize: '11px', color: '#64748B', fontWeight: 700 }}>{child.employee_code || child.employee_id || child.emp_code || child.code || 'N/A'}</div>
+                                              </div>
+                                            </div>
+                                            <button
+                                              onClick={(e) => { e.stopPropagation(); setPopoverEmpId(popoverEmpId === child.id ? null : child.id); }}
+                                              style={{ background: 'transparent', border: 'none', color: '#64748B', padding: '4px 8px', fontSize: '13px', cursor: 'pointer' }}
+                                            >
+                                              <FaEllipsisV />
+                                            </button>
+                                          </div>
+
+                                          <div style={{ fontSize: '11.5px', color: '#64748B', display: 'flex', justifyContent: 'space-between', paddingTop: '6px', borderTop: '1px solid #F1F5F9' }}>
+                                            <span>📞 {child.mobile_number || 'N/A'}</span>
+                                          </div>
+                                          {renderPopover(child)}
+                                        </div>
+
+                                        {/* Recursive Sub-tree */}
+                                        {renderSubTree(child, childRole)}
+
+                                      </div>
+                                    );
+                                  })}
+
+                                  {/* Direct TCs under Manager if any */}
+                                  {directTCsForMgr.length > 0 && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                      <div style={{ width: '2px', height: '18px', background: '#F59E0B' }}></div>
+                                      <div style={{ background: '#FFFBEB', border: `1px solid #FCD34D`, borderRadius: '16px', padding: '10px 14px', marginBottom: '12px', textAlign: 'center' }}>
+                                        <span style={{ background: '#F59E0B', color: '#FFF', fontSize: '10px', fontWeight: 900, padding: '2px 8px', borderRadius: '10px' }}>
+                                          DIRECT MEMBERS ({directTCsForMgr.length})
+                                        </span>
+                                      </div>
+                                      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                                        {directTCsForMgr.map(tc => (
+                                          <div 
+                                            key={tc.id} 
+                                            style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '16px', padding: '14px 12px', width: '135px', boxShadow: '0 4px 12px rgba(0,0,0,0.03)', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', position: 'relative' }}
+                                          >
+                                            <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: '#FEF3C7', color: '#D97706', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '14px', marginBottom: '8px' }}>
+                                              {tc.full_name?.charAt(0) || 'T'}
+                                            </div>
+                                            <div style={{ fontSize: '13px', fontWeight: 800, color: '#1E293B', marginBottom: '4px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', maxWidth: '120px' }}>
+                                              {tc.full_name}
+                                            </div>
+                                            <span style={{ background: '#D1FAE5', color: '#047857', fontSize: '9px', fontWeight: 900, padding: '2px 8px', borderRadius: '10px', textTransform: 'uppercase', marginBottom: '6px' }}>
+                                              TELECALLER
+                                            </span>
+                                            <div style={{ fontSize: '11px', color: '#64748B', fontWeight: 700 }}>{tc.employee_id}</div>
+                                            <div style={{ fontSize: '10px', color: '#94A3B8', marginTop: '2px' }}>{tc.mobile_number || 'N/A'}</div>
+
+                                            <button
+                                              onClick={(e) => { e.stopPropagation(); setPopoverEmpId(popoverEmpId === tc.id ? null : tc.id); }}
+                                              style={{ background: 'transparent', border: 'none', color: '#94A3B8', padding: '4px', fontSize: '12px', cursor: 'pointer', marginTop: '6px' }}
+                                            >
+                                              <FaEllipsisV />
+                                            </button>
+                                            {renderPopover(tc)}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                </div>
+                              </div>
+                            </>
+                          );
+                        };
+
+                        return renderSubTree(currentMgr, selectedTreeRole);
+                      })()}
+
+                      {/* Bottom Stats Summary Bar & Legend */}
+                      <div style={{ width: '100%', marginTop: '32px', paddingTop: '20px', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+                        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                          {selectedTreeRole === 'BRANCH_HEAD' && (
+                            <div style={{ background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: '12px', padding: '8px 14px', fontSize: '13px', fontWeight: 900, color: '#D97706', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: '#D97706', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px' }}>{subSrMgrs.length}</div>
+                              Sr. Managers
+                            </div>
+                          )}
+                          {(selectedTreeRole === 'BRANCH_HEAD' || selectedTreeRole === 'SENIOR_MANAGER') && (
+                            <div style={{ background: '#EDE9FE', border: '1px solid #DDD6FE', borderRadius: '12px', padding: '8px 14px', fontSize: '13px', fontWeight: 900, color: '#7C3AED', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: '#7C3AED', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px' }}>{subManagers.length}</div>
+                              Managers
+                            </div>
+                          )}
+                          {selectedTreeRole !== 'TEAM_LEADER' && (
+                            <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '12px', padding: '8px 14px', fontSize: '13px', fontWeight: 900, color: '#2563EB', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: '#2563EB', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px' }}>{managerTLs.length}</div>
+                              Team Leaders
+                            </div>
+                          )}
+                          <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '12px', padding: '8px 14px', fontSize: '13px', fontWeight: 900, color: '#059669', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: '#059669', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px' }}>{allManagerTCs.length}</div>
+                            Telecallers
+                          </div>
+                          <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '12px', padding: '8px 14px', fontSize: '13px', fontWeight: 900, color: '#D97706', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: '#D97706', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px' }}>
+                              {1 + (subSrMgrs?.length || 0) + (subManagers?.length || 0) + managerTLs.length + allManagerTCs.length}
+                            </div>
+                            Total Employees
+                          </div>
+                        </div>
+
+                        {/* Legend */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', fontSize: '12.5px', fontWeight: 700, color: '#64748B' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#D97706' }}></span> Branch Head</span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#4F46E5' }}></span> Sr Manager</span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#7C3AED' }}></span> Manager</span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#2563EB' }}></span> Team Leader</span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#059669' }}></span> Telecaller</span>
+                        </div>
+                      </div>
+
+                    </div>
+                  )}
+            </div>
+          );
+        })()}
+
+        {/* Manage Bonus & Targets Tab View */}
+        {activeTab === 'bonus' && (() => {
+          // Dynamic months list extracted from configured rules
+          const safeBonusRules = Array.isArray(bonusRulesList) ? bonusRulesList : [];
+          const availableMonthsSet = new Set(
+            safeBonusRules.flatMap(r => [
+              r?.start_date ? r.start_date.substring(0, 7) : null,
+              r?.end_date ? r.end_date.substring(0, 7) : null
+            ]).filter(Boolean)
+          );
+          // Always ensure current month (e.g. 2026-09) is present
+          const currentMonthISO = new Date().toISOString().substring(0, 7);
+          availableMonthsSet.add(currentMonthISO);
+          const availableMonthsList = Array.from(availableMonthsSet).sort().reverse();
+
+          // Filter rules by month & search query
+          const displayRules = safeBonusRules.filter(rule => {
+            if (!rule) return false;
+            if (selectedBonusMonth !== 'ALL') {
+              const sM = rule.start_date ? rule.start_date.substring(0, 7) : '';
+              const eM = rule.end_date ? rule.end_date.substring(0, 7) : '';
+              if (sM !== selectedBonusMonth && eM !== selectedBonusMonth) return false;
+            }
+            if (bonusSearchTerm.trim()) {
+              const q = bonusSearchTerm.toLowerCase().trim();
+              const nameMatch = (rule.employee_name || '').toLowerCase().includes(q);
+              const codeMatch = (rule.emp_code || '').toLowerCase().includes(q);
+              const bankMatch = (rule.bank_name || '').toLowerCase().includes(q);
+              const desigMatch = (rule.employee_designation || '').toLowerCase().includes(q);
+              if (!nameMatch && !codeMatch && !bankMatch && !desigMatch) return false;
+            }
+            return true;
+          });
+
+          // Compute summary stats for the current filter view
+          const totalTargetsConfigured = displayRules.length;
+          const totalTargetCardsSum = displayRules.reduce((acc, r) => acc + parseInt(r?.target_count || 0, 10), 0);
+          const totalApprovedCardsSum = displayRules.reduce((acc, r) => acc + parseInt(r?.approved_count || 0, 10), 0);
+          const totalUnlockedBonusSum = displayRules.reduce((acc, r) => acc + (r?.target_achieved ? parseFloat(r?.earned_bonus || 0) : 0), 0);
+
+          return (
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '20px', minHeight: '450px', padding: '24px' }}>
+              
+              {/* Header & Main Action */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+                <div>
+                  <h2 style={{ fontSize: '20px', fontWeight: 900, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <FaCoins style={{ color: '#D97706' }} /> Employee Bonus & Department Target Manager
+                  </h2>
+                  <div style={{ fontSize: '12.5px', color: C.textMid, marginTop: '4px' }}>
+                    Assign monthly targets & card bonus rates across employees and departments
+                  </div>
+                </div>
+                <button 
+                  onClick={() => openBonusModal()} 
+                  style={{ 
+                    background: C.teal, color: '#fff', border: 'none', padding: '10px 20px', 
+                    borderRadius: '10px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px',
+                    boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)' 
+                  }}
+                >
+                  <FaPlus /> Create Bonus Target
+                </button>
+              </div>
+
+              {/* Month Selector & Search Filter Bar */}
+              <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '14px 18px', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', flex: 1, minWidth: '280px' }}>
+                  
+                  {/* Month Selection Dropdown */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', padding: '6px 12px' }}>
+                    <FaCalendarAlt style={{ color: C.teal, fontSize: '14px' }} />
+                    <span style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, textTransform: 'uppercase' }}>Target Period / Month:</span>
+                    <select
+                      value={selectedBonusMonth}
+                      onChange={(e) => setSelectedBonusMonth(e.target.value)}
+                      style={{ background: 'transparent', border: 'none', color: C.text, fontWeight: 800, fontSize: '13px', cursor: 'pointer', outline: 'none' }}
+                    >
+                      <option value="ALL">All Target Months</option>
+                      {availableMonthsList.map(mIso => {
+                        const [yr, mo] = mIso.split('-');
+                        const dObj = new Date(parseInt(yr, 10), parseInt(mo, 10) - 1, 1);
+                        const label = dObj.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+                        return (
+                          <option key={mIso} value={mIso}>
+                            {label} ({mIso})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  {/* Search Filter */}
+                  <div style={{ position: 'relative', flex: 1, minWidth: '220px' }}>
+                    <FaSearch style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: C.textMid, fontSize: '12px' }} />
+                    <input 
+                      type="text" 
+                      placeholder="Search Employee, Code, Bank or Role..." 
+                      value={bonusSearchTerm}
+                      onChange={(e) => setBonusSearchTerm(e.target.value)}
+                      style={{ width: '100%', padding: '7px 12px 7px 34px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, outline: 'none', fontSize: '13px', fontWeight: 700 }}
+                    />
+                  </div>
+
+                </div>
+
+                {/* Period Summary Quick Badges */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <span style={{ padding: '6px 12px', borderRadius: '10px', background: C.card, border: `1px solid ${C.border}`, fontSize: '12px', fontWeight: 800, color: C.text }}>
+                    Configured Targets: <strong style={{ color: C.teal }}>{totalTargetsConfigured}</strong>
+                  </span>
+                  <span style={{ padding: '6px 12px', borderRadius: '10px', background: C.card, border: `1px solid ${C.border}`, fontSize: '12px', fontWeight: 800, color: C.text }}>
+                    Cards: <strong style={{ color: C.teal }}>{totalApprovedCardsSum} / {totalTargetCardsSum}</strong>
+                  </span>
+                  <span style={{ padding: '6px 12px', borderRadius: '10px', background: '#10B98115', border: '1px solid #10B98130', fontSize: '12px', fontWeight: 900, color: '#10B981' }}>
+                    Unlocked Bonus: ₹{totalUnlockedBonusSum.toLocaleString('en-IN')}
+                  </span>
+                </div>
+              </div>
+
+              {/* Configured Bonus Rules Cards Grid */}
+              <div style={{ marginTop: '12px' }}>
+                {loadingRules ? (
+                  <div style={{ padding: '40px', textAlign: 'center', color: C.textMid, fontWeight: 700 }}>Loading bonus rules data...</div>
+                ) : displayRules.length === 0 ? (
+                  <div style={{ padding: '40px', textAlign: 'center', color: C.textMid, background: C.bgSecondary, borderRadius: '16px', border: `1px solid ${C.border}` }}>
+                    <FaInfoCircle style={{ fontSize: '24px', color: C.teal, marginBottom: '8px' }} />
+                    <div style={{ fontSize: '14px', fontWeight: 800, color: C.text }}>No bonus targets found for the selected month or search filter.</div>
+                    <div style={{ fontSize: '12.5px', marginTop: '4px' }}>Click "Create Bonus Target" to set up a new target and period bonus for your employees.</div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '16px' }}>
+                    {displayRules.map(rule => {
+                      const startDateFormatted = rule.start_date ? new Date(rule.start_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A';
+                      const endDateFormatted = rule.end_date ? new Date(rule.end_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A';
+                      const monthName = rule.start_date ? new Date(rule.start_date).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) : '';
+
+                      return (
+                        <div key={rule.id} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '18px', padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.02)' }}>
+                          
+                          {/* Card Top Row: Employee & Bank Badge */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <div>
+                              <div style={{ fontSize: '15px', fontWeight: 900, color: C.text }}>{rule.employee_name}</div>
+                              <div style={{ fontSize: '12px', color: C.teal, fontWeight: 800 }}>ID: {rule.emp_code} | {rule.employee_designation || 'TC'}</div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ padding: '4px 10px', borderRadius: '10px', background: `${C.teal}15`, color: C.teal, fontSize: '12px', fontWeight: 900 }}>
+                                {rule.bank_name}
+                              </span>
+                              <button onClick={() => handleDeleteBonusRule(rule.id)} style={{ background: '#EF444415', border: 'none', color: '#EF4444', padding: '6px', borderRadius: '8px', cursor: 'pointer' }} title="Delete Rule">
+                                <FaTrash />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Target Progress & Unlock Status */}
+                          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '14px', padding: '14px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', fontSize: '13px', fontWeight: 800 }}>
+                              <span>Target Progress: <strong style={{ color: C.teal }}>{rule.approved_count} / {rule.target_count} Approved Cards</strong></span>
+                              {rule.target_achieved ? (
+                                <span style={{ padding: '3px 8px', borderRadius: '8px', background: '#10B98118', color: '#10B981', fontWeight: 900, fontSize: '12px' }}>
+                                  ✓ Unlocked: ₹{Number(rule.earned_bonus || 0).toLocaleString('en-IN')}
+                                </span>
+                              ) : (
+                                <span style={{ padding: '3px 8px', borderRadius: '8px', background: '#F59E0B18', color: '#D97706', fontWeight: 800, fontSize: '12px' }}>
+                                  🔒 Bonus Locked
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Progress Bar */}
+                            <div style={{ width: '100%', background: C.bgSecondary, height: '12px', borderRadius: '6px', overflow: 'hidden', marginBottom: '8px' }}>
+                              <div style={{ width: `${Math.min(rule.progress_percentage || 0, 100)}%`, background: rule.target_achieved ? '#10B981' : '#F59E0B', height: '100%', transition: 'width 0.4s ease' }} />
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: C.textMid, fontWeight: 700 }}>
+                              <span>
+                                {rule.target_achieved ? (
+                                  <strong style={{ color: '#10B981' }}>Target Achieved (Unlocked for {rule.employee_name})</strong>
+                                ) : (
+                                  <span style={{ color: '#D97706' }}>Needs {rule.remaining_count} more cards to unlock bonus</span>
+                                )}
+                              </span>
+                              <span>Bonus Rate: <strong>₹{rule.bonus_per_card} / Card</strong></span>
+                            </div>
+                          </div>
+
+                          {/* Active Period & Target Month */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: C.textMid, flexWrap: 'wrap', gap: '6px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <FaCalendarAlt style={{ color: C.teal }} /> Target Period: <strong>{startDateFormatted} – {endDateFormatted}</strong>
+                            </div>
+                            {monthName && (
+                              <span style={{ fontSize: '11px', fontWeight: 800, background: C.card, padding: '2px 8px', borderRadius: '6px', border: `1px solid ${C.border}`, color: C.textMid }}>
+                                {monthName}
+                              </span>
+                            )}
+                          </div>
+
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+            </div>
+          );
+        })()}
+
+        {/* Product Links Tab View */}
+        {activeTab === 'links' && (
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '20px', minHeight: '450px', padding: '24px' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: 900, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}><FaUniversity style={{ color: C.teal }} /> Employee-Specific Product Referral Links & Fixed Incentives</h2>
+            <p style={{ fontSize: '13px', color: C.textMid, marginBottom: '20px' }}>
+              Unlike Partner Commission URLs, employee referral links are isolated per employee record using <code>employee_product_links</code>.
+            </p>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13.5px' }}>
+                <thead>
+                  <tr style={{ background: C.bgSecondary, borderBottom: `1px solid ${C.border}`, color: C.textMid, fontWeight: 700 }}>
+                    <th style={{ padding: '12px 16px' }}>Employee</th>
+                    <th style={{ padding: '12px 16px' }}>Designation</th>
+                    <th style={{ padding: '12px 16px' }}>Active Links Count</th>
+                    <th style={{ padding: '12px 16px' }}>Incentives Earned</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {employees.map(emp => (
+                    <tr key={emp.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                      <td style={{ padding: '12px 16px', fontWeight: 800 }}>
+                        {emp.full_name} <span style={{ color: C.teal, fontWeight: 900 }}>({emp.employee_code || emp.employee_id || emp.emp_code || emp.code || 'N/A'})</span>
+                      </td>
+                      <td style={{ padding: '12px 16px' }}>{emp.designation}</td>
+                      <td style={{ padding: '12px 16px', fontWeight: 800 }}>{emp.active_links_count || 0} Products Assigned</td>
+                      <td style={{ padding: '12px 16px', fontWeight: 900, color: '#10B981' }}>₹{emp.total_incentives_earned || 0}</td>
+                      <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                        <button onClick={() => setLinkModalEmp(emp)} style={{ background: C.teal, color: '#fff', border: 'none', padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 800, cursor: 'pointer' }}>
+                          + Assign Product Link
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── MODAL: 360° Employee View Inspector ── */}
+        {selectedEmp && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: isMobile ? '10px' : '20px' }}>
+            <div style={{ background: C.card, borderRadius: isMobile ? '16px' : '24px', padding: isMobile ? '16px' : '28px', width: '100%', maxWidth: isMobile ? '96vw' : '850px', maxHeight: isMobile ? '85vh' : '90vh', overflowY: 'auto', border: `1px solid ${C.border}`, boxShadow: '0 20px 50px rgba(0,0,0,0.35)' }}>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: `1px solid ${C.border}`, paddingBottom: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <div style={{
+                    width: '52px', height: '52px', borderRadius: '50%', background: `${C.teal}20`, color: C.teal,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '20px', flexShrink: 0,
+                    border: `2px solid ${C.teal}40`, overflow: 'hidden', boxShadow: '0 4px 10px rgba(0,0,0,0.08)'
+                  }}>
+                    {(selectedEmp.profile_photo_url || selectedEmp.avatar_url || selectedEmp.photo || emp360Data?.employee?.profile_photo_url) ? (
+                      <img 
+                        src={selectedEmp.profile_photo_url || selectedEmp.avatar_url || selectedEmp.photo || emp360Data?.employee?.profile_photo_url} 
+                        alt={selectedEmp.full_name} 
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                      />
+                    ) : (
+                      selectedEmp.full_name ? selectedEmp.full_name[0].toUpperCase() : 'E'
+                    )}
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '12px', fontWeight: 800, color: C.teal, textTransform: 'uppercase' }}>Employee 360° Profile Inspector</span>
+                    <h2 style={{ fontSize: '20px', fontWeight: 900, margin: 0, color: C.text }}>{selectedEmp.full_name} ({selectedEmp.employee_code || selectedEmp.employee_id || selectedEmp.emp_code || selectedEmp.code || 'N/A'})</h2>
+                  </div>
+                </div>
+                <button onClick={() => setSelectedEmp(null)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, width: '36px', height: '36px', borderRadius: '50%', cursor: 'pointer', fontWeight: 900 }}>✕</button>
+              </div>
+
+              {loading360 ? (
+                <div style={{ padding: '60px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '14px' }}>
+                  <LoadingLogo size={90} />
+                  <span style={{ fontSize: '13.5px', fontWeight: 800, color: C.teal, letterSpacing: '0.3px' }}>
+                    Loading 360° Employee Details...
+                  </span>
+                </div>
+              ) : emp360Data && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  
+                  {/* Missing Documents & Submitted Documents Status Banners */}
+                  {(() => {
+                    const isVerified = selectedEmp.overall_verification_status === 'VERIFIED' || emp360Data.kyc?.kyc_status === 'VERIFIED';
+                    const allRawMissing = selectedEmp.missing_documents || emp360Data.employee?.missing_documents || [];
+                    
+                    const missingDocs = (Array.isArray(allRawMissing) ? allRawMissing : []).filter(d => !String(d).includes('Under Review'));
+                    const underReviewDocs = emp360Data.employee?.under_review_document_names || (Array.isArray(allRawMissing) ? allRawMissing : []).filter(d => String(d).includes('Under Review'));
+
+                    if (isVerified) return null;
+
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        {/* Red Banner: Truly missing / rejected items */}
+                        {missingDocs.length > 0 && (
+                          <div style={{ 
+                            background: '#FEF2F2', 
+                            border: '1px solid #FCA5A5', 
+                            borderRadius: '16px', 
+                            padding: '16px 20px', 
+                            display: 'flex', 
+                            justifyContent: 'space-between', 
+                            alignItems: 'center', 
+                            flexWrap: 'wrap', 
+                            gap: '12px' 
+                          }}>
+                            <div>
+                              <div style={{ fontSize: '13.5px', fontWeight: 900, color: '#991B1B', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                                <FaExclamationCircle style={{ color: '#EF4444' }} /> Missing Verification Documents ({missingDocs.length})
+                              </div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                {missingDocs.map((doc, idx) => (
+                                  <span key={idx} style={{ fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: '6px', background: '#FFFFFF', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+                                    • {doc}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={() => handleSendReminder(selectedEmp.id, selectedEmp.full_name)}
+                              disabled={sendingReminder[selectedEmp.id]}
+                              style={{
+                                background: '#F59E0B',
+                                color: '#ffffff',
+                                border: 'none',
+                                padding: '8px 16px',
+                                borderRadius: '10px',
+                                fontSize: '12.5px',
+                                fontWeight: 900,
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                boxShadow: '0 2px 8px rgba(245, 158, 11, 0.3)'
+                              }}
+                            >
+                              🔔 {sendingReminder[selectedEmp.id] ? 'Sending...' : 'Send Verification Reminder'}
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Blue Banner: Uploaded & Under Admin Review */}
+                        {underReviewDocs.length > 0 && (
+                          <div style={{ 
+                            background: '#EFF6FF', 
+                            border: '1px solid #93C5FD', 
+                            borderRadius: '16px', 
+                            padding: '14px 20px', 
+                            display: 'flex', 
+                            justifyContent: 'space-between', 
+                            alignItems: 'center', 
+                            flexWrap: 'wrap', 
+                            gap: '12px' 
+                          }}>
+                            <div>
+                              <div style={{ fontSize: '13px', fontWeight: 900, color: '#1E40AF', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                <FaShieldAlt style={{ color: '#2563EB' }} /> Documents Submitted & Pending Admin Review ({underReviewDocs.length})
+                              </div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                {underReviewDocs.map((doc, idx) => (
+                                  <span key={idx} style={{ fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: '6px', background: '#FFFFFF', color: '#1E40AF', border: '1px solid #BFDBFE' }}>
+                                    ✓ {doc}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  
+                  {/* Profile Summary Card */}
+                  <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Mobile Number</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800 }}>{emp360Data.employee.mobile_number || 'N/A'}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>WhatsApp Number</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800 }}>{emp360Data.employee.whatsapp_number || emp360Data.joining_details?.whatsapp_number || 'N/A'}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Email Address</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800 }}>{emp360Data.employee.email_id || emp360Data.employee.email || 'N/A'}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Designation</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800, color: C.teal }}>{emp360Data.employee.designation || 'N/A'}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Department</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800 }}>{emp360Data.employee.department || 'N/A'}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Work Location</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800 }}>{emp360Data.employee.work_location || emp360Data.joining_details?.work_location || 'N/A'}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Employment Type</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800 }}>{emp360Data.employee.employment_type || emp360Data.joining_details?.employment_type || 'N/A'}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Offered Salary</div>
+                      <div style={{ fontSize: '14px', fontWeight: 900, color: '#10B981' }}>₹{emp360Data.employee.offered_salary || emp360Data.joining_details?.offered_salary || 0} / month</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Joining Date</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800 }}>{emp360Data.employee.joining_date ? new Date(emp360Data.employee.joining_date).toLocaleDateString() : (emp360Data.joining_details?.joining_date ? new Date(emp360Data.joining_details.joining_date).toLocaleDateString() : 'N/A')}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Date of Birth & Gender</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800 }}>
+                        {emp360Data.employee.date_of_birth ? new Date(emp360Data.employee.date_of_birth).toLocaleDateString() : 'N/A'}
+                        {emp360Data.employee.gender ? ` (${emp360Data.employee.gender})` : ''}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Emergency Contact</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800 }}>
+                        {emp360Data.employee.emergency_contact_name || emp360Data.joining_details?.emergency_contact_name || 'N/A'}
+                        {(emp360Data.employee.emergency_contact_number || emp360Data.joining_details?.emergency_contact_number) ? ` (${emp360Data.employee.emergency_contact_number || emp360Data.joining_details?.emergency_contact_number})` : ''}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Blood Group & Father</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800 }}>
+                        {emp360Data.employee.blood_group || emp360Data.joining_details?.blood_group || 'N/A'}
+                        {(emp360Data.employee.father_name || emp360Data.joining_details?.father_name) ? ` • S/O ${emp360Data.employee.father_name || emp360Data.joining_details?.father_name}` : ''}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Reporting Manager</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800 }}>{emp360Data.employee.reporting_manager || emp360Data.joining_details?.reporting_manager || emp360Data.employee.manager_name || 'N/A'}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Bank Details</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800 }}>
+                        {emp360Data.employee.bank_name || emp360Data.joining_details?.bank_name || 'Bank N/A'}
+                        {(emp360Data.employee.branch_name || emp360Data.joining_details?.branch_name) ? ` - ${emp360Data.employee.branch_name || emp360Data.joining_details?.branch_name}` : ''}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Activation Status</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800, color: emp360Data.employee.activation_status === 'APPROVED' ? '#10B981' : (emp360Data.employee.activation_status === 'REJECTED' ? '#EF4444' : '#F59E0B') }}>
+                        {emp360Data.employee.activation_status || 'PENDING'}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Employee Status</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800, color: emp360Data.employee.employee_status === 'ACTIVE' ? '#10B981' : '#6B7280' }}>
+                        {emp360Data.employee.employee_status || 'N/A'}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Current Address</div>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: C.text }}>{emp360Data.employee.current_address || emp360Data.joining_details?.current_address || 'N/A'}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Permanent Address</div>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: C.text }}>{emp360Data.employee.permanent_address || emp360Data.joining_details?.permanent_address || 'Same as current'}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Created At</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800 }}>{emp360Data.employee.created_at ? new Date(emp360Data.employee.created_at).toLocaleDateString() : 'N/A'}</div>
+                    </div>
+                  </div>
+
+                  {/* Joining Form & KYC Inspection Card */}
+                  <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '16px 20px' }}>
+                    <h3 style={{ fontSize: '15px', fontWeight: 900, marginBottom: '14px', color: C.teal, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <FaUserCircle /> Submitted Joining Form & Verification Details
+                    </h3>
+                    
+                    {emp360Data.joining_details ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', fontSize: '13px' }}>
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>1. Full Name & Email</span>
+                          <strong>{emp360Data.joining_details.full_name}</strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>{emp360Data.joining_details.email_id}</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>2. Contact Numbers</span>
+                          <strong>Mobile: {emp360Data.joining_details.mobile_number || 'N/A'}</strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>WhatsApp: {emp360Data.joining_details.whatsapp_number || 'N/A'}</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>3. Role & Department</span>
+                          <strong>{emp360Data.joining_details.designation}</strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>{emp360Data.joining_details.department}</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>4. Salary & Joining Date</span>
+                          <strong style={{ color: '#10B981' }}>₹{emp360Data.joining_details.offered_salary} / mo</strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>Joining: {emp360Data.joining_details.joining_date ? new Date(emp360Data.joining_details.joining_date).toLocaleDateString() : 'N/A'}</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>5. Work Location & Type</span>
+                          <strong>{emp360Data.joining_details.work_location || 'N/A'}</strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>{emp360Data.joining_details.employment_type || 'N/A'}</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>6. Reporting Manager</span>
+                          <strong>{emp360Data.joining_details.reporting_manager || 'N/A'}</strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>Notice Period: {emp360Data.joining_details.notice_period_days || 'N/A'} days</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>7. PAN & Aadhaar</span>
+                          <strong>PAN: {emp360Data.joining_details.pan_number || 'N/A'}</strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>Aadhaar: {emp360Data.joining_details.aadhaar_number || 'N/A'}</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>8. Bank Account Details</span>
+                          <strong>{emp360Data.joining_details.bank_name || emp360Data.employee.bank_name || 'Bank'} {emp360Data.joining_details.branch_name || emp360Data.employee.branch_name ? `(${emp360Data.joining_details.branch_name || emp360Data.employee.branch_name})` : ''}</strong>
+                          <div style={{ fontSize: '12px', color: C.text, fontWeight: 700 }}>A/C: {emp360Data.joining_details.bank_account_number || 'N/A'}</div>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>IFSC: {emp360Data.joining_details.ifsc_code || 'N/A'} ({emp360Data.joining_details.bank_account_holder_name || emp360Data.employee.full_name})</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>9. Qualification & Experience</span>
+                          <strong>{emp360Data.joining_details.highest_qualification} ({emp360Data.joining_details.passing_year || 'N/A'})</strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>{emp360Data.joining_details.experience_type} - {emp360Data.joining_details.total_experience_years || '0'} yrs</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>10. Previous Employment</span>
+                          <strong>{emp360Data.joining_details.previous_company || 'N/A'}</strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>{emp360Data.joining_details.previous_designation || 'N/A'}</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>11. Current Address</span>
+                          <strong>{emp360Data.joining_details.current_address || 'N/A'}</strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>Permanent: {emp360Data.joining_details.permanent_address || 'Same as current'}</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>12. Recruitment Info</span>
+                          <strong>Referred By: {emp360Data.joining_details.referred_by || 'N/A'}</strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>Source: {emp360Data.joining_details.recruitment_source || 'N/A'}</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>13. Incentive & Interviewer</span>
+                          <strong>{emp360Data.joining_details.incentive_structure || 'N/A'}</strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>Interviewer: {emp360Data.joining_details.interviewer_name || 'N/A'}</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>14. Form Status</span>
+                          <strong style={{ color: emp360Data.joining_details.form_status === 'APPROVED' ? '#10B981' : (emp360Data.joining_details.form_status === 'REJECTED' ? '#EF4444' : '#F59E0B') }}>
+                            {emp360Data.joining_details.form_status}
+                          </strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>Declaration: {emp360Data.joining_details.declaration_accepted ? '✓ Accepted' : 'Pending'}</div>
+                        </div>
+
+                        <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '10px', border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700, display: 'block' }}>15. Family & Emergency Contact</span>
+                          <strong>{emp360Data.joining_details.emergency_contact_name || emp360Data.employee.emergency_contact_name || 'N/A'}</strong>
+                          <div style={{ fontSize: '12px', color: C.textMid }}>Phone: {emp360Data.joining_details.emergency_contact_number || emp360Data.employee.emergency_contact_number || 'N/A'}</div>
+                          <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>Father: {emp360Data.joining_details.father_name || emp360Data.employee.father_name || 'N/A'} • Blood: {emp360Data.joining_details.blood_group || emp360Data.employee.blood_group || 'N/A'}</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '13px', color: C.textMid, fontStyle: 'italic' }}>
+                        Joining Details Form has not been submitted by employee yet.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Submitted KYC & Verification Documents Panel */}
+                  <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '16px 20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+                      <h3 style={{ fontSize: '15px', fontWeight: 900, margin: 0, color: C.teal, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <FaIdCard /> Submitted KYC Documents & Verification Details
+                      </h3>
+                      <span style={{
+                        padding: '4px 12px', borderRadius: '10px', fontSize: '12px', fontWeight: 800,
+                        background: emp360Data.kyc?.kyc_status === 'VERIFIED' ? '#D1FAE5' : (emp360Data.kyc?.kyc_status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7'),
+                        color: emp360Data.kyc?.kyc_status === 'VERIFIED' ? '#065F46' : (emp360Data.kyc?.kyc_status === 'REJECTED' ? '#991B1B' : '#92400E')
+                      }}>
+                        KYC STATUS: {emp360Data.kyc?.kyc_status || 'PENDING'}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', fontSize: '13px' }}>
+                      
+                      {/* Document Verification Cards Grid */}
+                      {(() => {
+                        const docsList = emp360Data.documents || [];
+                        const getDoc = (type) => docsList.find(d => String(d.type).toLowerCase() === String(type).toLowerCase());
+
+                        const docConfig = [
+                          { type: 'pan', title: '1. PAN Card', fallbackUrl: emp360Data.kyc?.pan_document_url, fallbackNum: emp360Data.kyc?.pan_number || emp360Data.joining_details?.pan_number },
+                          { type: 'aadhaar', title: '2. Aadhaar Card', fallbackUrl: emp360Data.kyc?.aadhaar_document_url, fallbackNum: emp360Data.kyc?.aadhaar_number || emp360Data.joining_details?.aadhaar_number },
+                          { type: 'bank_proof', title: '3. Bank Account Proof', fallbackUrl: emp360Data.kyc?.bank_document_url, fallbackNum: emp360Data.kyc?.bank_account_number ? `A/C: ${emp360Data.kyc.bank_account_number}` : null }
+                        ];
+
+                        return (
+                          <>
+                            {docConfig.map(cfg => {
+                              const doc = getDoc(cfg.type);
+                              const st = doc?.status || (cfg.type === 'pan' ? (emp360Data.kyc?.pan_status || (emp360Data.kyc?.pan_verified ? 'APPROVED' : 'PENDING')) : (cfg.type === 'aadhaar' ? (emp360Data.kyc?.aadhaar_status || (emp360Data.kyc?.aadhaar_verified ? 'APPROVED' : 'PENDING')) : (cfg.type === 'bank_proof' ? (emp360Data.kyc?.bank_status || (emp360Data.kyc?.bank_verified ? 'APPROVED' : 'PENDING')) : 'PENDING')));
+                              
+                              const isApproved = st === 'APPROVED' || st === 'VERIFIED';
+                              const isRejected = st === 'REJECTED';
+                              const isUnderReview = st === 'UNDER_REVIEW' || st === 'SUBMITTED';
+
+                              const badgeBg = isApproved ? '#D1FAE5' : (isRejected ? '#FEE2E2' : (isUnderReview ? '#FEF3C7' : '#F3F4F6'));
+                              const badgeColor = isApproved ? '#065F46' : (isRejected ? '#991B1B' : (isUnderReview ? '#92400E' : '#6B7280'));
+                              const badgeText = isApproved ? 'VERIFIED' : (isRejected ? 'REJECTED' : (isUnderReview ? 'UNDER REVIEW' : 'NOT UPLOADED'));
+                              const docUrl = doc?.url || cfg.fallbackUrl;
+                              const rejReason = doc?.reason || doc?.rejection_reason || (cfg.type === 'pan' ? emp360Data.kyc?.pan_rejection_reason : (cfg.type === 'aadhaar' ? emp360Data.kyc?.aadhaar_rejection_reason : (cfg.type === 'bank_proof' ? emp360Data.kyc?.bank_rejection_reason : null)));
+
+                              return (
+                                <div key={cfg.type} style={{ background: C.bgSecondary, padding: '14px', borderRadius: '12px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                  <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                                      <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>{cfg.title}</span>
+                                      <span style={{ fontSize: '10.5px', fontWeight: 800, padding: '2px 8px', borderRadius: '6px', background: badgeBg, color: badgeColor }}>
+                                        {badgeText}
+                                      </span>
+                                    </div>
+                                    {cfg.fallbackNum && <strong style={{ fontSize: '13px', display: 'block', marginBottom: '4px' }}>{cfg.fallbackNum}</strong>}
+                                    {isRejected && rejReason && (
+                                      <div style={{ fontSize: '11px', color: '#EF4444', marginTop: '6px', background: '#FEF2F2', padding: '6px 8px', borderRadius: '6px', borderLeft: '3px solid #EF4444' }}>
+                                        ⚠️ {rejReason}
+                                      </div>
+                                    )}
+                                    {docUrl ? (
+                                      <a href={docUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', marginTop: '8px', background: C.card, border: `1px solid ${C.border}`, padding: '6px 10px', borderRadius: '8px', color: C.teal, fontSize: '12px', fontWeight: 800, textDecoration: 'none' }}>
+                                        <FaFileAlt /> View Doc ↗
+                                      </a>
+                                    ) : (
+                                      <div style={{ fontSize: '11px', color: C.textMid, marginTop: '8px' }}>No file attached</div>
+                                    )}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '6px', marginTop: '10px', paddingTop: '8px', borderTop: `1px dashed ${C.border}` }}>
+                                    <button onClick={() => handleDocVerify(selectedEmp.id, cfg.type, 'VERIFIED')} style={{ flex: 1, background: '#10B981', color: '#fff', border: 'none', padding: '6px 8px', borderRadius: '6px', fontWeight: 800, cursor: 'pointer', fontSize: '11px' }}>
+                                      ✓ Approve
+                                    </button>
+                                    <button onClick={() => handleDocVerify(selectedEmp.id, cfg.type, 'REJECTED')} style={{ flex: 1, background: '#EF4444', color: '#fff', border: 'none', padding: '6px 8px', borderRadius: '6px', fontWeight: 800, cursor: 'pointer', fontSize: '11px' }}>
+                                      ✕ Reject
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+
+                             {/* Verification Video Box */}
+                            {(() => {
+                              const vSt = emp360Data.terms?.verification_status || emp360Data.kyc?.video_status || selectedEmp?.video_status || (emp360Data.terms?.video_url ? 'UNDER_REVIEW' : 'PENDING');
+                              const isVideoVerified = vSt === 'VERIFIED' || vSt === 'APPROVED';
+                              const isVideoRejected = vSt === 'REJECTED';
+                              const isVideoUnderReview = vSt === 'UNDER_REVIEW' || vSt === 'SUBMITTED';
+
+                              const badgeText = isVideoVerified ? 'VERIFIED' : (isVideoRejected ? 'REJECTED' : (isVideoUnderReview ? 'UNDER REVIEW' : 'NOT UPLOADED'));
+                              const badgeBg = isVideoVerified ? '#D1FAE5' : (isVideoRejected ? '#FEE2E2' : (isVideoUnderReview ? '#FEF3C7' : '#F3F4F6'));
+                              const badgeColor = isVideoVerified ? '#065F46' : (isVideoRejected ? '#991B1B' : (isVideoUnderReview ? '#92400E' : '#6B7280'));
+
+                              return (
+                                <div style={{ background: C.bgSecondary, padding: '14px', borderRadius: '12px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                  <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                                      <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>4. Verification Video</span>
+                                      <span style={{ fontSize: '10.5px', fontWeight: 800, padding: '2px 8px', borderRadius: '6px', background: badgeBg, color: badgeColor }}>
+                                        {badgeText}
+                                      </span>
+                                    </div>
+                                    <strong style={{ fontSize: '13px' }}>{emp360Data.terms?.video_url ? '🎥 Recording Submitted' : 'Not Uploaded'}</strong>
+                                    {(isVideoRejected && (emp360Data.kyc?.video_rejection_reason || emp360Data.terms?.verification_notes)) && (
+                                      <div style={{ fontSize: '11px', color: '#EF4444', marginTop: '6px', background: '#FEF2F2', padding: '6px 8px', borderRadius: '6px', borderLeft: '3px solid #EF4444' }}>
+                                        ⚠️ {emp360Data.kyc?.video_rejection_reason || emp360Data.terms?.verification_notes}
+                                      </div>
+                                    )}
+                                    {emp360Data.terms?.video_url ? (
+                                      <a href={emp360Data.terms.video_url} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', marginTop: '8px', background: C.teal, color: '#fff', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 800, textDecoration: 'none' }}>
+                                        <FaVideo /> Play Video ↗
+                                      </a>
+                                    ) : (
+                                      <div style={{ fontSize: '11px', color: C.textMid, marginTop: '8px' }}>No video recording</div>
+                                    )}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '6px', marginTop: '10px', paddingTop: '8px', borderTop: `1px dashed ${C.border}` }}>
+                                    <button onClick={() => handleDocVerify(selectedEmp.id, 'video', 'VERIFIED')} style={{ flex: 1, background: '#10B981', color: '#fff', border: 'none', padding: '6px 8px', borderRadius: '6px', fontWeight: 800, cursor: 'pointer', fontSize: '11px' }}>
+                                      ✓ Approve
+                                    </button>
+                                    <button onClick={() => handleDocVerify(selectedEmp.id, 'video', 'REJECTED')} style={{ flex: 1, background: '#EF4444', color: '#fff', border: 'none', padding: '6px 8px', borderRadius: '6px', fontWeight: 800, cursor: 'pointer', fontSize: '11px' }}>
+                                      ✕ Reject
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* 5. Face Verification for Attendance Card */}
+                            {(() => {
+                              const bioEnrolled = emp360Data.biometrics?.is_enrolled || selectedEmp?.face_enrolled || selectedEmp?.biometric_status === 'ACTIVE';
+                              const bioTemplate = emp360Data.biometrics?.active_template || emp360Data.verification_state?.biometric_template;
+                              const adminReview = String(bioTemplate?.admin_review_status || 'PENDING').toUpperCase();
+                              const isApproved = adminReview === 'APPROVED';
+                              const isRejected = adminReview === 'REJECTED' || adminReview === 'FLAGGED';
+
+                              const badgeText = !bioEnrolled
+                                ? 'MISSING / PENDING'
+                                : isApproved
+                                ? 'VERIFIED & APPROVED'
+                                : isRejected
+                                ? 'FLAGGED / REJECTED'
+                                : 'PENDING ADMIN REVIEW';
+
+                              const badgeBg = !bioEnrolled ? '#FEF3C7' : isApproved ? '#D1FAE5' : isRejected ? '#FEE2E2' : '#E0F2FE';
+                              const badgeColor = !bioEnrolled ? '#92400E' : isApproved ? '#065F46' : isRejected ? '#991B1B' : '#0369A1';
+
+                              return (
+                                <div style={{ background: C.bgSecondary, padding: '14px', borderRadius: '12px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                  <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                      <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>5. Face Verification</span>
+                                      <span style={{ fontSize: '10.5px', fontWeight: 800, padding: '2px 8px', borderRadius: '6px', background: badgeBg, color: badgeColor }}>
+                                        {isApproved ? '✓ ' : isRejected ? '⚠️ ' : ''}{badgeText}
+                                      </span>
+                                    </div>
+                                    {bioEnrolled ? (
+                                      <div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                                          {bioTemplate?.image_url && (
+                                            <a href={bioTemplate.image_url} target="_blank" rel="noopener noreferrer" title="Click to view full photo">
+                                              <img
+                                                src={bioTemplate.image_url}
+                                                alt="Face Biometric"
+                                                style={{ width: '42px', height: '42px', borderRadius: '10px', objectFit: 'cover', border: `2px solid ${isApproved ? '#10B981' : isRejected ? '#EF4444' : C.teal}` }}
+                                              />
+                                            </a>
+                                          )}
+                                          <div>
+                                            <strong style={{ fontSize: '12.5px', color: isApproved ? '#10B981' : isRejected ? '#EF4444' : C.text, display: 'block' }}>
+                                              {isApproved ? '✓ Face Biometric Approved' : isRejected ? '⚠️ Face Enrollment Flagged' : '📷 Face Enrolled (Pending Review)'}
+                                            </strong>
+                                            <span style={{ fontSize: '11px', color: C.textMid }}>
+                                              Template: <strong>V{bioTemplate?.version || 1}</strong> • {bioTemplate?.enrolled_at ? new Date(bioTemplate.enrolled_at).toLocaleDateString('en-IN') : 'Enrolled'}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {isRejected && bioTemplate?.admin_review_notes && (
+                                          <div style={{ fontSize: '11px', color: '#EF4444', marginBottom: '6px', background: '#FEF2F2', padding: '6px 8px', borderRadius: '6px', borderLeft: '3px solid #EF4444' }}>
+                                            ⚠️ Rejection Reason: {bioTemplate.admin_review_notes}
+                                          </div>
+                                        )}
+                                        {isApproved && bioTemplate?.admin_review_notes && (
+                                          <div style={{ fontSize: '11px', color: '#065F46', marginBottom: '6px', background: '#D1FAE5', padding: '4px 8px', borderRadius: '6px' }}>
+                                            ✓ {bioTemplate.admin_review_notes}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div>
+                                        <strong style={{ fontSize: '13px', color: '#D97706', display: 'block', marginBottom: '4px' }}>
+                                          ⚠️ Face Verification Pending
+                                        </strong>
+                                        <div style={{ fontSize: '11px', color: C.textMid }}>
+                                          No authoritative face biometric reference captured yet.
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '10px', paddingTop: '8px', borderTop: `1px dashed ${C.border}` }}>
+                                    {bioEnrolled ? (
+                                      <>
+                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                          <button
+                                            onClick={() => handleVerifyBiometric(selectedEmp.id, 'APPROVED')}
+                                            style={{ flex: 1, background: '#10B981', color: '#fff', border: 'none', padding: '6px 8px', borderRadius: '6px', fontWeight: 800, cursor: 'pointer', fontSize: '11px' }}
+                                          >
+                                            ✓ Approve Face
+                                          </button>
+                                          <button
+                                            onClick={() => handleVerifyBiometric(selectedEmp.id, 'REJECTED')}
+                                            style={{ flex: 1, background: '#EF4444', color: '#fff', border: 'none', padding: '6px 8px', borderRadius: '6px', fontWeight: 800, cursor: 'pointer', fontSize: '11px' }}
+                                          >
+                                            ✕ Flag / Reject
+                                          </button>
+                                        </div>
+                                        <button
+                                          onClick={() => {
+                                            const empToManage = selectedEmp;
+                                            setSelectedEmp(null);
+                                            setBiometricModalEmp(empToManage);
+                                            setBiometricModalOpen(true);
+                                          }}
+                                          style={{ background: 'transparent', color: C.teal, border: `1px solid ${C.teal}40`, padding: '5px 8px', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '10.5px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                                        >
+                                          <FaCamera /> Re-Enroll Camera Reference
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <div style={{ display: 'flex', gap: '6px' }}>
+                                        <button
+                                          onClick={() => handleSendReminder(selectedEmp.id, selectedEmp.full_name)}
+                                          disabled={sendingReminder[selectedEmp.id]}
+                                          style={{ flex: 1, background: '#F59E0B', color: '#fff', border: 'none', padding: '6px 8px', borderRadius: '6px', fontWeight: 800, cursor: 'pointer', fontSize: '11px' }}
+                                        >
+                                          🔔 {sendingReminder[selectedEmp.id] ? 'Sending...' : 'Send Reminder'}
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            const empToManage = selectedEmp;
+                                            setSelectedEmp(null);
+                                            setBiometricModalEmp(empToManage);
+                                            setBiometricModalOpen(true);
+                                          }}
+                                          style={{ flex: 1, background: C.teal, color: '#fff', border: 'none', padding: '6px 8px', borderRadius: '6px', fontWeight: 800, cursor: 'pointer', fontSize: '11px' }}
+                                        >
+                                          <FaCamera /> Complete Verification
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </>
+                        );
+                      })()}
+
+                    </div>
+
+                    {/* Overall KYC Quick Action Buttons */}
+                    <div style={{ display: 'flex', gap: '10px', marginTop: '16px', borderTop: `1px dashed ${C.border}`, paddingTop: '14px', flexWrap: 'wrap' }}>
+                      <button onClick={() => handleKycVerify(selectedEmp.id, 'VERIFIED')} style={{ background: '#10B981', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '10px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+                        <FaCheck /> Approve All KYC & Activate Account
+                      </button>
+                      <button onClick={() => handleKycVerify(selectedEmp.id, 'REJECTED')} style={{ background: '#EF4444', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '10px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+                        <FaTimesCircle /> Bulk Reject KYC
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Onboarding Checklist Matrix */}
+                  <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '16px 20px' }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: 900, marginBottom: '12px', color: C.text, display: 'flex', alignItems: 'center', gap: '8px' }}><FaCheckCircle style={{ color: C.teal }} /> Onboarding & Verification Status Checklist</h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
+                      {[
+                        { label: 'Interview Completed', status: emp360Data.checklist?.interview_completed },
+                        { label: 'Employee Created', status: emp360Data.checklist?.employee_created },
+                        { label: 'Terms & Video', status: emp360Data.checklist?.terms_completed },
+                        { label: 'Joining Form', status: emp360Data.checklist?.joining_form_completed },
+                        { label: 'KYC Verified', status: emp360Data.checklist?.kyc_verified },
+                        { label: 'Activated', status: emp360Data.checklist?.activated }
+                      ].map((item, i) => (
+                        <div key={i} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, padding: '10px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {item.status ? <FaCheckCircle style={{ color: '#10B981' }} /> : <FaClock style={{ color: '#F59E0B' }} />}
+                          <span style={{ fontSize: '12px', fontWeight: 700 }}>{item.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Uploaded Documents List */}
+                  <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '16px 20px' }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: 900, marginBottom: '12px', color: C.text, display: 'flex', alignItems: 'center', gap: '8px' }}><FaFileAlt style={{ color: C.teal }} /> Uploaded Employee Verification Documents</h3>
+                    {(() => {
+                      const uniqueDocs = [];
+                      const seenTypes = new Set();
+                      (emp360Data.documents || []).forEach(doc => {
+                        const typeKey = (doc.document_type || '').toLowerCase().trim();
+                        if (typeKey && !seenTypes.has(typeKey)) {
+                          seenTypes.add(typeKey);
+                          uniqueDocs.push(doc);
+                        }
+                      });
+
+                      if (uniqueDocs.length === 0) {
+                        return <div style={{ fontSize: '12px', color: C.textMid }}>No verification documents uploaded yet.</div>;
+                      }
+
+                      return (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+                          {uniqueDocs.map(doc => (
+                            <a key={doc.id} href={doc.document_url} target="_blank" rel="noopener noreferrer" style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, padding: '10px 14px', borderRadius: '10px', textDecoration: 'none', color: C.teal, fontSize: '13px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <FaFileAlt /> {(doc.document_type || 'DOCUMENT').toUpperCase().replace('_', ' ')} ↗
+                            </a>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Assigned Product Referral Links */}
+                  <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '16px 20px' }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: 900, marginBottom: '12px', color: C.text, display: 'flex', alignItems: 'center', gap: '8px' }}><FaLink style={{ color: C.teal }} /> Assigned Referral Links & Incentive Rules</h3>
+                    {emp360Data.product_links?.length === 0 ? (
+                      <div style={{ fontSize: '12px', color: C.textMid }}>No product referral links assigned to this employee.</div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {emp360Data.product_links.map(pl => (
+                          <div key={pl.id} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, padding: '10px 14px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                            <div>
+                              <span style={{ fontSize: '13px', fontWeight: 800 }}>{pl.product_name}</span>
+                              <div style={{ fontSize: '11px', color: C.textMid }}>URL: {pl.employee_referral_url}</div>
+                            </div>
+                            <div style={{ fontSize: '13px', fontWeight: 900, color: '#10B981' }}>
+                              ₹{pl.incentive_amount} Incentive ({pl.incentive_type})
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Action Bar */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '10px' }}>
+                    <button onClick={() => handleActivateEmployee(selectedEmp.id, selectedEmp.activation_status)} style={{ background: selectedEmp.activation_status === 'APPROVED' ? '#EF4444' : '#10B981', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '10px', fontWeight: 800, cursor: 'pointer' }}>
+                      {selectedEmp.activation_status === 'APPROVED' ? 'Deactivate Employee' : 'Verify & Activate Account'}
+                    </button>
+                  </div>
+
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── MODAL: Assign Product Link & Incentive ── */}
+        {linkModalEmp && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}>
+            <div style={{ background: C.card, borderRadius: '24px', padding: '32px', width: '100%', maxWidth: '520px', border: `1px solid ${C.border}` }}>
+              <h2 style={{ fontSize: '20px', fontWeight: 900, color: C.text, margin: '0 0 8px 0' }}>Assign Product Link & Employee Incentive</h2>
+              <p style={{ fontSize: '14px', color: C.textMid, marginBottom: '20px' }}>Employee: <strong>{linkModalEmp.full_name} ({linkModalEmp.employee_id})</strong></p>
+
+              <form onSubmit={handleAssignLinkSubmit}>
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Select Product *</label>
+                  <select required value={linkForm.product_id} onChange={(e) => setLinkForm({ ...linkForm, product_id: e.target.value })} style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }}>
+                    <option value="">Select Product...</option>
+                    {productsList.map(p => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.category})</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Employee Incentive Amount (₹) *</label>
+                  <input type="number" required value={linkForm.incentive_amount} onChange={(e) => setLinkForm({ ...linkForm, incentive_amount: e.target.value })} placeholder="e.g. 500" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} />
+                  <span style={{ fontSize: '11px', color: C.textMid }}>Separate from Partner commission rules.</span>
+                </div>
+
+                <div style={{ marginBottom: '24px' }}>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Custom Referral URL (Optional)</label>
+                  <input type="url" value={linkForm.employee_referral_url} onChange={(e) => setLinkForm({ ...linkForm, employee_referral_url: e.target.value })} placeholder={`Auto-generated: https://gharkapaisa.in/apply/...?emp=${linkModalEmp.employee_id}`} style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} />
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={() => setLinkModalEmp(null)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '10px 20px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
+                  <button type="submit" style={{ background: C.teal, color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '10px', fontWeight: 800, cursor: 'pointer' }}>Save & Assign Link</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* ── MODAL: Super Admin Create New Employee ── */}
+        {createEmpModalOpen && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: isMobile ? '10px' : '16px' }}>
+            <div style={{ background: C.card, borderRadius: isMobile ? '16px' : '24px', padding: isMobile ? '16px' : '32px', width: '100%', maxWidth: isMobile ? '96vw' : '580px', maxHeight: isMobile ? '85vh' : '90vh', overflowY: 'auto', border: `1px solid ${C.border}`, boxShadow: '0 20px 50px rgba(0,0,0,0.3)' }}>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: `1px solid ${C.border}`, paddingBottom: '14px' }}>
+                <div>
+                  <span style={{ fontSize: '11px', fontWeight: 800, color: C.teal, textTransform: 'uppercase' }}>Super Admin Action</span>
+                  <h2 style={{ fontSize: '20px', fontWeight: 900, color: C.text, margin: 0 }}>Create New Employee & Assign Hierarchy</h2>
+                </div>
+                <button onClick={() => setCreateEmpModalOpen(false)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', fontWeight: 900 }}>✕</button>
+              </div>
+
+              <form onSubmit={handleCreateEmployeeSubmit}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '14px', marginBottom: '16px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 800, marginBottom: '6px', color: C.text }}>Full Name *</label>
+                    <input type="text" required value={createForm.full_name} onChange={(e) => setCreateForm({ ...createForm, full_name: e.target.value })} placeholder="e.g. Ramesh Kumar" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontSize: '13.5px' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 800, marginBottom: '6px', color: C.text }}>Mobile Number *</label>
+                    <input type="tel" required value={createForm.mobile_number} onChange={(e) => setCreateForm({ ...createForm, mobile_number: e.target.value })} placeholder="10-digit mobile" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontSize: '13.5px' }} />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '14px', marginBottom: '16px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 800, marginBottom: '6px', color: C.text }}>Email Address (Optional)</label>
+                    <input type="email" value={createForm.email_id} onChange={(e) => setCreateForm({ ...createForm, email_id: e.target.value })} placeholder="auto-generated if empty" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontSize: '13.5px' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 800, marginBottom: '6px', color: C.text }}>Monthly Salary (₹)</label>
+                    <input type="number" value={createForm.offered_salary} onChange={(e) => setCreateForm({ ...createForm, offered_salary: e.target.value })} placeholder="25000" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontSize: '13.5px' }} />
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 800, marginBottom: '6px', color: C.text }}>Hierarchy Level / Role *</label>
+                  <select 
+                    value={createForm.hierarchy_level} 
+                    onChange={(e) => {
+                      const level = e.target.value;
+                      const mapD = { 'BRANCH_HEAD': 'Branch Head', 'SENIOR_MANAGER': 'Senior Manager', 'MANAGER': 'Manager', 'TEAM_LEADER': 'Team Leader', 'TC': 'TC' };
+                      setCreateForm({ ...createForm, hierarchy_level: level, designation: mapD[level] || level });
+                    }} 
+                    style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontSize: '13.5px', fontWeight: 800 }}
+                  >
+                    <option value="BRANCH_HEAD">Level 1: Branch Head</option>
+                    <option value="SENIOR_MANAGER">Level 2: Senior Manager</option>
+                    <option value="MANAGER">Level 3: Manager</option>
+                    <option value="TEAM_LEADER">Level 4: Team Leader (TL)</option>
+                    <option value="TC">Level 5: Telecaller (TC)</option>
+                  </select>
+                </div>
+
+                {/* Reporting Supervisors Fields */}
+                <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '14px', marginBottom: '20px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 800, color: C.teal, display: 'block', marginBottom: '10px' }}>Reporting Chain Setup</span>
+
+                  {createForm.hierarchy_level !== 'BRANCH_HEAD' && (
+                    <div style={{ marginBottom: '10px' }}>
+                      <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 700, marginBottom: '4px' }}>Assign Branch Head (Level 1)</label>
+                      <select value={createForm.branch_head_id} onChange={(e) => setCreateForm({ ...createForm, branch_head_id: e.target.value })} style={{ width: '100%', padding: '8px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', color: C.text, fontSize: '12.5px' }}>
+                        <option value="">Direct / No Branch Head</option>
+                        {selectBranchHeadsOptions.map(bh => (
+                          <option key={bh.id} value={bh.id}>{bh.full_name} ({bh.employee_id})</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {(createForm.hierarchy_level === 'MANAGER' || createForm.hierarchy_level === 'TEAM_LEADER' || createForm.hierarchy_level === 'TC') && (
+                    <div style={{ marginBottom: '10px' }}>
+                      <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 700, marginBottom: '4px' }}>Assign Senior Manager (Level 2)</label>
+                      <select value={createForm.senior_manager_id} onChange={(e) => setCreateForm({ ...createForm, senior_manager_id: e.target.value })} style={{ width: '100%', padding: '8px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', color: C.text, fontSize: '12.5px' }}>
+                        <option value="">No Senior Manager</option>
+                        {selectSeniorManagersOptions.map(sm => (
+                          <option key={sm.id} value={sm.id}>{sm.full_name} ({sm.employee_id})</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {(createForm.hierarchy_level === 'TEAM_LEADER' || createForm.hierarchy_level === 'TC') && (
+                    <div style={{ marginBottom: '10px' }}>
+                      <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 700, marginBottom: '4px' }}>Assign Reporting Manager (Level 3)</label>
+                      <select value={createForm.manager_id} onChange={(e) => setCreateForm({ ...createForm, manager_id: e.target.value })} style={{ width: '100%', padding: '8px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', color: C.text, fontSize: '12.5px' }}>
+                        <option value="">No Manager</option>
+                        {selectManagersOptions.map(m => (
+                          <option key={m.id} value={m.id}>{m.full_name} ({m.employee_id})</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {createForm.hierarchy_level === 'TC' && (
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 700, marginBottom: '4px' }}>Assign Team Leader (Level 4)</label>
+                      <select value={createForm.team_leader_id} onChange={(e) => setCreateForm({ ...createForm, team_leader_id: e.target.value })} style={{ width: '100%', padding: '8px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', color: C.text, fontSize: '12.5px' }}>
+                        <option value="">No Team Leader</option>
+                        {selectTlsOptions.map(tl => (
+                          <option key={tl.id} value={tl.id}>{tl.full_name} ({tl.employee_id})</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={() => setCreateEmpModalOpen(false)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '10px 20px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
+                  <button type="submit" style={{ background: C.teal, color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '10px', fontWeight: 800, cursor: 'pointer' }}>Create Employee</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* ── MODAL: Assign Hierarchy / Team (5-Level) ── */}
+        {hierarchyModalEmp && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: isMobile ? '10px' : '16px' }}>
+            <div style={{ background: C.card, borderRadius: isMobile ? '16px' : '24px', padding: isMobile ? '16px' : '32px', width: '100%', maxWidth: isMobile ? '96vw' : '540px', maxHeight: isMobile ? '85vh' : '90vh', overflowY: 'auto', border: `1px solid ${C.border}`, boxShadow: '0 20px 50px rgba(0,0,0,0.3)' }}>
+              <h2 style={{ fontSize: '20px', fontWeight: 900, color: C.text, margin: '0 0 4px 0' }}>Assign Team & Employee Hierarchy</h2>
+              <p style={{ fontSize: '13.5px', color: C.textMid, marginBottom: '20px' }}>
+                Employee: <strong>{hierarchyModalEmp.full_name} ({hierarchyModalEmp.employee_id})</strong>
+              </p>
+
+              <form onSubmit={handleAssignHierarchySubmit}>
+                {/* 1. Employee Role Selection */}
+                <div style={{ marginBottom: '18px' }}>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 800, marginBottom: '6px', color: C.text }}>
+                    Employee Hierarchy Level / Role *
+                  </label>
+                  <select 
+                    value={hierarchyForm.hierarchy_level} 
+                    onChange={(e) => {
+                      const newRole = e.target.value;
+                      setHierarchyForm({
+                        ...hierarchyForm,
+                        hierarchy_level: newRole,
+                        selected_sm_ids: [],
+                        selected_mgr_ids: [],
+                        selected_tl_ids: [],
+                        selected_tc_ids: [],
+                        tl_tc_mapping: {},
+                        branch_head_id: '',
+                        senior_manager_id: '',
+                        manager_id: '',
+                        team_leader_id: ''
+                      });
+                    }} 
+                    style={{ width: '100%', padding: '11px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontSize: '13.5px', fontWeight: 800 }}
+                  >
+                    <option value="BRANCH_HEAD">Level 1: BRANCH HEAD</option>
+                    <option value="SENIOR_MANAGER">Level 2: SENIOR MANAGER</option>
+                    <option value="MANAGER">Level 3: MANAGER</option>
+                    <option value="TEAM_LEADER">Level 4: TL (Team Leader)</option>
+                    <option value="TC">Level 5: TC (Telecaller)</option>
+                  </select>
+                </div>
+
+                {/* 2. DYNAMIC REPORTING SUPERVISOR FIELDS */}
+                {hierarchyForm.hierarchy_level !== 'BRANCH_HEAD' && (
+                  <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '14px', padding: '14px', marginBottom: '18px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 800, color: C.teal, display: 'block', marginBottom: '10px' }}>Reporting Supervisors</span>
+
+                    {/* Branch Head (Level 1) */}
+                    <div style={{ marginBottom: '10px' }}>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Assign Branch Head (Level 1)</label>
+                      <select value={hierarchyForm.branch_head_id} onChange={(e) => setHierarchyForm({ ...hierarchyForm, branch_head_id: e.target.value })} style={{ width: '100%', padding: '9px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', color: C.text, fontSize: '13px' }}>
+                        <option value="">Direct / No Branch Head</option>
+                        {selectBranchHeadsOptions.map(bh => (
+                          <option key={bh.id} value={bh.id}>{bh.full_name} ({bh.employee_id})</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Senior Manager (Level 2) */}
+                    {(hierarchyForm.hierarchy_level === 'MANAGER' || hierarchyForm.hierarchy_level === 'TEAM_LEADER' || hierarchyForm.hierarchy_level === 'TC') && (
+                      <div style={{ marginBottom: '10px' }}>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Assign Senior Manager (Level 2)</label>
+                        <select value={hierarchyForm.senior_manager_id} onChange={(e) => setHierarchyForm({ ...hierarchyForm, senior_manager_id: e.target.value })} style={{ width: '100%', padding: '9px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', color: C.text, fontSize: '13px' }}>
+                          <option value="">No Senior Manager</option>
+                          {selectSeniorManagersOptions.map(sm => (
+                            <option key={sm.id} value={sm.id}>{sm.full_name} ({sm.employee_id})</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Manager (Level 3) */}
+                    {(hierarchyForm.hierarchy_level === 'TEAM_LEADER' || hierarchyForm.hierarchy_level === 'TC') && (
+                      <div style={{ marginBottom: '10px' }}>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Assign Manager (Level 3)</label>
+                        <select value={hierarchyForm.manager_id} onChange={(e) => setHierarchyForm({ ...hierarchyForm, manager_id: e.target.value })} style={{ width: '100%', padding: '9px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', color: C.text, fontSize: '13px' }}>
+                          <option value="">No Manager</option>
+                          {selectManagersOptions.map(m => (
+                            <option key={m.id} value={m.id}>{m.full_name} ({m.employee_id})</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Team Leader (Level 4) */}
+                    {hierarchyForm.hierarchy_level === 'TC' && (
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>Assign Team Leader (Level 4)</label>
+                        <select value={hierarchyForm.team_leader_id} onChange={(e) => setHierarchyForm({ ...hierarchyForm, team_leader_id: e.target.value })} style={{ width: '100%', padding: '9px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', color: C.text, fontSize: '13px' }}>
+                          <option value="">No Team Leader</option>
+                          {selectTlsOptions.map(tl => (
+                            <option key={tl.id} value={tl.id}>{tl.full_name} ({tl.employee_id})</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 3. DOWNSTREAM TEAM SELECTION FOR ALL ROLES */}
+                {hierarchyForm.hierarchy_level !== 'TC' && (
+                  <div style={{ marginBottom: '10px' }}>
+                    <input 
+                      type="text"
+                      placeholder="🔍 Search candidates by name, employee ID, or role..."
+                      value={subordinateSearchText}
+                      onChange={(e) => setSubordinateSearchText(e.target.value)}
+                      style={{ width: '100%', padding: '8px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', fontSize: '12.5px', color: C.text }}
+                    />
+                  </div>
+                )}
+
+                {hierarchyForm.hierarchy_level === 'BRANCH_HEAD' && (() => {
+                  const candidateSMs = (Array.isArray(targetEmployeeList) ? targetEmployeeList : [])
+                    .filter(e => e && e.id !== hierarchyModalEmp.id)
+                    .filter(e => {
+                      if (!subordinateSearchText.trim()) return true;
+                      const q = subordinateSearchText.toLowerCase().trim();
+                      return (e.full_name || '').toLowerCase().includes(q) || (e.employee_id || '').toLowerCase().includes(q) || (e.designation || '').toLowerCase().includes(q);
+                    })
+                    .sort((a, b) => {
+                      const matchA = (a.designation || '').toLowerCase().includes('senior manager') || a.hierarchy_level === 'SENIOR_MANAGER';
+                      const matchB = (b.designation || '').toLowerCase().includes('senior manager') || b.hierarchy_level === 'SENIOR_MANAGER';
+                      if (matchA && !matchB) return -1;
+                      if (!matchA && matchB) return 1;
+                      return (a.full_name || '').localeCompare(b.full_name || '');
+                    });
+
+                  return (
+                    <div style={{ marginBottom: '18px' }}>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: 800, marginBottom: '4px', color: C.text }}>
+                        Select Senior Manager(s) under this Branch Head ({hierarchyForm.selected_sm_ids?.length || 0} selected)
+                      </label>
+                      <div style={{ maxHeight: '180px', overflowY: 'auto', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '8px' }}>
+                        {candidateSMs.length === 0 ? (
+                          <div style={{ fontSize: '12px', color: C.textMid, padding: '12px', textAlign: 'center' }}>No matching candidates found</div>
+                        ) : (
+                          candidateSMs.map(sm => {
+                            const checked = (hierarchyForm.selected_sm_ids || []).includes(sm.id);
+                            const currentBh = sm.branch_head_id ? targetEmployeeList.find(e => e.id === sm.branch_head_id) : null;
+                            const currentBhName = currentBh ? currentBh.full_name : (sm.branch_head_name || null);
+                            const isSelfBh = sm.branch_head_id === hierarchyModalEmp.id;
+
+                            return (
+                              <label key={sm.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '8px 10px', fontSize: '12.5px', color: C.text, cursor: 'pointer', borderRadius: '8px', background: checked ? '#EEF2FF' : 'transparent', marginBottom: '4px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <input 
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      const currentList = hierarchyForm.selected_sm_ids || [];
+                                      const newIds = e.target.checked
+                                        ? [...currentList, sm.id]
+                                        : (Array.isArray(currentList) ? currentList : []).filter(id => id !== sm.id);
+                                      setHierarchyForm({ ...hierarchyForm, selected_sm_ids: newIds });
+                                    }}
+                                  />
+                                  <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#EEF2FF', color: '#4F46E5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '13px', flexShrink: 0 }}>
+                                    {sm.full_name?.charAt(0) || 'S'}
+                                  </div>
+                                  <div>
+                                    <span style={{ fontWeight: checked ? 800 : 600 }}>{sm.full_name} ({sm.employee_id})</span>
+                                    <span style={{ fontSize: '11px', color: C.textMid, marginLeft: '6px' }}>— {sm.designation || 'Senior Manager'}</span>
+                                  </div>
+                                </div>
+                                <span style={{ fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: isSelfBh ? '#E0E7FF' : currentBhName ? '#FEF3C7' : '#F3F4F6', color: isSelfBh ? '#3730A3' : currentBhName ? '#B45309' : '#6B7280' }}>
+                                  {isSelfBh ? '✓ Assigned' : currentBhName ? `Reassign from: ${currentBhName}` : 'Unassigned'}
+                                </span>
+                              </label>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {hierarchyForm.hierarchy_level === 'SENIOR_MANAGER' && (() => {
+                  const candidateMgrs = (Array.isArray(targetEmployeeList) ? targetEmployeeList : [])
+                    .filter(e => e && e.id !== hierarchyModalEmp.id)
+                    .filter(e => {
+                      if (!subordinateSearchText.trim()) return true;
+                      const q = subordinateSearchText.toLowerCase().trim();
+                      return (e.full_name || '').toLowerCase().includes(q) || (e.employee_id || '').toLowerCase().includes(q) || (e.designation || '').toLowerCase().includes(q);
+                    })
+                    .sort((a, b) => {
+                      const matchA = (a.designation || '').toLowerCase().includes('manager') || a.hierarchy_level === 'MANAGER';
+                      const matchB = (b.designation || '').toLowerCase().includes('manager') || b.hierarchy_level === 'MANAGER';
+                      if (matchA && !matchB) return -1;
+                      if (!matchA && matchB) return 1;
+                      return (a.full_name || '').localeCompare(b.full_name || '');
+                    });
+
+                  return (
+                    <div style={{ marginBottom: '18px' }}>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: 800, marginBottom: '4px', color: C.text }}>
+                        Select Manager(s) under this Senior Manager ({hierarchyForm.selected_mgr_ids?.length || 0} selected)
+                      </label>
+                      <div style={{ maxHeight: '180px', overflowY: 'auto', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '8px' }}>
+                        {candidateMgrs.length === 0 ? (
+                          <div style={{ fontSize: '12px', color: C.textMid, padding: '12px', textAlign: 'center' }}>No matching candidates found</div>
+                        ) : (
+                          candidateMgrs.map(mgr => {
+                            const checked = (hierarchyForm.selected_mgr_ids || []).includes(mgr.id);
+                            const currentSm = mgr.senior_manager_id ? targetEmployeeList.find(e => e.id === mgr.senior_manager_id) : null;
+                            const currentSmName = currentSm ? currentSm.full_name : (mgr.senior_manager_name || null);
+                            const isSelfSm = mgr.senior_manager_id === hierarchyModalEmp.id;
+
+                            return (
+                              <label key={mgr.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '8px 10px', fontSize: '12.5px', color: C.text, cursor: 'pointer', borderRadius: '8px', background: checked ? '#EDE9FE' : 'transparent', marginBottom: '4px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <input 
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      const currentList = hierarchyForm.selected_mgr_ids || [];
+                                      const newIds = e.target.checked
+                                        ? [...currentList, mgr.id]
+                                        : (Array.isArray(currentList) ? currentList : []).filter(id => id !== mgr.id);
+                                      setHierarchyForm({ ...hierarchyForm, selected_mgr_ids: newIds });
+                                    }}
+                                  />
+                                  <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#EDE9FE', color: '#7C3AED', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '13px', flexShrink: 0 }}>
+                                    {mgr.full_name?.charAt(0) || 'M'}
+                                  </div>
+                                  <div>
+                                    <span style={{ fontWeight: checked ? 800 : 600 }}>{mgr.full_name} ({mgr.employee_id})</span>
+                                    <span style={{ fontSize: '11px', color: C.textMid, marginLeft: '6px' }}>— {mgr.designation || 'Manager'}</span>
+                                  </div>
+                                </div>
+                                <span style={{ fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: isSelfSm ? '#DDD6FE' : currentSmName ? '#FEF3C7' : '#F3F4F6', color: isSelfSm ? '#5B21B6' : currentSmName ? '#B45309' : '#6B7280' }}>
+                                  {isSelfSm ? '✓ Assigned' : currentSmName ? `Reassign from: ${currentSmName}` : 'Unassigned'}
+                                </span>
+                              </label>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {hierarchyForm.hierarchy_level === 'MANAGER' && (() => {
+                  const candidateTLs = (Array.isArray(targetEmployeeList) ? targetEmployeeList : [])
+                    .filter(e => e && e.id !== hierarchyModalEmp.id)
+                    .filter(e => {
+                      if (!subordinateSearchText.trim()) return true;
+                      const q = subordinateSearchText.toLowerCase().trim();
+                      return (e.full_name || '').toLowerCase().includes(q) || (e.employee_id || '').toLowerCase().includes(q) || (e.designation || '').toLowerCase().includes(q);
+                    })
+                    .sort((a, b) => {
+                      const matchA = (a.designation || '').toLowerCase().includes('team leader') || String(a.designation || '').toUpperCase() === 'TL' || a.hierarchy_level === 'TEAM_LEADER';
+                      const matchB = (b.designation || '').toLowerCase().includes('team leader') || String(b.designation || '').toUpperCase() === 'TL' || b.hierarchy_level === 'TEAM_LEADER';
+                      if (matchA && !matchB) return -1;
+                      if (!matchA && matchB) return 1;
+                      return (a.full_name || '').localeCompare(b.full_name || '');
+                    });
+
+                  return (
+                    <div style={{ marginBottom: '18px' }}>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: 800, marginBottom: '4px', color: C.text }}>
+                        Select Team Leader(s) under this Manager ({hierarchyForm.selected_tl_ids?.length || 0} selected)
+                      </label>
+                      <div style={{ maxHeight: '180px', overflowY: 'auto', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '8px' }}>
+                        {candidateTLs.length === 0 ? (
+                          <div style={{ fontSize: '12px', color: C.textMid, padding: '12px', textAlign: 'center' }}>No matching candidates found</div>
+                        ) : (
+                          candidateTLs.map(tl => {
+                            const checked = (hierarchyForm.selected_tl_ids || []).includes(tl.id);
+                            const currentMgr = tl.manager_id ? targetEmployeeList.find(e => e.id === tl.manager_id) : null;
+                            const currentMgrName = currentMgr ? currentMgr.full_name : (tl.manager_name || null);
+                            const isSelfMgr = tl.manager_id === hierarchyModalEmp.id;
+
+                            return (
+                              <label key={tl.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '8px 10px', fontSize: '12.5px', color: C.text, cursor: 'pointer', borderRadius: '8px', background: checked ? '#EFF6FF' : 'transparent', marginBottom: '4px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <input 
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      const currentList = hierarchyForm.selected_tl_ids || [];
+                                      const newIds = e.target.checked
+                                        ? [...currentList, tl.id]
+                                        : (Array.isArray(currentList) ? currentList : []).filter(id => id !== tl.id);
+                                      setHierarchyForm({ ...hierarchyForm, selected_tl_ids: newIds });
+                                    }}
+                                  />
+                                  <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#EFF6FF', color: '#2563EB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '13px', flexShrink: 0 }}>
+                                    {tl.full_name?.charAt(0) || 'T'}
+                                  </div>
+                                  <div>
+                                    <span style={{ fontWeight: checked ? 800 : 600 }}>{tl.full_name} ({tl.employee_id})</span>
+                                    <span style={{ fontSize: '11px', color: C.textMid, marginLeft: '6px' }}>— {tl.designation || 'Team Leader'}</span>
+                                  </div>
+                                </div>
+                                <span style={{ fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: isSelfMgr ? '#DBEAFE' : currentMgrName ? '#FEF3C7' : '#F3F4F6', color: isSelfMgr ? '#1E40AF' : currentMgrName ? '#B45309' : '#6B7280' }}>
+                                  {isSelfMgr ? '✓ Assigned' : currentMgrName ? `Reassign from: ${currentMgrName}` : 'Unassigned'}
+                                </span>
+                              </label>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* TL-TC Mapping for Manager Role */}
+                {hierarchyForm.hierarchy_level === 'MANAGER' && hierarchyForm.selected_tl_ids.length > 0 && (
+                  <div style={{ marginBottom: '18px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '14px', padding: '14px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 800, marginBottom: '10px', color: C.text }}>
+                      Assign Telecallers to Selected Team Leaders
+                    </label>
+                    {hierarchyForm.selected_tl_ids.map(tlId => {
+                      const tl = (Array.isArray(targetEmployeeList) ? targetEmployeeList : []).find(e => e.id === tlId);
+                      if (!tl) return null;
+                      const currentTCs = hierarchyForm.tl_tc_mapping[tlId] || [];
+                      const candidateTCs = (Array.isArray(targetEmployeeList) ? targetEmployeeList : [])
+                        .filter(e => e && e.id !== hierarchyModalEmp.id && e.id !== tlId)
+                        .filter(e => {
+                          if (!subordinateSearchText.trim()) return true;
+                          const q = subordinateSearchText.toLowerCase().trim();
+                          return (e.full_name || '').toLowerCase().includes(q) || (e.employee_id || '').toLowerCase().includes(q) || (e.designation || '').toLowerCase().includes(q);
+                        })
+                        .sort((a, b) => {
+                          const matchA = (a.designation || '').toLowerCase().includes('tc') || (a.designation || '').toLowerCase().includes('telecaller') || a.hierarchy_level === 'TC';
+                          const matchB = (b.designation || '').toLowerCase().includes('tc') || (b.designation || '').toLowerCase().includes('telecaller') || b.hierarchy_level === 'TC';
+                          if (matchA && !matchB) return -1;
+                          if (!matchA && matchB) return 1;
+                          return (a.full_name || '').localeCompare(b.full_name || '');
+                        });
+
+                      return (
+                        <div key={tlId} style={{ marginBottom: '12px', paddingBottom: '12px', borderBottom: `1px solid ${C.border}` }}>
+                          <div style={{ fontSize: '12px', fontWeight: 800, marginBottom: '6px', color: C.teal }}>
+                            {tl.full_name} ({tl.employee_id}) — ({currentTCs.length} TCs assigned)
+                          </div>
+                          <div style={{ maxHeight: '140px', overflowY: 'auto', background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', padding: '6px' }}>
+                            {candidateTCs.length === 0 ? (
+                              <div style={{ fontSize: '11px', color: C.textMid, padding: '6px', textAlign: 'center' }}>No Telecallers available</div>
+                            ) : (
+                              candidateTCs.map(tc => {
+                                const checked = currentTCs.includes(tc.id);
+                                const currentTl = tc.team_leader_id ? targetEmployeeList.find(e => e.id === tc.team_leader_id) : null;
+                                const currentTlName = currentTl ? currentTl.full_name : (tc.team_leader_name || null);
+                                const isUnderThisTl = tc.team_leader_id === tlId;
+
+                                return (
+                                  <label key={tc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '6px 8px', fontSize: '12px', color: C.text, cursor: 'pointer', borderRadius: '6px', background: checked ? '#ECFDF5' : 'transparent', marginBottom: '2px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                      <input 
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={(e) => {
+                                          const currentMapping = hierarchyForm.tl_tc_mapping || {};
+                                          const tlCurrentTCs = currentMapping[tlId] || [];
+                                          const newTlTCs = e.target.checked
+                                            ? [...tlCurrentTCs, tc.id]
+                                            : (Array.isArray(tlCurrentTCs) ? tlCurrentTCs : []).filter(id => id !== tc.id);
+                                          setHierarchyForm({
+                                            ...hierarchyForm,
+                                            tl_tc_mapping: {
+                                              ...currentMapping,
+                                              [tlId]: newTlTCs
+                                            }
+                                          });
+                                        }}
+                                      />
+                                      <div style={{ width: '26px', height: '26px', borderRadius: '50%', background: '#ECFDF5', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '12px', flexShrink: 0 }}>
+                                        {tc.full_name?.charAt(0) || 'T'}
+                                      </div>
+                                      <div>
+                                        <span style={{ fontWeight: checked ? 700 : 600 }}>{tc.full_name} ({tc.employee_id})</span>
+                                        <span style={{ fontSize: '10.5px', color: C.textMid, marginLeft: '6px' }}>— {tc.designation || 'TC'}</span>
+                                      </div>
+                                    </div>
+                                    <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: isUnderThisTl ? '#D1FAE5' : currentTlName ? '#FEF3C7' : '#F3F4F6', color: isUnderThisTl ? '#047857' : currentTlName ? '#B45309' : '#6B7280' }}>
+                                      {isUnderThisTl ? '✓ Under this TL' : currentTlName ? `Reassign from: ${currentTlName}` : 'Unassigned'}
+                                    </span>
+                                  </label>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {hierarchyForm.hierarchy_level === 'TEAM_LEADER' && (() => {
+                  const candidateTCs = (Array.isArray(targetEmployeeList) ? targetEmployeeList : [])
+                    .filter(e => e && e.id !== hierarchyModalEmp.id)
+                    .filter(e => {
+                      if (!subordinateSearchText.trim()) return true;
+                      const q = subordinateSearchText.toLowerCase().trim();
+                      return (e.full_name || '').toLowerCase().includes(q) || (e.employee_id || '').toLowerCase().includes(q) || (e.designation || '').toLowerCase().includes(q);
+                    })
+                    .sort((a, b) => {
+                      const matchA = (a.designation || '').toLowerCase().includes('tc') || (a.designation || '').toLowerCase().includes('telecaller') || a.hierarchy_level === 'TC';
+                      const matchB = (b.designation || '').toLowerCase().includes('tc') || (b.designation || '').toLowerCase().includes('telecaller') || b.hierarchy_level === 'TC';
+                      if (matchA && !matchB) return -1;
+                      if (!matchA && matchB) return 1;
+                      return (a.full_name || '').localeCompare(b.full_name || '');
+                    });
+
+                  return (
+                    <div style={{ marginBottom: '20px' }}>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: 800, marginBottom: '4px', color: C.text }}>
+                        Select Telecaller(s) under this Team Leader ({hierarchyForm.selected_tc_ids?.length || 0} selected)
+                      </label>
+                      <div style={{ maxHeight: '180px', overflowY: 'auto', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '8px' }}>
+                        {candidateTCs.length === 0 ? (
+                          <div style={{ fontSize: '12px', color: C.textMid, padding: '12px', textAlign: 'center' }}>No matching candidates found</div>
+                        ) : (
+                          candidateTCs.map(tc => {
+                            const checked = (hierarchyForm.selected_tc_ids || []).includes(tc.id);
+                            const currentTl = tc.team_leader_id ? targetEmployeeList.find(e => e.id === tc.team_leader_id) : null;
+                            const currentTlName = currentTl ? currentTl.full_name : (tc.team_leader_name || null);
+                            const isSelfTl = tc.team_leader_id === hierarchyModalEmp.id;
+
+                            return (
+                              <label key={tc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '8px 10px', fontSize: '12.5px', color: C.text, cursor: 'pointer', borderRadius: '8px', background: checked ? '#ECFDF5' : 'transparent', marginBottom: '4px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <input 
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      const currentList = hierarchyForm.selected_tc_ids || [];
+                                      const newIds = e.target.checked
+                                        ? [...currentList, tc.id]
+                                        : (Array.isArray(currentList) ? currentList : []).filter(id => id !== tc.id);
+                                      setHierarchyForm({ ...hierarchyForm, selected_tc_ids: newIds });
+                                    }}
+                                  />
+                                  <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#ECFDF5', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: '13px', flexShrink: 0 }}>
+                                    {tc.full_name?.charAt(0) || 'T'}
+                                  </div>
+                                  <div>
+                                    <span style={{ fontWeight: checked ? 800 : 600 }}>{tc.full_name} ({tc.employee_id})</span>
+                                    <span style={{ fontSize: '11px', color: C.textMid, marginLeft: '6px' }}>— {tc.designation || 'TC'}</span>
+                                  </div>
+                                </div>
+                                <span style={{ fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: isSelfTl ? '#D1FAE5' : currentTlName ? '#FEF3C7' : '#F3F4F6', color: isSelfTl ? '#047857' : currentTlName ? '#B45309' : '#6B7280' }}>
+                                  {isSelfTl ? '✓ Assigned' : currentTlName ? `Reassign from: ${currentTlName}` : 'Unassigned'}
+                                </span>
+                              </label>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+
+                {/* Validation Note for all roles */}
+                <div style={{ marginBottom: '18px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '12px', padding: '12px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#1E40AF', marginBottom: '4px' }}>
+                    <FaExclamationCircle style={{ marginRight: '6px' }} />Single Supervisor Rule
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#1E40AF' }}>
+                    Each employee can have only ONE supervisor at each level (one Branch Head, one Senior Manager, one Manager, one Team Leader). To change supervisors, unassign the current one first.
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>
+                  <button type="button" onClick={() => setHierarchyModalEmp(null)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '10px 20px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
+                  <button type="submit" style={{ background: C.teal, color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '10px', fontWeight: 800, cursor: 'pointer' }}>Save Hierarchy</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+
+
+        {/* ── MODAL: Employee Performance Dashboard ── */}
+        {perfModalEmp && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '24px', width: '100%', maxWidth: '520px', padding: '24px', boxShadow: '0 20px 40px rgba(0,0,0,0.25)' }}>
+              
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', borderBottom: `1px solid ${C.border}`, paddingBottom: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: '#10B981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
+                    <FaTrophy />
+                  </div>
+                  <div>
+                    <h3 style={{ fontSize: '17px', fontWeight: 900, margin: 0, color: C.text }}>Performance Analytics</h3>
+                    <div style={{ fontSize: '12px', color: C.teal, fontWeight: 800 }}>{perfModalEmp.full_name} ({perfModalEmp.employee_id})</div>
+                  </div>
+                </div>
+                <button onClick={() => setPerfModalEmp(null)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', color: C.textMid, fontWeight: 900 }}>✕</button>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '14px', marginBottom: '20px' }}>
+                <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '16px' }}>
+                  <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, textTransform: 'uppercase' }}>Total Applications</div>
+                  <div style={{ fontSize: '22px', fontWeight: 900, color: C.teal, marginTop: '4px' }}>{perfModalEmp.total_applications || 0}</div>
+                  <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>CRM Applications Processed</div>
+                </div>
+
+                <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '16px' }}>
+                  <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, textTransform: 'uppercase' }}>Incentives Earned</div>
+                  <div style={{ fontSize: '22px', fontWeight: 900, color: '#10B981', marginTop: '4px' }}>₹{Number(perfModalEmp.total_incentives_earned || 0).toLocaleString('en-IN')}</div>
+                  <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>Completed payout incentives</div>
+                </div>
+
+                <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '16px' }}>
+                  <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, textTransform: 'uppercase' }}>Active Product Links</div>
+                  <div style={{ fontSize: '22px', fontWeight: 900, color: '#3B82F6', marginTop: '4px' }}>{perfModalEmp.active_links_count || 0}</div>
+                  <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>Assigned referral URLs</div>
+                </div>
+
+                <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '16px' }}>
+                  <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, textTransform: 'uppercase' }}>Onboarding Progress</div>
+                  <div style={{ fontSize: '22px', fontWeight: 900, color: '#8B5CF6', marginTop: '4px' }}>{perfModalEmp.overall_progress || 20}%</div>
+                  <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>Profile setup score</div>
+                </div>
+              </div>
+
+              <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '16px', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 800, color: C.text }}>Account & KYC Verification Status</span>
+                  <span style={{ padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 900, background: perfModalEmp.activation_status === 'APPROVED' ? '#D1FAE5' : '#FEF3C7', color: perfModalEmp.activation_status === 'APPROVED' ? '#065F46' : '#92400E' }}>
+                    {perfModalEmp.activation_status || 'PENDING'}
+                  </span>
+                </div>
+                <div style={{ fontSize: '12px', color: C.textMid }}>
+                  KYC Verified: <strong>{perfModalEmp.kyc_verified ? 'Yes ✅' : 'No ⏳'}</strong> | Terms Accepted: <strong>{perfModalEmp.terms_completed ? 'Yes ✅' : 'No ⏳'}</strong>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                <button onClick={() => { setPerfModalEmp(null); handleOpen360View(perfModalEmp); }} style={{ background: C.teal, color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '10px', fontWeight: 800, cursor: 'pointer' }}>View Full Profile</button>
+                <button onClick={() => setPerfModalEmp(null)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '10px 18px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}>Close</button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* ── MODAL: Manage Departments / Banks Assignment ── */}
+        {deptModalEmp && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isMobile ? '10px' : '16px' }}>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: isMobile ? '16px' : '24px', width: '100%', maxWidth: isMobile ? '96vw' : '520px', padding: isMobile ? '16px' : '24px', boxShadow: '0 20px 40px rgba(0,0,0,0.25)' }}>
+              
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px', borderBottom: `1px solid ${C.border}`, paddingBottom: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: `${C.teal}20`, color: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
+                    <FaBuilding />
+                  </div>
+                  <div>
+                    <h3 style={{ fontSize: '17px', fontWeight: 900, margin: 0, color: C.text }}>Manage Departments / Banks</h3>
+                    <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 700 }}>
+                      Employee: <span style={{ color: C.teal, fontWeight: 900 }}>{deptModalEmp.full_name}</span> ({deptModalEmp.employee_id})
+                    </div>
+                  </div>
+                </div>
+                <button onClick={() => setDeptModalEmp(null)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', color: C.textMid, fontWeight: 900 }}>✕</button>
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '12.5px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '8px' }}>
+                  Assigned Departments / Banks
+                </label>
+                
+                {loadingDepts ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: C.textMid }}>Loading bank departments...</div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '10px', maxHeight: '280px', overflowY: 'auto', paddingRight: '4px' }}>
+                    {deptBanksList.map(bank => {
+                      const isChecked = selectedBankIds.includes(bank.bank_id);
+                      return (
+                        <label 
+                          key={bank.bank_id} 
+                          style={{ 
+                            display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', 
+                            borderRadius: '12px', border: `1px solid ${isChecked ? C.teal : C.border}`,
+                            background: isChecked ? `${C.teal}08` : C.bgSecondary, cursor: 'pointer',
+                            transition: 'all 0.2s ease'
+                          }}
+                        >
+                          <input 
+                            type="checkbox" 
+                            checked={isChecked}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedBankIds(prev => [...prev, bank.bank_id]);
+                              } else {
+                                setSelectedBankIds(prev => (Array.isArray(prev) ? prev : []).filter(id => id !== bank.bank_id));
+                              }
+                            }}
+                            style={{ width: '16px', height: '16px', accentColor: C.teal, cursor: 'pointer' }}
+                          />
+                          <div style={{ fontSize: '13.5px', fontWeight: 800, color: isChecked ? C.teal : C.text }}>
+                            {bank.bank_name}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>
+                <button 
+                  onClick={handleSaveDeptAssignments} 
+                  disabled={savingDepts}
+                  style={{ 
+                    background: C.teal, color: '#fff', border: 'none', padding: '10px 20px', 
+                    borderRadius: '10px', fontWeight: 800, cursor: savingDepts ? 'not-allowed' : 'pointer',
+                    boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)' 
+                  }}
+                >
+                  {savingDepts ? 'Saving...' : 'Save Assignments'}
+                </button>
+                <button onClick={() => setDeptModalEmp(null)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '10px 20px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* ── MODAL: Manage Bonus & Targets ── */}
+        {bonusModalOpen && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '24px', width: '100%', maxWidth: '850px', padding: '24px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 40px rgba(0,0,0,0.25)' }}>
+              
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', borderBottom: `1px solid ${C.border}`, paddingBottom: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: '#F59E0B20', color: '#D97706', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
+                    <FaCoins />
+                  </div>
+                  <div>
+                    <h3 style={{ fontSize: '18px', fontWeight: 900, margin: 0, color: C.text }}>Manage Employee Bonus & Targets</h3>
+                    <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 700 }}>
+                      Configure card targets, date period, and bonus per card per department
+                    </div>
+                  </div>
+                </div>
+                <button onClick={() => setBonusModalOpen(false)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', color: C.textMid, fontWeight: 900 }}>✕</button>
+              </div>
+
+              {/* Form Section */}
+              <form onSubmit={handleSaveBonusRule} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '20px', marginBottom: '24px' }}>
+                <div style={{ fontSize: '14px', fontWeight: 900, color: C.text, marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <FaBullseye style={{ color: C.teal }} /> Create Target & Bonus Rule
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px', marginBottom: '16px' }}>
+                  
+                  {/* Employee */}
+                  <div>
+                    <label style={{ fontSize: '11.5px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '6px' }}>Select Employee *</label>
+                    <select 
+                      value={bonusForm.employee_id} 
+                      onChange={(e) => {
+                        const empId = e.target.value;
+                        setBonusForm({ ...bonusForm, employee_id: empId });
+                        fetchEmployeeAssignedBanks(empId);
+                      }}
+                      style={{ width: '100%', padding: '9px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontSize: '13px', fontWeight: 700 }}
+                      required
+                    >
+                      <option value="">Select Employee</option>
+                      {employees.map(e => (
+                        <option key={e.id} value={e.id}>{e.full_name} ({e.employee_id || 'N/A'})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Department / Bank */}
+                  <div>
+                    <label style={{ fontSize: '11.5px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '6px' }}>Department / Bank *</label>
+                    <select 
+                      value={bonusForm.bank_id} 
+                      onChange={(e) => setBonusForm({ ...bonusForm, bank_id: e.target.value })}
+                      style={{ width: '100%', padding: '9px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontSize: '13px', fontWeight: 700 }}
+                      required
+                    >
+                      <option value="">Select Bank</option>
+                      {employeeAssignedBanks.map(b => (
+                        <option key={b.bank_id} value={b.bank_id}>{b.bank_name}</option>
+                      ))}
+                    </select>
+                    {employeeAssignedBanks.length === 0 && bonusForm.employee_id && (
+                      <div style={{ fontSize: '11px', color: '#D97706', marginTop: '4px' }}>No assigned bank yet. Will auto-assign on submit.</div>
+                    )}
+                  </div>
+
+                  {/* From Date */}
+                  <div>
+                    <label style={{ fontSize: '11.5px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '6px' }}>From Date *</label>
+                    <input 
+                      type="date" 
+                      value={bonusForm.start_date}
+                      onChange={(e) => setBonusForm({ ...bonusForm, start_date: e.target.value })}
+                      style={{ width: '100%', padding: '9px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontSize: '13px' }}
+                      required
+                    />
+                  </div>
+
+                  {/* To Date */}
+                  <div>
+                    <label style={{ fontSize: '11.5px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '6px' }}>To Date *</label>
+                    <input 
+                      type="date" 
+                      value={bonusForm.end_date}
+                      onChange={(e) => setBonusForm({ ...bonusForm, end_date: e.target.value })}
+                      style={{ width: '100%', padding: '9px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontSize: '13px' }}
+                      required
+                    />
+                  </div>
+
+                  {/* Target Count */}
+                  <div>
+                    <label style={{ fontSize: '11.5px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '6px' }}>Target (Cards) *</label>
+                    <input 
+                      type="number" 
+                      min="1"
+                      value={bonusForm.target_count}
+                      onChange={(e) => setBonusForm({ ...bonusForm, target_count: e.target.value })}
+                      style={{ width: '100%', padding: '9px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontSize: '13px', fontWeight: 700 }}
+                      required
+                    />
+                  </div>
+
+                  {/* Bonus Per Card */}
+                  <div>
+                    <label style={{ fontSize: '11.5px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '6px' }}>Bonus Per Card (₹) *</label>
+                    <input 
+                      type="number" 
+                      min="0"
+                      value={bonusForm.bonus_per_card}
+                      onChange={(e) => setBonusForm({ ...bonusForm, bonus_per_card: e.target.value })}
+                      style={{ width: '100%', padding: '9px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontSize: '13px', fontWeight: 700 }}
+                      required
+                    />
+                  </div>
+
+                </div>
+
+                <div style={{ textAlign: 'right' }}>
+                  <button 
+                    type="submit" 
+                    disabled={savingRule}
+                    style={{ 
+                      background: C.teal, color: '#fff', border: 'none', padding: '10px 24px', 
+                      borderRadius: '10px', fontWeight: 800, cursor: savingRule ? 'not-allowed' : 'pointer',
+                      boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)' 
+                    }}
+                  >
+                    {savingRule ? 'Saving Rule...' : 'Assign Bonus Rule'}
+                  </button>
+                </div>
+              </form>
+
+              {/* Rules Progress & History List */}
+              <div>
+                <h4 style={{ fontSize: '15px', fontWeight: 900, color: C.text, marginBottom: '12px' }}>Configured Bonus Targets & Progress</h4>
+                
+                {loadingRules ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: C.textMid }}>Loading bonus rules...</div>
+                ) : bonusRulesList.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: C.textMid, background: C.bgSecondary, borderRadius: '12px' }}>No active or past bonus rules created yet.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {bonusRulesList.map(rule => (
+                      <div key={rule.id} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                          <div>
+                            <span style={{ fontSize: '14px', fontWeight: 900, color: C.text }}>{rule.employee_name} ({rule.emp_code})</span>
+                            <span style={{ marginLeft: '10px', padding: '2px 8px', borderRadius: '8px', background: `${C.teal}15`, color: C.teal, fontSize: '12px', fontWeight: 800 }}>{rule.bank_name}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '12px', color: C.textMid }}>
+                              Period: <strong>{new Date(rule.start_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} – {new Date(rule.end_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</strong>
+                            </span>
+                            <button onClick={() => handleDeleteBonusRule(rule.id)} style={{ background: '#EF444415', border: 'none', color: '#EF4444', padding: '6px', borderRadius: '6px', cursor: 'pointer' }} title="Delete Rule">
+                              <FaTrash />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Progress Bar & Calculation */}
+                        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '12px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', fontSize: '12.5px', fontWeight: 800 }}>
+                            <span>{rule.bank_name} Target: <strong style={{ color: C.teal }}>{rule.approved_count} / {rule.target_count} Cards</strong> ({rule.progress_percentage}%)</span>
+                            {rule.target_achieved ? (
+                              <span style={{ color: '#10B981', fontWeight: 900 }}>✓ ₹{Number(rule.earned_bonus || 0).toLocaleString('en-IN')} Unlocked</span>
+                            ) : (
+                              <span style={{ color: '#D97706', fontWeight: 800 }}>🔒 Bonus Locked</span>
+                            )}
+                          </div>
+
+                          <div style={{ width: '100%', background: C.bgSecondary, height: '10px', borderRadius: '5px', overflow: 'hidden' }}>
+                            <div style={{ width: `${rule.progress_percentage}%`, background: rule.target_achieved ? '#10B981' : '#F59E0B', height: '100%', transition: 'width 0.4s ease' }} />
+                          </div>
+
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '11px', color: C.textMid }}>
+                            <span>{rule.target_achieved ? <strong style={{ color: '#10B981' }}>Target Achieved (Awarded to {rule.employee_name})</strong> : <span style={{ color: '#D97706' }}>Needs {rule.remaining_count} more cards to unlock</span>}</span>
+                            <span>Rate: ₹{rule.bonus_per_card}/card</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* Right-Side Detail Drawer (Desktop) & Overlay Sheet (Mobile) */}
+        {drawerEmp && (
+          <>
+            {/* Backdrop Overlay */}
+            <div 
+              onClick={() => setDrawerEmp(null)}
+              style={{
+                position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.4)', backdropFilter: 'blur(2px)',
+                zIndex: 9998, transition: 'opacity 0.2s ease'
+              }}
+            />
+
+            {/* Profile Drawer Body (Desktop Right Drawer / Mobile Full-Screen Modal Sheet) */}
+            <div style={{
+              position: 'fixed',
+              zIndex: 9999,
+              background: C.card,
+              boxShadow: isMobile ? '0 10px 40px rgba(0,0,0,0.3)' : '-8px 0 32px rgba(0, 0, 0, 0.15)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              transition: 'all 0.25s ease',
+              ...(isMobile ? {
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                width: 'calc(100% - 20px)',
+                maxWidth: '94vw',
+                maxHeight: '85vh',
+                borderRadius: '16px',
+                border: `1px solid ${C.border}`,
+                boxShadow: '0 20px 50px rgba(0,0,0,0.35)'
+              } : {
+                top: 0,
+                right: 0,
+                bottom: 0,
+                width: isTablet ? '460px' : '520px',
+                maxWidth: '100vw',
+                borderLeft: `1px solid ${C.border}`
+              })
+            }}>
+              
+              {/* Drawer / Modal Header */}
+              <div style={{ padding: isMobile ? '12px 14px' : '18px 20px', borderBottom: `1px solid ${C.border}`, background: C.card }}>
+                {/* Top Section Title Banner */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <FaUserShield style={{ color: C.teal, fontSize: '18px' }} />
+                    <h2 style={{ fontSize: isMobile ? '16px' : '18px', fontWeight: 900, color: C.text, margin: 0 }}>
+                      Employee Details
+                    </h2>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }} ref={drawerActionsRef}>
+                    <button
+                      id="drawer-actions-dropdown-btn"
+                      onClick={() => setDrawerActionsOpen(!drawerActionsOpen)}
+                      style={{
+                        background: drawerActionsOpen ? C.teal : `${C.teal}14`,
+                        border: `1px solid ${drawerActionsOpen ? C.teal : `${C.teal}35`}`,
+                        color: drawerActionsOpen ? '#ffffff' : C.teal,
+                        padding: '6px 12px',
+                        borderRadius: '20px',
+                        fontSize: '12px',
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'all 0.15s ease',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.04)'
+                      }}
+                      title="Super Admin Actions Menu"
+                    >
+                      <FaEllipsisH />
+                      <span>Actions</span>
+                      <FaChevronDown style={{ fontSize: '9px', transform: drawerActionsOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
+                    </button>
+
+                    {/* Actions Dropdown Popover */}
+                    {drawerActionsOpen && (
+                      <div 
+                        style={{
+                          position: 'absolute',
+                          top: '38px',
+                          right: 0,
+                          width: '270px',
+                          background: C.card,
+                          border: `1px solid ${C.border}`,
+                          borderRadius: '16px',
+                          boxShadow: '0 12px 36px rgba(0,0,0,0.25)',
+                          zIndex: 10000,
+                          padding: '8px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '3px'
+                        }}
+                      >
+                        <div style={{ padding: '6px 10px', fontSize: '10.5px', fontWeight: 800, color: C.textMid, textTransform: 'uppercase', borderBottom: `1px solid ${C.border}` }}>
+                          Super Admin Actions
+                        </div>
+                        <button
+                          onClick={() => {
+                            setDrawerActionsOpen(false);
+                            setDrawerTab('overview');
+                            setIsEditingEmpInfo(true);
+                          }}
+                          style={{ width: '100%', padding: '9px 12px', background: 'transparent', border: 'none', borderRadius: '8px', textAlign: 'left', fontSize: '12.5px', fontWeight: 700, color: C.text, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = C.bgSecondary}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <FaEdit style={{ color: '#4F46E5' }} /> Edit Employee Details
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDrawerActionsOpen(false);
+                            handleSendKycLink(drawerEmp);
+                          }}
+                          style={{ width: '100%', padding: '9px 12px', background: 'transparent', border: 'none', borderRadius: '8px', textAlign: 'left', fontSize: '12.5px', fontWeight: 700, color: C.text, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = C.bgSecondary}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <FaEnvelope style={{ color: C.teal }} /> Send KYC Re-verification Link
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDrawerActionsOpen(false);
+                            handleResendCreds(drawerEmp);
+                          }}
+                          style={{ width: '100%', padding: '9px 12px', background: 'transparent', border: 'none', borderRadius: '8px', textAlign: 'left', fontSize: '12.5px', fontWeight: 700, color: C.text, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = C.bgSecondary}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <FaKey style={{ color: '#F59E0B' }} /> Reset Login Credentials
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDrawerActionsOpen(false);
+                            handleDownloadProfileSummary(drawerEmp);
+                          }}
+                          style={{ width: '100%', padding: '9px 12px', background: 'transparent', border: 'none', borderRadius: '8px', textAlign: 'left', fontSize: '12.5px', fontWeight: 700, color: C.text, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = C.bgSecondary}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <FaFileAlt style={{ color: '#10B981' }} /> Download Profile Summary
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDrawerActionsOpen(false);
+                            handleToggleEmpStatus(drawerEmp);
+                          }}
+                          style={{ width: '100%', padding: '9px 12px', background: 'transparent', border: 'none', borderRadius: '8px', textAlign: 'left', fontSize: '12.5px', fontWeight: 700, color: getEmployeeAccountStatus(drawerEmp).isSuspended ? '#10B981' : '#EF4444', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = C.bgSecondary}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                        >
+                          {getEmployeeAccountStatus(drawerEmp).isSuspended ? <FaCheck style={{ color: '#10B981' }} /> : <FaLock style={{ color: '#EF4444' }} />}
+                          {getEmployeeAccountStatus(drawerEmp).isSuspended ? 'Activate / Restore Account' : 'Suspend Employee Account'}
+                        </button>
+                        <div style={{ height: '1px', background: C.border, margin: '3px 0' }} />
+                        <button
+                          onClick={() => {
+                            setDrawerActionsOpen(false);
+                            openDeptModal(drawerEmp);
+                          }}
+                          style={{ width: '100%', padding: '9px 12px', background: 'transparent', border: 'none', borderRadius: '8px', textAlign: 'left', fontSize: '12.5px', fontWeight: 700, color: C.text, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = C.bgSecondary}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <FaBuilding style={{ color: C.teal }} /> Manage Depts & Banks
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDrawerActionsOpen(false);
+                            openHierarchyModal(drawerEmp);
+                          }}
+                          style={{ width: '100%', padding: '9px 12px', background: 'transparent', border: 'none', borderRadius: '8px', textAlign: 'left', fontSize: '12.5px', fontWeight: 700, color: C.text, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = C.bgSecondary}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <FaSitemap style={{ color: '#8B5CF6' }} /> Assign Team & Hierarchy
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDrawerActionsOpen(false);
+                            setSelectedEmp(drawerEmp);
+                          }}
+                          style={{ width: '100%', padding: '9px 12px', background: 'transparent', border: 'none', borderRadius: '8px', textAlign: 'left', fontSize: '12.5px', fontWeight: 700, color: C.text, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = C.bgSecondary}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <FaEye style={{ color: '#3B82F6' }} /> Inspect 360° Profile
+                        </button>
+                        <div style={{ height: '1px', background: C.border, margin: '4px 0' }} />
+                        <button
+                          onClick={() => {
+                            setDrawerActionsOpen(false);
+                            promptDeleteEmp(drawerEmp, 'temporary');
+                          }}
+                          style={{ width: '100%', padding: '9px 12px', background: 'transparent', border: 'none', borderRadius: '8px', textAlign: 'left', fontSize: '12.5px', fontWeight: 700, color: '#D97706', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = '#FEF3C7'}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <FaUserTimes style={{ color: '#D97706' }} /> 🟡 Temporary Delete (Deactivate)
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDrawerActionsOpen(false);
+                            promptDeleteEmp(drawerEmp, 'permanent');
+                          }}
+                          style={{ width: '100%', padding: '9px 12px', background: 'transparent', border: 'none', borderRadius: '8px', textAlign: 'left', fontSize: '12.5px', fontWeight: 700, color: '#DC2626', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = '#FEE2E2'}
+                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <FaTrash style={{ color: '#DC2626' }} /> 🔴 Permanent Delete (Purge)
+                        </button>
+                      </div>
+                    )}
+
+                    <button 
+                      onClick={() => { setDrawerEmp(null); setDrawerActionsOpen(false); }}
+                      style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.textMid, cursor: 'pointer', fontSize: '16px', fontWeight: 900, flexShrink: 0 }}
+                      title="Close Popup"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: isMobile ? '10px' : '14px', alignItems: 'center' }}>
+                  <div style={{
+                    width: isMobile ? '46px' : '64px', height: isMobile ? '46px' : '64px', borderRadius: '50%', background: `${C.teal}15`, color: C.teal,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: isMobile ? '18px' : '24px', flexShrink: 0,
+                    border: `2px solid ${C.teal}30`, overflow: 'hidden'
+                  }}>
+                    {drawerEmp.profile_photo_url || drawerEmp.avatar_url || drawerEmp.photo ? (
+                      <img src={drawerEmp.profile_photo_url || drawerEmp.avatar_url || drawerEmp.photo} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      drawerEmp.full_name ? drawerEmp.full_name[0].toUpperCase() : 'E'
+                    )}
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <h3 style={{ fontSize: isMobile ? '15px' : '17px', fontWeight: 900, color: C.text, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{drawerEmp.full_name}</h3>
+                      <span style={{ 
+                        padding: '2px 8px', 
+                        borderRadius: '6px', 
+                        fontSize: '11px', 
+                        fontWeight: 900, 
+                        background: getEmployeeAccountStatus(drawerEmp).bg, 
+                        color: getEmployeeAccountStatus(drawerEmp).color, 
+                        display: 'inline-flex', 
+                        alignItems: 'center', 
+                        gap: '4px' 
+                      }}>
+                        {getEmployeeAccountStatus(drawerEmp).label}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '11.5px', fontWeight: 700, color: C.teal, marginTop: '2px' }}>
+                      ID: {drawerEmp.employee_code || drawerEmp.employee_id || drawerEmp.emp_code || (drawerEmp.id ? String(drawerEmp.id).slice(0, 8) : 'N/A')}{drawerEmp.designation ? ` • ${drawerEmp.designation}` : ''}
+                    </div>
+                    <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+                      <span>📞 {drawerEmp.mobile_number || 'N/A'}</span>
+                      <span>✉ {drawerEmp.email_id || drawerEmp.email || 'N/A'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Drawer Navigation Tabs Header */}
+              <div style={{ 
+                display: 'flex', 
+                borderBottom: `1px solid ${C.border}`, 
+                background: C.card, 
+                padding: isMobile ? '8px 10px' : '0 12px', 
+                overflowX: 'auto', 
+                WebkitOverflowScrolling: 'touch',
+                gap: isMobile ? '6px' : '4px',
+                scrollbarWidth: 'none',
+                msOverflowStyle: 'none',
+                flexShrink: 0
+              }}>
+                {[
+                  { id: 'overview', label: 'Overview', icon: '📊' },
+                  { id: 'kyc', label: 'KYC Details', icon: '📜' },
+                  { id: 'biometric', label: 'Face Verification', icon: '👤' },
+                  { id: 'team', label: 'Access & Team', icon: '👥' },
+                  { id: 'attendance', label: 'Attendance', icon: '📅' },
+                  { id: 'actions', label: 'Actions', icon: '⚡' }
+                ].map(t => {
+                  const isActive = drawerTab === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => setDrawerTab(t.id)}
+                      style={{
+                        padding: isMobile ? '7px 12px' : '11px 16px',
+                        border: 'none',
+                        borderRadius: isMobile ? '16px' : '0px',
+                        background: isMobile ? (isActive ? C.teal : C.bgSecondary) : 'transparent',
+                        borderBottom: isMobile ? 'none' : (isActive ? `3px solid ${C.teal}` : '3px solid transparent'),
+                        color: isMobile ? (isActive ? '#FFFFFF' : C.text) : (isActive ? C.teal : C.textMid),
+                        fontWeight: isActive ? 900 : 700,
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                        transition: 'all 0.15s ease',
+                        flexShrink: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        boxShadow: isMobile && isActive ? '0 2px 6px rgba(13, 148, 136, 0.3)' : 'none'
+                      }}
+                    >
+                      <span>{t.icon}</span> {t.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Drawer Tab Content */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px' : '20px', background: '#F8FAFC' }}>
+                
+                {/* 1. OVERVIEW TAB */}
+                {drawerTab === 'overview' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    
+                    {/* Employee Information Card (View vs Edit Mode) */}
+                    {!isEditingEmpInfo ? (
+                      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: isMobile ? '14px' : '18px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                          <h4 style={{ fontSize: isMobile ? '14px' : '15px', fontWeight: 900, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <FaUserCircle style={{ color: C.teal }} /> Employee Information
+                          </h4>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <button 
+                              onClick={() => setDrawerActionsOpen(!drawerActionsOpen)}
+                              style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '4px 10px', borderRadius: '6px', fontSize: '11.5px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
+                              title="Open Employee Record Actions Menu"
+                            >
+                              <FaEllipsisH /> Actions
+                            </button>
+                            <button 
+                              onClick={() => setIsEditingEmpInfo(true)}
+                              style={{ background: '#EEF2FF', border: '1px solid #C7D2FE', color: '#4F46E5', padding: '4px 10px', borderRadius: '6px', fontSize: '11.5px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              ✏ Edit
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Primary Work & Contact Details */}
+                        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : isTablet ? '1fr 1fr' : 'repeat(2, 1fr)', gap: isMobile ? '10px' : '14px', fontSize: '12.5px' }}>
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Full Name</span>
+                            <strong style={{ color: C.text }}>{drawerEmp.full_name || 'N/A'}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Employee Code / ID</span>
+                            <strong style={{ color: C.text }}>{drawerEmp.employee_code || drawerEmp.employee_id || drawerEmp.emp_code || (drawerEmp.id ? String(drawerEmp.id).slice(0, 8) : 'N/A')}</strong>
+                          </div>
+
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Account Status</span>
+                            <span style={{ 
+                              padding: '2px 8px', 
+                              borderRadius: '6px', 
+                              fontSize: '11px', 
+                              fontWeight: 800, 
+                              background: getEmployeeAccountStatus(drawerEmp).bg, 
+                              color: getEmployeeAccountStatus(drawerEmp).color, 
+                              display: 'inline-flex', 
+                              alignItems: 'center', 
+                              gap: '3px' 
+                            }}>
+                              {getEmployeeAccountStatus(drawerEmp).label}
+                            </span>
+                          </div>
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Date of Joining</span>
+                            <strong style={{ color: C.text }}>{drawerEmp.joining_date || drawerEmp.date_of_joining || (drawerEmp.created_at ? new Date(drawerEmp.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A')}</strong>
+                          </div>
+
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Designation</span>
+                            <strong style={{ color: C.text }}>{drawerEmp.designation || drawerEmp.role || 'N/A'}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Department</span>
+                            <strong style={{ color: C.text }}>{drawerEmp.department || 'N/A'}</strong>
+                          </div>
+
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Work Location</span>
+                            <strong style={{ color: C.text }}>{drawerEmp.work_location || 'Not Specified'}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Employment Type</span>
+                            <strong style={{ color: C.text }}>{drawerEmp.employment_type || 'Full-time'}</strong>
+                          </div>
+
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Offered Monthly Salary</span>
+                            <strong style={{ color: C.teal }}>{drawerEmp.offered_salary ? `₹${Number(drawerEmp.offered_salary).toLocaleString('en-IN')}` : 'Not Specified'}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Mobile Number</span>
+                            <strong style={{ color: C.text }}>{drawerEmp.mobile_number || 'N/A'}</strong>
+                          </div>
+
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>WhatsApp Number</span>
+                            <strong style={{ color: C.text }}>{drawerEmp.whatsapp_number || drawerEmp.mobile_number || 'N/A'}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Official Email</span>
+                            <strong style={{ color: C.text }}>{drawerEmp.email_id || drawerEmp.email || 'N/A'}</strong>
+                          </div>
+
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Date of Birth</span>
+                            <strong style={{ color: C.text }}>{drawerEmp.date_of_birth ? new Date(drawerEmp.date_of_birth).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Gender</span>
+                            <strong style={{ color: C.text }}>{drawerEmp.gender || 'N/A'}</strong>
+                          </div>
+
+                          <div style={{ gridColumn: isMobile ? 'span 1' : 'span 2' }}>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Emergency Contact</span>
+                            <strong style={{ color: C.text }}>
+                              {drawerEmp.emergency_contact_name ? `${drawerEmp.emergency_contact_name} (${drawerEmp.emergency_contact_number || 'No Phone'})` : 'Not Provided'}
+                            </strong>
+                          </div>
+
+                          <div style={{ gridColumn: isMobile ? 'span 1' : 'span 2' }}>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Current Address</span>
+                            <span style={{ color: C.text, fontSize: '12px', lineHeight: 1.4 }}>{drawerEmp.current_address || 'Not Provided'}</span>
+                          </div>
+
+                          <div style={{ gridColumn: isMobile ? 'span 1' : 'span 2' }}>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Permanent Address</span>
+                            <span style={{ color: C.text, fontSize: '12px', lineHeight: 1.4 }}>{drawerEmp.permanent_address || 'Not Provided'}</span>
+                          </div>
+                        </div>
+
+                        {/* Organizational Reporting Chain Divider */}
+                        <div style={{ borderTop: `1px solid ${C.border}`, marginTop: '14px', paddingTop: '12px' }}>
+                          <span style={{ fontSize: '11.5px', fontWeight: 900, color: C.teal, display: 'block', marginBottom: '8px' }}>
+                            👥 Organizational Hierarchy Chain
+                          </span>
+                          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '8px', fontSize: '12px' }}>
+                            <div>
+                              <span style={{ color: C.textMid, fontSize: '11px' }}>Branch Head: </span>
+                              <strong style={{ color: C.text }}>{drawerEmp.branch_head_name || 'Direct / None'}</strong>
+                            </div>
+                            <div>
+                              <span style={{ color: C.textMid, fontSize: '11px' }}>Senior Manager: </span>
+                              <strong style={{ color: C.text }}>{drawerEmp.senior_manager_name || 'Direct / None'}</strong>
+                            </div>
+                            <div>
+                              <span style={{ color: C.textMid, fontSize: '11px' }}>Reporting Manager: </span>
+                              <strong style={{ color: C.text }}>{drawerEmp.manager_name || drawerEmp.reporting_manager || 'Direct / None'}</strong>
+                            </div>
+                            <div>
+                              <span style={{ color: C.textMid, fontSize: '11px' }}>Team Leader: </span>
+                              <strong style={{ color: C.text }}>{drawerEmp.team_leader_name || 'Direct / None'}</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Qualifications & Experience Divider */}
+                        <div style={{ borderTop: `1px solid ${C.border}`, marginTop: '12px', paddingTop: '12px' }}>
+                          <span style={{ fontSize: '11.5px', fontWeight: 900, color: C.teal, display: 'block', marginBottom: '8px' }}>
+                            🎓 Academic & Experience Background
+                          </span>
+                          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '8px', fontSize: '12px' }}>
+                            <div>
+                              <span style={{ color: C.textMid, fontSize: '11px' }}>Highest Qualification: </span>
+                              <strong style={{ color: C.text }}>{drawer360Data?.joining?.highest_qualification || drawerEmp.highest_qualification || 'N/A'}</strong>
+                            </div>
+                            <div>
+                              <span style={{ color: C.textMid, fontSize: '11px' }}>Year of Passing: </span>
+                              <strong style={{ color: C.text }}>{drawer360Data?.joining?.passing_year || drawerEmp.passing_year || 'N/A'}</strong>
+                            </div>
+                            <div>
+                              <span style={{ color: C.textMid, fontSize: '11px' }}>Experience Type: </span>
+                              <strong style={{ color: C.text }}>{drawer360Data?.joining?.experience_type || drawerEmp.experience_type || (drawerEmp.experience_years ? `${drawerEmp.experience_years} Years` : 'Fresher')}</strong>
+                            </div>
+                            <div>
+                              <span style={{ color: C.textMid, fontSize: '11px' }}>Total Experience: </span>
+                              <strong style={{ color: C.text }}>{drawer360Data?.joining?.experience_years ? `${drawer360Data?.joining?.experience_years} Years` : drawerEmp.experience_years ? `${drawerEmp.experience_years} Years` : '0 Years'}</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* System Access Flags */}
+                        <div style={{ borderTop: `1px solid ${C.border}`, marginTop: '12px', paddingTop: '12px', display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'center' }}>
+                          <div style={{ fontSize: '12px' }}>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Attendance Access</span>
+                            <span style={{ padding: '2px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 800, background: (drawerEmp.attendance_access === false || drawerEmp.attendance_enabled === false) ? '#FEE2E2' : '#D1FAE5', color: (drawerEmp.attendance_access === false || drawerEmp.attendance_enabled === false) ? '#991B1B' : '#065F46', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                              {(drawerEmp.attendance_access === false || drawerEmp.attendance_enabled === false) ? '✕ Restricted' : '✓ Permitted'}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '12px' }}>
+                            <span style={{ color: C.textMid, fontSize: '11px', display: 'block', marginBottom: '2px' }}>Bank Portals Access</span>
+                            <strong style={{ color: C.text }}>{drawerEmp.active_links_count !== undefined ? `${drawerEmp.active_links_count} Products Assigned` : (drawerEmp.bank_count !== undefined ? `${drawerEmp.bank_count} Banks Assigned` : 'None Assigned')}</strong>
+                          </div>
+
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11.5px', display: 'block', marginBottom: '2px' }}>Date of Birth & Gender</span>
+                            <strong style={{ color: C.text }}>
+                              {drawerEmp.date_of_birth ? new Date(drawerEmp.date_of_birth).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                              {drawerEmp.gender ? ` (${drawerEmp.gender})` : ''}
+                            </strong>
+                          </div>
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11.5px', display: 'block', marginBottom: '2px' }}>Emergency Contact</span>
+                            <strong style={{ color: C.text }}>
+                              {drawerEmp.emergency_contact_name || 'N/A'}
+                              {drawerEmp.emergency_contact_number ? ` (${drawerEmp.emergency_contact_number})` : ''}
+                            </strong>
+                          </div>
+
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11.5px', display: 'block', marginBottom: '2px' }}>Blood Group & Father</span>
+                            <strong style={{ color: C.text }}>
+                              {drawerEmp.blood_group || 'N/A'}
+                              {drawerEmp.father_name ? ` • S/O ${drawerEmp.father_name}` : ''}
+                            </strong>
+                          </div>
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11.5px', display: 'block', marginBottom: '2px' }}>Salary & Type</span>
+                            <strong style={{ color: '#10B981' }}>
+                              ₹{drawerEmp.offered_salary || 0} / mo
+                              <span style={{ color: C.textMid, fontSize: '11.5px', fontWeight: 600 }}> ({drawerEmp.employment_type || 'Full Time'})</span>
+                            </strong>
+                          </div>
+
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11.5px', display: 'block', marginBottom: '2px' }}>Bank Account</span>
+                            <strong style={{ color: C.text }}>
+                              {drawerEmp.bank_name || 'Bank N/A'}
+                              {drawerEmp.branch_name ? ` (${drawerEmp.branch_name})` : ''}
+                              <div style={{ fontSize: '11.5px', color: C.textMid }}>A/C: {drawerEmp.bank_account_number || 'N/A'} • IFSC: {drawerEmp.ifsc_code || 'N/A'}</div>
+                            </strong>
+                          </div>
+                          <div>
+                            <span style={{ color: C.textMid, fontSize: '11.5px', display: 'block', marginBottom: '2px' }}>Address</span>
+                            <strong style={{ color: C.text, fontSize: '12px' }}>
+                              {drawerEmp.current_address || 'N/A'}
+                              {drawerEmp.permanent_address && drawerEmp.permanent_address !== drawerEmp.current_address ? ` (Perm: ${drawerEmp.permanent_address})` : ''}
+                            </strong>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: isMobile ? '14px' : '18px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                          <h4 style={{ fontSize: '15px', fontWeight: 900, color: C.teal, margin: 0 }}>✏ Edit Employee Information</h4>
+                          <span style={{ fontSize: '11.5px', fontWeight: 800, color: C.textMid }}>ID: {drawerEmp.employee_code || drawerEmp.employee_id || drawerEmp.emp_code}</span>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '12px', fontSize: '12.5px' }}>
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Full Name *</label>
+                            <input 
+                              type="text" 
+                              value={editEmpForm.full_name || ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, full_name: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }} 
+                            />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Mobile Number *</label>
+                            <input 
+                              type="text" 
+                              value={editEmpForm.mobile_number || ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, mobile_number: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }} 
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>WhatsApp Number</label>
+                            <input 
+                              type="text" 
+                              value={editEmpForm.whatsapp_number || ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, whatsapp_number: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }} 
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Email Address *</label>
+                            <input 
+                              type="email" 
+                              value={editEmpForm.email_id || ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, email_id: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }} 
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Designation *</label>
+                            <select 
+                              value={editEmpForm.designation || ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, designation: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }}
+                            >
+                              <option value="TC">TC (Telecaller)</option>
+                              <option value="TL">TL (Team Leader)</option>
+                              <option value="Manager">Manager</option>
+                              <option value="Senior Manager">Senior Manager</option>
+                              <option value="Branch Head">Branch Head</option>
+                              <option value="KYC Operator">KYC Operator</option>
+                              <option value="QD Operator">QD Operator</option>
+                              <option value="Remark Operator">Remark Operator</option>
+                              <option value="Final Status Operator">Final Status Operator</option>
+                              <option value="Querable Operator">Querable Operator</option>
+                              <option value="Physical Curable Operator">Physical Curable Operator</option>
+                              <option value="Digital Curable Operator">Digital Curable Operator</option>
+                              <option value="Email Curable Operator">Email Curable Operator</option>
+                              <option value="PAN Checker">PAN Checker</option>
+                              <option value="Administrative Operator">Administrative Operator</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Department</label>
+                            <input 
+                              type="text" 
+                              value={editEmpForm.department || ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, department: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }} 
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Work Location</label>
+                            <input 
+                              type="text" 
+                              placeholder="e.g. Pune Head Office, Mumbai Branch"
+                              value={editEmpForm.work_location || ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, work_location: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }} 
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Employment Type</label>
+                            <select 
+                              value={editEmpForm.employment_type || 'Full-time'} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, employment_type: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }}
+                            >
+                              <option value="Full-time">Full-time</option>
+                              <option value="Part-time">Part-time</option>
+                              <option value="Contract">Contract</option>
+                              <option value="Probation">Probation</option>
+                              <option value="Internship">Internship</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Offered Monthly Salary (₹)</label>
+                            <input 
+                              type="number" 
+                              placeholder="e.g. 25000"
+                              value={editEmpForm.offered_salary || ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, offered_salary: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }} 
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Reporting Manager</label>
+                            <input 
+                              type="text" 
+                              value={editEmpForm.manager_name || ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, manager_name: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }} 
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Date of Birth</label>
+                            <input 
+                              type="date" 
+                              value={editEmpForm.date_of_birth ? editEmpForm.date_of_birth.slice(0, 10) : ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, date_of_birth: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }} 
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Gender</label>
+                            <select 
+                              value={editEmpForm.gender || 'Male'} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, gender: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }}
+                            >
+                              <option value="Male">Male</option>
+                              <option value="Female">Female</option>
+                              <option value="Other">Other</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Emergency Contact Name</label>
+                            <input 
+                              type="text" 
+                              placeholder="Contact person name"
+                              value={editEmpForm.emergency_contact_name || ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, emergency_contact_name: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }} 
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Emergency Contact Phone</label>
+                            <input 
+                              type="text" 
+                              placeholder="Emergency phone number"
+                              value={editEmpForm.emergency_contact_number || ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, emergency_contact_number: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }} 
+                            />
+                          </div>
+
+                          <div style={{ gridColumn: isMobile ? 'span 1' : 'span 2' }}>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Current Address</label>
+                            <input 
+                              type="text" 
+                              placeholder="Current residential address"
+                              value={editEmpForm.current_address || ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, current_address: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }} 
+                            />
+                          </div>
+
+                          <div style={{ gridColumn: isMobile ? 'span 1' : 'span 2' }}>
+                            <label style={{ fontSize: '11px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Permanent Address</label>
+                            <input 
+                              type="text" 
+                              placeholder="Permanent hometown address"
+                              value={editEmpForm.permanent_address || ''} 
+                              onChange={(e) => setEditEmpForm({ ...editEmpForm, permanent_address: e.target.value })}
+                              style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12.5px', fontWeight: 700 }} 
+                            />
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>
+                          <button 
+                            type="button" 
+                            onClick={() => setIsEditingEmpInfo(false)}
+                            style={{ padding: '6px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '12px', fontWeight: 700, color: C.text, cursor: 'pointer' }}
+                          >
+                            Cancel
+                          </button>
+                          <button 
+                            type="button" 
+                            disabled={savingEmpDetails}
+                            onClick={handleSaveEmployeeDetails}
+                            style={{ padding: '6px 16px', background: C.teal, color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 900, cursor: 'pointer', opacity: savingEmpDetails ? 0.7 : 1 }}
+                          >
+                            {savingEmpDetails ? 'Saving...' : 'Save Changes'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 4 Status Summary Cards Grid (Dynamic live status) */}
+                    {(() => {
+                      const kycStatus = drawer360Data?.kyc_verification?.overall_status || drawerEmp.kyc_status || (drawerEmp.activation_status === 'APPROVED' ? 'VERIFIED' : 'PENDING');
+                      const isKycVerified = kycStatus === 'VERIFIED' || kycStatus === 'APPROVED';
+                      const isKycRejected = kycStatus === 'REJECTED';
+                      const isKycUnderReview = kycStatus === 'UNDER_REVIEW' || kycStatus === 'SUBMITTED';
+
+                      const hasBiometric = !!(drawer360Data?.biometric_template && drawer360Data.biometric_template.status === 'ACTIVE');
+                      const bioAdminStatus = (drawer360Data?.biometric_template?.admin_review_status || 'PENDING').toUpperCase();
+                      const isBioApproved = hasBiometric && (bioAdminStatus === 'APPROVED' || bioAdminStatus === 'VERIFIED');
+                      const isBioFlagged = hasBiometric && (bioAdminStatus === 'FLAGGED' || bioAdminStatus === 'REJECTED');
+
+                      const attEnabled = !(drawerEmp.attendance_access === false || drawerEmp.attendance_enabled === false);
+
+                      const teamName = drawerEmp.team_name || drawerEmp.team || (drawerEmp.team_leader_name ? `${drawerEmp.team_leader_name}'s Team` : null);
+
+                      return (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+                          {/* KYC Status Card */}
+                          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ fontSize: '11.5px', color: C.textMid, fontWeight: 800 }}>KYC Status</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                              <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: isKycVerified ? '#10B981' : isKycRejected ? '#EF4444' : isKycUnderReview ? '#2563EB' : '#F59E0B', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 900 }}>
+                                {isKycVerified ? '✓' : isKycRejected ? '✕' : isKycUnderReview ? '⏳' : '●'}
+                              </div>
+                              <span style={{ fontSize: '13.5px', fontWeight: 900, color: isKycVerified ? '#059669' : isKycRejected ? '#DC2626' : isKycUnderReview ? '#2563EB' : '#D97706' }}>
+                                {isKycVerified ? 'Completed' : isKycRejected ? 'Rejected' : isKycUnderReview ? 'Under Review' : 'Pending'}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>
+                              {isKycVerified ? 'All documents verified' : isKycRejected ? 'KYC documents rejected' : isKycUnderReview ? 'Awaiting admin review' : 'Documents pending upload'}
+                            </div>
+                          </div>
+
+                          {/* Face Verification Card */}
+                          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ fontSize: '11.5px', color: C.textMid, fontWeight: 800 }}>Face Verification</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                              <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: isBioApproved ? '#10B981' : isBioFlagged ? '#EF4444' : hasBiometric ? '#2563EB' : '#F59E0B', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 900 }}>
+                                {isBioApproved ? '✓' : isBioFlagged ? '✕' : hasBiometric ? '✓' : '▲'}
+                              </div>
+                              <span style={{ fontSize: '13.5px', fontWeight: 900, color: isBioApproved ? '#059669' : isBioFlagged ? '#DC2626' : hasBiometric ? '#2563EB' : '#D97706' }}>
+                                {isBioApproved ? 'Verified' : isBioFlagged ? 'Flagged' : hasBiometric ? 'Enrolled' : 'Pending'}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>
+                              {isBioApproved ? 'Biometric approved' : isBioFlagged ? 'Biometric flagged for review' : hasBiometric ? 'Biometric captured' : 'Biometric reference not captured'}
+                            </div>
+                          </div>
+
+                          {/* Attendance Card */}
+                          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ fontSize: '11.5px', color: C.textMid, fontWeight: 800 }}>Attendance</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                              <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: attEnabled ? '#10B981' : '#EF4444', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 900 }}>
+                                {attEnabled ? '✓' : '✕'}
+                              </div>
+                              <span style={{ fontSize: '13.5px', fontWeight: 900, color: attEnabled ? '#059669' : '#DC2626' }}>
+                                {attEnabled ? 'Enabled' : 'Disabled'}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>
+                              {attEnabled ? 'Can mark attendance' : 'Attendance access disabled'}
+                            </div>
+                          </div>
+
+                          {/* Team Assignment Card */}
+                          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ fontSize: '11.5px', color: C.textMid, fontWeight: 800 }}>Team Assignment</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                              <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: teamName ? '#4F46E5' : '#9CA3AF', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px' }}>
+                                👥
+                              </div>
+                              <span style={{ fontSize: '13.5px', fontWeight: 900, color: teamName ? '#4F46E5' : '#6B7280' }}>
+                                {teamName ? 'Assigned' : 'Unassigned'}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {teamName || 'No team assigned'}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Recent Activity Timeline Card */}
+                    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '18px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                        <h4 style={{ fontSize: '15px', fontWeight: 900, color: C.text, margin: 0 }}>Recent Activity</h4>
+                        {drawer360Data?.recent_activities?.length > 0 && (
+                          <span style={{ background: '#EEF2FF', color: '#4F46E5', padding: '2px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 800 }}>
+                            {drawer360Data.recent_activities.length} Recorded
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                        {drawer360Data?.recent_activities && drawer360Data.recent_activities.length > 0 ? (
+                          drawer360Data.recent_activities.map((act, actIdx) => {
+                            const actDate = act.timestamp ? new Date(act.timestamp) : null;
+                            const dateStr = actDate && !isNaN(actDate.getTime()) ? actDate.toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+                            const timeStr = actDate && !isNaN(actDate.getTime()) ? actDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '';
+                            const iconBg = act.type === 'activated' ? '#D1FAE5' : act.type === 'biometric' ? '#E0E7FF' : act.type === 'kyc' ? '#EFF6FF' : '#F3E8FF';
+                            const iconColor = act.type === 'activated' ? '#059669' : act.type === 'biometric' ? '#4F46E5' : act.type === 'kyc' ? '#2563EB' : '#7C3AED';
+                            const iconSymbol = act.type === 'activated' ? '✓' : act.type === 'biometric' ? '👤' : act.type === 'kyc' ? '📄' : '📝';
+
+                            return (
+                              <div key={actIdx} style={{ display: 'flex', gap: '12px', alignItems: 'center', fontSize: '12.5px' }}>
+                                <div style={{ width: '28px', height: '28px', borderRadius: '6px', background: iconBg, color: iconColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, flexShrink: 0 }}>
+                                  {iconSymbol}
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontWeight: 800, color: C.text }}>{act.title}</div>
+                                  <div style={{ fontSize: '11px', color: C.textMid }}>by {act.by || 'System'}</div>
+                                </div>
+                                <div style={{ fontSize: '11px', color: C.textMid, textAlign: 'right' }}>
+                                  <div>{dateStr}</div>
+                                  {timeStr && <div>{timeStr}</div>}
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div style={{ padding: '14px', textAlign: 'center', color: C.textMid, fontSize: '12px', background: C.bgSecondary, borderRadius: '8px' }}>
+                            {drawerEmp.created_at ? (
+                              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', fontSize: '12.5px', textAlign: 'left' }}>
+                                <div style={{ width: '28px', height: '28px', borderRadius: '6px', background: '#F3E8FF', color: '#7C3AED', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, flexShrink: 0 }}>👤</div>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontWeight: 800, color: C.text }}>Employee profile created</div>
+                                  <div style={{ fontSize: '11px', color: C.textMid }}>System record created</div>
+                                </div>
+                                <div style={{ fontSize: '11px', color: C.textMid, textAlign: 'right' }}>
+                                  <div>{new Date(drawerEmp.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+                                </div>
+                              </div>
+                            ) : (
+                              'No recent activity recorded yet'
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                  </div>
+                )}
+
+                {/* 2. KYC & DOCS TAB (EMBEDDED 360° INSPECTION) */}
+                {drawerTab === 'kyc' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ 
+                      background: getEmployeeAccountStatus(drawerEmp).isSuspended ? '#FEE2E215' : (drawerEmp.activation_status === 'APPROVED' ? '#D1FAE515' : '#FEF3C715'), 
+                      border: `1px solid ${getEmployeeAccountStatus(drawerEmp).isSuspended ? '#FECACA' : (drawerEmp.activation_status === 'APPROVED' ? '#A7F3D0' : '#FDE68A')}`, 
+                      borderRadius: '0px', 
+                      padding: '14px' 
+                    }}>
+                      <div style={{ fontSize: '13px', fontWeight: 900, color: getEmployeeAccountStatus(drawerEmp).isSuspended ? '#DC2626' : (drawerEmp.activation_status === 'APPROVED' ? '#065F46' : '#92400E') }}>
+                        KYC Approval Status: {getEmployeeAccountStatus(drawerEmp).isSuspended ? '● ACCOUNT DEACTIVATED / SUSPENDED' : (drawerEmp.activation_status === 'APPROVED' ? '✓ VERIFIED & APPROVED' : '⏳ PENDING SUPER ADMIN APPROVAL')}
+                      </div>
+                      {!getEmployeeAccountStatus(drawerEmp).isSuspended && drawerEmp.activation_status !== 'APPROVED' && (
+                        <button
+                          onClick={() => handleKycVerify(drawerEmp.id, 'VERIFIED')}
+                          style={{ marginTop: '10px', width: '100%', padding: '10px', background: '#10B981', color: '#fff', border: 'none', borderRadius: '0px', fontWeight: 900, fontSize: '13px', cursor: 'pointer' }}
+                        >
+                          ✓ Approve KYC & Activate Account Now
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 360° Identity Form Fields */}
+                    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '16px' }}>
+                      <div style={{ fontSize: '14px', fontWeight: 900, color: C.text, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <FaIdCard style={{ color: C.teal }} /> 360° Profile & Identity Details
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '12px', fontSize: '12.5px' }}>
+                        <div>
+                          <label style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, display: 'block', marginBottom: '3px' }}>Aadhaar Number</label>
+                          <input 
+                            type="text" 
+                            placeholder="12-digit Aadhaar number"
+                            value={docIdentityFields.aadhaar_number} 
+                            onChange={(e) => setDocIdentityFields({ ...docIdentityFields, aadhaar_number: e.target.value })}
+                            style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12px', fontWeight: 700 }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, display: 'block', marginBottom: '3px' }}>PAN Number</label>
+                          <input 
+                            type="text" 
+                            placeholder="10-digit PAN (e.g. ABCDE1234F)"
+                            value={docIdentityFields.pan_number} 
+                            onChange={(e) => setDocIdentityFields({ ...docIdentityFields, pan_number: e.target.value })}
+                            style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12px', fontWeight: 700 }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, display: 'block', marginBottom: '3px' }}>Bank Account Holder Name</label>
+                          <input 
+                            type="text" 
+                            placeholder="Name as printed in passbook"
+                            value={docIdentityFields.bank_account_holder_name} 
+                            onChange={(e) => setDocIdentityFields({ ...docIdentityFields, bank_account_holder_name: e.target.value })}
+                            style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12px', fontWeight: 700 }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, display: 'block', marginBottom: '3px' }}>Bank Name</label>
+                          <input 
+                            type="text" 
+                            value={docIdentityFields.bank_name || ''} 
+                            onChange={(e) => setDocIdentityFields({ ...docIdentityFields, bank_name: e.target.value })}
+                            placeholder="e.g. HDFC Bank, SBI..."
+                            style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '0px', color: C.text, fontSize: '12px', fontWeight: 700 }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, display: 'block', marginBottom: '3px' }}>Branch Name</label>
+                          <input 
+                            type="text" 
+                            value={docIdentityFields.branch_name || ''} 
+                            onChange={(e) => setDocIdentityFields({ ...docIdentityFields, branch_name: e.target.value })}
+                            placeholder="e.g. Mumbai Main Branch"
+                            style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '0px', color: C.text, fontSize: '12px', fontWeight: 700 }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, display: 'block', marginBottom: '3px' }}>Bank Account No.</label>
+                          <input 
+                            type="text" 
+                            placeholder="Account number"
+                            value={docIdentityFields.bank_account} 
+                            onChange={(e) => setDocIdentityFields({ ...docIdentityFields, bank_account: e.target.value })}
+                            style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12px', fontWeight: 700 }}
+                          />
+                        </div>
+
+                        <div style={{ gridColumn: isMobile ? 'span 1' : 'span 2' }}>
+                          <label style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, display: 'block', marginBottom: '3px' }}>Bank IFSC Code</label>
+                          <input 
+                            type="text" 
+                            placeholder="e.g. HDFC0001234"
+                            value={docIdentityFields.ifsc_code} 
+                            onChange={(e) => setDocIdentityFields({ ...docIdentityFields, ifsc_code: e.target.value })}
+                            style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12px', fontWeight: 700 }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, display: 'block', marginBottom: '3px' }}>Account Holder Name</label>
+                          <input 
+                            type="text" 
+                            value={docIdentityFields.bank_account_holder_name || ''} 
+                            onChange={(e) => setDocIdentityFields({ ...docIdentityFields, bank_account_holder_name: e.target.value })}
+                            style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '0px', color: C.text, fontSize: '12px', fontWeight: 700 }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, display: 'block', marginBottom: '3px' }}>Date of Birth</label>
+                          <input 
+                            type="date" 
+                            value={docIdentityFields.date_of_birth || ''} 
+                            onChange={(e) => setDocIdentityFields({ ...docIdentityFields, date_of_birth: e.target.value })}
+                            style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '0px', color: C.text, fontSize: '12px', fontWeight: 700 }}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: '12px' }}>
+                        <label style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, display: 'block', marginBottom: '3px' }}>Verification Notes / Inspection Remarks</label>
+                        <textarea 
+                          rows="2"
+                          value={docIdentityFields.admin_remarks}
+                          onChange={(e) => setDocIdentityFields({ ...docIdentityFields, admin_remarks: e.target.value })}
+                          style={{ width: '100%', padding: '7px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', color: C.text, fontSize: '12px', fontWeight: 600, outline: 'none' }}
+                          placeholder="Add KYC notes or verification remarks..."
+                        />
+                      </div>
+
+                      <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'flex-end' }}>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await api.post(`/employees/${drawerEmp.id}/kyc-verify`, {
+                                aadhaar_number: docIdentityFields.aadhaar_number,
+                                pan_number: docIdentityFields.pan_number,
+                                bank_account: docIdentityFields.bank_account,
+                                bank_name: docIdentityFields.bank_name,
+                                branch_name: docIdentityFields.branch_name,
+                                bank_account_holder_name: docIdentityFields.bank_account_holder_name,
+                                date_of_birth: docIdentityFields.date_of_birth,
+                                ifsc_code: docIdentityFields.ifsc_code,
+                                review_notes: docIdentityFields.admin_remarks
+                              });
+                              alert('Identity details updated successfully!');
+                              fetchDrawerEmp360(drawerEmp.id);
+                            } catch (err) {
+                              alert('Failed to update identity details');
+                            }
+                          }}
+                          style={{ padding: '8px 16px', background: C.teal, color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 800, cursor: 'pointer' }}
+                        >
+                          💾 Save Identity Details
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 360° Document Inspection & Action Center */}
+                    <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '14px', padding: '18px' }}>
+                      <div style={{ fontSize: '14.5px', fontWeight: 900, color: C.text, marginBottom: '14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <FaFileAlt style={{ color: C.teal }} /> Required Documents Inspection
+                        </span>
+                        <span style={{ fontSize: '11.5px', color: C.teal, fontWeight: 900, background: `${C.teal}15`, padding: '3px 10px', borderRadius: '12px' }}>
+                          9 Tracked Documents
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        {[
+                          { key: 'aadhaar', name: 'Aadhaar Card (Front & Back)' },
+                          { key: 'pan', name: 'PAN Card' },
+                          { key: 'bank', name: 'Bank Passbook / Cheque' },
+                          { key: 'photo', name: 'Profile Photograph' },
+                          { key: 'offer_letter', name: 'Signed Offer Letter' },
+                          { key: 'resume', name: 'Resume / Curriculum Vitae' },
+                          { key: 'education_certificate', name: 'Highest Education Certificate' },
+                          { key: 'experience_letter', name: 'Experience / Relieving Letter' },
+                          { key: 'terms_video', name: 'Terms Agreement Video Declaration' }
+                        ].map((docItem) => {
+                          const docInfo = docStatuses[docItem.key] || { status: 'Not Uploaded', reason: '', url: null };
+                          const isRejectingThis = rejectingDocKey === docItem.key;
+                          const statusUpper = (docInfo.status || 'Not Uploaded').toUpperCase();
+                          const isVerified = statusUpper === 'VERIFIED' || statusUpper === 'APPROVED';
+                          const isRejected = statusUpper === 'REJECTED';
+                          const isSubmitted = statusUpper === 'SUBMITTED' || statusUpper === 'UNDER_REVIEW' || statusUpper === 'PENDING';
+
+                          return (
+                            <div key={docItem.key} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                                <div>
+                                  <div style={{ color: C.text, fontWeight: 800, fontSize: '13.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    📄 {docItem.name}
+                                  </div>
+                                  {docInfo.reason && (
+                                    <div style={{ fontSize: '11.5px', color: '#DC2626', fontWeight: 700, marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                      ⚠️ Rejection Reason: {docInfo.reason}
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                  <span style={{ 
+                                    padding: '4px 10px', borderRadius: '8px', fontSize: '11.5px', fontWeight: 900,
+                                    background: isVerified ? '#D1FAE5' : isRejected ? '#FEE2E2' : isSubmitted ? '#FEF3C7' : '#F3F4F6',
+                                    color: isVerified ? '#065F46' : isRejected ? '#991B1B' : isSubmitted ? '#92400E' : '#6B7280',
+                                    border: `1px solid ${isVerified ? '#A7F3D0' : isRejected ? '#FCA5A5' : isSubmitted ? '#FDE68A' : '#E5E7EB'}`
+                                  }}>
+                                    {isVerified ? 'Verified ✓' : isRejected ? 'Rejected ❌' : isSubmitted ? 'Submitted ⏳' : 'Not Uploaded ⚠️'}
+                                  </span>
+
+                                  {/* View Document Button */}
+                                  <button
+                                    onClick={() => setViewingDocModal({ name: docItem.name, key: docItem.key, url: docInfo.url })}
+                                    style={{ padding: '5px 10px', background: '#3B82F615', color: '#2563EB', border: '1px solid #3B82F640', borderRadius: '8px', fontSize: '11.5px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                  >
+                                    <FaEye /> View
+                                  </button>
+
+                                  {/* Approve Document Button */}
+                                  <button
+                                    onClick={() => handleSingleDocAction(drawerEmp.id, docItem.key, 'VERIFIED')}
+                                    style={{ padding: '5px 10px', background: '#10B98115', color: '#059669', border: '1px solid #10B98140', borderRadius: '8px', fontSize: '11.5px', fontWeight: 800, cursor: 'pointer' }}
+                                  >
+                                    ✓ Approve
+                                  </button>
+
+                                  {/* Reject Document Button */}
+                                  <button
+                                    onClick={() => {
+                                      if (isRejectingThis) {
+                                        setRejectingDocKey(null);
+                                      } else {
+                                        setRejectingDocKey(docItem.key);
+                                        setDocRejectReasonInput('');
+                                      }
+                                    }}
+                                    style={{ padding: '5px 10px', background: '#EF444415', color: '#DC2626', border: '1px solid #EF444440', borderRadius: '8px', fontSize: '11.5px', fontWeight: 800, cursor: 'pointer' }}
+                                  >
+                                    ✕ Reject
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Inline Rejection Reason Box */}
+                              {isRejectingThis && (
+                                <div style={{ background: '#FFF5F5', border: '1px solid #FCA5A5', borderRadius: '10px', padding: '12px', marginTop: '4px' }}>
+                                  <div style={{ fontSize: '12px', fontWeight: 800, color: '#991B1B', marginBottom: '8px' }}>
+                                    Specify Rejection Reason for {docItem.name}:
+                                  </div>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                                    {['Blurry Image', 'Document Expired', 'Name Mismatch', 'Signature Missing', 'File Unreadable'].map((preset) => (
+                                      <button
+                                        key={preset}
+                                        onClick={() => setDocRejectReasonInput(preset)}
+                                        style={{ padding: '4px 10px', background: '#ffffff', border: '1px solid #FCA5A5', borderRadius: '6px', fontSize: '11px', color: '#991B1B', fontWeight: 700, cursor: 'pointer' }}
+                                      >
+                                        {preset}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '8px' }}>
+                                    <input 
+                                      type="text" 
+                                      placeholder="Enter custom rejection reason..."
+                                      value={docRejectReasonInput}
+                                      onChange={(e) => setDocRejectReasonInput(e.target.value)}
+                                      style={{ flex: 1, padding: '7px 12px', background: '#ffffff', border: '1px solid #FCA5A5', borderRadius: '8px', fontSize: '12px', color: C.text }}
+                                    />
+                                    <button
+                                      onClick={() => {
+                                        if (!docRejectReasonInput.trim()) {
+                                          alert('Please select or enter a rejection reason');
+                                          return;
+                                        }
+                                        handleSingleDocAction(drawerEmp.id, docItem.key, 'REJECTED', docRejectReasonInput.trim());
+                                        setRejectingDocKey(null);
+                                      }}
+                                      style={{ padding: '7px 16px', background: '#DC2626', color: '#ffffff', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 900, cursor: 'pointer' }}
+                                    >
+                                      Confirm Rejection
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. FACE VERIFICATION TAB */}
+                {drawerTab === 'biometric' && (() => {
+                  const emp = drawer360Data?.employee || drawerEmp || {};
+                  const docs = drawer360Data?.documents || [];
+
+                  // Find face document from uploaded documents
+                  const faceDoc = docs.find(d => {
+                    const t = String(d.document_type || '').toLowerCase().trim();
+                    return ['face', 'face_biometric', 'biometric', 'face_verification', 'face_reference', 'selfie', 'teleprompter_face'].includes(t) || t.includes('face');
+                  });
+
+                  // Find profile photo document
+                  const photoDoc = docs.find(d => {
+                    const t = String(d.document_type || '').toLowerCase().trim();
+                    return ['photo', 'photograph', 'profile_photo', 'passport_photo', 'avatar'].includes(t);
+                  });
+
+                  // Candidate URLs for face biometric verification image
+                  const faceVerificationImg = 
+                    drawer360Data?.biometrics?.active_template?.image_url ||
+                    drawer360Data?.verification_state?.biometric_template?.image_url ||
+                    emp.face_reference_url ||
+                    emp.face_verification_url ||
+                    faceDoc?.document_url ||
+                    faceDoc?.file_url ||
+                    drawer360Data?.kyc?.face_verification_url ||
+                    null;
+
+                  // Candidate URLs for captured profile image
+                  const profileImg = 
+                    emp.profile_photo_url ||
+                    drawer360Data?.verification_state?.profile_photo_url ||
+                    emp.avatar_url ||
+                    photoDoc?.document_url ||
+                    photoDoc?.file_url ||
+                    drawer360Data?.kyc?.photo_url ||
+                    null;
+
+                  // Unified fallbacks: if either image is captured, show it!
+                  const finalProfileImg = profileImg || faceVerificationImg;
+                  const finalFaceImg = faceVerificationImg || profileImg;
+
+                  const isFaceEnrolled = Boolean(
+                    finalFaceImg ||
+                    drawer360Data?.biometrics?.is_enrolled ||
+                    drawer360Data?.verification_state?.has_biometric_reference ||
+                    emp.face_verification_status === 'VERIFIED' || 
+                    emp.biometric_enrolled || 
+                    emp.face_enrolled || 
+                    emp.face_status === 'VERIFIED' || 
+                    emp.face_status === 'ENROLLED' ||
+                    emp.biometric_status === 'ACTIVE'
+                  );
+
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      <h4 style={{ fontSize: '16px', fontWeight: 900, color: C.text, margin: 0 }}>Face Biometric Verification</h4>
+
+                      {isFaceEnrolled ? (
+                        /* Enrolled & Verified Callout Box */
+                        <div style={{ background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: '12px', padding: '16px' }}>
+                          <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', marginBottom: '14px' }}>
+                            <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#10B981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: 900, flexShrink: 0 }}>
+                              ✓
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '15.5px', fontWeight: 900, color: '#065F46' }}>
+                                Attendance Biometric Reference Enrolled & Locked
+                              </div>
+                              <div style={{ fontSize: '12.5px', color: '#047857', marginTop: '3px', fontWeight: 700 }}>
+                                Biometric Version: V{drawer360Data?.biometrics?.active_template?.version || '1'} | Enrolled Date: {emp.activated_at ? new Date(emp.activated_at).toLocaleDateString('en-IN') : 'Active'} | Status: <span style={{ color: '#059669' }}>ACTIVE ✓</span>
+                              </div>
+                              <div style={{ fontSize: '12px', color: '#065F46', marginTop: '6px', lineHeight: 1.4 }}>
+                                Your biometric reference is locked. Employees cannot replace it. Re-enrollment requires Super Admin authorization.
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '12px' }}>
+                            <button
+                              onClick={() => {
+                                setBiometricModalEmp(emp);
+                                setBiometricModalOpen(true);
+                              }}
+                              style={{
+                                flex: 1, padding: '10px 14px', background: '#059669', color: '#ffffff', border: 'none',
+                                borderRadius: '8px', fontSize: '12.5px', fontWeight: 800, cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                boxShadow: '0 2px 8px rgba(5, 150, 105, 0.25)'
+                              }}
+                            >
+                              🔒 Re-Enroll / Modify Biometric Reference
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Face Pending Callout Box */
+                        <div style={{ background: '#FFF8F0', border: '1px solid #FED7AA', borderRadius: '12px', padding: '16px' }}>
+                          <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', marginBottom: '14px' }}>
+                            <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#F59E0B', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: 900, flexShrink: 0 }}>
+                              ▲
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '15.5px', fontWeight: 900, color: '#C2410C' }}>Face Verification Pending</div>
+                              <div style={{ fontSize: '12.5px', color: '#9A3412', marginTop: '2px' }}>
+                                No authoritative face biometric reference captured yet.
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '12px' }}>
+                            <button
+                              onClick={() => {
+                                handleSendReminder(emp.id, emp.full_name);
+                              }}
+                              style={{
+                                flex: 1, padding: '10px 14px', background: '#4F46E5', color: '#ffffff', border: 'none',
+                                borderRadius: '8px', fontSize: '12.5px', fontWeight: 800, cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                boxShadow: '0 2px 8px rgba(79, 70, 229, 0.25)'
+                              }}
+                            >
+                              🔔 Send Reminder
+                            </button>
+                            <button
+                              onClick={() => {
+                                setBiometricModalEmp(emp);
+                                setBiometricModalOpen(true);
+                              }}
+                              style={{
+                                flex: 1, padding: '10px 14px', background: '#ffffff', color: '#4F46E5', border: '1.5px solid #4F46E5',
+                                borderRadius: '8px', fontSize: '12.5px', fontWeight: 800, cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
+                              }}
+                            >
+                              Complete Verification
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Side by Side Reference Grid */}
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '14px' }}>
+                        {/* Captured Profile Photo */}
+                        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '14px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                            <div style={{ fontSize: '13px', fontWeight: 800, color: C.text }}>Captured Profile Image</div>
+                            {finalProfileImg && (
+                              <span style={{ fontSize: '11px', fontWeight: 800, color: '#3B82F6', background: '#EFF6FF', padding: '2px 8px', borderRadius: '6px' }}>
+                                Profile Photo
+                              </span>
+                            )}
+                          </div>
+                          <div 
+                            style={{ 
+                              width: '100%', 
+                              height: '180px', 
+                              borderRadius: '10px', 
+                              overflow: 'hidden', 
+                              background: '#F1F5F9', 
+                              border: `1px solid ${C.border}`, 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              justifyContent: 'center',
+                              cursor: finalProfileImg ? 'pointer' : 'default',
+                              position: 'relative'
+                            }}
+                            onClick={() => {
+                              if (finalProfileImg) {
+                                setViewingDocModal({ url: finalProfileImg, name: 'Captured Profile Image' });
+                              }
+                            }}
+                            title={finalProfileImg ? 'Click to view full image' : ''}
+                          >
+                            {finalProfileImg ? (
+                              <img 
+                                src={finalProfileImg} 
+                                alt="Captured Profile" 
+                                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} 
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                  if (e.currentTarget.nextElementSibling) e.currentTarget.nextElementSibling.style.display = 'block';
+                                }}
+                              />
+                            ) : null}
+                            <div style={{ 
+                              display: finalProfileImg ? 'none' : 'block', 
+                              textAlign: 'center', 
+                              color: C.textMid, 
+                              padding: '20px' 
+                            }}>
+                              <div style={{ fontSize: '36px', marginBottom: '4px' }}>👤</div>
+                              <div style={{ fontSize: '12px' }}>Captured Face Image</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Employee Face Reference Box */}
+                        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '14px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                            <div style={{ fontSize: '13px', fontWeight: 800, color: C.text }}>Biometric Reference Template</div>
+                            {finalFaceImg && (
+                              <span style={{ fontSize: '11px', fontWeight: 800, color: '#059669', background: '#D1FAE5', padding: '2px 8px', borderRadius: '6px' }}>
+                                Face Reference
+                              </span>
+                            )}
+                          </div>
+                          <div 
+                            style={{ 
+                              width: '100%', 
+                              height: '180px', 
+                              borderRadius: '10px', 
+                              border: finalFaceImg ? '1.5px solid #86EFAC' : (isFaceEnrolled ? '1.5px solid #86EFAC' : '1.5px dashed #CBD5E1'), 
+                              background: finalFaceImg ? '#F0FDF4' : (isFaceEnrolled ? '#F0FDF4' : '#F8FAFC'), 
+                              display: 'flex', 
+                              flexDirection: 'column', 
+                              alignItems: 'center', 
+                              justifyContent: 'center', 
+                              padding: finalFaceImg ? '0' : '16px', 
+                              textAlign: 'center', 
+                              overflow: 'hidden',
+                              position: 'relative',
+                              cursor: finalFaceImg ? 'pointer' : 'default'
+                            }}
+                            onClick={() => {
+                              if (finalFaceImg) {
+                                setViewingDocModal({ url: finalFaceImg, name: 'Face Biometric Reference Template' });
+                              }
+                            }}
+                            title={finalFaceImg ? 'Click to view full image' : ''}
+                          >
+                            {finalFaceImg ? (
+                              <img 
+                                src={finalFaceImg} 
+                                alt="Biometric Reference" 
+                                style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px', display: 'block' }} 
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                  if (e.currentTarget.nextElementSibling) e.currentTarget.nextElementSibling.style.display = 'flex';
+                                }}
+                              />
+                            ) : null}
+                            <div style={{ 
+                              display: finalFaceImg ? 'none' : 'flex', 
+                              flexDirection: 'column', 
+                              alignItems: 'center', 
+                              justifyContent: 'center' 
+                            }}>
+                              <div style={{ width: '48px', height: '48px', borderRadius: '50%', border: '2px dashed #94A3B8', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B', fontSize: '24px', marginBottom: '10px' }}>
+                                {isFaceEnrolled ? '✓' : '🔲'}
+                              </div>
+                              <div style={{ fontSize: '12px', color: isFaceEnrolled ? '#047857' : '#64748B', fontWeight: 600, maxWidth: '160px', lineHeight: 1.3 }}>
+                                {isFaceEnrolled ? 'Face Biometric Reference Enrolled & Locked' : 'No face biometric reference available yet.'}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Bottom Info Banner Callout */}
+                      <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '10px', padding: '12px 14px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                        <div style={{ color: '#2563EB', fontSize: '16px', flexShrink: 0, marginTop: '1px' }}>ℹ</div>
+                        <div style={{ fontSize: '12px', color: '#1E40AF', lineHeight: 1.4, fontWeight: 500 }}>
+                          This photo will be used to create the biometric reference for attendance face matching. It is separate from the profile photo.
+                        </div>
+                      </div>
+
+                    </div>
+                  );
+                })()}
+
+                {/* 4. ACCESS & TEAM TAB */}
+                {drawerTab === 'team' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontSize: '12px', fontWeight: 800, color: C.teal, textTransform: 'uppercase', marginBottom: '4px' }}>Department & Bank Access</div>
+                        <div style={{ fontSize: '13.5px', color: C.text, fontWeight: 800 }}>{drawerEmp.department || 'Sales & Support'}</div>
+                      </div>
+                      <button
+                        onClick={() => openDeptModal(drawerEmp)}
+                        style={{ padding: '8px 14px', background: C.teal, color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 800, cursor: 'pointer' }}
+                      >
+                        Manage Depts
+                      </button>
+                    </div>
+
+                    <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontSize: '12px', fontWeight: 800, color: C.teal, textTransform: 'uppercase', marginBottom: '4px' }}>Reporting Hierarchy</div>
+                        <div style={{ fontSize: '13px', color: C.text }}>Manager: <strong>{drawerEmp.manager_name || 'Direct Super Admin'}</strong></div>
+                        <div style={{ fontSize: '13px', color: C.text, marginTop: '2px' }}>Designation: <strong>{drawerEmp.designation || 'Telecaller'}</strong></div>
+                      </div>
+                      <button
+                        onClick={() => openHierarchyModal(drawerEmp)}
+                        style={{ padding: '8px 14px', background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 800, cursor: 'pointer' }}
+                      >
+                        Assign Team
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 5. ATTENDANCE TAB */}
+                {drawerTab === 'attendance' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    {/* Header Access & Overview Card */}
+                    <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 700 }}>Attendance Access & Biometric Status</div>
+                        <div style={{ fontSize: '14px', fontWeight: 900, color: (drawerEmp.face_verification_status === 'VERIFIED' || drawerEmp.biometric_enrolled) ? '#059669' : '#DC2626', marginTop: '2px' }}>
+                          {(drawerEmp.face_verification_status === 'VERIFIED' || drawerEmp.biometric_enrolled) ? '✓ ENABLED (Face Registered)' : '🔒 RESTRICTED (Face Reference Missing)'}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => openBiometricModal(drawerEmp)}
+                        style={{ padding: '6px 12px', background: `${C.teal}15`, border: `1px solid ${C.teal}40`, borderRadius: '6px', color: C.teal, fontSize: '11.5px', fontWeight: 800, cursor: 'pointer' }}
+                      >
+                        ⚙ Biometric Settings
+                      </button>
+                    </div>
+
+                    {/* Month & Year Filter Bar */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', padding: '10px 14px' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 900, color: C.text, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>📅</span> Monthly Attendance Overview
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <select
+                          value={attendanceMonth}
+                          onChange={(e) => setAttendanceMonth(parseInt(e.target.value, 10))}
+                          style={{ padding: '5px 8px', borderRadius: '6px', border: `1px solid ${C.border}`, background: C.bgSecondary, color: C.text, fontSize: '12px', fontWeight: 700 }}
+                        >
+                          {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m, idx) => (
+                            <option key={idx + 1} value={idx + 1}>{m}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={attendanceYear}
+                          onChange={(e) => setAttendanceYear(parseInt(e.target.value, 10))}
+                          style={{ padding: '5px 8px', borderRadius: '6px', border: `1px solid ${C.border}`, background: C.bgSecondary, color: C.text, fontSize: '12px', fontWeight: 700 }}
+                        >
+                          {[2026, 2025, 2024].map((y) => (
+                            <option key={y} value={y}>{y}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Summary Metrics Cards */}
+                    {empAttendanceData?.summary && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+                        <div style={{ background: '#D1FAE5', border: '1px solid #A7F3D0', padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
+                          <div style={{ fontSize: '10.5px', fontWeight: 800, color: '#065F46' }}>PRESENT</div>
+                          <div style={{ fontSize: '16px', fontWeight: 900, color: '#047857' }}>{empAttendanceData.summary.totalPresent}</div>
+                        </div>
+                        <div style={{ background: '#FEF3C7', border: '1px solid #FDE68A', padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
+                          <div style={{ fontSize: '10.5px', fontWeight: 800, color: '#92400E' }}>LATE</div>
+                          <div style={{ fontSize: '16px', fontWeight: 900, color: '#D97706' }}>{empAttendanceData.summary.totalLate}</div>
+                        </div>
+                        <div style={{ background: '#FFEDD5', border: '1px solid #FED7AA', padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
+                          <div style={{ fontSize: '10.5px', fontWeight: 800, color: '#9A3412' }}>HALF DAY</div>
+                          <div style={{ fontSize: '16px', fontWeight: 900, color: '#C2410C' }}>{empAttendanceData.summary.totalHalfDay}</div>
+                        </div>
+                        <div style={{ background: '#FEE2E2', border: '1px solid #FCA5A5', padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
+                          <div style={{ fontSize: '10.5px', fontWeight: 800, color: '#991B1B' }}>ABSENT / LEAVE</div>
+                          <div style={{ fontSize: '16px', fontWeight: 900, color: '#DC2626' }}>
+                            {(empAttendanceData.summary.totalAbsent || 0) + (empAttendanceData.summary.totalLeave || 0)}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Total Working Hours Bar */}
+                    {empAttendanceData?.summary && (
+                      <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                        <span style={{ color: C.textMid, fontWeight: 700 }}>⏱ Total Hours Logged this Month:</span>
+                        <strong style={{ color: C.teal, fontSize: '13px', fontWeight: 900 }}>{empAttendanceData.summary.totalWorkingHoursFormatted || '0h 0m'}</strong>
+                      </div>
+                    )}
+
+                    {/* Daily Attendance Records Section */}
+                    <div style={{ fontSize: '13px', fontWeight: 900, color: C.text, marginTop: '4px' }}>
+                      Detailed Daily Attendance Breakdown
+                    </div>
+
+                    {loadingAttendance ? (
+                      <div style={{ padding: '24px', textAlign: 'center', color: C.textMid, fontSize: '12.5px' }}>
+                        ⏳ Loading attendance records...
+                      </div>
+                    ) : (!empAttendanceData?.records || empAttendanceData.records.length === 0) ? (
+                      <div style={{ padding: '24px', textAlign: 'center', background: C.card, border: `1px dashed ${C.border}`, borderRadius: '10px', color: C.textMid, fontSize: '12.5px' }}>
+                        📅 No attendance records found for this month.
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {empAttendanceData.records.map((rec) => {
+                          const dateObj = new Date(rec.attendance_date);
+                          const dateFormatted = isNaN(dateObj.getTime()) ? rec.attendance_date : dateObj.toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+                          
+                          const checkInFmt = rec.check_in_time ? new Date(rec.check_in_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : 'N/A';
+                          const checkOutFmt = rec.check_out_time ? new Date(rec.check_out_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : (rec.check_in_time ? '⏳ In Progress' : 'N/A');
+
+                          let duration = 'N/A';
+                          if (rec.check_in_time) {
+                            const startMs = new Date(rec.check_in_time).getTime();
+                            const endMs = rec.check_out_time ? new Date(rec.check_out_time).getTime() : Date.now();
+                            if (!isNaN(startMs) && !isNaN(endMs) && endMs >= startMs) {
+                              const totalMins = Math.floor((endMs - startMs) / 60000);
+                              duration = `${Math.floor(totalMins / 60)}h ${totalMins % 60}m${!rec.check_out_time ? ' (Active)' : ''}`;
+                            }
+                          }
+
+                          const statusColors = {
+                            PRESENT: { bg: '#D1FAE5', color: '#065F46', label: '✓ PRESENT' },
+                            LATE: { bg: '#FEF3C7', color: '#92400E', label: '⚠️ LATE' },
+                            HALF_DAY: { bg: '#FFEDD5', color: '#C2410C', label: '🌗 HALF DAY' },
+                            LEAVE: { bg: '#F3E8FF', color: '#6B21A8', label: '🏖 LEAVE' },
+                            ABSENT: { bg: '#FEE2E2', color: '#991B1B', label: '✕ ABSENT' },
+                          };
+                          const st = statusColors[rec.attendance_status] || { bg: '#F3F4F6', color: '#374151', label: rec.attendance_status || 'NOT MARKED' };
+
+                          return (
+                            <div
+                              key={rec.attendance_id || rec.attendance_date}
+                              style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}
+                            >
+                              {/* Top Bar: Date & Status */}
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div style={{ fontSize: '13px', fontWeight: 900, color: C.text }}>
+                                  📅 {dateFormatted}
+                                </div>
+                                <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 800, background: st.bg, color: st.color }}>
+                                  {st.label}
+                                </span>
+                              </div>
+
+                              {/* Time & Duration Grid */}
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', background: C.bgSecondary, padding: '8px 10px', borderRadius: '6px', fontSize: '11.5px' }}>
+                                <div>
+                                  <span style={{ color: C.textMid, fontSize: '10.5px', display: 'block' }}>Check-In</span>
+                                  <strong style={{ color: C.text }}>{checkInFmt}</strong>
+                                </div>
+                                <div>
+                                  <span style={{ color: C.textMid, fontSize: '10.5px', display: 'block' }}>Check-Out</span>
+                                  <strong style={{ color: C.text }}>{checkOutFmt}</strong>
+                                </div>
+                                <div>
+                                  <span style={{ color: C.textMid, fontSize: '10.5px', display: 'block' }}>Work Duration</span>
+                                  <strong style={{ color: C.teal }}>{duration}</strong>
+                                </div>
+                              </div>
+
+                              {/* Audit & Verification Badges */}
+                              <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: C.textMid, paddingTop: '2px' }}>
+                                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                  <span>🔒 Ref: <strong>{rec.verification_reference || 'N/A'}</strong></span>
+                                  <span>📍 Location: <strong>{rec.matched_environment_code || 'OFFICE'}</strong></span>
+                                  <span>📱 Channel: <strong>{rec.source || 'WEB'}</strong></span>
+                                </div>
+                                <button
+                                  onClick={() => setSelectedDayAttendance(rec)}
+                                  style={{ background: 'transparent', border: 'none', color: C.teal, fontWeight: 800, cursor: 'pointer', fontSize: '11px', textDecoration: 'underline' }}
+                                >
+                                  Inspect Full Day Details →
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 6. ACTIONS TAB */}
+                {drawerTab === 'actions' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 900, color: C.text }}>Administrative & Operational Actions</div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+                      {/* 1. Manage Depts */}
+                      <button
+                        onClick={() => openDeptModal(drawerEmp)}
+                        style={{ width: '100%', padding: '16px 14px', background: `${C.teal}08`, border: `1px solid ${C.teal}30`, borderRadius: '16px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', color: C.text, textAlign: 'left' }}
+                      >
+                        <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: `${C.teal}20`, color: C.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>
+                          <FaBuilding />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text }}>Manage Depts</div>
+                          <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>Assign bank & department access</div>
+                        </div>
+                      </button>
+
+                      {/* 2. Manage Bonus */}
+                      <button
+                        onClick={() => openBonusModal(drawerEmp)}
+                        style={{ width: '100%', padding: '16px 14px', background: '#F59E0B08', border: '1px solid #F59E0B30', borderRadius: '16px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', color: C.text, textAlign: 'left' }}
+                      >
+                        <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#F59E0B20', color: '#B45309', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>
+                          <FaCoins />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text }}>Manage Bonus</div>
+                          <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>Set card targets & bonus rates</div>
+                        </div>
+                      </button>
+
+                      {/* 3. 360 View */}
+                      <button
+                        onClick={() => setSelectedEmp(drawerEmp)}
+                        style={{ width: '100%', padding: '16px 14px', background: '#3B82F608', border: '1px solid #3B82F630', borderRadius: '16px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', color: C.text, textAlign: 'left' }}
+                      >
+                        <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#3B82F620', color: '#2563EB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>
+                          <FaEye />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text }}>360 View</div>
+                          <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>Inspect KYC, links & profile 360</div>
+                        </div>
+                      </button>
+
+                      {/* 4. Assign Team */}
+                      <button
+                        onClick={() => openHierarchyModal(drawerEmp)}
+                        style={{ width: '100%', padding: '16px 14px', background: '#8B5CF608', border: '1px solid #8B5CF630', borderRadius: '16px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', color: C.text, textAlign: 'left' }}
+                      >
+                        <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#8B5CF620', color: '#7C3AED', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>
+                          <FaSitemap />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text }}>Assign Team</div>
+                          <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>Set reporting hierarchy & team</div>
+                        </div>
+                      </button>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
+                      <button
+                        onClick={() => {
+                          setDrawerTab('overview');
+                          setIsEditingEmpInfo(true);
+                        }}
+                        style={{ padding: '12px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', color: C.text, fontWeight: 800, fontSize: '13px', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }}
+                      >
+                        <FaEdit style={{ color: '#4F46E5', fontSize: '16px' }} />
+                        <div>
+                          <div>Edit Employee Details</div>
+                          <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 600 }}>Update designation, department, contact & manager</div>
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={() => handleSendKycLink(drawerEmp)}
+                        style={{ padding: '12px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', color: C.text, fontWeight: 800, fontSize: '13px', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }}
+                      >
+                        <FaEnvelope style={{ color: C.teal, fontSize: '16px' }} />
+                        <div>
+                          <div>Send KYC Re-verification Link</div>
+                          <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 600 }}>Notify employee via in-app alert, SMS & WhatsApp</div>
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={() => handleResendCreds(drawerEmp)}
+                        style={{ padding: '12px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', color: C.text, fontWeight: 800, fontSize: '13px', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }}
+                      >
+                        <FaKey style={{ color: '#F59E0B', fontSize: '16px' }} />
+                        <div>
+                          <div>Send / Reset Login Credentials</div>
+                          <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 600 }}>Generate temporary password and send via WhatsApp/SMS</div>
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={() => handleDownloadProfileSummary(drawerEmp)}
+                        style={{ padding: '12px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '12px', color: C.text, fontWeight: 800, fontSize: '13px', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }}
+                      >
+                        <FaFileAlt style={{ color: '#10B981', fontSize: '16px' }} />
+                        <div>
+                          <div>Download Official Profile Summary</div>
+                          <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 600 }}>Export comprehensive employee record text file</div>
+                        </div>
+                      </button>
+
+                      <button
+                        onClick={() => handleToggleEmpStatus(drawerEmp)}
+                        style={{ 
+                          padding: '12px 14px', 
+                          background: getEmployeeAccountStatus(drawerEmp).isSuspended ? '#F0FDF4' : '#FEF2F2', 
+                          border: `1px solid ${getEmployeeAccountStatus(drawerEmp).isSuspended ? '#86EFAC' : '#FCA5A5'}`, 
+                          borderRadius: '12px', 
+                          color: getEmployeeAccountStatus(drawerEmp).isSuspended ? '#166534' : '#DC2626', 
+                          fontWeight: 800, 
+                          fontSize: '13px', 
+                          textAlign: 'left', 
+                          cursor: 'pointer', 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: '10px' 
+                        }}
+                      >
+                        {getEmployeeAccountStatus(drawerEmp).isSuspended ? <FaCheck style={{ color: '#10B981', fontSize: '16px' }} /> : <FaLock style={{ color: '#EF4444', fontSize: '16px' }} />}
+                        <div>
+                          <div>{getEmployeeAccountStatus(drawerEmp).isSuspended ? 'Activate / Restore Employee Account' : 'Suspend Employee Account'}</div>
+                          <div style={{ fontSize: '11px', opacity: 0.8, fontWeight: 600 }}>
+                            {getEmployeeAccountStatus(drawerEmp).isSuspended ? 'Grant active portal login access and restore account' : 'Revoke login access and mark account suspended'}
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            </div>
+          </>
+        )}
+
+        <BiometricManagementModal
+          isOpen={biometricModalOpen}
+          onClose={() => setBiometricModalOpen(false)}
+          employee={biometricModalEmp}
+        />
+
+        {/* Send Login Credentials via SMS / WhatsApp Modal */}
+        {credentialsModalEmp && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '0px', width: '100%', maxWidth: '560px', padding: '24px', boxShadow: '0 20px 40px rgba(0,0,0,0.3)' }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: `1px solid ${C.border}`, paddingBottom: '12px' }}>
+                <div>
+                  <h3 style={{ fontSize: '17px', fontWeight: 900, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <FaKey style={{ color: '#F59E0B' }} /> Send Login Credentials
+                  </h3>
+                  <div style={{ fontSize: '12px', color: C.textMid, marginTop: '2px' }}>
+                    Recipient: <strong>{credentialsModalEmp.full_name}</strong> ({credentialsModalEmp.mobile_number || 'Mobile not provided'})
+                  </div>
+                </div>
+                <button onClick={() => setCredentialsModalEmp(null)} style={{ background: 'transparent', border: 'none', fontSize: '18px', cursor: 'pointer', color: C.textMid }}>✕</button>
+              </div>
+
+              {/* Form Controls for Credentials */}
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                <div>
+                  <label style={{ fontSize: '11.5px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Username / Employee ID</label>
+                  <input 
+                    type="text" 
+                    readOnly
+                    value={credentialsModalEmp.employee_code || credentialsModalEmp.employee_id || credentialsModalEmp.emp_code || 'EMP10001'}
+                    style={{ width: '100%', padding: '8px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '0px', color: C.text, fontSize: '12.5px', fontWeight: 800 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '11.5px', fontWeight: 800, color: C.textMid, display: 'block', marginBottom: '4px' }}>Temporary Password</label>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <input 
+                      type="text" 
+                      value={credentialsTempPassword}
+                      onChange={(e) => setCredentialsTempPassword(e.target.value)}
+                      style={{ flex: 1, padding: '8px 10px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '0px', color: C.text, fontSize: '12.5px', fontWeight: 800 }}
+                    />
+                    <button 
+                      onClick={() => setCredentialsTempPassword(`Pass#${Math.floor(1000 + Math.random() * 9000)}`)}
+                      style={{ padding: '8px 10px', background: C.teal, color: '#fff', border: 'none', borderRadius: '0px', fontSize: '11px', fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    >
+                      🎲 Auto
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Template Preview Box */}
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label style={{ fontSize: '11.5px', fontWeight: 800, color: C.textMid }}>Message Template Preview (SMS & WhatsApp):</label>
+                  {credentialsCopied && <span style={{ fontSize: '11px', fontWeight: 800, color: '#059669' }}>✓ Copied to Clipboard!</span>}
+                </div>
+                <textarea 
+                  rows="7"
+                  readOnly
+                  value={getCredentialMessageTemplate(credentialsModalEmp, credentialsTempPassword)}
+                  style={{ width: '100%', padding: '10px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '0px', color: C.text, fontSize: '12px', fontFamily: 'monospace', lineHeight: 1.4, resize: 'none' }}
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center' }}>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(getCredentialMessageTemplate(credentialsModalEmp, credentialsTempPassword));
+                    setCredentialsCopied(true);
+                    setTimeout(() => setCredentialsCopied(false), 3000);
+                  }}
+                  style={{ padding: '9px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '0px', fontSize: '12px', fontWeight: 800, color: C.text, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  📋 Copy Template
+                </button>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={() => {
+                      handleSendSmsCredentials(credentialsModalEmp, credentialsTempPassword);
+                      toast.success('SMS application opened with pre-filled credentials template!');
+                    }}
+                    style={{ padding: '9px 16px', background: '#3B82F6', color: '#fff', border: 'none', borderRadius: '0px', fontSize: '12.5px', fontWeight: 900, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    💬 Send via SMS
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      handleSendWhatsAppCredentials(credentialsModalEmp, credentialsTempPassword);
+                      toast.success('WhatsApp opened with pre-filled credentials template!');
+                    }}
+                    style={{ padding: '9px 16px', background: '#25D366', color: '#fff', border: 'none', borderRadius: '0px', fontSize: '12.5px', fontWeight: 900, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(37, 211, 102, 0.3)' }}
+                  >
+                    📲 Send via WhatsApp
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Document Inspection Preview Modal */}
+        {viewingDocModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '16px', width: '100%', maxWidth: '600px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 40px rgba(0,0,0,0.4)' }}>
+              <div style={{ padding: '16px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.bgSecondary }}>
+                <h4 style={{ fontSize: '16px', fontWeight: 900, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  📄 Document Inspection: {viewingDocModal.name}
+                </h4>
+                <button onClick={() => setViewingDocModal(null)} style={{ background: 'transparent', border: 'none', fontSize: '18px', cursor: 'pointer', color: C.textMid, fontWeight: 900 }}>✕</button>
+              </div>
+
+              <div style={{ padding: '20px', flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#0F172A08', minHeight: '300px' }}>
+                {viewingDocModal.url ? (
+                  viewingDocModal.url.match(/\.(jpeg|jpg|png|webp|gif)/i) || viewingDocModal.url.includes('data:image') || viewingDocModal.key === 'photo' ? (
+                    <img 
+                      src={viewingDocModal.url} 
+                      alt={viewingDocModal.name} 
+                      style={{ maxWidth: '100%', maxHeight: '420px', objectFit: 'contain', borderRadius: '8px', border: `1px solid ${C.border}`, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} 
+                    />
+                  ) : viewingDocModal.url.match(/\.(mp4|webm|mov|ogg)/i) || viewingDocModal.key === 'terms_video' ? (
+                    <video 
+                      controls 
+                      src={viewingDocModal.url} 
+                      style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: '8px', border: `1px solid ${C.border}`, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} 
+                    />
+                  ) : (
+                    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', textAlign: 'center', padding: '30px' }}>
+                      <div style={{ fontSize: '48px', color: C.teal }}>📄</div>
+                      <div style={{ fontSize: '14px', fontWeight: 800, color: C.text }}>{viewingDocModal.name}</div>
+                      <a 
+                        href={viewingDocModal.url} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        style={{ padding: '10px 20px', background: C.teal, color: '#fff', borderRadius: '10px', textDecoration: 'none', fontWeight: 900, fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                      >
+                        Open Document File ↗
+                      </a>
+                    </div>
+                  )
+                ) : (
+                  <div style={{ textAlign: 'center', color: C.textMid, padding: '30px' }}>
+                    <div style={{ fontSize: '48px', marginBottom: '8px' }}>📄</div>
+                    <div style={{ fontSize: '14px', fontWeight: 800, color: C.text }}>{viewingDocModal.name}</div>
+                    <div style={{ fontSize: '12px', color: C.textMid, marginTop: '4px' }}>
+                      Submitted by {drawerEmp?.full_name || 'Employee'} • Verified Document Record
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ padding: '14px 20px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.card }}>
+                {viewingDocModal.url ? (
+                  <a 
+                    href={viewingDocModal.url} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    style={{ fontSize: '12.5px', color: C.teal, fontWeight: 800, textDecoration: 'none' }}
+                  >
+                    Open in New Window ↗
+                  </a>
+                ) : <span />}
+                <button onClick={() => setViewingDocModal(null)} style={{ padding: '8px 20px', background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, borderRadius: '8px', fontWeight: 800, cursor: 'pointer' }}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Full Day Attendance Details Audit Modal */}
+        {selectedDayAttendance && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', width: '100%', maxWidth: '520px', padding: '20px', boxShadow: '0 20px 40px rgba(0,0,0,0.3)' }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: `1px solid ${C.border}`, paddingBottom: '10px' }}>
+                <div>
+                  <h3 style={{ fontSize: '16px', fontWeight: 900, color: C.text, margin: 0 }}>
+                    📅 Attendance Details: {selectedDayAttendance.attendance_date}
+                  </h3>
+                  <div style={{ fontSize: '12px', color: C.textMid, marginTop: '2px' }}>
+                    Employee: <strong>{drawerEmp?.full_name}</strong> ({drawerEmp?.employee_code || drawerEmp?.employee_id || drawerEmp?.id})
+                  </div>
+                </div>
+                <button onClick={() => setSelectedDayAttendance(null)} style={{ background: 'transparent', border: 'none', fontSize: '18px', cursor: 'pointer', color: C.textMid }}>✕</button>
+              </div>
+
+              {/* Day Metrics */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', marginBottom: '14px' }}>
+                <div style={{ background: C.bgSecondary, padding: '10px', borderRadius: '8px', border: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Check-In Timestamp</div>
+                  <div style={{ fontSize: '13px', fontWeight: 900, color: C.text, marginTop: '2px' }}>
+                    {selectedDayAttendance.check_in_time ? new Date(selectedDayAttendance.check_in_time).toLocaleString('en-IN') : 'N/A'}
+                  </div>
+                </div>
+                <div style={{ background: C.bgSecondary, padding: '10px', borderRadius: '8px', border: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 700 }}>Check-Out Timestamp</div>
+                  <div style={{ fontSize: '13px', fontWeight: 900, color: C.text, marginTop: '2px' }}>
+                    {selectedDayAttendance.check_out_time ? new Date(selectedDayAttendance.check_out_time).toLocaleString('en-IN') : (selectedDayAttendance.check_in_time ? '⏳ Work Session Active' : 'N/A')}
+                  </div>
+                </div>
+              </div>
+
+              {/* Verification & Audit Technical Log */}
+              <div style={{ background: C.bgSecondary, padding: '12px', borderRadius: '8px', border: `1px solid ${C.border}`, fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 900, color: C.teal, borderBottom: `1px solid ${C.border}`, paddingBottom: '4px' }}>
+                  🛡 Verification Audit Details
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                  <div>Verification Ref: <strong>{selectedDayAttendance.verification_reference || 'N/A'}</strong></div>
+                  <div>Status: <strong>{selectedDayAttendance.verification_status || 'VERIFIED'}</strong></div>
+                  <div>Face Match: <strong>{selectedDayAttendance.face_status || 'PASSED'}</strong></div>
+                  <div>Liveness Check: <strong>{selectedDayAttendance.liveness_status || 'PASSED'}</strong></div>
+                  <div>Environment: <strong>{selectedDayAttendance.environment_status || 'MATCHED'}</strong></div>
+                  <div>Location Code: <strong>{selectedDayAttendance.matched_environment_code || 'OFFICE_HQ'}</strong></div>
+                  <div>Channel / Source: <strong>{selectedDayAttendance.source || 'WEB'}</strong></div>
+                  <div>Attendance Status: <strong>{selectedDayAttendance.attendance_status || 'PRESENT'}</strong></div>
+                </div>
+              </div>
+
+              {/* Close Button */}
+              <button
+                onClick={() => setSelectedDayAttendance(null)}
+                style={{ width: '100%', padding: '10px', background: C.teal, color: '#FFF', border: 'none', borderRadius: '8px', fontWeight: 900, fontSize: '13px', cursor: 'pointer' }}
+              >
+                Close Audit Details
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Employee Account Modal (Temporary & Permanent) */}
+        {empDeleteModal.isOpen && empDeleteModal.emp && (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 10000,
+            backgroundColor: 'rgba(15, 23, 42, 0.65)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '16px', backdropFilter: 'blur(4px)'
+          }}>
+            <div style={{
+              backgroundColor: '#FFFFFF', borderRadius: '16px',
+              maxWidth: '520px', width: '100%',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              overflow: 'hidden', border: '1px solid #E2E8F0',
+              fontFamily: "'Inter', sans-serif"
+            }}>
+              {/* Header */}
+              <div style={{
+                padding: '20px 24px',
+                borderBottom: '1px solid #F1F5F9',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                backgroundColor: empDeleteModal.mode === 'permanent' ? '#FEF2F2' : '#FFFBEB'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{
+                    width: '40px', height: '40px', borderRadius: '10px',
+                    backgroundColor: empDeleteModal.mode === 'permanent' ? '#FEE2E2' : '#FEF3C7',
+                    color: empDeleteModal.mode === 'permanent' ? '#DC2626' : '#D97706',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                    fontSize: '18px'
+                  }}>
+                    <FaTrash />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: '#0F172A' }}>
+                      {empDeleteModal.mode === 'permanent' ? 'Permanently Delete Employee Account' : 'Temporary Delete (Deactivate)'}
+                    </h3>
+                    <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+                      {empDeleteModal.emp.full_name} ({empDeleteModal.emp.employee_code || empDeleteModal.emp.employee_id || 'EMP'})
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setEmpDeleteModal({ isOpen: false, emp: null, mode: 'temporary', confirmText: '', loading: false })}
+                  style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', padding: '4px', fontSize: '18px' }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Body */}
+              <div style={{ padding: '24px' }}>
+                {/* Mode Selector Tabs */}
+                <div style={{
+                  display: 'flex', gap: '8px', padding: '4px',
+                  backgroundColor: '#F1F5F9', borderRadius: '10px', marginBottom: '20px'
+                }}>
+                  <button
+                    type="button"
+                    onClick={() => setEmpDeleteModal(prev => ({ ...prev, mode: 'temporary' }))}
+                    style={{
+                      flex: 1, padding: '9px 12px', borderRadius: '8px', border: 'none',
+                      fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+                      backgroundColor: empDeleteModal.mode === 'temporary' ? '#FFFFFF' : 'transparent',
+                      color: empDeleteModal.mode === 'temporary' ? '#D97706' : '#64748B',
+                      boxShadow: empDeleteModal.mode === 'temporary' ? '0 2px 6px rgba(0,0,0,0.06)' : 'none'
+                    }}
+                  >
+                    🟡 Temporary Delete
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEmpDeleteModal(prev => ({ ...prev, mode: 'permanent' }))}
+                    style={{
+                      flex: 1, padding: '9px 12px', borderRadius: '8px', border: 'none',
+                      fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+                      backgroundColor: empDeleteModal.mode === 'permanent' ? '#FFFFFF' : 'transparent',
+                      color: empDeleteModal.mode === 'permanent' ? '#DC2626' : '#64748B',
+                      boxShadow: empDeleteModal.mode === 'permanent' ? '0 2px 6px rgba(0,0,0,0.06)' : 'none'
+                    }}
+                  >
+                    🔴 Permanent Delete
+                  </button>
+                </div>
+
+                {/* Employee Summary Card */}
+                <div style={{
+                  padding: '12px 16px', backgroundColor: '#F8FAFC', borderRadius: '10px',
+                  border: '1px solid #E2E8F0', marginBottom: '16px', fontSize: '13px', lineHeight: 1.6
+                }}>
+                  <div><strong>Employee:</strong> {empDeleteModal.emp.full_name}</div>
+                  <div><strong>ID:</strong> {empDeleteModal.emp.employee_code || empDeleteModal.emp.employee_id}</div>
+                  <div><strong>Designation:</strong> {empDeleteModal.emp.designation || 'N/A'} • {empDeleteModal.emp.department || 'N/A'}</div>
+                  <div><strong>Mobile:</strong> {empDeleteModal.emp.mobile_number || 'N/A'}</div>
+                </div>
+
+                {empDeleteModal.mode === 'temporary' ? (
+                  <div style={{
+                    padding: '12px 16px', backgroundColor: '#FFFBEB', borderRadius: '10px',
+                    border: '1px solid #FDE68A', color: '#92400E', fontSize: '13px', lineHeight: 1.5, marginBottom: '20px'
+                  }}>
+                    <strong>Temporary Deletion (Soft Delete):</strong>
+                    <p style={{ margin: '6px 0 0' }}>
+                      The employee account will be marked as INACTIVE and their login sessions will be immediately terminated. Their historical attendance, leads, applications, hierarchy, and uploaded documents will remain safely stored. The account can be restored at any time.
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{
+                      padding: '12px 16px', backgroundColor: '#FEF2F2', borderRadius: '10px',
+                      border: '1px solid #FECACA', color: '#991B1B', fontSize: '13px', lineHeight: 1.5, marginBottom: '16px'
+                    }}>
+                      <strong>CAUTION: Permanent Deletion (Hard Delete / Purge):</strong>
+                      <p style={{ margin: '6px 0 0' }}>
+                        This employee record, login account, biometric face encodings, team relationships, and documents will be completely deleted from the database. <strong>THIS ACTION CANNOT BE UNDONE.</strong>
+                      </p>
+                    </div>
+
+                    <div style={{ marginBottom: '20px' }}>
+                      <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                        Type <span style={{ color: '#DC2626', fontWeight: 900 }}>DELETE</span> to confirm permanent deletion:
+                      </label>
+                      <input
+                        type="text"
+                        value={empDeleteModal.confirmText}
+                        onChange={e => setEmpDeleteModal(prev => ({ ...prev, confirmText: e.target.value }))}
+                        placeholder="DELETE"
+                        style={{
+                          width: '100%', padding: '10px 14px', borderRadius: '8px',
+                          border: '1.5px solid #CBD5E1', fontSize: '14px', fontWeight: 700,
+                          outline: 'none', boxSizing: 'border-box'
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={() => setEmpDeleteModal({ isOpen: false, emp: null, mode: 'temporary', confirmText: '', loading: false })}
+                    disabled={empDeleteModal.loading}
+                    style={{
+                      padding: '10px 18px', borderRadius: '8px', border: '1px solid #CBD5E1',
+                      backgroundColor: '#FFFFFF', color: '#475569', fontSize: '13px',
+                      fontWeight: 700, cursor: empDeleteModal.loading ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={executeDeleteEmp}
+                    disabled={empDeleteModal.loading || (empDeleteModal.mode === 'permanent' && empDeleteModal.confirmText.trim().toUpperCase() !== 'DELETE')}
+                    style={{
+                      padding: '10px 20px', borderRadius: '8px', border: 'none',
+                      backgroundColor: empDeleteModal.mode === 'permanent' ? '#DC2626' : '#D97706',
+                      color: '#FFFFFF', fontSize: '13px', fontWeight: 800,
+                      cursor: (empDeleteModal.loading || (empDeleteModal.mode === 'permanent' && empDeleteModal.confirmText.trim().toUpperCase() !== 'DELETE')) ? 'not-allowed' : 'pointer',
+                      opacity: (empDeleteModal.mode === 'permanent' && empDeleteModal.confirmText.trim().toUpperCase() !== 'DELETE') ? 0.6 : 1,
+                      boxShadow: empDeleteModal.mode === 'permanent' ? '0 4px 12px rgba(220, 38, 38, 0.3)' : '0 4px 12px rgba(217, 119, 6, 0.3)'
+                    }}
+                  >
+                    {empDeleteModal.loading ? 'Processing...' : (empDeleteModal.mode === 'permanent' ? 'Permanently Delete' : 'Confirm Temporary Delete')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}

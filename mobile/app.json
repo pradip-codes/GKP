@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "GharKaPaisa",
+    "slug": "GharKaPaisa",
+    "scheme": "gharkapaisa",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-sharing",
+      "expo-status-bar"
+    ],
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.gharkapaisa.app"
+    },
+    "android": {
+      "package": "com.gharkapaisa.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "65a6253e-75c8-4245-88e4-0adf47339c99"
+      }
+    }
+  }
+}

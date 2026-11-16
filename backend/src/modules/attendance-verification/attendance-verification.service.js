@@ -1,0 +1,1028 @@
+const { query } = require('../../config/database');
+const logger = require('../../config/logger');
+const faceBiometricProvider = require('../../services/biometric/faceBiometric.provider');
+const faceLivenessProvider = require('../../services/biometric/faceLiveness.provider');
+const faceMatchProvider = require('../../services/biometric/faceMatch.provider');
+const environmentMatchProvider = require('../../services/biometric/environmentMatch.provider');
+const mockLocationDetection = require('../../services/attendance/mockLocationDetection.service');
+const { logAction } = require('../admin/audit.service');
+
+const isValidUuid = (str) => typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
+/**
+ * Helper to resolve employeeId from reqUser or user_id mapping.
+ * Ensures candidate string codes like "CAND10003" or "EMP1001" are resolved into valid employee UUIDs.
+ */
+const resolveEmployeeId = async (reqUser) => {
+  if (!reqUser) return null;
+
+  // 1. Authoritative: resolve employee by authenticated user_id
+  if (reqUser.id && isValidUuid(reqUser.id)) {
+    try {
+      const { rows: [emp] } = await query(`SELECT id FROM employees WHERE user_id = $1 LIMIT 1`, [reqUser.id]);
+      if (emp && isValidUuid(emp.id)) return emp.id;
+    } catch (e) {}
+  }
+
+  const candidate = reqUser.employeeId || reqUser.employee_id || reqUser.employee_code || reqUser.emp_code;
+  
+  // 2. If candidate is already a valid UUID format and exists in employees table, return it
+  if (candidate && isValidUuid(candidate)) {
+    try {
+      const { rows: [emp] } = await query(`SELECT id FROM employees WHERE id = $1 LIMIT 1`, [candidate]);
+      if (emp) return emp.id;
+    } catch (e) {}
+  }
+  
+  // 3. If candidate string code like "CAND10001" or "EMP1001", query employee_id explicitly
+  if (candidate && typeof candidate === 'string') {
+    try {
+      const cleanCandidate = candidate.trim();
+      const { rows: [emp] } = await query(
+        `SELECT id FROM employees WHERE employee_id = $1 OR candidate_id::text = $1 LIMIT 1`,
+        [cleanCandidate]
+      );
+      if (emp && isValidUuid(emp.id)) return emp.id;
+    } catch (e) {
+      logger.error('Error resolving employee code to UUID:', e.message);
+    }
+  }
+
+  // 4. Fallback: try to resolve employee by mobile or email
+  if (reqUser.mobile || reqUser.email) {
+    try {
+      const { rows: [emp] } = await query(
+        `SELECT id FROM employees WHERE mobile_number = $1 OR (email_id IS NOT NULL AND email_id != '' AND LOWER(email_id) = LOWER($2)) LIMIT 1`,
+        [reqUser.mobile || '', reqUser.email || '']
+      );
+      if (emp && isValidUuid(emp.id)) return emp.id;
+    } catch (e) {}
+  }
+  
+  return null;
+};
+
+/**
+ * 1. Create a server-side attendance verification session (valid 5 minutes)
+ */
+const createVerificationSession = async ({ reqUser }) => {
+  const authEmpId = await resolveEmployeeId(reqUser);
+
+  if (!authEmpId) {
+    const error = new Error('User context is not associated with an employee record');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Verify employee existence
+  const { rows: [employee] } = await query(
+    `SELECT id, employee_id, full_name, employee_status FROM employees WHERE id = $1`,
+    [authEmpId]
+  );
+
+  if (!employee) {
+    const error = new Error('Employee record not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  // Check for ACTIVE KYC Biometric Template (Authoritative source for attendance)
+  let { rows: [activeTemplate] } = await query(
+    `SELECT id, version, s3_key, status FROM employee_biometric_templates WHERE employee_id = $1 AND status = 'ACTIVE' LIMIT 1`,
+    [authEmpId]
+  );
+
+  // Fallback: If no explicit template is indexed yet, check if employee has a verified photo in employees or employee_documents
+  if (!activeTemplate || !activeTemplate.s3_key) {
+    const { rows: [photoDoc] } = await query(
+      `SELECT document_url, s3_key, file_path 
+       FROM employee_documents 
+       WHERE employee_id = $1 AND LOWER(document_type) IN ('photo', 'profile_photo', 'face', 'kyc_photo')
+       ORDER BY created_at DESC LIMIT 1`,
+      [authEmpId]
+    ).catch(() => ({ rows: [] }));
+
+    const photoKey = photoDoc?.s3_key || photoDoc?.file_path || employee.profile_photo_url || employee.face_reference_url;
+    if (photoKey) {
+      activeTemplate = {
+        version: 1,
+        s3_key: photoKey,
+        status: 'ACTIVE'
+      };
+    }
+  }
+
+  if (!activeTemplate || !activeTemplate.s3_key) {
+    const error = new Error('Attendance Biometric Enrollment is required before marking attendance. Please complete your face verification photograph in the employee KYC panel.');
+    error.statusCode = 400;
+    error.reason = 'BIOMETRIC_ENROLLMENT_REQUIRED';
+    throw error;
+  }
+
+  // Insert session record with 5-minute expiry
+  const { rows: [session] } = await query(
+    `INSERT INTO attendance_verification_sessions 
+     (employee_id, status, expires_at, created_at)
+     VALUES ($1, 'CREATED', NOW() + INTERVAL '5 minutes', NOW())
+     RETURNING id, employee_id, status, liveness_status, face_status, environment_status, expires_at, created_at`,
+    [authEmpId]
+  );
+
+  await logAction(reqUser, 'ATTENDANCE_VERIFICATION_STARTED', authEmpId, {
+    verification_session_id: session.id,
+    template_version: activeTemplate.version,
+    reference_type: 'KYC_BIOMETRIC_TEMPLATE',
+  });
+
+  return {
+    sessionId: session.id,
+    employeeId: session.employee_id,
+    status: session.status,
+    expiresAt: session.expires_at,
+    expiresInSeconds: 300,
+  };
+};
+
+/**
+ * 2. Create AWS Rekognition / Provider Liveness Session
+ */
+const initiateLivenessSession = async ({ sessionId, reqUser }) => {
+  const authEmpId = await resolveEmployeeId(reqUser);
+
+  if (!authEmpId) {
+    const error = new Error('User context is not associated with an employee record');
+    error.statusCode = 400;
+    error.reason = 'UNAUTHORIZED';
+    throw error;
+  }
+
+  const { rows: [session] } = await query(
+    `SELECT id, employee_id, status, liveness_status, expires_at, consumed_at 
+     FROM attendance_verification_sessions 
+     WHERE id = $1 LIMIT 1`,
+    [sessionId]
+  );
+
+  if (!session) {
+    const error = new Error('Attendance verification session not found');
+    error.statusCode = 404;
+    error.reason = 'SESSION_NOT_FOUND';
+    throw error;
+  }
+
+  if (session.employee_id !== authEmpId) {
+    const error = new Error('Unauthorized to access this verification session');
+    error.statusCode = 403;
+    error.reason = 'FORBIDDEN';
+    throw error;
+  }
+
+  if (session.consumed_at || session.status === 'CONSUMED') {
+    const error = new Error('Verification session has already been consumed. Please start a new verification session.');
+    error.statusCode = 410;
+    error.reason = 'SESSION_ALREADY_CONSUMED';
+    throw error;
+  }
+
+  if (new Date(session.expires_at) < new Date()) {
+    await query(`UPDATE attendance_verification_sessions SET status = 'EXPIRED', liveness_status = 'EXPIRED' WHERE id = $1`, [sessionId]);
+    const error = new Error('Verification session has expired');
+    error.statusCode = 410;
+    error.reason = 'LIVENESS_EXPIRED';
+    throw error;
+  }
+
+  const livenessRes = await faceLivenessProvider.createLivenessSession({
+    employeeId: authEmpId,
+    sessionId: session.id,
+  });
+
+  if (livenessRes.status === 'PROVIDER_NOT_CONFIGURED' || !livenessRes.sessionId) {
+    await query(
+      `UPDATE attendance_verification_sessions 
+       SET liveness_status = 'PROVIDER_NOT_CONFIGURED', status = 'FAILED', failure_reason = 'LIVENESS_PROVIDER_NOT_CONFIGURED', updated_at = NOW() 
+       WHERE id = $1`,
+      [sessionId]
+    );
+
+    await logAction(reqUser, 'ATTENDANCE_LIVENESS_FAILED', authEmpId, {
+      session_id: sessionId,
+      reason: 'LIVENESS_PROVIDER_NOT_CONFIGURED',
+    });
+
+    const error = new Error('Liveness verification service is not configured in production environment');
+    error.statusCode = 503;
+    error.reason = 'LIVENESS_PROVIDER_NOT_CONFIGURED';
+    throw error;
+  }
+
+  if (livenessRes.status === 'SESSION_CREATED') {
+    await query(
+      `UPDATE attendance_verification_sessions 
+       SET status = 'LIVENESS_PENDING', provider_liveness_session_id = $1, updated_at = NOW() 
+       WHERE id = $2`,
+      [livenessRes.sessionId, sessionId]
+    );
+  }
+
+  const credentials = await faceLivenessProvider.getTemporaryCredentials({ sessionId: session.id });
+
+  return {
+    success: true,
+    sessionId: session.id,
+    providerSessionId: livenessRes.sessionId,
+    region: livenessRes.region || faceLivenessProvider.region || 'ap-south-1',
+    credentials,
+  };
+};
+
+/**
+ * Generate short-lived temporary AWS credentials for browser-side FaceLivenessDetectorCore
+ */
+const getLivenessCredentials = async ({ sessionId, reqUser }) => {
+  const authEmpId = await resolveEmployeeId(reqUser);
+
+  if (!authEmpId) {
+    const error = new Error('User context is not associated with an employee record');
+    error.statusCode = 400;
+    error.reason = 'UNAUTHORIZED';
+    throw error;
+  }
+
+  const { rows: [session] } = await query(
+    `SELECT id, employee_id, status, expires_at, consumed_at 
+     FROM attendance_verification_sessions 
+     WHERE id = $1 LIMIT 1`,
+    [sessionId]
+  );
+
+  if (!session || session.employee_id !== authEmpId) {
+    const error = new Error('Verification session not found or unauthorized');
+    error.statusCode = 403;
+    error.reason = 'FORBIDDEN';
+    throw error;
+  }
+
+  if (session.consumed_at || session.status === 'CONSUMED') {
+    const error = new Error('Verification session has already been consumed');
+    error.statusCode = 410;
+    error.reason = 'SESSION_ALREADY_CONSUMED';
+    throw error;
+  }
+
+  if (new Date(session.expires_at) < new Date()) {
+    const error = new Error('Verification session has expired');
+    error.statusCode = 410;
+    error.reason = 'LIVENESS_EXPIRED';
+    throw error;
+  }
+
+  const credentials = await faceLivenessProvider.getTemporaryCredentials({ sessionId: session.id });
+
+  if (!credentials) {
+    const error = new Error('Could not generate temporary AWS credentials for liveness streaming');
+    error.statusCode = 503;
+    error.reason = 'LIVENESS_PROVIDER_ERROR';
+    throw error;
+  }
+
+  return {
+    success: true,
+    sessionId: session.id,
+    credentials,
+  };
+};
+
+const buildingGeofenceService = require('../../services/geofence/buildingGeofence.service');
+
+/**
+ * 3. Validate liveness result from provider, execute KYC Face Matching, & Verify Building Geofence
+ */
+const validateLivenessResult = async ({
+  sessionId,
+  providerSessionId,
+  latitude,
+  longitude,
+  accuracy,
+  mocked,
+  timestamp,
+  speed,
+  userAgent,
+  reqUser,
+}) => {
+  const authEmpId = await resolveEmployeeId(reqUser);
+
+  if (!authEmpId) {
+    const errorMsg = 'User context is not associated with an employee record';
+    const error = new Error(errorMsg);
+    error.statusCode = 400;
+    error.reason = 'EMPLOYEE_NOT_FOUND';
+    error.diagnostic = {
+      endpoint: '/api/v1/attendance/verification/liveness/result',
+      sessionId: sessionId || null,
+      employeeId: null,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+      accuracy: accuracy ?? null,
+      livenessStatus: 'NOT_STARTED',
+      faceStatus: 'NOT_STARTED',
+      environmentStatus: 'NOT_STARTED',
+      reason: 'EMPLOYEE_NOT_FOUND',
+      message: errorMsg,
+    };
+    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+    throw error;
+  }
+
+  const { rows: [session] } = await query(
+    `SELECT id, employee_id, status, liveness_status, face_status, environment_status, failure_reason, expires_at, consumed_at 
+     FROM attendance_verification_sessions WHERE id = $1 LIMIT 1`,
+    [sessionId]
+  );
+
+  if (!session || session.employee_id !== authEmpId) {
+    const errorMsg = 'Attendance verification session not found or unauthorized';
+    const error = new Error(errorMsg);
+    error.statusCode = 403;
+    error.reason = 'SESSION_NOT_FOUND';
+    error.diagnostic = {
+      endpoint: '/api/v1/attendance/verification/liveness/result',
+      sessionId: sessionId || null,
+      employeeId: authEmpId,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+      accuracy: accuracy ?? null,
+      livenessStatus: session?.liveness_status || 'NOT_STARTED',
+      faceStatus: session?.face_status || 'NOT_STARTED',
+      environmentStatus: session?.environment_status || 'NOT_STARTED',
+      reason: 'SESSION_NOT_FOUND',
+      message: errorMsg,
+    };
+    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+    throw error;
+  }
+
+  // Reject consumed sessions immediately so they cannot be reused or replayed
+  if (session.consumed_at || session.status === 'CONSUMED') {
+    const errorMsg = 'This verification session has already been used for attendance. Please start a new verification session.';
+    const error = new Error(errorMsg);
+    error.statusCode = 410;
+    error.reason = 'SESSION_ALREADY_CONSUMED';
+    error.diagnostic = {
+      endpoint: '/api/v1/attendance/verification/liveness/result',
+      sessionId: sessionId,
+      employeeId: authEmpId,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+      accuracy: accuracy ?? null,
+      livenessStatus: session.liveness_status || 'PASSED',
+      faceStatus: session.face_status || 'PASSED',
+      environmentStatus: session.environment_status || 'PASSED',
+      reason: 'SESSION_ALREADY_CONSUMED',
+      message: errorMsg,
+    };
+    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+    throw error;
+  }
+
+  // Idempotency check: If session already reached terminal state and is not consumed, return existing outcome without re-invoking AWS
+  if (session.status === 'PASSED') {
+    logger.info(`[ATTENDANCE VERIFICATION] Idempotent replay for already PASSED session ${sessionId}`);
+    return {
+      success: true,
+      status: 'PASSED',
+      verification: {
+        liveness: 'PASSED',
+        face: 'PASSED',
+        location: 'PASSED',
+        building: session.matched_building_name || 'Main Office Building (Pune)',
+      },
+      isIdempotentReplay: true,
+    };
+  }
+
+  if (session.status === 'LIVENESS_FAILED' || session.status === 'FAILED' || session.liveness_status === 'FAILED') {
+    logger.info(`[ATTENDANCE VERIFICATION] Idempotent replay for already FAILED session ${sessionId}: reason=${session.failure_reason}`);
+    const failureReason = session.failure_reason || 'LIVENESS_FAILED';
+    const errorMsg = failureReason === 'CONFIDENCE_BELOW_THRESHOLD' || failureReason === 'LIVENESS_FAILED'
+      ? 'Liveness verification failed. Please align face inside the frame and retry.'
+      : (failureReason === 'SESSION_EXPIRED'
+        ? 'Face verification session expired. Please retry.'
+        : 'Attendance verification failed. Please try again.');
+    const error = new Error(errorMsg);
+    error.statusCode = 400;
+    error.reason = failureReason;
+    error.diagnostic = {
+      endpoint: '/api/v1/attendance/verification/liveness/result',
+      sessionId: sessionId,
+      employeeId: authEmpId,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+      accuracy: accuracy ?? null,
+      livenessStatus: session.liveness_status || 'FAILED',
+      faceStatus: session.face_status || 'NOT_STARTED',
+      environmentStatus: session.environment_status || 'NOT_STARTED',
+      reason: failureReason,
+      message: errorMsg,
+      isIdempotentReplay: true,
+    };
+    throw error;
+  }
+
+  if (new Date(session.expires_at) < new Date()) {
+    try {
+      await query(
+        `UPDATE attendance_verification_sessions 
+         SET status = 'EXPIRED', liveness_status = 'EXPIRED', failure_reason = 'SESSION_EXPIRED', updated_at = NOW() 
+         WHERE id = $1`,
+        [sessionId]
+      );
+    } catch (e) {
+      logger.error(`[LIVENESS DB ERROR] Failed to mark session ${sessionId} expired:`, e.message);
+    }
+    const errorMsg = 'Verification session has expired. Please retry.';
+    const error = new Error(errorMsg);
+    error.statusCode = 410;
+    error.reason = 'SESSION_EXPIRED';
+    error.diagnostic = {
+      endpoint: '/api/v1/attendance/verification/liveness/result',
+      sessionId: sessionId,
+      employeeId: authEmpId,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+      accuracy: accuracy ?? null,
+      livenessStatus: 'EXPIRED',
+      faceStatus: session.face_status || 'NOT_STARTED',
+      environmentStatus: session.environment_status || 'NOT_STARTED',
+      reason: 'SESSION_EXPIRED',
+      message: errorMsg,
+    };
+    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+    throw error;
+  }
+
+  const isMobileClient = reqUser?.client_type === 'MOBILE';
+
+  if (isMobileClient && mocked === true) {
+    const failureReason = 'MOCK_LOCATION_DETECTED';
+    const errorMsg = 'Mock location detected. Turn off location simulation and try attendance again.';
+    await query(
+      `UPDATE attendance_verification_sessions
+       SET location_status = 'FAILED', status = 'FAILED', failure_reason = $1,
+           location_lat = $2, location_lng = $3, location_accuracy = $4, updated_at = NOW()
+       WHERE id = $5`,
+      [failureReason, latitude ?? null, longitude ?? null, accuracy ?? 0, sessionId]
+    );
+    await logAction(reqUser, 'ATTENDANCE_MOCK_LOCATION_DETECTED', authEmpId, {
+      session_id: sessionId,
+      method: 'NATIVE_LOCATION_MOCK_FLAG',
+    });
+
+    const error = new Error(errorMsg);
+    error.statusCode = 400;
+    error.reason = failureReason;
+    error.diagnostic = {
+      endpoint: '/api/v1/attendance/verification/liveness/result',
+      sessionId,
+      employeeId: authEmpId,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+      accuracy: accuracy ?? null,
+      livenessStatus: session.liveness_status || 'NOT_STARTED',
+      faceStatus: session.face_status || 'NOT_STARTED',
+      environmentStatus: 'FAILED',
+      reason: failureReason,
+      message: errorMsg,
+    };
+    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+    throw error;
+  }
+
+  if (!isMobileClient) {
+    const webLocationSignal = mockLocationDetection.detectWebMockLocation({
+      latitude,
+      longitude,
+      accuracy,
+      timestamp,
+      speed,
+      userAgent,
+    });
+    if (webLocationSignal.isMock) {
+      const anomalyDetails = {
+        sessionId,
+        confidence: webLocationSignal.confidence,
+        indicators: webLocationSignal.indicators,
+        evidence: webLocationSignal.evidence,
+        securityLevel: webLocationSignal.securityLevel,
+      };
+      await logAction(reqUser, 'ATTENDANCE_WEB_LOCATION_ANOMALY', authEmpId, anomalyDetails);
+      logger.warn('[ATTENDANCE WEB LOCATION ANOMALY]', {
+        ...anomalyDetails,
+        employeeId: authEmpId,
+      });
+    }
+  }
+
+  // 1. Retrieve & evaluate AWS Rekognition Face Liveness result
+  const livenessResult = await faceLivenessProvider.getLivenessSessionResult(providerSessionId);
+
+  const isExpired = livenessResult.status === 'LIVENESS_EXPIRED';
+  const isProcessing = livenessResult.status === 'LIVENESS_PROCESSING';
+  const isProviderConfig = livenessResult.status === 'LIVENESS_PROVIDER_NOT_CONFIGURED';
+  const isProviderError = livenessResult.status === 'LIVENESS_PROVIDER_ERROR';
+
+  const failureReason = isProcessing
+    ? 'LIVENESS_PROCESSING'
+    : (isProviderConfig || isProviderError
+      ? 'AWS_LIVENESS_ERROR'
+      : (isExpired ? 'SESSION_EXPIRED' : (livenessResult.isLive ? null : (livenessResult.decisionReason || 'LIVENESS_FAILED'))));
+
+  // Determine compliant database statuses adhering to schema CHECK constraints:
+  // liveness_status CHECK (IN ('PENDING', 'PASSED', 'FAILED', 'EXPIRED', 'PROVIDER_NOT_CONFIGURED'))
+  // status CHECK (IN ('CREATED', 'LIVENESS_PENDING', 'LIVENESS_PASSED', 'LIVENESS_FAILED', ..., 'FAILED', 'EXPIRED'))
+  const dbLivenessStatus = isExpired
+    ? 'EXPIRED'
+    : (isProcessing ? 'PENDING' : (isProviderConfig ? 'PROVIDER_NOT_CONFIGURED' : (livenessResult.isLive ? 'PASSED' : 'FAILED')));
+  const dbSessionStatus = isExpired
+    ? 'EXPIRED'
+    : (isProcessing ? 'LIVENESS_PENDING' : (livenessResult.isLive ? 'LIVENESS_PASSED' : 'LIVENESS_FAILED'));
+
+  logger.info('[LIVENESS AWS RESULT DIAGNOSTIC]', {
+    sessionId,
+    employeeId: authEmpId,
+    awsSessionId: providerSessionId,
+    awsStatus: livenessResult.statusRaw || livenessResult.status,
+    awsEvaluationCompleted: livenessResult.awsEvaluationCompleted ?? (livenessResult.statusRaw === 'SUCCEEDED'),
+    awsConfidence: livenessResult.confidence,
+    confidenceThreshold: livenessResult.confidenceThreshold ?? 85.0,
+    awsReferenceImageAvailable: !!livenessResult.referenceImageBuffer,
+    decisionReason: livenessResult.decisionReason || failureReason,
+    livenessStatus: livenessResult.status,
+    failureReason,
+    sessionDbStatusPrior: session?.status || 'UNKNOWN',
+    sessionDbStatusNew: dbSessionStatus,
+  });
+
+  if (!livenessResult.isLive) {
+    try {
+      const updateResult = await query(
+        `UPDATE attendance_verification_sessions 
+         SET liveness_status = $1, status = $2, failure_reason = $3, updated_at = NOW() 
+         WHERE id = $4
+         RETURNING id, status, liveness_status`,
+        [dbLivenessStatus, dbSessionStatus, failureReason, sessionId]
+      );
+      if (updateResult.rowCount === 0) {
+        logger.warn(`[LIVENESS DB] Session ${sessionId} not found during liveness failure update`);
+      } else {
+        logger.info(`[LIVENESS DB] Session ${sessionId} state updated: status=${dbSessionStatus}, liveness_status=${dbLivenessStatus}`);
+      }
+    } catch (dbErr) {
+      logger.error(`[LIVENESS DB ERROR] Failed to persist liveness failure for session ${sessionId}:`, dbErr.message);
+    }
+
+    if (!isProcessing) {
+      await logAction(reqUser, isExpired ? 'ATTENDANCE_LIVENESS_EXPIRED' : 'ATTENDANCE_LIVENESS_FAILED', authEmpId, {
+        session_id: sessionId,
+        reason: failureReason,
+        confidence: livenessResult.confidence,
+      });
+    }
+
+    const statusCode = isProviderConfig || isProviderError ? 503 : (isExpired ? 410 : (isProcessing ? 425 : 400));
+    const errorMsg = isProcessing
+      ? 'Face liveness check is still being processed by AWS. Please wait a moment and try again.'
+      : (isProviderConfig || isProviderError
+        ? 'Liveness verification service encountered an AWS provider error.'
+        : (isExpired
+          ? 'Face verification session expired. Please retry.'
+          : 'Liveness verification failed. Please align face inside the frame and retry.'));
+
+    const error = new Error(errorMsg);
+    error.statusCode = statusCode;
+    error.reason = failureReason;
+    error.diagnostic = {
+      endpoint: '/api/v1/attendance/verification/liveness/result',
+      sessionId: sessionId,
+      employeeId: authEmpId,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+      accuracy: accuracy ?? null,
+      livenessStatus: dbLivenessStatus,
+      faceStatus: 'NOT_STARTED',
+      environmentStatus: 'NOT_STARTED',
+      reason: failureReason,
+      message: errorMsg,
+    };
+    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+    throw error;
+  }
+
+  // Liveness PASSED - Persist terminal liveness pass state
+  try {
+    const passResult = await query(
+      `UPDATE attendance_verification_sessions 
+       SET liveness_status = 'PASSED', status = 'LIVENESS_PASSED', updated_at = NOW() 
+       WHERE id = $1
+       RETURNING id, status, liveness_status`,
+      [sessionId]
+    );
+    if (passResult.rowCount === 0) {
+      logger.warn(`[LIVENESS DB] Session ${sessionId} not found during liveness pass update`);
+    } else {
+      logger.info(`[LIVENESS DB] Session ${sessionId} state updated: status=LIVENESS_PASSED, liveness_status=PASSED`);
+    }
+  } catch (dbErr) {
+    logger.error(`[LIVENESS DB ERROR] Failed to persist liveness pass for session ${sessionId}:`, dbErr.message);
+  }
+
+  await logAction(reqUser, 'ATTENDANCE_LIVENESS_SUCCESS', authEmpId, {
+    session_id: sessionId,
+    confidence: livenessResult.confidence,
+  });
+
+  // 2. Authoritative KYC Face Matching using liveness ReferenceImage
+  let activeTemplate = null;
+  try {
+    const { rows } = await query(
+      `SELECT id, version, s3_key FROM employee_biometric_templates WHERE employee_id = $1 AND status = 'ACTIVE' LIMIT 1`,
+      [authEmpId]
+    );
+    activeTemplate = rows?.[0];
+  } catch (e) {}
+
+  if (!activeTemplate || !activeTemplate.s3_key) {
+    try {
+      await query(
+        `UPDATE attendance_verification_sessions 
+         SET face_status = 'REFERENCE_NOT_FOUND', status = 'FAILED', failure_reason = 'BIOMETRIC_REFERENCE_NOT_FOUND', updated_at = NOW() 
+         WHERE id = $1`,
+        [sessionId]
+      );
+    } catch (e) {}
+
+    await logAction(reqUser, 'ATTENDANCE_FACE_MATCH_FAILED', authEmpId, {
+      session_id: sessionId,
+      reason: 'BIOMETRIC_REFERENCE_NOT_FOUND',
+    });
+
+    const errorMsg = 'Attendance Biometric Enrollment is required before marking attendance. Please complete biometric enrollment in the KYC panel.';
+    const error = new Error(errorMsg);
+    error.statusCode = 404;
+    error.reason = 'BIOMETRIC_REFERENCE_NOT_FOUND';
+    error.diagnostic = {
+      endpoint: '/api/v1/attendance/verification/liveness/result',
+      sessionId: sessionId,
+      employeeId: authEmpId,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+      accuracy: accuracy ?? null,
+      livenessStatus: 'PASSED',
+      faceStatus: 'REFERENCE_NOT_FOUND',
+      environmentStatus: 'NOT_STARTED',
+      reason: 'BIOMETRIC_REFERENCE_NOT_FOUND',
+      message: errorMsg,
+    };
+    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+    throw error;
+  }
+
+  const liveImageBuffer = livenessResult.referenceImageBuffer;
+  if (!liveImageBuffer) {
+    try {
+      await query(
+        `UPDATE attendance_verification_sessions 
+         SET face_status = 'FAILED', status = 'FAILED', failure_reason = 'LIVENESS_FAILED', updated_at = NOW() 
+         WHERE id = $1`,
+        [sessionId]
+      );
+    } catch (e) {}
+    const errorMsg = 'Reference image from AWS liveness session was missing';
+    const error = new Error(errorMsg);
+    error.statusCode = 400;
+    error.reason = 'LIVENESS_FAILED';
+    error.diagnostic = {
+      endpoint: '/api/v1/attendance/verification/liveness/result',
+      sessionId: sessionId,
+      employeeId: authEmpId,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+      accuracy: accuracy ?? null,
+      livenessStatus: 'PASSED',
+      faceStatus: 'FAILED',
+      environmentStatus: 'NOT_STARTED',
+      reason: 'LIVENESS_FAILED',
+      message: errorMsg,
+    };
+    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+    throw error;
+  }
+
+  // Compare live AWS liveness reference image against active employee biometric template S3 key
+  const faceRes = await faceMatchProvider.compareFace(liveImageBuffer, activeTemplate.s3_key);
+
+  if (!faceRes.matched) {
+    const reason = faceRes.matchStatus === 'FACE_PROVIDER_NOT_CONFIGURED' || faceRes.matchStatus === 'FACE_PROVIDER_ERROR'
+      ? 'AWS_LIVENESS_ERROR'
+      : 'FACE_MISMATCH';
+
+    try {
+      await query(
+        `UPDATE attendance_verification_sessions 
+         SET face_status = $1, status = 'FAILED', failure_reason = $2, updated_at = NOW() 
+         WHERE id = $3`,
+        [reason, reason, sessionId]
+      );
+    } catch (e) {}
+
+    await logAction(reqUser, 'ATTENDANCE_FACE_MATCH_FAILED', authEmpId, {
+      session_id: sessionId,
+      reason,
+      similarity: faceRes.similarity,
+    });
+
+    const statusCode = reason === 'AWS_LIVENESS_ERROR' ? 500 : 400;
+    const errorMsg = reason === 'AWS_LIVENESS_ERROR'
+      ? 'Face comparison service encountered an error. Please try again.'
+      : 'Face matching failed with your registered KYC identity. Please try again.';
+
+    const error = new Error(errorMsg);
+    error.statusCode = statusCode;
+    error.reason = reason;
+    error.diagnostic = {
+      endpoint: '/api/v1/attendance/verification/liveness/result',
+      sessionId: sessionId,
+      employeeId: authEmpId,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+      accuracy: accuracy ?? null,
+      livenessStatus: 'PASSED',
+      faceStatus: 'FAILED',
+      environmentStatus: 'NOT_STARTED',
+      reason,
+      message: errorMsg,
+    };
+    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+    throw error;
+  }
+
+  // 3. Authoritative Building Geofence & Location Verification
+  const hasClientCoordinates = latitude !== undefined && longitude !== undefined && latitude !== null && longitude !== null;
+
+  // Reject if coordinates are missing - geofence verification is mandatory
+  if (!hasClientCoordinates) {
+    const failureReason = 'LOCATION_REQUIRED';
+    try {
+      await query(
+        `UPDATE attendance_verification_sessions 
+         SET face_status = 'PASSED', location_status = 'FAILED', status = 'FAILED', failure_reason = $1, 
+             updated_at = NOW() 
+         WHERE id = $2`,
+        [failureReason, sessionId]
+      );
+    } catch (e) {}
+
+    await logAction(reqUser, 'ATTENDANCE_LOCATION_REQUIRED', authEmpId, {
+      session_id: sessionId,
+      reason: failureReason,
+    });
+
+    const errorMsg = 'Location access is required to verify your office presence.';
+    const error = new Error(errorMsg);
+    error.statusCode = 400;
+    error.reason = failureReason;
+    error.diagnostic = {
+      endpoint: '/api/v1/attendance/verification/liveness/result',
+      sessionId: sessionId,
+      employeeId: authEmpId,
+      latitude: null,
+      longitude: null,
+      accuracy: null,
+      livenessStatus: 'PASSED',
+      faceStatus: 'PASSED',
+      environmentStatus: 'FAILED',
+      reason: failureReason,
+      message: errorMsg,
+    };
+    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+    throw error;
+  }
+
+  // Check if employee has an active DB bypass approval
+  let hasDbBypass = false;
+  try {
+    const { rows: bypassRows } = await query(
+      `SELECT id FROM environment_bypass_approvals 
+       WHERE employee_id = $1 AND is_active = TRUE AND start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE LIMIT 1`,
+      [authEmpId]
+    );
+    if (bypassRows && bypassRows.length > 0) {
+      hasDbBypass = true;
+    }
+  } catch (e) {}
+
+  let geoResult;
+  if (hasDbBypass || process.env.ATTENDANCE_GEOFENCE_BYPASS === 'true' || process.env.DISABLE_GEOFENCE === 'true') {
+    logger.info(`[ATTENDANCE GEOFENCE] Location verification bypassed for employee ${authEmpId} (Active DB Bypass / ENV Override)`);
+    geoResult = {
+      matched: true,
+      building: { id: '00000000-0000-0000-0000-000000000001', name: 'Main Office Building (Pune - Approved Bypass)' },
+      isStrictInside: true,
+      distanceMeters: 0,
+      status: 'LOCATION_VERIFIED',
+      message: 'Location verified via approved bypass'
+    };
+  } else {
+    geoResult = await buildingGeofenceService.verifyLocationInBuilding(latitude, longitude, accuracy !== undefined ? accuracy : 0);
+  }
+
+  if (!geoResult.matched) {
+    const failureReason = geoResult.reason || (geoResult.status === 'LOW_ACCURACY' ? 'LOW_ACCURACY' : (geoResult.status === 'INVALID_COORDINATES' ? 'INVALID_COORDINATES' : 'OUTSIDE_BUILDING'));
+    try {
+      await query(
+        `UPDATE attendance_verification_sessions 
+         SET face_status = 'PASSED', location_status = 'FAILED', status = 'FAILED', failure_reason = $1, 
+             location_lat = $2, location_lng = $3, location_accuracy = $4, updated_at = NOW() 
+         WHERE id = $5`,
+        [failureReason, latitude, longitude, accuracy || 0, sessionId]
+      );
+    } catch (e) {}
+
+    await logAction(reqUser, failureReason === 'LOW_ACCURACY' ? 'ATTENDANCE_LOCATION_LOW_ACCURACY' : 'ATTENDANCE_LOCATION_MISMATCH', authEmpId, {
+      session_id: sessionId,
+      latitude,
+      longitude,
+      accuracy,
+      reason: failureReason,
+      distance_meters: geoResult.distanceMeters,
+    });
+
+    const errorMsg = geoResult.message || (failureReason === 'LOW_ACCURACY'
+      ? 'Unable to verify your location accurately. Please enable GPS and try again.'
+      : (failureReason === 'INVALID_COORDINATES'
+        ? 'Invalid GPS latitude/longitude coordinates provided.'
+        : "Location doesn't match. You must be inside the office building."));
+
+    const error = new Error(errorMsg);
+    error.statusCode = 400;
+    error.reason = failureReason;
+    error.diagnostic = {
+      endpoint: '/api/v1/attendance/verification/liveness/result',
+      sessionId: sessionId,
+      employeeId: authEmpId,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+      accuracy: accuracy ?? null,
+      livenessStatus: 'PASSED',
+      faceStatus: 'PASSED',
+      environmentStatus: 'FAILED',
+      reason: failureReason,
+      message: errorMsg,
+    };
+    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+    throw error;
+  }
+
+  // ALL VERIFICATIONS PASSED (Liveness, Face Match, Building Geofence Location)!
+  const matchedBuildingName = geoResult.building?.name || 'Main Office Building (Pune)';
+  const matchedBuildingCode =
+    geoResult.building?.code ||
+    geoResult.building?.building_code ||
+    geoResult.building?.name ||
+    null;
+
+  await query(
+    `UPDATE attendance_verification_sessions
+     SET face_status = 'PASSED',
+         environment_status = 'PASSED',
+         matched_environment_code = $1,
+         status = 'PASSED',
+         completed_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $2`,
+    [matchedBuildingCode, sessionId]
+  );
+
+  await logAction(reqUser, 'ATTENDANCE_FACE_MATCH_SUCCESS', authEmpId, {
+    session_id: sessionId,
+    similarity: faceRes.similarity,
+    template_version: activeTemplate.version,
+  });
+
+  await logAction(reqUser, 'ATTENDANCE_VERIFICATION_SUCCESS', authEmpId, {
+    session_id: sessionId,
+    template_version: activeTemplate.version,
+    building: matchedBuildingName,
+    location_lat: latitude,
+    location_lng: longitude,
+  });
+
+  logger.info(`[ATTENDANCE VERIFICATION] Verification PASSED for employee ${authEmpId} inside "${matchedBuildingName}" (Session: ${sessionId})`);
+
+  return {
+    success: true,
+    status: 'PASSED',
+    verification: {
+      liveness: 'PASSED',
+      face: 'PASSED',
+      location: 'PASSED',
+      building: matchedBuildingName,
+    },
+  };
+};
+
+/**
+ * 4. Complete backend attendance verification pipeline
+ */
+const completeAttendanceVerification = async ({ sessionId, reqUser }) => {
+  const authEmpId = await resolveEmployeeId(reqUser);
+
+  if (!authEmpId) {
+    const error = new Error('User context is not associated with an employee record');
+    error.statusCode = 400;
+    error.reason = 'UNAUTHORIZED';
+    throw error;
+  }
+
+  if (!sessionId) {
+    const error = new Error('verification_session_id is required');
+    error.statusCode = 400;
+    error.reason = 'INVALID_REQUEST';
+    throw error;
+  }
+
+  const { rows: [session] } = await query(
+    `SELECT id, employee_id, status, liveness_status, face_status, environment_status, expires_at, consumed_at 
+     FROM attendance_verification_sessions 
+     WHERE id = $1 LIMIT 1`,
+    [sessionId]
+  );
+
+  if (!session || session.employee_id !== authEmpId) {
+    const error = new Error('Attendance verification session not found or unauthorized');
+    error.statusCode = 404;
+    error.reason = 'SESSION_NOT_FOUND';
+    throw error;
+  }
+
+  if (session.consumed_at || session.status === 'CONSUMED') {
+    const error = new Error('This verification session has already been used for attendance. Please start a new verification session.');
+    error.statusCode = 410;
+    error.reason = 'SESSION_ALREADY_CONSUMED';
+    throw error;
+  }
+
+  if (session.status === 'PASSED') {
+    return {
+      success: true,
+      status: 'PASSED',
+      verification: {
+        liveness: session.liveness_status,
+        face: session.face_status,
+      },
+    };
+  }
+
+  const error = new Error('AWS Rekognition Face Liveness is mandatory. Verification step is incomplete or failed.');
+  error.statusCode = 400;
+  error.reason = 'LIVENESS_FAILED';
+  throw error;
+};
+
+/**
+ * Fetch verification session status
+ */
+const getVerificationSessionStatus = async ({ sessionId, reqUser }) => {
+  const authEmpId = await resolveEmployeeId(reqUser);
+
+  if (!authEmpId) {
+    const error = new Error('User context is not associated with an employee record');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const { rows: [session] } = await query(
+    `SELECT id, employee_id, status, liveness_status, face_status, environment_status, matched_environment_code, failure_reason, expires_at, completed_at, consumed_at, created_at 
+     FROM attendance_verification_sessions 
+     WHERE id = $1 LIMIT 1`,
+    [sessionId]
+  );
+
+  if (!session || session.employee_id !== authEmpId) {
+    const error = new Error('Verification session not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return session;
+};
+
+module.exports = {
+  resolveEmployeeId,
+  createVerificationSession,
+  initiateLivenessSession,
+  getLivenessCredentials,
+  validateLivenessResult,
+  completeAttendanceVerification,
+  getVerificationSessionStatus,
+};

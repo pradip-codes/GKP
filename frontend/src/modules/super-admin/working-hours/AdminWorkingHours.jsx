@@ -1,0 +1,3328 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Clock,
+  ShieldAlert,
+  UserCheck,
+  PlusCircle,
+  Edit2,
+  Calendar,
+  CheckCircle2,
+  AlertCircle,
+  X,
+  Search,
+  Filter,
+  History,
+  Building,
+  Users,
+  Zap,
+  Power,
+  Trash2,
+  Check,
+  Tag,
+  Briefcase,
+  UserPlus,
+  MoreVertical,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  Sliders,
+  Settings
+} from 'lucide-react';
+import {
+  fetchWorkingHoursConfig,
+  updateWorkingHours,
+  extendWorkingHours,
+  fetchExtensionHistory,
+  savePolicy,
+  deletePolicy,
+  saveHoliday,
+  deleteHoliday,
+  revokeExtension
+} from '../../../services/workingHours.api';
+import {
+  activateAccount,
+  deactivateAccount,
+  scheduleAccountStatus,
+  bulkUpdateAccountStatus,
+  deleteUserAccountApi
+} from '../../../services/accountStatus.api';
+
+const DAYS_OF_WEEK = [
+  { key: 'monday', short: 'Mon', label: 'Monday' },
+  { key: 'tuesday', short: 'Tue', label: 'Tuesday' },
+  { key: 'wednesday', short: 'Wed', label: 'Wednesday' },
+  { key: 'thursday', short: 'Thu', label: 'Thursday' },
+  { key: 'friday', short: 'Fri', label: 'Friday' },
+  { key: 'saturday', short: 'Sat', label: 'Saturday' },
+  { key: 'sunday', short: 'Sun', label: 'Sunday' }
+];
+
+const DEFAULT_SCHEDULE = {
+  monday:    { is_working: true,  start_time: '09:00 AM', end_time: '06:00 PM' },
+  tuesday:   { is_working: true,  start_time: '09:00 AM', end_time: '06:00 PM' },
+  wednesday: { is_working: true,  start_time: '09:00 AM', end_time: '06:00 PM' },
+  thursday:  { is_working: true,  start_time: '09:00 AM', end_time: '06:00 PM' },
+  friday:    { is_working: true,  start_time: '09:00 AM', end_time: '06:00 PM' },
+  saturday:  { is_working: false, start_time: '09:00 AM', end_time: '06:00 PM' },
+  sunday:    { is_working: false, start_time: '09:00 AM', end_time: '06:00 PM' }
+};
+
+const TIME_OPTIONS = [
+  '12:00 AM', '12:30 AM',
+  '01:00 AM', '01:30 AM', '02:00 AM', '02:30 AM', '03:00 AM', '03:30 AM',
+  '04:00 AM', '04:30 AM', '05:00 AM', '05:30 AM', '06:00 AM', '06:30 AM',
+  '07:00 AM', '07:30 AM', '08:00 AM', '08:30 AM', '09:00 AM', '09:30 AM',
+  '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM',
+  '12:00 PM', '12:30 PM',
+  '01:00 PM', '01:30 PM', '02:00 PM', '02:30 PM', '03:00 PM', '03:30 PM',
+  '04:00 PM', '04:30 PM', '05:00 PM', '05:30 PM', '06:00 PM', '06:30 PM',
+  '07:00 PM', '07:30 PM', '08:00 PM', '08:30 PM', '09:00 PM', '09:30 PM',
+  '10:00 PM', '10:30 PM', '11:00 PM', '11:30 PM', '11:59 PM'
+];
+
+function getInitials(name = '') {
+  if (!name) return 'U';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function getRoleBadgeStyle(role = '') {
+  const r = String(role).toUpperCase();
+  switch (r) {
+    case 'ADMIN':
+    case 'SUPER_ADMIN':
+      return { bg: '#FEE2E2', text: '#DC2626', label: r === 'SUPER_ADMIN' ? 'Super Admin' : 'Admin' };
+    case 'EMPLOYEE':
+      return { bg: '#E0F2FE', text: '#0284C7', label: 'Employee' };
+    case 'PARTNER':
+      return { bg: '#DCFCE7', text: '#16A34A', label: 'Partner' };
+    case 'VIEWER':
+      return { bg: '#F3E8FF', text: '#9333EA', label: 'Viewer' };
+    case 'MODERATOR':
+      return { bg: '#FFEDD5', text: '#EA580C', label: 'Moderator' };
+    case 'HR':
+      return { bg: '#CCFBF1', text: '#0D9488', label: 'HR' };
+    default:
+      return { bg: '#F1F5F9', text: '#475569', label: role || 'User' };
+  }
+}
+
+export default function AdminWorkingHours() {
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState([]);
+  const [defaultConfig, setDefaultConfig] = useState({ start_time: '09:00 AM', end_time: '06:00 PM', is_enabled: true });
+  const [extensionsToday, setExtensionsToday] = useState([]);
+  const [policies, setPolicies] = useState([]);
+  const [holidays, setHolidays] = useState([]);
+  const [distinctDesignations, setDistinctDesignations] = useState([]);
+  const [distinctRoles, setDistinctRoles] = useState(['ADMIN', 'EMPLOYEE', 'PARTNER', 'VIEWER', 'MODERATOR', 'HR']);
+  const [historyList, setHistoryList] = useState([]);
+
+  // Active view tab: 'records' (primary view from user screenshot) | 'policies' | 'holidays' | 'history'
+  const [activeTab, setActiveTab] = useState('records');
+
+  // Filters & Search Bar (Screenshot matching)
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedRole, setSelectedRole] = useState('ALL');
+  const [selectedStatus, setSelectedStatus] = useState('ALL');
+  const [selectedDaysFilter, setSelectedDaysFilter] = useState('ALL');
+
+  // Selection
+  const [selectedUserIds, setSelectedUserIds] = useState([]);
+
+  // Sorting
+  const [sortField, setSortField] = useState('userId');
+  const [sortAsc, setSortAsc] = useState(true);
+
+  // Pagination
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Modals
+  const [showGlobalDaysModal, setShowGlobalDaysModal] = useState(false);
+  const [showHolidayModal, setShowHolidayModal] = useState(false);
+  const [showExtendModal, setShowExtendModal] = useState(false);
+  const [showEditUserModal, setShowEditUserModal] = useState(false);
+  const [showPolicyModal, setShowPolicyModal] = useState(false);
+  const [showStatusConfirmModal, setShowStatusConfirmModal] = useState(false);
+  const [showManageUsersModal, setShowManageUsersModal] = useState(false);
+  const [manageUsersBulkScope, setManageUsersBulkScope] = useState('ALL');
+  const [manageUsersReason, setManageUsersReason] = useState('');
+  const [manageUsersConfirmAction, setManageUsersConfirmAction] = useState(null);
+  const [openActionMenuId, setOpenActionMenuId] = useState(null);
+
+  // Toast & Submitting state
+  const [toast, setToast] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Edit User State
+  const [editUserData, setEditUserData] = useState({
+    userId: null,
+    displayUserId: '',
+    fullName: '',
+    email: '',
+    role: '',
+    startTime: '09:00 AM',
+    endTime: '06:00 PM',
+    weeklyWorkingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+    accountStatus: 'active'
+  });
+
+  // Global Working Days State
+  const [globalDaysData, setGlobalDaysData] = useState({
+    startTime: '09:00 AM',
+    endTime: '06:00 PM',
+    weeklyWorkingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+  });
+
+  // Holiday Modal State
+  const [holidayForm, setHolidayForm] = useState({
+    id: null,
+    holidayName: '',
+    holidayDate: new Date().toISOString().split('T')[0],
+    scopeType: 'GLOBAL',
+    roles: [],
+    designations: [],
+    userId: '',
+    reason: '',
+    isActive: true
+  });
+
+  // Extend Modal State
+  const [extendForm, setExtendForm] = useState({
+    applyTo: 'SPECIFIC',
+    userId: '',
+    userIds: [],
+    roles: [],
+    designations: [],
+    dateMode: 'SINGLE',
+    extensionDate: new Date().toISOString().split('T')[0],
+    startDate: new Date().toISOString().split('T')[0],
+    endDate: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+    extendedStartTime: '08:30 AM',
+    extendedEndTime: '07:00 PM',
+    reason: ''
+  });
+  const [userSearchText, setUserSearchText] = useState('');
+  const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+
+  // Policy Form State
+  const [policyForm, setPolicyForm] = useState({
+    id: null,
+    name: 'Operating Shift Policy',
+    scopeType: 'GLOBAL',
+    roles: [],
+    designations: [],
+    userId: '',
+    isEnabled: true,
+    scheduleConfig: JSON.parse(JSON.stringify(DEFAULT_SCHEDULE))
+  });
+
+  // Status Change Confirmation Dialog State
+  const [statusConfirmData, setStatusConfirmData] = useState({
+    user: null,
+    targetStatus: 'active', // 'active' or 'inactive'
+    reason: ''
+  });
+
+  // Delete User Account Confirmation Dialog State (Temporary & Permanent)
+  const [deleteConfirmData, setDeleteConfirmData] = useState({
+    user: null,
+    mode: 'temporary', // 'temporary' | 'permanent'
+    confirmationText: ''
+  });
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const res = await fetchWorkingHoursConfig();
+      if (res.success) {
+        setUsers(res.data.users || []);
+        if (res.data.defaultConfig) {
+          setDefaultConfig(res.data.defaultConfig);
+          setGlobalDaysData({
+            startTime: res.data.defaultConfig.start_time || '09:00 AM',
+            endTime: res.data.defaultConfig.end_time || '06:00 PM',
+            weeklyWorkingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+          });
+        }
+        setExtensionsToday(res.data.extensionsToday || []);
+        setPolicies(res.data.policies || []);
+        setHolidays(res.data.holidays || []);
+        if (res.data.distinctDesignations) setDistinctDesignations(res.data.distinctDesignations);
+        if (res.data.distinctRoles) setDistinctRoles(res.data.distinctRoles);
+      }
+    } catch (err) {
+      showToast(err.message || 'Failed to load working hours data', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadHistory = async () => {
+    try {
+      const res = await fetchExtensionHistory();
+      if (res.success) setHistoryList(res.data || []);
+    } catch (err) {
+      console.error('Failed to load extension history:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'history') loadHistory();
+  }, [activeTab]);
+
+  // Close 3-dots dropdown when clicking outside
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (!e.target.closest('.action-menu-container')) {
+        setOpenActionMenuId(null);
+      }
+    };
+    document.addEventListener('click', handleOutsideClick);
+    return () => document.removeEventListener('click', handleOutsideClick);
+  }, []);
+
+  // Filter & Search Logic
+  const filteredUsers = users.filter(u => {
+    const query = searchTerm.toLowerCase().trim();
+    const matchesSearch = !query ||
+      (u.displayUserId && u.displayUserId.toLowerCase().includes(query)) ||
+      (u.user && u.user.toLowerCase().includes(query)) ||
+      (u.email && u.email.toLowerCase().includes(query)) ||
+      (u.employeeId && u.employeeId.toLowerCase().includes(query));
+
+    const matchesRole = selectedRole === 'ALL' || String(u.role).toUpperCase() === selectedRole;
+
+    const matchesStatus = selectedStatus === 'ALL' ||
+      (selectedStatus === 'ACTIVE' && (u.accountStatus === 'active' || u.status === 'Active')) ||
+      (selectedStatus === 'INACTIVE' && (u.accountStatus === 'inactive' || u.status === 'Inactive')) ||
+      (selectedStatus === 'SCHEDULED' && (u.accountStatus === 'scheduled' || u.status === 'Scheduled'));
+
+    let matchesDays = true;
+    if (selectedDaysFilter === '5_DAYS') {
+      matchesDays = (u.weeklyWorkingDays || []).length === 5;
+    } else if (selectedDaysFilter === '6_DAYS') {
+      matchesDays = (u.weeklyWorkingDays || []).length === 6;
+    } else if (selectedDaysFilter === '7_DAYS') {
+      matchesDays = (u.weeklyWorkingDays || []).length === 7;
+    }
+
+    return matchesSearch && matchesRole && matchesStatus && matchesDays;
+  });
+
+  // Sorting Logic
+  const sortedUsers = [...filteredUsers].sort((a, b) => {
+    let aVal = '';
+    let bVal = '';
+
+    switch (sortField) {
+      case 'userId':
+        aVal = a.displayUserId || a.employeeId || '';
+        bVal = b.displayUserId || b.employeeId || '';
+        break;
+      case 'user':
+        aVal = a.user || '';
+        bVal = b.user || '';
+        break;
+      case 'role':
+        aVal = a.role || '';
+        bVal = b.role || '';
+        break;
+      case 'startTime':
+        aVal = a.startTime || '';
+        bVal = b.startTime || '';
+        break;
+      case 'endTime':
+        aVal = a.endTime || '';
+        bVal = b.endTime || '';
+        break;
+      case 'days':
+        aVal = (a.weeklyWorkingDays || []).length;
+        bVal = (b.weeklyWorkingDays || []).length;
+        return sortAsc ? aVal - bVal : bVal - aVal;
+      case 'status':
+        aVal = a.accountStatus || a.status || '';
+        bVal = b.accountStatus || b.status || '';
+        break;
+      default:
+        aVal = a.displayUserId || '';
+        bVal = b.displayUserId || '';
+    }
+
+    const cmp = String(aVal).localeCompare(String(bVal));
+    return sortAsc ? cmp : -cmp;
+  });
+
+  // Pagination Logic
+  const totalRecords = sortedUsers.length;
+  const isShowAll = pageSize === 'ALL' || pageSize >= totalRecords;
+  const effectivePageSize = isShowAll ? totalRecords : Number(pageSize);
+  const totalPages = isShowAll || totalRecords === 0 ? 1 : Math.ceil(totalRecords / effectivePageSize);
+  const startIndex = isShowAll ? 0 : (currentPage - 1) * effectivePageSize;
+  const paginatedUsers = sortedUsers.slice(startIndex, isShowAll ? totalRecords : startIndex + effectivePageSize);
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortAsc(!sortAsc);
+    } else {
+      setSortField(field);
+      setSortAsc(true);
+    }
+  };
+
+  const handleResetFilters = () => {
+    setSearchTerm('');
+    setSelectedRole('ALL');
+    setSelectedStatus('ALL');
+    setSelectedDaysFilter('ALL');
+    setCurrentPage(1);
+  };
+
+  // Bulk Selection
+  const handleSelectAll = (e) => {
+    if (e.target.checked) {
+      setSelectedUserIds(paginatedUsers.map(u => u.id));
+    } else {
+      setSelectedUserIds([]);
+    }
+  };
+
+  const handleToggleUserSelect = (id) => {
+    if (selectedUserIds.includes(id)) {
+      setSelectedUserIds(selectedUserIds.filter(item => item !== id));
+    } else {
+      setSelectedUserIds([...selectedUserIds, id]);
+    }
+  };
+
+  // Open Edit User Modal
+  const handleOpenEditUser = (user) => {
+    setEditUserData({
+      userId: user.id,
+      displayUserId: user.displayUserId || user.employeeId || '',
+      fullName: user.user || '',
+      email: user.email || '',
+      role: user.role || '',
+      startTime: user.startTime || '09:00 AM',
+      endTime: user.endTime || '06:00 PM',
+      weeklyWorkingDays: user.weeklyWorkingDays && user.weeklyWorkingDays.length > 0
+        ? [...user.weeklyWorkingDays]
+        : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+      accountStatus: user.accountStatus || (user.isActive ? 'active' : 'inactive')
+    });
+    setShowEditUserModal(true);
+  };
+
+  // Toggle Day in User Edit Form
+  const toggleEditDay = (dayShort) => {
+    const current = editUserData.weeklyWorkingDays || [];
+    if (current.includes(dayShort)) {
+      if (current.length === 1) {
+        showToast('At least 1 working day must be active', 'error');
+        return;
+      }
+      setEditUserData({ ...editUserData, weeklyWorkingDays: current.filter(d => d !== dayShort) });
+    } else {
+      setEditUserData({ ...editUserData, weeklyWorkingDays: [...current, dayShort] });
+    }
+  };
+
+  const setEditPreset = (preset) => {
+    if (preset === '5') {
+      setEditUserData({ ...editUserData, weeklyWorkingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] });
+    } else if (preset === '6') {
+      setEditUserData({ ...editUserData, weeklyWorkingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] });
+    } else if (preset === '7') {
+      setEditUserData({ ...editUserData, weeklyWorkingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] });
+    }
+  };
+
+  // Save User Edit Form
+  const handleSaveUserEditSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      const payload = {
+        userId: editUserData.userId,
+        startTime: editUserData.startTime,
+        endTime: editUserData.endTime,
+        weeklyWorkingDays: editUserData.weeklyWorkingDays,
+        accountStatus: editUserData.accountStatus,
+        isEnabled: editUserData.accountStatus === 'active'
+      };
+      const res = await updateWorkingHours(payload);
+      if (res.success) {
+        showToast(res.message || 'User working hours and status updated successfully');
+        setShowEditUserModal(false);
+        loadData();
+      } else {
+        showToast(res.message || 'Failed to update record', 'error');
+      }
+    } catch (err) {
+      showToast(err.message || 'Server error', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Global Week Working Days Handlers
+  const toggleGlobalDay = (dayShort) => {
+    const current = globalDaysData.weeklyWorkingDays || [];
+    if (current.includes(dayShort)) {
+      if (current.length === 1) {
+        showToast('At least 1 working day must be active', 'error');
+        return;
+      }
+      setGlobalDaysData({ ...globalDaysData, weeklyWorkingDays: current.filter(d => d !== dayShort) });
+    } else {
+      setGlobalDaysData({ ...globalDaysData, weeklyWorkingDays: [...current, dayShort] });
+    }
+  };
+
+  const setGlobalPreset = (preset) => {
+    if (preset === '5') {
+      setGlobalDaysData({ ...globalDaysData, weeklyWorkingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] });
+    } else if (preset === '6') {
+      setGlobalDaysData({ ...globalDaysData, weeklyWorkingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] });
+    } else if (preset === '7') {
+      setGlobalDaysData({ ...globalDaysData, weeklyWorkingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] });
+    }
+  };
+
+  const handleSaveGlobalDaysSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      const payload = {
+        isGlobal: true,
+        startTime: globalDaysData.startTime,
+        endTime: globalDaysData.endTime,
+        weeklyWorkingDays: globalDaysData.weeklyWorkingDays,
+        isEnabled: true
+      };
+      const res = await updateWorkingHours(payload);
+      if (res.success) {
+        showToast('Global working days and default schedule updated successfully');
+        setShowGlobalDaysModal(false);
+        loadData();
+      } else {
+        showToast(res.message || 'Failed to update global schedule', 'error');
+      }
+    } catch (err) {
+      showToast(err.message || 'Server error', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Direct Activate / Deactivate Toggle with Confirmation
+  const handlePromptStatusToggle = (user) => {
+    const isCurrentlyActive = user.accountStatus === 'active' || user.status === 'Active';
+    const targetStatus = isCurrentlyActive ? 'inactive' : 'active';
+    setStatusConfirmData({
+      user,
+      targetStatus,
+      reason: ''
+    });
+    setShowStatusConfirmModal(true);
+  };
+
+  const handleConfirmStatusToggle = async () => {
+    if (!statusConfirmData.user) return;
+    setSubmitting(true);
+    try {
+      const u = statusConfirmData.user;
+      if (statusConfirmData.targetStatus === 'active') {
+        const res = await activateAccount(u.id, { reason: statusConfirmData.reason.trim() || undefined });
+        if (res.success) {
+          showToast(`Account for ${u.user} has been activated`);
+        }
+      } else {
+        const res = await deactivateAccount(u.id, { reason: statusConfirmData.reason.trim() || undefined });
+        if (res.success) {
+          showToast(`Account for ${u.user} has been deactivated`);
+        }
+      }
+      setShowStatusConfirmModal(false);
+      loadData();
+    } catch (err) {
+      showToast(err.message || 'Status update failed', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Delete User Account Handlers (Temporary Deactivate / Permanent Delete)
+  const handlePromptDelete = (user, mode = 'temporary') => {
+    if (user.role === 'SUPER_ADMIN') {
+      showToast('Super Administrator accounts cannot be deleted or suspended.', 'error');
+      return;
+    }
+    setDeleteConfirmData({
+      user,
+      mode,
+      confirmationText: ''
+    });
+    setShowDeleteConfirmModal(true);
+  };
+
+  const handleExecuteDelete = async () => {
+    if (!deleteConfirmData.user) return;
+    const u = deleteConfirmData.user;
+    const isPermanent = deleteConfirmData.mode === 'permanent';
+
+    if (isPermanent && deleteConfirmData.confirmationText.trim().toUpperCase() !== 'DELETE') {
+      showToast('Please type DELETE to confirm permanent account purge.', 'error');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await deleteUserAccountApi(u.id, deleteConfirmData.mode);
+      if (res && res.success) {
+        showToast(
+          isPermanent
+            ? `Account for ${u.user || u.name || u.email} has been PERMANENTLY deleted.`
+            : `Account for ${u.user || u.name || u.email} has been temporarily deactivated (soft deleted).`
+        );
+        if (isPermanent) {
+          setUsers(prev => (Array.isArray(prev) ? prev : []).filter(user => 
+            user.id !== u.id && 
+            user.email !== u.email && 
+            user.employee_id !== u.employee_id
+          ));
+        }
+        setShowDeleteConfirmModal(false);
+        setDeleteConfirmData({ user: null, mode: 'temporary', confirmationText: '' });
+        loadData();
+      } else {
+        showToast(res?.message || 'Delete operation failed', 'error');
+      }
+    } catch (err) {
+      showToast(err.response?.data?.message || err.message || 'Error processing deletion', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Manage All Users Modal Handlers
+  const handleExecuteBulkStatusUpdate = async (action, scope) => {
+    setSubmitting(true);
+    try {
+      const res = await bulkUpdateAccountStatus({
+        action,
+        scope,
+        reason: manageUsersReason.trim() || undefined
+      });
+      if (res.success) {
+        showToast(res.message || `Successfully updated accounts to ${action}`);
+        setManageUsersConfirmAction(null);
+        await loadData();
+      }
+    } catch (err) {
+      showToast(err.message || 'Bulk status update failed', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Extend Modal handlers
+  const handleOpenExtendForUser = (user) => {
+    setUserSearchText('');
+    setUserDropdownOpen(false);
+    setExtendForm({
+      applyTo: 'SPECIFIC',
+      userId: user.id,
+      userIds: [user.id],
+      roles: [],
+      designations: [],
+      dateMode: 'SINGLE',
+      extensionDate: new Date().toISOString().split('T')[0],
+      startDate: new Date().toISOString().split('T')[0],
+      endDate: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+      extendedStartTime: user.startTime || '08:30 AM',
+      extendedEndTime: '07:00 PM',
+      reason: ''
+    });
+    setShowExtendModal(true);
+  };
+
+  const handleExtendSubmit = async (e) => {
+    e.preventDefault();
+    if (!extendForm.reason.trim()) {
+      showToast('Reason is required for extending hours', 'error');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const todayStr = new Date().toISOString().split('T')[0];
+      let extensionDate = null;
+      let startDate = null;
+      let endDate = null;
+
+      if (extendForm.dateMode === 'ALL_TIME') {
+        extensionDate = null;
+        startDate = todayStr;
+        endDate = '2099-12-31';
+      } else if (extendForm.dateMode === 'RANGE') {
+        extensionDate = null;
+        startDate = extendForm.startDate || todayStr;
+        endDate = extendForm.endDate || todayStr;
+      } else {
+        extensionDate = extendForm.extensionDate || todayStr;
+        startDate = null;
+        endDate = null;
+      }
+
+      const isAll = !extendForm.userId && (!extendForm.userIds || extendForm.userIds.length === 0);
+      const payload = {
+        applyTo: isAll ? 'ALL' : 'SPECIFIC',
+        userId: extendForm.userIds?.[0] || extendForm.userId || null,
+        userIds: extendForm.userId ? [extendForm.userId] : (extendForm.userIds || []),
+        roles: extendForm.roles || [],
+        designations: extendForm.designations || [],
+        extensionDate,
+        startDate,
+        endDate,
+        extendedStartTime: extendForm.extendedStartTime || '08:30 AM',
+        extendedEndTime: extendForm.extendedEndTime || '07:00 PM',
+        reason: extendForm.reason.trim()
+      };
+      const res = await extendWorkingHours(payload);
+      if (res.success) {
+        showToast(res.message || 'Working hours extended successfully');
+        setShowExtendModal(false);
+        loadData();
+      } else {
+        showToast(res.message || 'Failed to extend hours', 'error');
+      }
+    } catch (err) {
+      showToast(err.message || 'Server error', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Holiday Modal handlers
+  const handleOpenHolidayForUser = (user) => {
+    setHolidayForm({
+      id: null,
+      holidayName: 'Time Off / Individual Holiday',
+      holidayDate: new Date().toISOString().split('T')[0],
+      scopeType: 'USER',
+      roles: [],
+      designations: [],
+      userId: user.id,
+      reason: `Holiday granted for ${user.user}`,
+      isActive: true
+    });
+    setShowHolidayModal(true);
+  };
+
+  const handleHolidaySubmit = async (e) => {
+    e.preventDefault();
+    if (!holidayForm.holidayName.trim()) {
+      showToast('Holiday name is required', 'error');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await saveHoliday(holidayForm);
+      if (res.success) {
+        showToast('Holiday calendar rule saved successfully');
+        setShowHolidayModal(false);
+        loadData();
+      } else {
+        showToast(res.message || 'Failed to save holiday', 'error');
+      }
+    } catch (err) {
+      showToast(err.message || 'Server error', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteHolidayClick = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this holiday record?')) return;
+    try {
+      const res = await deleteHoliday(id);
+      if (res.success) {
+        showToast('Holiday deleted successfully');
+        loadData();
+      }
+    } catch (err) {
+      showToast(err.message || 'Failed to delete holiday', 'error');
+    }
+  };
+
+  const handleRevokeExtension = async (id) => {
+    if (!window.confirm('Are you sure you want to revoke this extension?')) return;
+    try {
+      const res = await revokeExtension(id);
+      if (res.success) {
+        showToast('Extension revoked successfully');
+        loadData();
+        loadHistory();
+      }
+    } catch (err) {
+      showToast(err.message || 'Failed to revoke extension', 'error');
+    }
+  };
+
+  return (
+    <div style={{ padding: isMobile ? '12px' : '24px', backgroundColor: '#F8FAFC', minHeight: '100vh', fontFamily: 'Inter, system-ui, -apple-system, sans-serif' }}>
+      {/* Toast Alert */}
+      {toast && (
+        <div style={{
+          position: 'fixed', top: '24px', right: '24px', zIndex: 10000,
+          backgroundColor: toast.type === 'error' ? '#FEF2F2' : '#F0FDF4',
+          border: `1px solid ${toast.type === 'error' ? '#FCA5A5' : '#86EFAC'}`,
+          color: toast.type === 'error' ? '#991B1B' : '#166534',
+          padding: '12px 20px', borderRadius: '12px', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)',
+          display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 600, fontSize: '14px'
+        }}>
+          {toast.type === 'error' ? <AlertCircle size={20} /> : <CheckCircle2 size={20} />}
+          <span>{toast.message}</span>
+        </div>
+      )}
+
+      {/* Top Header & Upside Options */}
+      <div style={{
+        display: 'flex',
+        flexDirection: isMobile ? 'column' : 'row',
+        justifyContent: 'space-between',
+        alignItems: isMobile ? 'flex-start' : 'center',
+        gap: '16px',
+        marginBottom: '20px'
+      }}>
+        <div>
+          <h1 style={{ fontSize: isMobile ? '20px' : '24px', fontWeight: 800, color: '#0F172A', margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Clock style={{ color: '#6366F1' }} size={isMobile ? 24 : 28} />
+            Working Hours & Staff Schedules
+          </h1>
+          <p style={{ margin: '4px 0 0 0', color: '#64748B', fontSize: isMobile ? '12.5px' : '14px' }}>
+            Configure daily shifts, weekly working days, account access statuses, holiday rules, and time extensions.
+          </p>
+        </div>
+
+        {/* Upside Action Controls (Global Week Working Day Manage, Add Holiday, Extend Time) */}
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
+          <button
+            onClick={() => setShowGlobalDaysModal(true)}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+              padding: isMobile ? '9px 14px' : '10px 18px',
+              backgroundColor: '#6366F1', color: '#FFFFFF', border: 'none', borderRadius: '10px',
+              fontWeight: 700, cursor: 'pointer', fontSize: '13.5px', flex: isMobile ? '1 1 100%' : 'none',
+              boxShadow: '0 4px 12px rgba(99, 102, 241, 0.25)', transition: 'background 0.2s'
+            }}
+          >
+            <Settings size={16} />
+            <span>Global Week Working Days</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setHolidayForm({
+                id: null,
+                holidayName: '',
+                holidayDate: new Date().toISOString().split('T')[0],
+                scopeType: 'GLOBAL',
+                roles: [],
+                designations: [],
+                userId: '',
+                reason: '',
+                isActive: true
+              });
+              setShowHolidayModal(true);
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+              padding: isMobile ? '9px 14px' : '10px 18px',
+              backgroundColor: '#0284C7', color: '#FFFFFF', border: 'none', borderRadius: '10px',
+              fontWeight: 700, cursor: 'pointer', fontSize: '13.5px', flex: isMobile ? '1 1 140px' : 'none',
+              boxShadow: '0 4px 12px rgba(2, 132, 199, 0.25)'
+            }}
+          >
+            <Calendar size={16} />
+            <span>Add Holiday</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setUserSearchText('');
+              setUserDropdownOpen(false);
+              setExtendForm({
+                applyTo: 'SPECIFIC',
+                userId: '',
+                userIds: [],
+                roles: [],
+                designations: [],
+                dateMode: 'SINGLE',
+                extensionDate: new Date().toISOString().split('T')[0],
+                startDate: new Date().toISOString().split('T')[0],
+                endDate: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+                extendedStartTime: '08:30 AM',
+                extendedEndTime: '07:00 PM',
+                reason: ''
+              });
+              setShowExtendModal(true);
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+              padding: isMobile ? '9px 14px' : '10px 18px',
+              backgroundColor: '#10B981', color: '#FFFFFF', border: 'none', borderRadius: '10px',
+              fontWeight: 700, cursor: 'pointer', fontSize: '13.5px', flex: isMobile ? '1 1 120px' : 'none',
+              boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)'
+            }}
+          >
+            <Zap size={16} />
+            <span>Extend Time</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setManageUsersBulkScope('ALL');
+              setManageUsersReason('');
+              setManageUsersConfirmAction(null);
+              setShowManageUsersModal(true);
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+              padding: isMobile ? '9px 14px' : '10px 18px',
+              backgroundColor: '#7C3AED', color: '#FFFFFF', border: 'none', borderRadius: '10px',
+              fontWeight: 700, cursor: 'pointer', fontSize: '13.5px', flex: isMobile ? '1 1 140px' : 'none',
+              boxShadow: '0 4px 12px rgba(124, 58, 237, 0.25)', transition: 'background 0.2s'
+            }}
+            title="Manage active/inactive status for all employee and admin accounts"
+          >
+            <Users size={16} />
+            <span>Manage All Users</span>
+          </button>
+        </div>
+      </div>
+
+      {/* KPI Stats Cards */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)',
+        gap: isMobile ? '10px' : '14px',
+        marginBottom: '20px'
+      }}>
+        <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+          <div style={{ fontSize: '11px', color: '#64748B', fontWeight: 800, textTransform: 'uppercase' }}>Total Staff Records</div>
+          <div style={{ fontSize: isMobile ? '20px' : '24px', fontWeight: 900, color: '#4F46E5', marginTop: '4px' }}>{users.length}</div>
+          <div style={{ fontSize: '11.5px', color: '#94A3B8', marginTop: '2px' }}>Operational accounts</div>
+        </div>
+
+        <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+          <div style={{ fontSize: '11px', color: '#64748B', fontWeight: 800, textTransform: 'uppercase' }}>Active Accounts</div>
+          <div style={{ fontSize: isMobile ? '20px' : '24px', fontWeight: 900, color: '#16A34A', marginTop: '4px' }}>
+            {users.filter(u => u.accountStatus === 'active' || u.status === 'Active').length}
+          </div>
+          <div style={{ fontSize: '11.5px', color: '#94A3B8', marginTop: '2px' }}>Authorized & working</div>
+        </div>
+
+        <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+          <div style={{ fontSize: '11px', color: '#64748B', fontWeight: 800, textTransform: 'uppercase' }}>Inactive Accounts</div>
+          <div style={{ fontSize: isMobile ? '20px' : '24px', fontWeight: 900, color: '#DC2626', marginTop: '4px' }}>
+            {users.filter(u => u.accountStatus === 'inactive' || u.status === 'Inactive').length}
+          </div>
+          <div style={{ fontSize: '11.5px', color: '#94A3B8', marginTop: '2px' }}>Deactivated access</div>
+        </div>
+
+        <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+          <div style={{ fontSize: '11px', color: '#64748B', fontWeight: 800, textTransform: 'uppercase' }}>Extensions Today</div>
+          <div style={{ fontSize: isMobile ? '20px' : '24px', fontWeight: 900, color: '#D97706', marginTop: '4px' }}>{extensionsToday.length}</div>
+          <div style={{ fontSize: '11.5px', color: '#94A3B8', marginTop: '2px' }}>Active overtime shifts</div>
+        </div>
+      </div>
+
+      {/* View Switcher Tabs */}
+      <div style={{
+        display: 'flex',
+        gap: '8px',
+        borderBottom: '2px solid #E2E8F0',
+        marginBottom: '20px',
+        overflowX: 'auto',
+        WebkitOverflowScrolling: 'touch',
+        paddingBottom: '2px'
+      }}>
+        {[
+          { id: 'records', label: 'User Shift Records', icon: Users, count: users.length },
+          { id: 'policies', label: 'Weekly Policies', icon: Clock, count: policies.length },
+          { id: 'holidays', label: 'Holidays Calendar', icon: Calendar, count: holidays.length },
+          { id: 'history', label: 'Extension Logs', icon: History, count: historyList.length }
+        ].map(tab => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '8px', padding: isMobile ? '10px 14px' : '12px 20px',
+                border: 'none', background: 'none',
+                borderBottom: isActive ? '3px solid #6366F1' : '3px solid transparent',
+                color: isActive ? '#6366F1' : '#64748B', fontWeight: isActive ? 800 : 600,
+                cursor: 'pointer', fontSize: isMobile ? '13px' : '14px', whiteSpace: 'nowrap', flexShrink: 0
+              }}
+            >
+              <Icon size={16} />
+              <span>{tab.label}</span>
+              <span style={{
+                backgroundColor: isActive ? '#EEF2FF' : '#F1F5F9',
+                color: isActive ? '#6366F1' : '#64748B',
+                fontSize: '11px', padding: '2px 8px', borderRadius: '12px', fontWeight: 800
+              }}>
+                {tab.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ================= PRIMARY VIEW: USER RECORDS TABLE (MATCHING SCREENSHOT 1:1) ================= */}
+      {activeTab === 'records' && (
+        <div>
+          {/* Top Filter and Search Bar (Screenshot matching) */}
+          <div style={{
+            background: '#FFFFFF',
+            border: '1px solid #E2E8F0',
+            borderRadius: '14px',
+            padding: '16px',
+            marginBottom: '16px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+            display: 'flex',
+            flexDirection: isMobile ? 'column' : 'row',
+            gap: '12px',
+            alignItems: isMobile ? 'stretch' : 'center',
+            justifyContent: 'space-between'
+          }}>
+            {/* Search Input */}
+            <div style={{ flex: '1 1 300px', position: 'relative' }}>
+              <Search size={18} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#94A3B8' }} />
+              <input
+                type="text"
+                placeholder="Search by User ID, name or email..."
+                value={searchTerm}
+                onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+                style={{
+                  width: '100%',
+                  padding: '10px 14px 10px 42px',
+                  borderRadius: '10px',
+                  border: '1px solid #CBD5E1',
+                  fontSize: '13.5px',
+                  outline: 'none',
+                  backgroundColor: '#FFFFFF',
+                  color: '#1E293B',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
+
+            {/* Role Filter */}
+            <select
+              value={selectedRole}
+              onChange={e => { setSelectedRole(e.target.value); setCurrentPage(1); }}
+              style={{
+                padding: '10px 14px',
+                borderRadius: '10px',
+                border: '1px solid #CBD5E1',
+                fontSize: '13.5px',
+                backgroundColor: '#FFFFFF',
+                color: '#334155',
+                outline: 'none',
+                minWidth: '130px',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="ALL">All Roles</option>
+              {distinctRoles.map(r => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+
+            {/* Status Filter */}
+            <select
+              value={selectedStatus}
+              onChange={e => { setSelectedStatus(e.target.value); setCurrentPage(1); }}
+              style={{
+                padding: '10px 14px',
+                borderRadius: '10px',
+                border: '1px solid #CBD5E1',
+                fontSize: '13.5px',
+                backgroundColor: '#FFFFFF',
+                color: '#334155',
+                outline: 'none',
+                minWidth: '130px',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="ALL">All Status</option>
+              <option value="ACTIVE">Active</option>
+              <option value="INACTIVE">Inactive</option>
+              <option value="SCHEDULED">Scheduled</option>
+            </select>
+
+            {/* Working Days Filter */}
+            <select
+              value={selectedDaysFilter}
+              onChange={e => { setSelectedDaysFilter(e.target.value); setCurrentPage(1); }}
+              style={{
+                padding: '10px 14px',
+                borderRadius: '10px',
+                border: '1px solid #CBD5E1',
+                fontSize: '13.5px',
+                backgroundColor: '#FFFFFF',
+                color: '#334155',
+                outline: 'none',
+                minWidth: '160px',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="ALL">All Working Days</option>
+              <option value="5_DAYS">5 Days (Mon-Fri)</option>
+              <option value="6_DAYS">6 Days (Mon-Sat)</option>
+              <option value="7_DAYS">7 Days (Full Week)</option>
+            </select>
+
+            {/* Reset Filters Button */}
+            <button
+              onClick={handleResetFilters}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                padding: '10px 16px',
+                borderRadius: '10px',
+                border: '1px solid #E2E8F0',
+                backgroundColor: '#F8FAFC',
+                color: '#4F46E5',
+                fontWeight: 700,
+                fontSize: '13.5px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                transition: 'all 0.2s'
+              }}
+            >
+              <RefreshCw size={14} />
+              <span>Reset Filters</span>
+            </button>
+          </div>
+
+          {/* Table Container Card */}
+          <div style={{
+            background: '#FFFFFF',
+            border: '1px solid #E2E8F0',
+            borderRadius: '14px',
+            overflow: 'hidden',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+          }}>
+            {loading ? (
+              <div style={{ padding: '60px', textAlign: 'center', color: '#64748B' }}>
+                Loading user shift records...
+              </div>
+            ) : paginatedUsers.length === 0 ? (
+              <div style={{ padding: '60px', textAlign: 'center', color: '#94A3B8' }}>
+                <Users size={36} style={{ margin: '0 auto 12px auto', opacity: 0.5 }} />
+                <div style={{ fontSize: '15px', fontWeight: 600 }}>No user records found</div>
+                <div style={{ fontSize: '13px', marginTop: '4px' }}>Try modifying your search or reset filters</div>
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13.5px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', color: '#334155' }}>
+                      {/* Checkbox */}
+                      <th style={{ padding: '14px 16px', width: '40px' }}>
+                        <input
+                          type="checkbox"
+                          checked={paginatedUsers.length > 0 && selectedUserIds.length === paginatedUsers.length}
+                          onChange={handleSelectAll}
+                          style={{ cursor: 'pointer', borderRadius: '4px' }}
+                        />
+                      </th>
+
+                      {/* User ID */}
+                      <th
+                        onClick={() => handleSort('userId')}
+                        style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          User ID {sortField === 'userId' ? (sortAsc ? '↑' : '↓') : '↑↓'}
+                        </span>
+                      </th>
+
+                      {/* User Name */}
+                      <th
+                        onClick={() => handleSort('user')}
+                        style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          User Name {sortField === 'user' ? (sortAsc ? '↑' : '↓') : '↑↓'}
+                        </span>
+                      </th>
+
+                      {/* Role */}
+                      <th
+                        onClick={() => handleSort('role')}
+                        style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          Role {sortField === 'role' ? (sortAsc ? '↑' : '↓') : '↑↓'}
+                        </span>
+                      </th>
+
+                      {/* Starting Time */}
+                      <th
+                        onClick={() => handleSort('startTime')}
+                        style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          Starting Time {sortField === 'startTime' ? (sortAsc ? '↑' : '↓') : '↑↓'}
+                        </span>
+                      </th>
+
+                      {/* Ending Time */}
+                      <th
+                        onClick={() => handleSort('endTime')}
+                        style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          Ending Time {sortField === 'endTime' ? (sortAsc ? '↑' : '↓') : '↑↓'}
+                        </span>
+                      </th>
+
+                      {/* Weekly Working Days */}
+                      <th
+                        onClick={() => handleSort('days')}
+                        style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          Weekly Working Days {sortField === 'days' ? (sortAsc ? '↑' : '↓') : '↑↓'}
+                        </span>
+                      </th>
+
+                      {/* Account Status */}
+                      <th
+                        onClick={() => handleSort('status')}
+                        style={{ padding: '14px 16px', fontWeight: 700, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          Account Status {sortField === 'status' ? (sortAsc ? '↑' : '↓') : '↑↓'}
+                        </span>
+                      </th>
+
+                      {/* Action */}
+                      <th style={{ padding: '14px 16px', fontWeight: 700, textAlign: 'left', whiteSpace: 'nowrap' }}>
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedUsers.map((u) => {
+                      const roleStyle = getRoleBadgeStyle(u.role);
+                      const isSelected = selectedUserIds.includes(u.id);
+                      const isUserActive = u.accountStatus === 'active' || u.status === 'Active';
+                      const isScheduled = u.accountStatus === 'scheduled' || u.status === 'Scheduled';
+
+                      return (
+                        <tr
+                          key={u.id}
+                          style={{
+                            borderBottom: '1px solid #F1F5F9',
+                            backgroundColor: isSelected ? '#F8FAFC' : '#FFFFFF',
+                            transition: 'background 0.15s'
+                          }}
+                        >
+                          {/* Checkbox */}
+                          <td style={{ padding: '14px 16px' }}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleToggleUserSelect(u.id)}
+                              style={{ cursor: 'pointer' }}
+                            />
+                          </td>
+
+                          {/* User ID */}
+                          <td style={{ padding: '14px 16px', fontWeight: 700, color: '#334155', whiteSpace: 'nowrap' }}>
+                            {u.displayUserId || u.employeeId || `PM-${String(u.id).slice(0, 8)}`}
+                          </td>
+
+                          {/* User Name + Avatar + Email */}
+                          <td style={{ padding: '14px 16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <div style={{
+                                width: '36px', height: '36px', borderRadius: '50%',
+                                backgroundColor: '#6366F1', color: '#FFFFFF',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontWeight: 800, fontSize: '13px', flexShrink: 0
+                              }}>
+                                {getInitials(u.user)}
+                              </div>
+                              <div>
+                                <div style={{ fontWeight: 700, color: '#0F172A', fontSize: '13.5px' }}>{u.user}</div>
+                                <div style={{ fontSize: '12px', color: '#64748B' }}>{u.email}</div>
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Role Pill */}
+                          <td style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>
+                            <span style={{
+                              display: 'inline-block',
+                              padding: '4px 12px',
+                              borderRadius: '16px',
+                              fontSize: '12px',
+                              fontWeight: 700,
+                              backgroundColor: roleStyle.bg,
+                              color: roleStyle.text
+                            }}>
+                              {roleStyle.label}
+                            </span>
+                          </td>
+
+                          {/* Starting Time */}
+                          <td style={{ padding: '14px 16px', fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>
+                            {u.startTime || '09:00 AM'}
+                          </td>
+
+                          {/* Ending Time */}
+                          <td style={{ padding: '14px 16px', fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>
+                            {u.endTime || '06:00 PM'}
+                            {u.effectiveEndTime && u.effectiveEndTime !== u.endTime && (
+                              <div style={{ fontSize: '11px', color: '#059669', fontWeight: 700 }}>
+                                Overtime: {u.effectiveEndTime}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Weekly Working Days */}
+                          <td style={{ padding: '14px 16px' }}>
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                              {(u.weeklyWorkingDays && u.weeklyWorkingDays.length > 0 ? u.weeklyWorkingDays : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']).map(day => (
+                                <span
+                                  key={day}
+                                  style={{
+                                    padding: '2px 7px',
+                                    borderRadius: '6px',
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    backgroundColor: '#EEF2FF',
+                                    color: '#4F46E5',
+                                    border: '1px solid #E0E7FF'
+                                  }}
+                                >
+                                  {day}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+
+                          {/* Account Status */}
+                          <td style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>
+                            {isScheduled ? (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                padding: '4px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: 700,
+                                backgroundColor: '#E0F2FE', color: '#0284C7'
+                              }}>
+                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#0284C7' }} />
+                                Scheduled
+                              </span>
+                            ) : isUserActive ? (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                padding: '4px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: 700,
+                                backgroundColor: '#DCFCE7', color: '#15803D'
+                              }}>
+                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#16A34A' }} />
+                                Active
+                              </span>
+                            ) : (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                padding: '4px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: 700,
+                                backgroundColor: '#FFEDD5', color: '#C2410C'
+                              }}>
+                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#EA580C' }} />
+                                Inactive
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Action Buttons */}
+                          <td style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              {/* Edit Button */}
+                              <button
+                                onClick={() => handleOpenEditUser(u)}
+                                style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                  padding: '6px 12px', borderRadius: '8px',
+                                  border: '1px solid #E2E8F0', backgroundColor: '#FFFFFF',
+                                  color: '#0F172A', fontWeight: 700, fontSize: '12.5px',
+                                  cursor: 'pointer', transition: 'all 0.15s'
+                                }}
+                              >
+                                <Edit2 size={13} />
+                                <span>Edit</span>
+                              </button>
+
+                              {/* Activate / Deactivate Toggle Button */}
+                              {isUserActive ? (
+                                <button
+                                  onClick={() => handlePromptStatusToggle(u)}
+                                  style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                    padding: '6px 12px', borderRadius: '8px',
+                                    border: '1px solid #FECACA', backgroundColor: '#FEF2F2',
+                                    color: '#DC2626', fontWeight: 700, fontSize: '12.5px',
+                                    cursor: 'pointer', transition: 'all 0.15s'
+                                  }}
+                                >
+                                  <Power size={13} />
+                                  <span>Deactivate</span>
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handlePromptStatusToggle(u)}
+                                  style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                    padding: '6px 12px', borderRadius: '8px',
+                                    border: '1px solid #16A34A', backgroundColor: '#16A34A',
+                                    color: '#FFFFFF', fontWeight: 700, fontSize: '12.5px',
+                                    cursor: 'pointer', transition: 'all 0.15s'
+                                  }}
+                                >
+                                  <Power size={13} />
+                                  <span>Activate</span>
+                                </button>
+                              )}
+
+                              {/* Delete Account Button */}
+                              {u.role !== 'SUPER_ADMIN' && (
+                                <button
+                                  onClick={() => handlePromptDelete(u)}
+                                  style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                    padding: '6px 10px', borderRadius: '8px',
+                                    border: '1px solid #FECACA', backgroundColor: '#FEF2F2',
+                                    color: '#DC2626', fontWeight: 700, fontSize: '12.5px',
+                                    cursor: 'pointer', transition: 'all 0.15s'
+                                  }}
+                                  title="Delete Account (Temporary or Permanent)"
+                                >
+                                  <Trash2 size={13} />
+                                  <span>Delete</span>
+                                </button>
+                              )}
+
+                              {/* Three-dots Menu */}
+                              <div className="action-menu-container" style={{ position: 'relative' }}>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOpenActionMenuId(openActionMenuId === u.id ? null : u.id);
+                                  }}
+                                  style={{
+                                    background: 'none', border: 'none', cursor: 'pointer',
+                                    color: '#64748B', padding: '6px', borderRadius: '6px',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                  }}
+                                >
+                                  <MoreVertical size={16} />
+                                </button>
+
+                                {openActionMenuId === u.id && (
+                                  <div style={{
+                                    position: 'absolute', right: 0, top: '100%', zIndex: 100,
+                                    backgroundColor: '#FFFFFF', borderRadius: '10px',
+                                    border: '1px solid #E2E8F0', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.12)',
+                                    minWidth: '220px', padding: '6px', display: 'flex', flexDirection: 'column', gap: '2px'
+                                  }}>
+                                    <button
+                                      onClick={() => { setOpenActionMenuId(null); handleOpenExtendForUser(u); }}
+                                      style={{
+                                        display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px',
+                                        border: 'none', background: 'none', textAlign: 'left',
+                                        fontSize: '12.5px', fontWeight: 600, color: '#334155', cursor: 'pointer',
+                                        borderRadius: '6px', width: '100%'
+                                      }}
+                                    >
+                                      <Zap size={14} color="#D97706" />
+                                      <span>Extend Shift Time</span>
+                                    </button>
+
+                                    <button
+                                      onClick={() => { setOpenActionMenuId(null); handleOpenHolidayForUser(u); }}
+                                      style={{
+                                        display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px',
+                                        border: 'none', background: 'none', textAlign: 'left',
+                                        fontSize: '12.5px', fontWeight: 600, color: '#334155', cursor: 'pointer',
+                                        borderRadius: '6px', width: '100%'
+                                      }}
+                                    >
+                                      <Calendar size={14} color="#0284C7" />
+                                      <span>Add Holiday / Leave</span>
+                                    </button>
+
+                                    <button
+                                      onClick={() => { setOpenActionMenuId(null); handleOpenEditUser(u); }}
+                                      style={{
+                                        display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px',
+                                        border: 'none', background: 'none', textAlign: 'left',
+                                        fontSize: '12.5px', fontWeight: 600, color: '#334155', cursor: 'pointer',
+                                        borderRadius: '6px', width: '100%'
+                                      }}
+                                    >
+                                      <Settings size={14} color="#6366F1" />
+                                      <span>Manage Working Days</span>
+                                    </button>
+
+                                    {u.role !== 'SUPER_ADMIN' && (
+                                      <>
+                                        <div style={{ height: '1px', backgroundColor: '#E2E8F0', margin: '4px 0' }} />
+                                        <button
+                                          onClick={() => {
+                                            setOpenActionMenuId(null);
+                                            handlePromptDelete(u, 'temporary');
+                                          }}
+                                          style={{
+                                            display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px',
+                                            border: 'none', background: 'none', textAlign: 'left',
+                                            fontSize: '12.5px', fontWeight: 700, color: '#D97706', cursor: 'pointer',
+                                            borderRadius: '6px', width: '100%'
+                                          }}
+                                        >
+                                          <Power size={14} color="#D97706" />
+                                          <span>🟡 Temporary Delete (Deactivate)</span>
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            setOpenActionMenuId(null);
+                                            handlePromptDelete(u, 'permanent');
+                                          }}
+                                          style={{
+                                            display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px',
+                                            border: 'none', background: 'none', textAlign: 'left',
+                                            fontSize: '12.5px', fontWeight: 700, color: '#DC2626', cursor: 'pointer',
+                                            borderRadius: '6px', width: '100%'
+                                          }}
+                                        >
+                                          <Trash2 size={14} color="#DC2626" />
+                                          <span>🔴 Permanent Delete (Purge)</span>
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Bottom Pagination & Records Summary */}
+            <div style={{
+              display: 'flex',
+              flexDirection: isMobile ? 'column' : 'row',
+              justifyContent: 'space-between',
+              alignItems: isMobile ? 'flex-start' : 'center',
+              padding: '14px 20px',
+              borderTop: '1px solid #E2E8F0',
+              backgroundColor: '#FFFFFF',
+              gap: '12px'
+            }}>
+              <div style={{ fontSize: '13px', color: '#64748B' }}>
+                Showing{' '}
+                <strong>{totalRecords === 0 ? 0 : startIndex + 1}</strong> to{' '}
+                <strong>{Math.min(startIndex + effectivePageSize, totalRecords)}</strong> of{' '}
+                <strong>{totalRecords}</strong> records
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                {/* Page Size Dropdown */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#64748B' }}>
+                  <span>Rows per page:</span>
+                  <select
+                    value={pageSize}
+                    onChange={e => {
+                      setPageSize(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value));
+                      setCurrentPage(1);
+                    }}
+                    style={{
+                      padding: '4px 8px', borderRadius: '6px', border: '1px solid #CBD5E1',
+                      fontSize: '13px', backgroundColor: '#FFFFFF', outline: 'none', cursor: 'pointer'
+                    }}
+                  >
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value="ALL">All</option>
+                  </select>
+                </div>
+
+                {/* Prev / Next Pagination */}
+                {!isShowAll && totalPages > 1 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      style={{
+                        padding: '6px 10px', borderRadius: '6px', border: '1px solid #E2E8F0',
+                        backgroundColor: currentPage === 1 ? '#F8FAFC' : '#FFFFFF',
+                        color: currentPage === 1 ? '#CBD5E1' : '#334155',
+                        cursor: currentPage === 1 ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#334155', padding: '0 4px' }}>
+                      Page {currentPage} of {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      style={{
+                        padding: '6px 10px', borderRadius: '6px', border: '1px solid #E2E8F0',
+                        backgroundColor: currentPage === totalPages ? '#F8FAFC' : '#FFFFFF',
+                        color: currentPage === totalPages ? '#CBD5E1' : '#334155',
+                        cursor: currentPage === totalPages ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= TAB 2: WEEKLY SCHEDULE POLICIES ================= */}
+      {activeTab === 'policies' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div>
+              <h2 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: '#0F172A' }}>Organization Shift Policies</h2>
+              <p style={{ margin: '2px 0 0 0', color: '#64748B', fontSize: '13px' }}>Precedence: Specific User &gt; Designation &gt; Role &gt; Global Default</p>
+            </div>
+            <button
+              onClick={() => {
+                setPolicyForm({
+                  id: null,
+                  name: 'New Custom Schedule',
+                  scopeType: 'GLOBAL',
+                  roles: [],
+                  designations: [],
+                  userId: '',
+                  isEnabled: true,
+                  scheduleConfig: JSON.parse(JSON.stringify(DEFAULT_SCHEDULE))
+                });
+                setShowPolicyModal(true);
+              }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 16px',
+                backgroundColor: '#6366F1', color: '#FFFFFF', border: 'none', borderRadius: '8px',
+                fontWeight: 700, cursor: 'pointer', fontSize: '13px'
+              }}
+            >
+              <PlusCircle size={15} />
+              <span>Create Policy</span>
+            </button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
+            {policies.map(p => (
+              <div key={p.id} style={{
+                backgroundColor: '#FFFFFF', borderRadius: '12px', padding: '18px',
+                border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
+                  <div>
+                    <span style={{
+                      display: 'inline-block', fontSize: '11px', fontWeight: 800, padding: '2px 8px',
+                      borderRadius: '6px', textTransform: 'uppercase', marginBottom: '6px',
+                      backgroundColor: p.scope_type === 'GLOBAL' ? '#EEF2FF' : p.scope_type === 'USER' ? '#FEF3C7' : '#F0FDF4',
+                      color: p.scope_type === 'GLOBAL' ? '#4F46E5' : p.scope_type === 'USER' ? '#D97706' : '#166534'
+                    }}>
+                      Scope: {p.scope_type}
+                    </span>
+                    <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#0F172A' }}>{p.name}</h3>
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                      onClick={() => {
+                        setPolicyForm({
+                          id: p.id,
+                          name: p.name,
+                          scopeType: p.scope_type,
+                          roles: p.roles || [],
+                          designations: p.designations || [],
+                          userId: p.user_id || '',
+                          isEnabled: p.is_enabled !== false,
+                          scheduleConfig: p.schedule_config || JSON.parse(JSON.stringify(DEFAULT_SCHEDULE))
+                        });
+                        setShowPolicyModal(true);
+                      }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#4F46E5', padding: '4px' }}
+                    >
+                      <Edit2 size={16} />
+                    </button>
+                    {p.scope_type !== 'GLOBAL' && (
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm('Delete this policy?')) return;
+                          await deletePolicy(p.id);
+                          showToast('Policy deleted');
+                          loadData();
+                        }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: '4px' }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '12px' }}>
+                  {p.scope_type === 'ROLE' && <div><strong>Roles:</strong> {p.roles?.join(', ')}</div>}
+                  {p.scope_type === 'DESIGNATION' && <div><strong>Designations:</strong> {p.designations?.join(', ')}</div>}
+                  {p.scope_type === 'USER' && <div><strong>User:</strong> {p.user_name || p.user_email}</div>}
+                  {p.scope_type === 'GLOBAL' && <div>Default organizational schedule applied to all staff</div>}
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', background: '#F8FAFC', padding: '10px', borderRadius: '8px' }}>
+                  {DAYS_OF_WEEK.map(d => {
+                    const item = p.schedule_config?.[d.key] || { is_working: true, start_time: '09:00 AM', end_time: '06:00 PM' };
+                    return (
+                      <div key={d.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                        <span style={{ fontWeight: 600, color: item.is_working ? '#1E293B' : '#94A3B8' }}>{d.label}</span>
+                        {item.is_working ? (
+                          <span style={{ fontWeight: 700, color: '#4F46E5' }}>{item.start_time} - {item.end_time}</span>
+                        ) : (
+                          <span style={{ color: '#EF4444', fontWeight: 600 }}>Off</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ================= TAB 3: HOLIDAYS CALENDAR ================= */}
+      {activeTab === 'holidays' && (
+        <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: '#0F172A' }}>Holiday Calendar & Scheduled Days Off</h2>
+            <button
+              onClick={() => {
+                setHolidayForm({
+                  id: null,
+                  holidayName: '',
+                  holidayDate: new Date().toISOString().split('T')[0],
+                  scopeType: 'GLOBAL',
+                  roles: [],
+                  designations: [],
+                  userId: '',
+                  reason: '',
+                  isActive: true
+                });
+                setShowHolidayModal(true);
+              }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px',
+                backgroundColor: '#0284C7', color: '#FFFFFF', border: 'none', borderRadius: '8px',
+                fontWeight: 700, cursor: 'pointer', fontSize: '13px'
+              }}
+            >
+              <Calendar size={15} />
+              <span>Add Holiday</span>
+            </button>
+          </div>
+
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13.5px' }}>
+            <thead>
+              <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', color: '#475569' }}>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Holiday Name</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Date</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Scope</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Status</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700, textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {holidays.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ padding: '30px', textAlign: 'center', color: '#94A3B8' }}>
+                    No holiday records configured.
+                  </td>
+                </tr>
+              ) : (
+                holidays.map(h => (
+                  <tr key={h.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                    <td style={{ padding: '12px 16px', fontWeight: 700, color: '#0F172A' }}>{h.holiday_name}</td>
+                    <td style={{ padding: '12px 16px', color: '#334155' }}>{h.holiday_date ? h.holiday_date.split('T')[0] : ''}</td>
+                    <td style={{ padding: '12px 16px' }}>
+                      <span style={{
+                        fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '6px',
+                        backgroundColor: h.scope_type === 'GLOBAL' ? '#EEF2FF' : '#F0FDF4',
+                        color: h.scope_type === 'GLOBAL' ? '#4F46E5' : '#166534'
+                      }}>
+                        {h.scope_type}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px 16px' }}>
+                      <span style={{
+                        fontSize: '11.5px', fontWeight: 700, padding: '3px 8px', borderRadius: '12px',
+                        backgroundColor: h.is_active ? '#DCFCE7' : '#FEE2E2',
+                        color: h.is_active ? '#15803D' : '#B91C1C'
+                      }}>
+                        {h.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                      <button
+                        onClick={() => handleDeleteHolidayClick(h.id)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444' }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ================= TAB 4: EXTENSION LOGS ================= */}
+      {activeTab === 'history' && (
+        <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '20px' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 800, margin: '0 0 16px 0', color: '#0F172A' }}>Working Hour Extensions History</h2>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13.5px' }}>
+            <thead>
+              <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '1px solid #E2E8F0', color: '#475569' }}>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Date</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Applied To</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Extended Hours</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Reason</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Status</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700, textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {historyList.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ padding: '30px', textAlign: 'center', color: '#94A3B8' }}>
+                    No extensions recorded.
+                  </td>
+                </tr>
+              ) : (
+                historyList.map(h => (
+                  <tr key={h.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                    <td style={{ padding: '12px 16px', color: '#334155' }}>
+                      {h.start_date && h.end_date ? `${h.start_date.split('T')[0]} to ${h.end_date.split('T')[0]}` : (h.extension_date ? h.extension_date.split('T')[0] : 'Today')}
+                    </td>
+                    <td style={{ padding: '12px 16px', fontWeight: 700, color: '#0F172A' }}>
+                      {h.apply_to === 'ALL' ? 'All Staff' : (h.target_user_name || h.target_user_email || h.apply_to)}
+                    </td>
+                    <td style={{ padding: '12px 16px', fontWeight: 700, color: '#059669' }}>
+                      {h.extended_start_time || '09:00 AM'} - {h.extended_end_time}
+                    </td>
+                    <td style={{ padding: '12px 16px', color: '#475569' }}>{h.reason || 'N/A'}</td>
+                    <td style={{ padding: '12px 16px' }}>
+                      <span style={{
+                        fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '6px',
+                        backgroundColor: h.is_revoked ? '#F1F5F9' : '#DCFCE7',
+                        color: h.is_revoked ? '#64748B' : '#15803D'
+                      }}>
+                        {h.is_revoked ? 'Revoked' : 'Active'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                      {!h.is_revoked && (
+                        <button
+                          onClick={() => handleRevokeExtension(h.id)}
+                          style={{ padding: '4px 8px', background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontWeight: 700 }}
+                        >
+                          Revoke
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ================= MODAL: EDIT USER SHIFT, WORKING DAYS & STATUS ================= */}
+      {showEditUserModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'rgba(15, 23, 42, 0.6)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
+        }}>
+          <div style={{
+            backgroundColor: '#FFFFFF', borderRadius: '16px', width: '100%', maxWidth: '540px',
+            maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+          }}>
+            <div style={{
+              padding: '18px 24px', borderBottom: '1px solid #E2E8F0', display: 'flex',
+              justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC'
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: '#0F172A' }}>
+                  Edit Shift & Account Status
+                </h3>
+                <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+                  {editUserData.fullName} • {editUserData.displayUserId}
+                </div>
+              </div>
+              <button onClick={() => setShowEditUserModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B' }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveUserEditSubmit} style={{ padding: '24px' }}>
+              {/* Shift Starting & Ending Time */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '18px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                    Starting Time
+                  </label>
+                  <select
+                    value={editUserData.startTime}
+                    onChange={e => setEditUserData({ ...editUserData, startTime: e.target.value })}
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13.5px', backgroundColor: '#FFFFFF' }}
+                  >
+                    {TIME_OPTIONS.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                    Ending Time
+                  </label>
+                  <select
+                    value={editUserData.endTime}
+                    onChange={e => setEditUserData({ ...editUserData, endTime: e.target.value })}
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13.5px', backgroundColor: '#FFFFFF' }}
+                  >
+                    {TIME_OPTIONS.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Weekly Working Days */}
+              <div style={{ marginBottom: '18px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label style={{ fontSize: '12.5px', fontWeight: 700, color: '#334155' }}>
+                    Weekly Working Days ({editUserData.weeklyWorkingDays.length} Selected)
+                  </label>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setEditPreset('5')}
+                      style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', border: '1px solid #CBD5E1', background: '#F8FAFC', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      5 Days (Mon-Fri)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditPreset('6')}
+                      style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', border: '1px solid #CBD5E1', background: '#F8FAFC', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      6 Days (Mon-Sat)
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {DAYS_OF_WEEK.map(d => {
+                    const isSelected = editUserData.weeklyWorkingDays.includes(d.short);
+                    return (
+                      <button
+                        key={d.short}
+                        type="button"
+                        onClick={() => toggleEditDay(d.short)}
+                        style={{
+                          padding: '7px 14px', borderRadius: '8px', border: '1px solid',
+                          borderColor: isSelected ? '#6366F1' : '#CBD5E1',
+                          backgroundColor: isSelected ? '#EEF2FF' : '#FFFFFF',
+                          color: isSelected ? '#4F46E5' : '#64748B',
+                          fontWeight: 700, fontSize: '13px', cursor: 'pointer'
+                        }}
+                      >
+                        {d.short}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Account Status */}
+              <div style={{ marginBottom: '22px' }}>
+                <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '8px' }}>
+                  Account Status
+                </label>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <label style={{
+                    flex: 1, display: 'flex', alignItems: 'center', gap: '8px',
+                    padding: '10px 14px', borderRadius: '8px', border: '1px solid',
+                    borderColor: editUserData.accountStatus === 'active' ? '#16A34A' : '#CBD5E1',
+                    backgroundColor: editUserData.accountStatus === 'active' ? '#F0FDF4' : '#FFFFFF',
+                    cursor: 'pointer'
+                  }}>
+                    <input
+                      type="radio"
+                      name="accountStatus"
+                      value="active"
+                      checked={editUserData.accountStatus === 'active'}
+                      onChange={() => setEditUserData({ ...editUserData, accountStatus: 'active' })}
+                    />
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#16A34A' }}>Active</span>
+                  </label>
+
+                  <label style={{
+                    flex: 1, display: 'flex', alignItems: 'center', gap: '8px',
+                    padding: '10px 14px', borderRadius: '8px', border: '1px solid',
+                    borderColor: editUserData.accountStatus === 'inactive' ? '#DC2626' : '#CBD5E1',
+                    backgroundColor: editUserData.accountStatus === 'inactive' ? '#FEF2F2' : '#FFFFFF',
+                    cursor: 'pointer'
+                  }}>
+                    <input
+                      type="radio"
+                      name="accountStatus"
+                      value="inactive"
+                      checked={editUserData.accountStatus === 'inactive'}
+                      onChange={() => setEditUserData({ ...editUserData, accountStatus: 'inactive' })}
+                    />
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#DC2626' }}>Inactive</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowEditUserModal(false)}
+                  style={{
+                    padding: '9px 16px', borderRadius: '8px', border: '1px solid #CBD5E1',
+                    backgroundColor: '#FFFFFF', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '13.5px'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  style={{
+                    padding: '9px 20px', borderRadius: '8px', border: 'none',
+                    backgroundColor: '#6366F1', color: '#FFFFFF', fontWeight: 700, cursor: 'pointer', fontSize: '13.5px',
+                    boxShadow: '0 4px 12px rgba(99, 102, 241, 0.25)'
+                  }}
+                >
+                  {submitting ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: GLOBAL WEEK WORKING DAYS ================= */}
+      {showGlobalDaysModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'rgba(15, 23, 42, 0.6)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
+        }}>
+          <div style={{
+            backgroundColor: '#FFFFFF', borderRadius: '16px', width: '100%', maxWidth: '520px',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+          }}>
+            <div style={{
+              padding: '18px 24px', borderBottom: '1px solid #E2E8F0', display: 'flex',
+              justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC'
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: '#0F172A' }}>
+                  Global Week Working Days
+                </h3>
+                <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+                  Default schedule applied across all accounts
+                </div>
+              </div>
+              <button onClick={() => setShowGlobalDaysModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B' }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveGlobalDaysSubmit} style={{ padding: '24px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '18px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                    Default Start Time
+                  </label>
+                  <select
+                    value={globalDaysData.startTime}
+                    onChange={e => setGlobalDaysData({ ...globalDaysData, startTime: e.target.value })}
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13.5px', backgroundColor: '#FFFFFF' }}
+                  >
+                    {TIME_OPTIONS.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                    Default End Time
+                  </label>
+                  <select
+                    value={globalDaysData.endTime}
+                    onChange={e => setGlobalDaysData({ ...globalDaysData, endTime: e.target.value })}
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13.5px', backgroundColor: '#FFFFFF' }}
+                  >
+                    {TIME_OPTIONS.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '22px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label style={{ fontSize: '12.5px', fontWeight: 700, color: '#334155' }}>
+                    Working Days of Week ({globalDaysData.weeklyWorkingDays.length} Active)
+                  </label>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setGlobalPreset('5')}
+                      style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', border: '1px solid #CBD5E1', background: '#F8FAFC', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      5 Days (Mon-Fri)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGlobalPreset('6')}
+                      style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', border: '1px solid #CBD5E1', background: '#F8FAFC', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      6 Days (Mon-Sat)
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {DAYS_OF_WEEK.map(d => {
+                    const isSelected = globalDaysData.weeklyWorkingDays.includes(d.short);
+                    return (
+                      <button
+                        key={d.short}
+                        type="button"
+                        onClick={() => toggleGlobalDay(d.short)}
+                        style={{
+                          padding: '7px 14px', borderRadius: '8px', border: '1px solid',
+                          borderColor: isSelected ? '#6366F1' : '#CBD5E1',
+                          backgroundColor: isSelected ? '#EEF2FF' : '#FFFFFF',
+                          color: isSelected ? '#4F46E5' : '#64748B',
+                          fontWeight: 700, fontSize: '13px', cursor: 'pointer'
+                        }}
+                      >
+                        {d.short}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowGlobalDaysModal(false)}
+                  style={{
+                    padding: '9px 16px', borderRadius: '8px', border: '1px solid #CBD5E1',
+                    backgroundColor: '#FFFFFF', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '13.5px'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  style={{
+                    padding: '9px 20px', borderRadius: '8px', border: 'none',
+                    backgroundColor: '#6366F1', color: '#FFFFFF', fontWeight: 700, cursor: 'pointer', fontSize: '13.5px',
+                    boxShadow: '0 4px 12px rgba(99, 102, 241, 0.25)'
+                  }}
+                >
+                  {submitting ? 'Updating...' : 'Save Global Schedule'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: ADD HOLIDAY ================= */}
+      {showHolidayModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'rgba(15, 23, 42, 0.6)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
+        }}>
+          <div style={{
+            backgroundColor: '#FFFFFF', borderRadius: '16px', width: '100%', maxWidth: '500px',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+          }}>
+            <div style={{
+              padding: '18px 24px', borderBottom: '1px solid #E2E8F0', display: 'flex',
+              justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC'
+            }}>
+              <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: '#0F172A' }}>
+                Add Holiday / Scheduled Day Off
+              </h3>
+              <button onClick={() => setShowHolidayModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B' }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleHolidaySubmit} style={{ padding: '24px' }}>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>Holiday Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Diwali, Independence Day, Annual Off"
+                  value={holidayForm.holidayName}
+                  onChange={e => setHolidayForm({ ...holidayForm, holidayName: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>Holiday Date</label>
+                <input
+                  type="date"
+                  required
+                  value={holidayForm.holidayDate}
+                  onChange={e => setHolidayForm({ ...holidayForm, holidayDate: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>Apply Holiday To</label>
+                <select
+                  value={holidayForm.scopeType}
+                  onChange={e => setHolidayForm({ ...holidayForm, scopeType: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13.5px', backgroundColor: '#FFFFFF' }}
+                >
+                  <option value="GLOBAL">All Users (Global)</option>
+                  <option value="ROLE">Specific Role</option>
+                  <option value="USER">Specific User</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '22px' }}>
+                <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>Reason / Notes</label>
+                <textarea
+                  rows={2}
+                  value={holidayForm.reason}
+                  onChange={e => setHolidayForm({ ...holidayForm, reason: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowHolidayModal(false)}
+                  style={{
+                    padding: '9px 16px', borderRadius: '8px', border: '1px solid #CBD5E1',
+                    backgroundColor: '#FFFFFF', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '13.5px'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  style={{
+                    padding: '9px 20px', borderRadius: '8px', border: 'none',
+                    backgroundColor: '#0284C7', color: '#FFFFFF', fontWeight: 700, cursor: 'pointer', fontSize: '13.5px',
+                    boxShadow: '0 4px 12px rgba(2, 132, 199, 0.25)'
+                  }}
+                >
+                  {submitting ? 'Saving...' : 'Save Holiday'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: EXTEND WORKING HOURS ================= */}
+      {showExtendModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'rgba(15, 23, 42, 0.6)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
+        }}>
+          <div style={{
+            backgroundColor: '#FFFFFF', borderRadius: '16px', width: '100%', maxWidth: '520px',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+          }}>
+            <div style={{
+              padding: '18px 24px', borderBottom: '1px solid #E2E8F0', display: 'flex',
+              justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC'
+            }}>
+              <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: '#0F172A' }}>
+                Extend Shift Working Hours
+              </h3>
+              <button onClick={() => setShowExtendModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B' }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleExtendSubmit} style={{ padding: '24px' }}>
+              {/* Target User(s) / Staff Search */}
+              <div style={{ marginBottom: '18px', position: 'relative' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label style={{ fontSize: '12.5px', fontWeight: 700, color: '#334155' }}>
+                    Target User(s) / Staff
+                  </label>
+                  {(extendForm.userId || (extendForm.userIds && extendForm.userIds.length > 0)) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExtendForm({ ...extendForm, userId: '', userIds: [], applyTo: 'ALL' });
+                        setUserSearchText('');
+                        setUserDropdownOpen(false);
+                      }}
+                      style={{
+                        background: 'none', border: 'none', color: '#DC2626', fontSize: '11.5px',
+                        fontWeight: 600, cursor: 'pointer', padding: 0
+                      }}
+                    >
+                      Clear Selection (Apply to All)
+                    </button>
+                  )}
+                </div>
+
+                {/* If a user is selected, show selected card */}
+                {(() => {
+                  const selectedId = extendForm.userIds?.[0] || extendForm.userId;
+                  const selectedUser = users.find(u => String(u.id) === String(selectedId));
+
+                  if (selectedUser && !userDropdownOpen) {
+                    const rStyle = getRoleBadgeStyle(selectedUser.role);
+                    return (
+                      <div style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 14px', borderRadius: '10px', border: '1px solid #93C5FD',
+                        backgroundColor: '#EFF6FF'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                          <div style={{
+                            width: '34px', height: '34px', borderRadius: '50%',
+                            backgroundColor: '#2563EB', color: '#FFFFFF', display: 'flex',
+                            alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '12.5px', flexShrink: 0
+                          }}>
+                            {getInitials(selectedUser.user)}
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A' }}>
+                                {selectedUser.user}
+                              </span>
+                              <span style={{
+                                padding: '2px 7px', borderRadius: '4px', fontSize: '11px',
+                                fontWeight: 700, fontFamily: 'monospace', backgroundColor: '#DBEAFE', color: '#1E40AF'
+                              }}>
+                                {selectedUser.displayUserId || selectedUser.employee_id || 'ID N/A'}
+                              </span>
+                              <span style={{
+                                padding: '2px 6px', borderRadius: '4px', fontSize: '10.5px',
+                                fontWeight: 600, backgroundColor: rStyle.bg, color: rStyle.text
+                              }}>
+                                {rStyle.label}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '11.5px', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {selectedUser.email || selectedUser.designation}
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUserDropdownOpen(true);
+                            setUserSearchText('');
+                          }}
+                          style={{
+                            padding: '5px 10px', borderRadius: '6px', border: '1px solid #CBD5E1',
+                            backgroundColor: '#FFFFFF', color: '#1E40AF', fontSize: '11.5px',
+                            fontWeight: 700, cursor: 'pointer', flexShrink: 0, marginLeft: '8px'
+                          }}
+                        >
+                          Change
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  const filteredStaff = users.filter(u => {
+                    if (!userSearchText.trim()) return true;
+                    const q = userSearchText.toLowerCase();
+                    return (
+                      (u.user && u.user.toLowerCase().includes(q)) ||
+                      (u.displayUserId && u.displayUserId.toLowerCase().includes(q)) ||
+                      (u.employee_id && u.employee_id.toLowerCase().includes(q)) ||
+                      (u.email && u.email.toLowerCase().includes(q)) ||
+                      (u.role && u.role.toLowerCase().includes(q)) ||
+                      (u.designation && u.designation.toLowerCase().includes(q))
+                    );
+                  });
+
+                  return (
+                    <div style={{ position: 'relative' }}>
+                      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                        <Search size={16} style={{ position: 'absolute', left: '12px', color: '#94A3B8' }} />
+                        <input
+                          type="text"
+                          value={userSearchText}
+                          onChange={e => {
+                            setUserSearchText(e.target.value);
+                            setUserDropdownOpen(true);
+                          }}
+                          onFocus={() => setUserDropdownOpen(true)}
+                          placeholder="Search staff by name, ID (e.g. PM-ADMIN-0806), email..."
+                          style={{
+                            width: '100%', padding: '9px 12px 9px 36px', borderRadius: '8px',
+                            border: '1px solid #CBD5E1', fontSize: '13px', boxSizing: 'border-box',
+                            backgroundColor: '#FFFFFF', outline: 'none'
+                          }}
+                        />
+                        {userSearchText && (
+                          <button
+                            type="button"
+                            onClick={() => setUserSearchText('')}
+                            style={{ position: 'absolute', right: '10px', background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: 0 }}
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+
+                      {userDropdownOpen && (
+                        <div style={{
+                          position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px',
+                          backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '10px',
+                          boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+                          maxHeight: '220px', overflowY: 'auto', zIndex: 100
+                        }}>
+                          {/* All Staff Option */}
+                          <div
+                            onClick={() => {
+                              setExtendForm({ ...extendForm, userId: '', userIds: [], applyTo: 'ALL' });
+                              setUserDropdownOpen(false);
+                              setUserSearchText('');
+                            }}
+                            style={{
+                              padding: '10px 14px', borderBottom: '1px solid #F1F5F9', cursor: 'pointer',
+                              backgroundColor: (!extendForm.userId && (!extendForm.userIds || extendForm.userIds.length === 0)) ? '#F0FDF4' : '#FFFFFF',
+                              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                              transition: 'background-color 0.15s ease'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#F8FAFC'}
+                            onMouseLeave={e => e.currentTarget.style.backgroundColor = (!extendForm.userId && (!extendForm.userIds || extendForm.userIds.length === 0)) ? '#F0FDF4' : '#FFFFFF'}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontSize: '15px' }}>🌐</span>
+                              <div>
+                                <div style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A' }}>
+                                  All Staff Users (Global Extension)
+                                </div>
+                                <div style={{ fontSize: '11px', color: '#64748B' }}>
+                                  Apply extension globally to all staff accounts
+                                </div>
+                              </div>
+                            </div>
+                            {(!extendForm.userId && (!extendForm.userIds || extendForm.userIds.length === 0)) && (
+                              <Check size={16} color="#16A34A" />
+                            )}
+                          </div>
+
+                          {/* Filtered Staff List */}
+                          {filteredStaff.length === 0 ? (
+                            <div style={{ padding: '14px', textAlign: 'center', color: '#94A3B8', fontSize: '12.5px' }}>
+                              No staff found matching "{userSearchText}"
+                            </div>
+                          ) : (
+                            filteredStaff.map(u => {
+                              const isSelected = String(extendForm.userId) === String(u.id) || (extendForm.userIds && extendForm.userIds.includes(u.id));
+                              const rStyle = getRoleBadgeStyle(u.role);
+                              return (
+                                <div
+                                  key={u.id}
+                                  onClick={() => {
+                                    setExtendForm({ ...extendForm, userId: u.id, userIds: [u.id], applyTo: 'SPECIFIC' });
+                                    setUserDropdownOpen(false);
+                                    setUserSearchText('');
+                                  }}
+                                  style={{
+                                    padding: '9px 14px', borderBottom: '1px solid #F8FAFC', cursor: 'pointer',
+                                    backgroundColor: isSelected ? '#EFF6FF' : '#FFFFFF',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                    transition: 'background-color 0.15s ease'
+                                  }}
+                                  onMouseEnter={e => e.currentTarget.style.backgroundColor = isSelected ? '#EFF6FF' : '#F8FAFC'}
+                                  onMouseLeave={e => e.currentTarget.style.backgroundColor = isSelected ? '#EFF6FF' : '#FFFFFF'}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                                    <div style={{
+                                      width: '28px', height: '28px', borderRadius: '50%',
+                                      backgroundColor: '#F1F5F9', color: '#475569', display: 'flex',
+                                      alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '11px', flexShrink: 0
+                                    }}>
+                                      {getInitials(u.user)}
+                                    </div>
+                                    <div style={{ minWidth: 0 }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A' }}>
+                                          {u.user}
+                                        </span>
+                                        <span style={{
+                                          padding: '1px 6px', borderRadius: '4px', fontSize: '10.5px',
+                                          fontWeight: 700, fontFamily: 'monospace', backgroundColor: '#DBEAFE', color: '#1E40AF'
+                                        }}>
+                                          {u.displayUserId || u.employee_id || 'ID N/A'}
+                                        </span>
+                                        <span style={{
+                                          padding: '1px 5px', borderRadius: '4px', fontSize: '10px',
+                                          fontWeight: 600, backgroundColor: rStyle.bg, color: rStyle.text
+                                        }}>
+                                          {rStyle.label}
+                                        </span>
+                                      </div>
+                                      <div style={{ fontSize: '11px', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {u.email || u.designation}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {isSelected && <Check size={16} color="#2563EB" />}
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Quick Shift Time Presets */}
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>
+                  Quick Shift Presets
+                </label>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExtendForm(prev => ({
+                        ...prev,
+                        extendedStartTime: '12:00 AM',
+                        extendedEndTime: '11:59 PM',
+                        reason: prev.reason || '24-hour full day shift access'
+                      }));
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '5px',
+                      padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 700,
+                      backgroundColor: (extendForm.extendedStartTime === '12:00 AM' && extendForm.extendedEndTime === '11:59 PM') ? '#059669' : '#ECFDF5',
+                      color: (extendForm.extendedStartTime === '12:00 AM' && extendForm.extendedEndTime === '11:59 PM') ? '#FFFFFF' : '#059669',
+                      border: '1px solid #A7F3D0', cursor: 'pointer', transition: 'all 0.15s ease'
+                    }}
+                  >
+                    <Zap size={13} />
+                    <span>⚡ Full Day (12:00 AM – 11:59 PM)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExtendForm(prev => ({
+                        ...prev,
+                        extendedStartTime: '08:30 AM',
+                        extendedEndTime: '07:00 PM'
+                      }));
+                    }}
+                    style={{
+                      padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+                      backgroundColor: (extendForm.extendedStartTime === '08:30 AM' && extendForm.extendedEndTime === '07:00 PM') ? '#0284C7' : '#F0F9FF',
+                      color: (extendForm.extendedStartTime === '08:30 AM' && extendForm.extendedEndTime === '07:00 PM') ? '#FFFFFF' : '#0369A1',
+                      border: '1px solid #BAE6FD', cursor: 'pointer', transition: 'all 0.15s ease'
+                    }}
+                  >
+                    Standard (08:30 AM – 07:00 PM)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExtendForm(prev => ({
+                        ...prev,
+                        extendedStartTime: '09:00 AM',
+                        extendedEndTime: '11:59 PM'
+                      }));
+                    }}
+                    style={{
+                      padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+                      backgroundColor: (extendForm.extendedStartTime === '09:00 AM' && extendForm.extendedEndTime === '11:59 PM') ? '#7C3AED' : '#F5F3FF',
+                      color: (extendForm.extendedStartTime === '09:00 AM' && extendForm.extendedEndTime === '11:59 PM') ? '#FFFFFF' : '#6D28D9',
+                      border: '1px solid #DDD6FE', cursor: 'pointer', transition: 'all 0.15s ease'
+                    }}
+                  >
+                    Night (Until 11:59 PM)
+                  </button>
+                </div>
+              </div>
+
+              {/* Extended Start & End Time Dropdowns */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                    Extended Start Time
+                  </label>
+                  <select
+                    value={extendForm.extendedStartTime}
+                    onChange={e => setExtendForm({ ...extendForm, extendedStartTime: e.target.value })}
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13.5px', backgroundColor: '#FFFFFF' }}
+                  >
+                    {TIME_OPTIONS.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                    Extended End Time
+                  </label>
+                  <select
+                    value={extendForm.extendedEndTime}
+                    onChange={e => setExtendForm({ ...extendForm, extendedEndTime: e.target.value })}
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13.5px', backgroundColor: '#FFFFFF' }}
+                  >
+                    {TIME_OPTIONS.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Schedule Duration Scope (Single Day vs All Time vs Date Range) */}
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                  Schedule Scope / Duration
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setExtendForm({ ...extendForm, dateMode: 'SINGLE' })}
+                    style={{
+                      padding: '8px 10px', borderRadius: '8px', fontSize: '12px', fontWeight: 700,
+                      backgroundColor: extendForm.dateMode === 'SINGLE' ? '#2563EB' : '#F8FAFC',
+                      color: extendForm.dateMode === 'SINGLE' ? '#FFFFFF' : '#475569',
+                      border: extendForm.dateMode === 'SINGLE' ? '1px solid #2563EB' : '1px solid #E2E8F0',
+                      cursor: 'pointer', textAlign: 'center', transition: 'all 0.15s ease'
+                    }}
+                  >
+                    📅 Single Day
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setExtendForm({ ...extendForm, dateMode: 'ALL_TIME' })}
+                    style={{
+                      padding: '8px 10px', borderRadius: '8px', fontSize: '12px', fontWeight: 700,
+                      backgroundColor: extendForm.dateMode === 'ALL_TIME' ? '#059669' : '#F8FAFC',
+                      color: extendForm.dateMode === 'ALL_TIME' ? '#FFFFFF' : '#475569',
+                      border: extendForm.dateMode === 'ALL_TIME' ? '1px solid #059669' : '1px solid #E2E8F0',
+                      cursor: 'pointer', textAlign: 'center', transition: 'all 0.15s ease'
+                    }}
+                  >
+                    ♾️ All Time (24/7)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setExtendForm({ ...extendForm, dateMode: 'RANGE' })}
+                    style={{
+                      padding: '8px 10px', borderRadius: '8px', fontSize: '12px', fontWeight: 700,
+                      backgroundColor: extendForm.dateMode === 'RANGE' ? '#0284C7' : '#F8FAFC',
+                      color: extendForm.dateMode === 'RANGE' ? '#FFFFFF' : '#475569',
+                      border: extendForm.dateMode === 'RANGE' ? '1px solid #0284C7' : '1px solid #E2E8F0',
+                      cursor: 'pointer', textAlign: 'center', transition: 'all 0.15s ease'
+                    }}
+                  >
+                    📆 Date Range
+                  </button>
+                </div>
+
+                {/* Single Day Mode */}
+                {extendForm.dateMode === 'SINGLE' && (
+                  <div>
+                    <input
+                      type="date"
+                      required
+                      value={extendForm.extensionDate}
+                      onChange={e => setExtendForm({ ...extendForm, extensionDate: e.target.value })}
+                      style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                    />
+                    <div style={{ fontSize: '11px', color: '#64748B', marginTop: '4px' }}>
+                      Extension will apply only on this specific date.
+                    </div>
+                  </div>
+                )}
+
+                {/* All Time / Permanent Mode */}
+                {extendForm.dateMode === 'ALL_TIME' && (
+                  <div style={{
+                    padding: '10px 14px', borderRadius: '8px', backgroundColor: '#ECFDF5',
+                    border: '1px solid #A7F3D0', display: 'flex', alignItems: 'center', gap: '8px'
+                  }}>
+                    <CheckCircle2 size={16} color="#059669" style={{ flexShrink: 0 }} />
+                    <div style={{ fontSize: '12px', color: '#065F46', lineHeight: 1.4 }}>
+                      <strong>Permanent 24/7 Access:</strong> Continuous access is granted indefinitely across all days with no daily shift cutoff.
+                    </div>
+                  </div>
+                )}
+
+                {/* Range Mode */}
+                {extendForm.dateMode === 'RANGE' && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', color: '#64748B', marginBottom: '3px' }}>Start Date</label>
+                      <input
+                        type="date"
+                        required
+                        value={extendForm.startDate}
+                        onChange={e => setExtendForm({ ...extendForm, startDate: e.target.value })}
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px', boxSizing: 'border-box' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', color: '#64748B', marginBottom: '3px' }}>End Date</label>
+                      <input
+                        type="date"
+                        required
+                        value={extendForm.endDate}
+                        onChange={e => setExtendForm({ ...extendForm, endDate: e.target.value })}
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px', boxSizing: 'border-box' }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Reason Input */}
+              <div style={{ marginBottom: '22px' }}>
+                <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                  Reason (Required)
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Month-end audits, high volume loan processing"
+                  value={extendForm.reason}
+                  onChange={e => setExtendForm({ ...extendForm, reason: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowExtendModal(false)}
+                  style={{
+                    padding: '9px 16px', borderRadius: '8px', border: '1px solid #CBD5E1',
+                    backgroundColor: '#FFFFFF', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '13.5px'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  style={{
+                    padding: '9px 20px', borderRadius: '8px', border: 'none',
+                    backgroundColor: '#10B981', color: '#FFFFFF', fontWeight: 700, cursor: 'pointer', fontSize: '13.5px',
+                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)'
+                  }}
+                >
+                  {submitting ? 'Applying...' : 'Grant Extension'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: STATUS CHANGE CONFIRMATION ================= */}
+      {showStatusConfirmModal && statusConfirmData.user && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'rgba(15, 23, 42, 0.6)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
+        }}>
+          <div style={{
+            backgroundColor: '#FFFFFF', borderRadius: '16px', width: '100%', maxWidth: '440px',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', padding: '24px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+              <div style={{
+                width: '40px', height: '40px', borderRadius: '50%',
+                backgroundColor: statusConfirmData.targetStatus === 'active' ? '#DCFCE7' : '#FEE2E2',
+                color: statusConfirmData.targetStatus === 'active' ? '#16A34A' : '#DC2626',
+                display: 'flex', alignItems: 'center', justifyContent: 'center'
+              }}>
+                <Power size={20} />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#0F172A' }}>
+                  {statusConfirmData.targetStatus === 'active' ? 'Activate Account?' : 'Deactivate Account?'}
+                </h3>
+                <div style={{ fontSize: '12px', color: '#64748B' }}>
+                  {statusConfirmData.user.user} ({statusConfirmData.user.displayUserId})
+                </div>
+              </div>
+            </div>
+
+            <p style={{ fontSize: '13px', color: '#475569', lineHeight: 1.5, marginBottom: '16px' }}>
+              {statusConfirmData.targetStatus === 'active'
+                ? `Are you sure you want to activate access for ${statusConfirmData.user.user}? The account will immediately regain system access within configured working hours.`
+                : `Are you sure you want to deactivate ${statusConfirmData.user.user}? The account will immediately be blocked from logging into the system.`
+              }
+            </p>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                Reason (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Leave of absence, role change, reactivation requested"
+                value={statusConfirmData.reason}
+                onChange={e => setStatusConfirmData({ ...statusConfirmData, reason: e.target.value })}
+                style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={() => setShowStatusConfirmModal(false)}
+                style={{
+                  padding: '9px 16px', borderRadius: '8px', border: '1px solid #CBD5E1',
+                  backgroundColor: '#FFFFFF', color: '#475569', fontWeight: 600, cursor: 'pointer', fontSize: '13px'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmStatusToggle}
+                disabled={submitting}
+                style={{
+                  padding: '9px 18px', borderRadius: '8px', border: 'none',
+                  backgroundColor: statusConfirmData.targetStatus === 'active' ? '#16A34A' : '#DC2626',
+                  color: '#FFFFFF', fontWeight: 700, cursor: 'pointer', fontSize: '13px',
+                  boxShadow: statusConfirmData.targetStatus === 'active' ? '0 4px 12px rgba(22, 163, 74, 0.25)' : '0 4px 12px rgba(220, 38, 38, 0.25)'
+                }}
+              >
+                {submitting ? 'Updating...' : (statusConfirmData.targetStatus === 'active' ? 'Confirm Activate' : 'Confirm Deactivate')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: DELETE USER ACCOUNT (TEMPORARY & PERMANENT) ================= */}
+      {showDeleteConfirmModal && deleteConfirmData.user && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 10000,
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '16px', backdropFilter: 'blur(4px)'
+        }}>
+          <div style={{
+            backgroundColor: '#FFFFFF', borderRadius: '16px',
+            maxWidth: '520px', width: '100%',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+            overflow: 'hidden', border: '1px solid #E2E8F0'
+          }}>
+            {/* Header */}
+            <div style={{
+              padding: '20px 24px',
+              borderBottom: '1px solid #F1F5F9',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              backgroundColor: deleteConfirmData.mode === 'permanent' ? '#FEF2F2' : '#FFFBEB'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                  width: '40px', height: '40px', borderRadius: '10px',
+                  backgroundColor: deleteConfirmData.mode === 'permanent' ? '#FEE2E2' : '#FEF3C7',
+                  color: deleteConfirmData.mode === 'permanent' ? '#DC2626' : '#D97706',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                }}>
+                  <Trash2 size={20} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: '#0F172A' }}>
+                    {deleteConfirmData.mode === 'permanent' ? 'Permanently Delete User Account' : 'Temporary Delete (Deactivate)'}
+                  </h3>
+                  <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+                    {deleteConfirmData.user.user || deleteConfirmData.user.full_name} ({deleteConfirmData.user.role})
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => { setShowDeleteConfirmModal(false); setDeleteConfirmData({ user: null, mode: 'temporary', confirmationText: '' }); }}
+                style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: '24px' }}>
+              {/* Mode Selector Tabs */}
+              <div style={{
+                display: 'flex', gap: '8px', padding: '4px',
+                backgroundColor: '#F1F5F9', borderRadius: '10px', marginBottom: '20px'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmData(prev => ({ ...prev, mode: 'temporary' }))}
+                  style={{
+                    flex: 1, padding: '9px 12px', borderRadius: '8px', border: 'none',
+                    fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+                    backgroundColor: deleteConfirmData.mode === 'temporary' ? '#FFFFFF' : 'transparent',
+                    color: deleteConfirmData.mode === 'temporary' ? '#D97706' : '#64748B',
+                    boxShadow: deleteConfirmData.mode === 'temporary' ? '0 2px 6px rgba(0,0,0,0.06)' : 'none'
+                  }}
+                >
+                  🟡 Temporary Delete
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmData(prev => ({ ...prev, mode: 'permanent' }))}
+                  style={{
+                    flex: 1, padding: '9px 12px', borderRadius: '8px', border: 'none',
+                    fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+                    backgroundColor: deleteConfirmData.mode === 'permanent' ? '#FFFFFF' : 'transparent',
+                    color: deleteConfirmData.mode === 'permanent' ? '#DC2626' : '#64748B',
+                    boxShadow: deleteConfirmData.mode === 'permanent' ? '0 2px 6px rgba(0,0,0,0.06)' : 'none'
+                  }}
+                >
+                  🔴 Permanent Delete
+                </button>
+              </div>
+
+              {/* User Card */}
+              <div style={{
+                padding: '12px 16px', backgroundColor: '#F8FAFC', borderRadius: '10px',
+                border: '1px solid #E2E8F0', marginBottom: '16px', fontSize: '13px', lineHeight: 1.6
+              }}>
+                <div><strong>Name:</strong> {deleteConfirmData.user.user || deleteConfirmData.user.full_name}</div>
+                <div><strong>Email / ID:</strong> {deleteConfirmData.user.displayUserId || deleteConfirmData.user.email}</div>
+                <div><strong>Role / Dept:</strong> {deleteConfirmData.user.role} {deleteConfirmData.user.department ? `(${deleteConfirmData.user.department})` : ''}</div>
+              </div>
+
+              {deleteConfirmData.mode === 'temporary' ? (
+                <div style={{
+                  padding: '12px 16px', backgroundColor: '#FFFBEB', borderRadius: '10px',
+                  border: '1px solid #FDE68A', color: '#92400E', fontSize: '13px', lineHeight: 1.5, marginBottom: '20px'
+                }}>
+                  <strong>Temporary Deletion (Soft Delete):</strong>
+                  <p style={{ margin: '6px 0 0' }}>
+                    The account will be suspended and immediately blocked from logging in. All past applications, leads, KYC documents, and earnings remain safely preserved in the database. You can reactivate this account at any time.
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <div style={{
+                    padding: '12px 16px', backgroundColor: '#FEF2F2', borderRadius: '10px',
+                    border: '1px solid #FECACA', color: '#991B1B', fontSize: '13px', lineHeight: 1.5, marginBottom: '16px'
+                  }}>
+                    <strong>CAUTION: Permanent Deletion (Hard Delete / Purge):</strong>
+                    <p style={{ margin: '6px 0 0' }}>
+                      This user, their login credentials, biometric/profile templates, team associations, and non-immutable records will be completely and permanently removed from the database. <strong>THIS CANNOT BE UNDONE.</strong>
+                    </p>
+                  </div>
+
+                  <div style={{ marginBottom: '20px' }}>
+                    <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                      Type <span style={{ color: '#DC2626', fontWeight: 900 }}>DELETE</span> to confirm permanent deletion:
+                    </label>
+                    <input
+                      type="text"
+                      value={deleteConfirmData.confirmationText}
+                      onChange={e => setDeleteConfirmData(prev => ({ ...prev, confirmationText: e.target.value }))}
+                      placeholder="DELETE"
+                      style={{
+                        width: '100%', padding: '10px 14px', borderRadius: '8px',
+                        border: '1.5px solid #CBD5E1', fontSize: '14px', fontWeight: 700,
+                        outline: 'none', boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => { setShowDeleteConfirmModal(false); setDeleteConfirmData({ user: null, mode: 'temporary', confirmationText: '' }); }}
+                  disabled={submitting}
+                  style={{
+                    padding: '10px 18px', borderRadius: '8px', border: '1px solid #CBD5E1',
+                    backgroundColor: '#FFFFFF', color: '#475569', fontSize: '13px',
+                    fontWeight: 700, cursor: submitting ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteDelete}
+                  disabled={submitting || (deleteConfirmData.mode === 'permanent' && deleteConfirmData.confirmationText.trim().toUpperCase() !== 'DELETE')}
+                  style={{
+                    padding: '10px 20px', borderRadius: '8px', border: 'none',
+                    backgroundColor: deleteConfirmData.mode === 'permanent' ? '#DC2626' : '#D97706',
+                    color: '#FFFFFF', fontSize: '13px', fontWeight: 800,
+                    cursor: (submitting || (deleteConfirmData.mode === 'permanent' && deleteConfirmData.confirmationText.trim().toUpperCase() !== 'DELETE')) ? 'not-allowed' : 'pointer',
+                    opacity: (deleteConfirmData.mode === 'permanent' && deleteConfirmData.confirmationText.trim().toUpperCase() !== 'DELETE') ? 0.6 : 1,
+                    boxShadow: deleteConfirmData.mode === 'permanent' ? '0 4px 12px rgba(220, 38, 38, 0.3)' : '0 4px 12px rgba(217, 119, 6, 0.3)'
+                  }}
+                >
+                  {submitting ? 'Processing...' : (deleteConfirmData.mode === 'permanent' ? 'Permanently Delete' : 'Confirm Temporary Delete')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: MANAGE ALL USERS (ACTIVE / INACTIVE STATUS) ================= */}
+      {showManageUsersModal && (() => {
+        const totalStaff = users.length;
+        const activeStaff = users.filter(u => u.accountStatus === 'active' || u.status === 'Active').length;
+        const inactiveStaff = users.filter(u => u.accountStatus === 'inactive' || u.status === 'Inactive').length;
+        const totalEmployees = users.filter(u => String(u.role).toUpperCase() === 'EMPLOYEE').length;
+        const totalAdmins = users.filter(u => String(u.role).toUpperCase() === 'ADMIN').length;
+
+        // Current target label and count based on selected scope
+        let targetLabel = 'All Employees & Admins';
+        let targetCount = totalEmployees + totalAdmins;
+        if (manageUsersBulkScope === 'EMPLOYEES') {
+          targetLabel = 'All Employees';
+          targetCount = totalEmployees;
+        } else if (manageUsersBulkScope === 'ADMINS') {
+          targetLabel = 'All Admins';
+          targetCount = totalAdmins;
+        }
+
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
+          }}>
+            <div style={{
+              backgroundColor: '#FFFFFF', borderRadius: '20px', width: '100%', maxWidth: '620px',
+              maxHeight: '92vh', display: 'flex', flexDirection: 'column',
+              boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.3)', overflow: 'hidden'
+            }}>
+              {/* Modal Header */}
+              <div style={{
+                padding: '20px 24px', borderBottom: '1px solid #E2E8F0', display: 'flex',
+                justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{
+                    width: '42px', height: '42px', borderRadius: '12px',
+                    backgroundColor: '#EDE9FE', color: '#7C3AED',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }}>
+                    <Users size={22} />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#0F172A' }}>
+                      Manage All Users (Account Status)
+                    </h3>
+                    <div style={{ fontSize: '12.5px', color: '#64748B', marginTop: '2px' }}>
+                      Make employee and admin accounts inactive or active
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowManageUsersModal(false)}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer', color: '#64748B',
+                    padding: '6px', borderRadius: '8px', display: 'flex', alignItems: 'center'
+                  }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Scrollable Body */}
+              <div style={{ padding: '22px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                {/* Metric Summary Cards */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)',
+                  gap: '10px'
+                }}>
+                  <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '12px' }}>
+                    <div style={{ fontSize: '11px', color: '#64748B', fontWeight: 700, textTransform: 'uppercase' }}>Total Staff</div>
+                    <div style={{ fontSize: '20px', fontWeight: 900, color: '#4F46E5', marginTop: '2px' }}>{totalStaff}</div>
+                    <div style={{ fontSize: '11px', color: '#94A3B8' }}>All staff records</div>
+                  </div>
+                  <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '10px', padding: '12px' }}>
+                    <div style={{ fontSize: '11px', color: '#15803D', fontWeight: 700, textTransform: 'uppercase' }}>Active Accounts</div>
+                    <div style={{ fontSize: '20px', fontWeight: 900, color: '#16A34A', marginTop: '2px' }}>{activeStaff}</div>
+                    <div style={{ fontSize: '11px', color: '#16A34A' }}>Authorized & working</div>
+                  </div>
+                  <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '10px', padding: '12px' }}>
+                    <div style={{ fontSize: '11px', color: '#B91C1C', fontWeight: 700, textTransform: 'uppercase' }}>Inactive Accounts</div>
+                    <div style={{ fontSize: '20px', fontWeight: 900, color: '#DC2626', marginTop: '2px' }}>{inactiveStaff}</div>
+                    <div style={{ fontSize: '11px', color: '#DC2626' }}>Deactivated access</div>
+                  </div>
+                  <div style={{ background: '#FAF5FF', border: '1px solid #E9D5FF', borderRadius: '10px', padding: '12px' }}>
+                    <div style={{ fontSize: '11px', color: '#7E22CE', fontWeight: 700, textTransform: 'uppercase' }}>Staff Roles</div>
+                    <div style={{ fontSize: '20px', fontWeight: 900, color: '#7C3AED', marginTop: '2px' }}>{totalEmployees + totalAdmins}</div>
+                    <div style={{ fontSize: '11px', color: '#7C3AED' }}>{totalEmployees} Emp · {totalAdmins} Admin</div>
+                  </div>
+                </div>
+
+                {/* Bulk Status Control Card */}
+                <div style={{
+                  background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: '14px',
+                  padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '14px'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Power size={17} style={{ color: '#7C3AED' }} />
+                      <span style={{ fontSize: '14px', fontWeight: 800, color: '#1E293B' }}>
+                        Bulk Status Action
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#64748B' }}>
+                      Target: <strong>{targetCount}</strong> account{targetCount === 1 ? '' : 's'}
+                    </div>
+                  </div>
+
+                  {/* Target Scope Selection */}
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {[
+                      { key: 'ALL', label: 'All Employees & Admins', count: totalEmployees + totalAdmins },
+                      { key: 'EMPLOYEES', label: 'All Employees', count: totalEmployees },
+                      { key: 'ADMINS', label: 'All Admins', count: totalAdmins }
+                    ].map(scopeItem => (
+                      <button
+                        key={scopeItem.key}
+                        type="button"
+                        onClick={() => setManageUsersBulkScope(scopeItem.key)}
+                        style={{
+                          padding: '7px 14px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 700,
+                          border: manageUsersBulkScope === scopeItem.key ? '1.5px solid #7C3AED' : '1px solid #CBD5E1',
+                          backgroundColor: manageUsersBulkScope === scopeItem.key ? '#EDE9FE' : '#FFFFFF',
+                          color: manageUsersBulkScope === scopeItem.key ? '#6D28D9' : '#475569',
+                          cursor: 'pointer', transition: 'all 0.15s'
+                        }}
+                      >
+                        {scopeItem.label} ({scopeItem.count})
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Optional Reason Input */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#334155', marginBottom: '5px' }}>
+                      Reason / Note (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Weekend shutdown, Staff reactivation, System maintenance..."
+                      value={manageUsersReason}
+                      onChange={e => setManageUsersReason(e.target.value)}
+                      style={{
+                        width: '100%', padding: '9px 12px', borderRadius: '8px',
+                        border: '1px solid #CBD5E1', fontSize: '12.5px', boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  {/* Bulk Action Buttons or Confirmation Alert */}
+                  {manageUsersConfirmAction ? (
+                    <div style={{
+                      padding: '14px', borderRadius: '10px',
+                      backgroundColor: manageUsersConfirmAction.action === 'ACTIVATE' ? '#F0FDF4' : '#FEF2F2',
+                      border: `1.5px solid ${manageUsersConfirmAction.action === 'ACTIVATE' ? '#86EFAC' : '#FCA5A5'}`,
+                      display: 'flex', flexDirection: 'column', gap: '10px'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <AlertCircle size={18} style={{ color: manageUsersConfirmAction.action === 'ACTIVATE' ? '#16A34A' : '#DC2626' }} />
+                        <span style={{ fontSize: '13px', fontWeight: 800, color: manageUsersConfirmAction.action === 'ACTIVATE' ? '#15803D' : '#991B1B' }}>
+                          Are you sure you want to {manageUsersConfirmAction.action === 'ACTIVATE' ? 'ACTIVATE' : 'DEACTIVATE'} {targetLabel}?
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#475569' }}>
+                        {manageUsersConfirmAction.action === 'ACTIVATE'
+                          ? `This will immediately mark ${targetCount} account(s) as ACTIVE and permit system access during operating hours.`
+                          : `This will immediately mark ${targetCount} account(s) as INACTIVE and revoke active sessions (Super Admin accounts are safely protected).`
+                        }
+                      </div>
+                      <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                        <button
+                          type="button"
+                          onClick={() => setManageUsersConfirmAction(null)}
+                          disabled={submitting}
+                          style={{
+                            padding: '6px 14px', borderRadius: '8px', border: '1px solid #CBD5E1',
+                            backgroundColor: '#FFFFFF', color: '#475569', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer'
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleExecuteBulkStatusUpdate(
+                            manageUsersConfirmAction.action,
+                            manageUsersBulkScope
+                          )}
+                          disabled={submitting}
+                          style={{
+                            padding: '6px 16px', borderRadius: '8px', border: 'none',
+                            backgroundColor: manageUsersConfirmAction.action === 'ACTIVATE' ? '#16A34A' : '#DC2626',
+                            color: '#FFFFFF', fontSize: '12.5px', fontWeight: 700, cursor: 'pointer',
+                            boxShadow: manageUsersConfirmAction.action === 'ACTIVATE' ? '0 4px 12px rgba(22, 163, 74, 0.25)' : '0 4px 12px rgba(220, 38, 38, 0.25)'
+                          }}
+                        >
+                          {submitting ? 'Applying...' : `Yes, ${manageUsersConfirmAction.action === 'ACTIVATE' ? 'Activate All' : 'Deactivate All'}`}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={() => setManageUsersConfirmAction({ action: 'ACTIVATE', scope: manageUsersBulkScope })}
+                        disabled={submitting || targetCount === 0}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '7px',
+                          padding: '10px 18px', borderRadius: '8px', border: 'none',
+                          backgroundColor: '#16A34A', color: '#FFFFFF',
+                          fontWeight: 700, fontSize: '13px', cursor: targetCount === 0 ? 'not-allowed' : 'pointer',
+                          opacity: targetCount === 0 ? 0.6 : 1,
+                          boxShadow: '0 4px 12px rgba(22, 163, 74, 0.25)', flex: '1 1 180px', justifyContent: 'center'
+                        }}
+                      >
+                        <CheckCircle2 size={16} />
+                        <span>Make {targetLabel} Active</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setManageUsersConfirmAction({ action: 'DEACTIVATE', scope: manageUsersBulkScope })}
+                        disabled={submitting || targetCount === 0}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '7px',
+                          padding: '10px 18px', borderRadius: '8px', border: 'none',
+                          backgroundColor: '#DC2626', color: '#FFFFFF',
+                          fontWeight: 700, fontSize: '13px', cursor: targetCount === 0 ? 'not-allowed' : 'pointer',
+                          opacity: targetCount === 0 ? 0.6 : 1,
+                          boxShadow: '0 4px 12px rgba(220, 38, 38, 0.25)', flex: '1 1 180px', justifyContent: 'center'
+                        }}
+                      >
+                        <Power size={16} />
+                        <span>Make {targetLabel} Inactive</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div style={{
+                padding: '16px 24px', borderTop: '1px solid #E2E8F0', display: 'flex',
+                justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC'
+              }}>
+                <div style={{ fontSize: '12px', color: '#64748B' }}>
+                  Manage active and inactive access for employees and admins
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowManageUsersModal(false)}
+                  style={{
+                    padding: '8px 20px', borderRadius: '8px', border: '1px solid #CBD5E1',
+                    backgroundColor: '#FFFFFF', color: '#334155', fontWeight: 700, fontSize: '13px', cursor: 'pointer'
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}

@@ -1,0 +1,110 @@
+const logger = require('../../config/logger');
+const { serverError, error } = require('../../utils/response/response');
+
+// 404 handler
+const notFoundHandler = (req, res) => {
+  return error(res, `Route ${req.method} ${req.originalUrl} not found`, 404);
+};
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return false;
+  const normalizedOrigin = String(origin).trim().toLowerCase();
+  try {
+    const hostname = new URL(normalizedOrigin).hostname;
+    return (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === 'gharkapaisa.in' ||
+      hostname.endsWith('.gharkapaisa.in')
+    );
+  } catch (e) {
+    return false;
+  }
+};
+
+// Global error handler
+// eslint-disable-next-line no-unused-vars
+const errorHandler = (err, req, res, next) => {
+  if (req.headers && req.headers.origin && isAllowedOrigin(req.headers.origin)) {
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  // Gracefully handle malformed URL encoding from bot/scanner probes
+  if (err instanceof URIError || err.name === 'URIError' || err.message?.includes('Failed to decode param')) {
+    logger.warn(`Malformed URI probe blocked: ${err.message}`, {
+      path: req.originalUrl || req.url,
+      method: req.method,
+      ip: req.ip
+    });
+    return error(res, 'Invalid URL encoding in request', 400);
+  }
+
+  // Gracefully handle aborted requests (e.g., user navigated away or cancelled payload upload)
+  if (err.type === 'request.aborted' || err.code === 'ECONNABORTED' || err.message === 'request aborted') {
+    logger.warn(`Request aborted by client: ${req.method} ${req.originalUrl || req.url}`, { ip: req.ip });
+    return error(res, 'Request aborted by client', 400);
+  }
+
+  logger.error(`${err.name}: ${err.message}`, {
+    ...(process.env.NODE_ENV !== 'production' && { stack: err.stack }),
+    path: req.path,
+    method: req.method,
+    ip: req.ip,
+    code: err?.code,
+    detail: err?.detail,
+    hint: err?.hint,
+    constraint: err?.constraint,
+    table: err?.table,
+    column: err?.column
+  });
+
+  // Multer errors
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return error(res, 'File size exceeds 5MB limit', 413);
+  }
+  if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+    return error(res, 'Unexpected file field', 400);
+  }
+
+  // PostgreSQL errors
+  if (err.code === '23505') {  // unique violation
+    const uniqueFieldMap = {
+      'users_email_key': 'Email already registered',
+      'users_mobile_key': 'Mobile already registered',
+      'partner_profiles_gst_number_key': 'GST number already registered',
+      'partner_profiles_gst_number_key': 'GST number already registered',
+    };
+    const safeMsg = uniqueFieldMap[err.constraint] || 'Record already exists';
+    return error(res, safeMsg, 409);
+  }
+  if (err.code === '23503') {  // foreign key violation
+    return error(res, 'Referenced record not found', 400);
+  }
+  if (err.code === '22P02') {  // invalid UUID
+    return error(res, `Invalid ID format: ${err.message}`, 400);
+  }
+  if (err.code === '23502') { // not null violation
+    return error(res, 'Required field missing', 400);
+  }
+  if (err.code === '42P01') { // undefined table
+    logger.error('DB schema error — undefined table', { message: err.message });
+    return serverError(res);
+  }
+  if (err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT' || err.message?.includes('timeout') || err.message?.includes('Connection terminated')) { // DB connection lost or timed out
+    logger.error('DB connection unavailable or timed out:', { error: err.message, code: err.code });
+    return error(res, 'Database connection unavailable. Please check AWS RDS connectivity.', 503);
+  }
+
+  // Custom status code error handling
+  if (err.statusCode) {
+    return error(res, err.message, err.statusCode);
+  }
+
+  // Default
+  if (process.env.NODE_ENV === 'development') {
+    return res.status(500).json({ success: false, message: err.message, stack: err.stack });
+  }
+  return serverError(res);
+};
+
+module.exports = { notFoundHandler, errorHandler };

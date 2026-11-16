@@ -1,0 +1,870 @@
+import React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
+import { getApiV1Url } from '../../config/api';
+import api from '../../services/api';
+import { useTheme } from '../../contexts/ThemeContext';
+import { useAuthStore } from '../../app/store/authStore';
+import { FiUser, FiSliders, FiBriefcase, FiFileText, FiAlertCircle } from 'react-icons/fi';
+import { getBankAppNumberConfig } from '../../utils/bankAppNumberUtils';
+
+export default function CustomerPostApplyStep2() {
+  const { token } = useParams();
+  const { C, isDark } = useTheme();
+
+  // Auth User check (Admin / SuperAdmin vs Partner)
+  const userFromStore = useAuthStore((state) => state.user);
+  const localUser = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('user') || '{}');
+    } catch (_) {
+      return {};
+    }
+  })();
+  const currentUser = userFromStore || localUser || {};
+  const userRole = (currentUser?.role || '').toString().toUpperCase();
+
+  const isAdminOrSuperAdmin = [
+    'SUPER_ADMIN', 'ADMIN', 'EMPLOYEE', 'SUPERADMIN',
+    'CRM_ADMIN', 'OPERATIONS', 'OPERATIONS_HEAD', 'ADMINISTRATIVE_OPERATOR', 'MANAGEMENT'
+  ].includes(userRole);
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submittedSuccess, setSubmittedSuccess] = useState(false);
+  const [systemDigitalJourneyLink, setSystemDigitalJourneyLink] = useState('');
+
+  // Bank & Application Header Info
+  const [bankInfo, setBankInfo] = useState(null);
+  const isSbi = String(bankInfo?.bank_name || bankInfo?.bank_code || '').toUpperCase().includes('SBI');
+
+  // Section 1: Customer Quick Details (QD)
+  const [customerMobile, setCustomerMobile] = useState('');
+  const [customerName, setCustomerName] = useState('');
+  const [dob, setDob] = useState('');
+  const [customerEmail, setCustomerEmail] = useState('');
+  const [panNumber, setPanNumber] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [designation, setDesignation] = useState('');
+  const [address1, setAddress1] = useState('');
+  const [address2, setAddress2] = useState('');
+  const [landmark, setLandmark] = useState('');
+  const [pincode, setPincode] = useState('');
+  const [city, setCity] = useState('');
+  const [state, setState] = useState('');
+  const [motherName, setMotherName] = useState('');
+
+  // Section 2: Operational Remarks & Stages (Editable by Partner & Admin)
+  const [appcodeStatus, setAppcodeStatus] = useState('None');
+  const [softApprovalStatus, setSoftApprovalStatus] = useState('None');
+  const [vkycStage, setVkycStage] = useState('None');
+  const [iqaStage, setIqaStage] = useState('None');
+  const [dispatchStatus, setDispatchStatus] = useState('None');
+  const [operationalRemarks, setOperationalRemarks] = useState('');
+
+  // TATA Co-brand HDFC Specific Stages
+  const [ipaStage, setIpaStage] = useState('None');
+  const [kycStage, setKycStage] = useState('None');
+  const [cardApprovalStage, setCardApprovalStage] = useState('None');
+
+  // Section 3: Bank Reference & Final Application Stage (Disabled for Partner, Editable by Admin/SuperAdmin)
+  const [appNumber, setAppNumber] = useState('');
+  const [vkycUrl, setVkycUrl] = useState('');
+  const [finalStatus, setFinalStatus] = useState('In Process');
+  const [declineReason, setDeclineReason] = useState('');
+  const [eligibleReqd, setEligibleReqd] = useState('No');
+
+  const formatDobInput = (val) => {
+    if (!val) return '';
+    const cleaned = val.replace(/\D/g, '').slice(0, 8);
+    if (cleaned.length <= 2) return cleaned;
+    if (cleaned.length <= 4) return `${cleaned.slice(0, 2)}-${cleaned.slice(2)}`;
+    return `${cleaned.slice(0, 2)}-${cleaned.slice(2, 4)}-${cleaned.slice(4, 8)}`;
+  };
+
+  useEffect(() => {
+    const elRoot = document.getElementById('root');
+    if (elRoot) {
+      elRoot.style.overflow = 'auto';
+      elRoot.style.height = '100%';
+    }
+    document.body.style.overflow = 'auto';
+    document.body.style.overflowY = 'auto';
+    document.body.style.height = '100%';
+    document.documentElement.style.overflow = 'auto';
+    document.documentElement.style.overflowY = 'auto';
+    return () => {
+      if (elRoot) {
+        elRoot.style.overflow = '';
+        elRoot.style.height = '';
+      }
+      document.body.style.overflow = '';
+      document.body.style.overflowY = '';
+      document.body.style.height = '';
+      document.documentElement.style.overflow = '';
+      document.documentElement.style.overflowY = '';
+    };
+  }, []);
+
+  // Fetch system digital journey link from settings
+  useEffect(() => {
+    const fetchSystemDigitalLink = async () => {
+      try {
+        const res = await api.get('/settings');
+        if (res.data?.success && res.data.data?.digital_journey_link) {
+          setSystemDigitalJourneyLink(res.data.data.digital_journey_link);
+        }
+      } catch (err) {
+        console.error('Failed to fetch system digital journey link:', err);
+      }
+    };
+    fetchSystemDigitalLink();
+  }, []);
+
+  useEffect(() => {
+    const fetchPostApplyInfo = async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(`${getApiV1Url()}/public/apply/${token}/post-apply`);
+        const json = await res.json();
+        if (json && json.success && json.data) {
+          setBankInfo(json.data);
+          
+          const details = json.data.application_details || {};
+          const cust = json.data.customer || {};
+
+          setCustomerMobile(details.customer_mobile || cust.mobile || '');
+          setCustomerName(details.customer_name || cust.full_name || '');
+          setDob(details.dob || '');
+          setCustomerEmail(details.customer_email || cust.email || '');
+          setPanNumber(details.pan_number || cust.pan_number || '');
+          setCompanyName(details.company_name || '');
+          setDesignation(details.designation || '');
+          setAddress1(details.address1 || details.flat_no || cust.address1 || cust.flat_no || details.address || '');
+          setAddress2(details.address2 || details.sub_area || cust.address2 || cust.sub_area || '');
+          setLandmark(details.landmark || cust.landmark || '');
+          setPincode(details.pincode || cust.pincode || '');
+          setCity(details.city || cust.city || '');
+          setState(details.state || cust.state || '');
+          setMotherName(details.mother_name || '');
+
+          setAppcodeStatus(details.appcode_status || 'None');
+          setSoftApprovalStatus(details.soft_approval_status || 'None');
+          setVkycStage(details.vkyc_stage || 'None');
+          setIqaStage(details.iqa_stage || 'None');
+          setDispatchStatus(details.dispatch_status || 'None');
+          setOperationalRemarks(details.operational_remarks || details.remarks || details.notes || '');
+
+          setIpaStage(details.ipa_stage || 'None');
+          setKycStage(details.kyc_stage || 'None');
+          setCardApprovalStage(details.card_approval_stage || details.card_approval_status || 'None');
+
+          setAppNumber(details.bank_application_number || '');
+          setVkycUrl(details.vkyc_url || '');
+          setFinalStatus(details.final_status || 'In Process');
+          setDeclineReason(details.decline_reason || '');
+          setEligibleReqd(details.eligible_reqd || 'No');
+        } else {
+          setError(json.message || 'Invalid application link');
+        }
+      } catch (err) {
+        console.error('Failed to fetch post apply info:', err);
+        setError('Network error. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (token) fetchPostApplyInfo();
+  }, [token]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    if (!customerName.trim()) return alert('Please enter Name As Per PAN Card');
+    
+    const cleanPan = panNumber.trim().toUpperCase();
+    if (!cleanPan) return alert('Please enter PAN Card Number');
+    const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+    if (!panRegex.test(cleanPan)) {
+      return alert('Please enter a valid 10-character PAN Card number (e.g. ABCDE1234F).');
+    }
+
+    setSubmitting(true);
+    try {
+      const payload = {
+        customer_mobile: customerMobile.trim(),
+        customer_name: customerName.trim(),
+        dob: dob.trim(),
+        customer_email: customerEmail.trim(),
+        pan_number: cleanPan,
+        company_name: companyName.trim(),
+        designation: designation.trim(),
+        address1: address1.trim(),
+        address2: address2.trim(),
+        landmark: landmark.trim(),
+        pincode: pincode.trim(),
+        city: city.trim(),
+        state: state.trim(),
+        address: [address1, address2, landmark, city, state, pincode].map(s => s.trim()).filter(Boolean).join(', '),
+        mother_name: motherName.trim(),
+        appcode_status: appcodeStatus,
+        soft_approval_status: softApprovalStatus,
+        vkyc_stage: vkycStage,
+        iqa_stage: iqaStage,
+        dispatch_status: dispatchStatus,
+        operational_remarks: operationalRemarks.trim(),
+        remarks: operationalRemarks.trim(),
+        notes: operationalRemarks.trim(),
+        ipa_stage: ipaStage,
+        kyc_stage: kycStage,
+        card_approval_stage: cardApprovalStage,
+        bank_application_number: appNumber.trim(),
+        vkyc_url: vkycUrl.trim()
+      };
+
+      if (isAdminOrSuperAdmin) {
+        payload.final_status = finalStatus;
+        payload.decline_reason = declineReason.trim();
+        payload.eligible_reqd = eligibleReqd;
+      }
+
+      const res = await fetch(`${getApiV1Url()}/public/apply/${token}/post-apply`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const json = await res.json();
+      if (json && json.success) {
+        setSubmittedSuccess(true);
+      } else {
+        alert(json.message || 'Failed to submit application form details.');
+      }
+    } catch (err) {
+      console.error('Submit post apply error:', err);
+      alert('Network error. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const bg = isDark ? '#09090b' : '#f8fafc';
+  const cardBg = isDark ? '#18181b' : '#ffffff';
+  const border = isDark ? '#27272a' : '#e2e8f0';
+  const inputBg = isDark ? '#27272a' : '#ffffff';
+  const disabledBg = isDark ? '#1c1c1f' : '#f1f5f9';
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: bg, color: C.text, fontFamily: 'Inter, sans-serif' }}>
+        <div style={{ width: '40px', height: '40px', border: `3px solid ${border}`, borderTopColor: C.primary, borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '16px' }} />
+        <p style={{ fontSize: '14px', fontWeight: 600 }}>Loading Quick Details Form...</p>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: bg, color: C.text, fontFamily: 'Inter, sans-serif', padding: '24px', textAlign: 'center' }}>
+        <FiAlertCircle size={44} style={{ color: '#EF4444', marginBottom: '16px' }} />
+        <h2 style={{ fontSize: '20px', fontWeight: 800, margin: '0 0 8px' }}>{error}</h2>
+        <a href="https://gharkapaisa.in" style={{ padding: '10px 20px', background: C.primary, color: '#fff', borderRadius: '10px', fontWeight: 700, textDecoration: 'none', fontSize: '13px' }}>Visit GharKaPaisa</a>
+      </div>
+    );
+  }
+
+  if (submittedSuccess) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: bg, color: C.text, fontFamily: 'Inter, sans-serif', padding: '24px', textAlign: 'center' }}>
+        <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#10B98115', color: '#10B981', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px', marginBottom: '16px' }}>
+          ✓
+        </div>
+        <h2 style={{ fontSize: '22px', fontWeight: 900, margin: '0 0 8px' }}>Application Details Submitted!</h2>
+        <p style={{ fontSize: '14px', color: C.textLight, maxWidth: '440px', lineHeight: 1.5, marginBottom: '24px' }}>
+          Quick Details (QD) for <strong>{bankInfo?.product_name || 'Application'}</strong> have been successfully updated.
+        </p>
+        <a href="https://gharkapaisa.in" style={{ padding: '12px 24px', background: C.primary, color: '#fff', borderRadius: '12px', fontWeight: 800, textDecoration: 'none', fontSize: '14px' }}>
+          Back to Home
+        </a>
+      </div>
+    );
+  }
+
+  const inputStyle = {
+    width: '100%',
+    boxSizing: 'border-box',
+    padding: '11px 14px',
+    borderRadius: '10px',
+    border: `1px solid ${border}`,
+    background: inputBg,
+    color: C.text,
+    fontSize: '13.5px',
+    outline: 'none',
+    transition: 'border 0.2s ease'
+  };
+
+  const disabledInputStyle = {
+    ...inputStyle,
+    background: disabledBg,
+    color: isDark ? '#a1a1aa' : '#64748b',
+    cursor: 'not-allowed',
+    opacity: 0.95
+  };
+
+  const labelStyle = {
+    fontSize: '12px',
+    fontWeight: 700,
+    color: C.textLight,
+    display: 'block',
+    marginBottom: '6px'
+  };
+
+  const sectionHeaderStyle = {
+    fontSize: '15px',
+    fontWeight: 800,
+    color: C.primary,
+    marginBottom: '14px',
+    paddingBottom: '8px',
+    borderBottom: `1px solid ${border}`,
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px'
+  };
+
+  const processType = String(bankInfo?.process_type || bankInfo?.process_by || '').toLowerCase();
+  const isPunchOnly = !processType || processType.includes('punch') || processType === 'punch_only' || processType === 'lead_punching' || processType === 'digital_punching';
+  const partnerUrl = bankInfo?.partner_url || bankInfo?.redirect_url || bankInfo?.product?.partner_url || '';
+
+  const bankNameCombined = `${bankInfo?.bank_name || ''} ${bankInfo?.product_name || ''} ${bankInfo?.product?.name || ''} ${bankInfo?.product?.bank_name || ''}`.toUpperCase();
+  const isTataHdfc = bankNameCombined.includes('TATA');
+  const bankAppConfig = getBankAppNumberConfig(
+    bankInfo?.bank_name || bankInfo?.product?.bank_name || '',
+    bankInfo?.product_name || bankInfo?.product?.name || '',
+    bankInfo?.bank_id || bankInfo?.product?.bank_id || ''
+  );
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      height: '100vh',
+      width: '100%',
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      WebkitOverflowScrolling: 'touch',
+      background: bg,
+      color: C.text,
+      fontFamily: 'Inter, sans-serif',
+      padding: '24px 16px 60px',
+      boxSizing: 'border-box',
+      position: 'relative'
+    }}>
+      
+      {/* Header Banner */}
+      <div style={{ maxWidth: '720px', margin: '0 auto 24px', textAlign: 'center' }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: `${C.primary}15`, padding: '6px 14px', borderRadius: '20px', color: C.primary, fontWeight: 700, fontSize: '12px', marginBottom: '12px' }}>
+          <FiFileText size={14} /> Lead Punching • Quick Details (QD) Form
+        </div>
+        <h1 style={{ fontSize: '24px', fontWeight: 900, margin: '0 0 4px' }}>{bankInfo?.product_name}</h1>
+        <p style={{ fontSize: '13px', color: C.textLight, margin: 0 }}>{bankInfo?.bank_name} • Partner Lead Punching Quick Details</p>
+      </div>
+
+      {/* Complete Digital Journey Top Action Bar for Punch Only processes */}
+      {(isPunchOnly || partnerUrl || systemDigitalJourneyLink) && (
+        <div style={{
+          maxWidth: '720px',
+          margin: '0 auto 24px',
+          background: 'linear-gradient(135deg, #1e40af 0%, #2563eb 100%)',
+          borderRadius: '16px',
+          padding: '18px 24px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '16px',
+          boxShadow: '0 10px 25px rgba(37, 99, 235, 0.25)',
+          color: '#ffffff'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(255, 255, 255, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>
+              ⚡
+            </div>
+            <div>
+              <div style={{ fontWeight: 900, fontSize: '16px', color: '#ffffff' }}>Punch Only Application</div>
+              <div style={{ fontSize: '12.5px', color: 'rgba(255, 255, 255, 0.9)', marginTop: '2px' }}>
+                Complete application directly on bank portal
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const url = partnerUrl || systemDigitalJourneyLink || 'https://gharkapaisa.in';
+              window.open(url, '_blank', 'noopener,noreferrer');
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: '#ffffff',
+              color: '#1e40af',
+              border: 'none',
+              padding: '12px 22px',
+              borderRadius: '12px',
+              fontWeight: 900,
+              fontSize: '14px',
+              cursor: 'pointer',
+              boxShadow: '0 4px 14px rgba(0,0,0,0.15)',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            Complete Digital Journey →
+          </button>
+        </div>
+      )}
+
+      {/* Main Unified Form Container */}
+      <div style={{ maxWidth: '720px', margin: '0 auto', background: cardBg, borderRadius: '20px', border: `1px solid ${border}`, padding: '24px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)' }}>
+        
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          
+          {/* SECTION 1: Customer Quick Details (QD) */}
+          <div>
+            <div style={sectionHeaderStyle}>
+              <FiUser size={18} style={{ color: C.primary }} />
+              <span>Customer Quick Details (QD)</span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+              <div>
+                <label style={labelStyle}>Aadhaar Link Contact Number</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 9876543210"
+                  value={customerMobile}
+                  onChange={(e) => setCustomerMobile(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>Name As Per PAN Card *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Full Name as on PAN Card"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>DOB As Per PAN Card (dd-mm-yyyy)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 15-08-1995"
+                  maxLength={10}
+                  value={dob}
+                  onChange={(e) => setDob(formatDobInput(e.target.value))}
+                  style={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>Personal Email ID</label>
+                <input
+                  type="email"
+                  placeholder="name@example.com"
+                  value={customerEmail}
+                  onChange={(e) => setCustomerEmail(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>PAN Card Number *</label>
+                <input
+                  type="text"
+                  required
+                  maxLength={10}
+                  placeholder="e.g. ABCDE1234F"
+                  value={panNumber}
+                  onChange={(e) => setPanNumber(e.target.value.toUpperCase())}
+                  style={{ ...inputStyle, fontFamily: 'monospace', fontWeight: 700 }}
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>Company Name</label>
+                <input
+                  type="text"
+                  placeholder="Current Employer / Company Name"
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>Designation</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Software Engineer / Manager"
+                  value={designation}
+                  onChange={(e) => setDesignation(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>Mother Name</label>
+                <input
+                  type="text"
+                  placeholder="Mother's Full Name"
+                  value={motherName}
+                  onChange={(e) => setMotherName(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>Address Line 1</label>
+                <input
+                  type="text"
+                  placeholder="Flat / House No / Building Name"
+                  value={address1}
+                  onChange={(e) => setAddress1(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>Address Line 2</label>
+                <input
+                  type="text"
+                  placeholder="Street / Area / Locality"
+                  value={address2}
+                  onChange={(e) => setAddress2(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>Landmark</label>
+                <input
+                  type="text"
+                  placeholder="Nearby Landmark"
+                  value={landmark}
+                  onChange={(e) => setLandmark(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>Pincode</label>
+                <input
+                  type="text"
+                  maxLength={6}
+                  placeholder="e.g. 400001"
+                  value={pincode}
+                  onChange={(e) => setPincode(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>City</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Mumbai / Pune / Delhi"
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>State</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Maharashtra"
+                  value={state}
+                  onChange={(e) => setState(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION 2: Operational Remarks & Processing Stage */}
+          <div>
+            <div style={sectionHeaderStyle}>
+              <FiSliders size={18} style={{ color: C.primary }} />
+              <span>{isTataHdfc ? 'Operational Remarks & Processing Stages (TATA Co-Brand HDFC Bank)' : 'Operational Remarks & Processing Stages'}</span>
+            </div>
+
+            {isTataHdfc ? (
+              /* TATA Co-Brand HDFC Specific 6 Fields */
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+                {/* 1. IPA stage */}
+                <div>
+                  <label style={labelStyle}>1. IPA Stage</label>
+                  <select
+                    value={ipaStage}
+                    onChange={(e) => setIpaStage(e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="None">None</option>
+                    <option value="Approve">Approve</option>
+                    <option value="Decline">Decline</option>
+                    <option value="Error">Error</option>
+                    <option value="IPA Failed">IPA Failed</option>
+                  </select>
+                </div>
+
+                {/* 2. KYC stage */}
+                <div>
+                  <label style={labelStyle}>2. KYC Stage</label>
+                  <select
+                    value={kycStage || 'None'}
+                    onChange={(e) => setKycStage(e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="None">None</option>
+                    <option value="Awaiting">Awaiting</option>
+                    <option value="IDCOM Success">IDCOM Success</option>
+                    <option value="IDCOM Failed">IDCOM Failed</option>
+                    <option value="IDCOM Pending">IDCOM Pending</option>
+                    <option value="BIO Success">BIO Success</option>
+                    <option value="BIO Pending">BIO Pending</option>
+                    <option value="Vkyc Success">Vkyc Success</option>
+                    <option value="Vkyc Pending">Vkyc Pending</option>
+                    <option value="Vkyc Failed">Vkyc Failed</option>
+                    {kycStage && !['None', 'IDCOM Success', 'IDCOM Failed', 'IDCOM Pending', 'BIO Success', 'BIO Pending', 'Vkyc Success', 'Vkyc Pending', 'Vkyc Failed', 'VKYC Success', 'VKYC Pending', 'VKYC Failed', ''].includes(kycStage) && (
+                      <option value={kycStage}>{kycStage}</option>
+                    )}
+                  </select>
+                </div>
+
+                {/* 3. Bank Application Number */}
+                <div>
+                  <label style={labelStyle}>3. Bank Application Number ({bankAppConfig.bankName.toUpperCase()})</label>
+                  <input
+                    type="text"
+                    maxLength={bankAppConfig.maxLength}
+                    placeholder={bankAppConfig.placeholder}
+                    value={appNumber}
+                    onChange={(e) => setAppNumber(bankAppConfig.sanitize(e.target.value))}
+                    style={{ ...inputStyle, fontFamily: 'monospace' }}
+                  />
+                  <div style={{ fontSize: '11px', color: C.primary, marginTop: '4px', fontWeight: 600 }}>
+                    {bankAppConfig.hint}
+                  </div>
+                </div>
+
+                {/* 4. VKYC Link */}
+                <div>
+                  <label style={labelStyle}>4. VKYC Link (Optional)</label>
+                  <input
+                    type="url"
+                    placeholder="https://vkyc..."
+                    value={vkycUrl}
+                    onChange={(e) => setVkycUrl(e.target.value)}
+                    style={inputStyle}
+                  />
+                </div>
+
+                {/* 5. Card approval stage */}
+                <div>
+                  <label style={labelStyle}>5. Card Approval Stage</label>
+                  <select
+                    value={cardApprovalStage}
+                    onChange={(e) => setCardApprovalStage(e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="None">None</option>
+                    <option value="instant approved">instant approved</option>
+                    <option value="in process">in process</option>
+                    <option value="decline">decline</option>
+                  </select>
+                </div>
+
+                {/* 6. User Remark */}
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>6. User Remark</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Enter user remark / application notes..."
+                    value={operationalRemarks}
+                    onChange={(e) => setOperationalRemarks(e.target.value)}
+                    style={{
+                      ...inputStyle,
+                      fontFamily: 'inherit',
+                      resize: 'vertical',
+                      minHeight: '74px'
+                    }}
+                  />
+                </div>
+              </div>
+            ) : (
+              /* Default Generic Bank Fields */
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+                {/* Order 1: Appcode Status */}
+                <div>
+                  <label style={labelStyle}>Appcode Status</label>
+                  <select
+                    value={appcodeStatus}
+                    onChange={(e) => setAppcodeStatus(e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="None">None</option>
+                    <option value="appcode send">appcode send</option>
+                    <option value="appcode pending">appcode pending</option>
+                    <option value="appcode complete">appcode complete</option>
+                    <option value="digital">digital</option>
+                  </select>
+                </div>
+
+                {/* Order 2: Soft Approval Status */}
+                <div>
+                  <label style={labelStyle}>Soft Approval Status</label>
+                  <select
+                    value={softApprovalStatus}
+                    onChange={(e) => setSoftApprovalStatus(e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="None">None</option>
+                    <option value="approved">approved</option>
+                    <option value="decline">decline</option>
+                    <option value="ETQ">ETQ</option>
+                    <option value="technical error">technical error</option>
+                  </select>
+                </div>
+
+                {/* Order 3: IQA Stage */}
+                <div>
+                  <label style={labelStyle}>IQA Stage</label>
+                  <select
+                    value={iqaStage}
+                    onChange={(e) => setIqaStage(e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="None">None</option>
+                    <option value="IQA SENT">IQA SENT</option>
+                    <option value="IQA COMPLETE">IQA COMPLETE</option>
+                    <option value="IQA PENDING">IQA PENDING</option>
+                    <option value="BLAZE CONTINUE">BLAZE CONTINUE</option>
+                    <option value="BLAZE DECLINE">BLAZE DECLINE</option>
+                  </select>
+                </div>
+
+                {/* Order 4: Bank Application Number */}
+                <div>
+                  <label style={labelStyle}>Bank Application Number ({bankAppConfig.bankName.toUpperCase()})</label>
+                  <input
+                    type="text"
+                    maxLength={bankAppConfig.maxLength}
+                    placeholder={bankAppConfig.placeholder}
+                    value={appNumber}
+                    onChange={(e) => setAppNumber(bankAppConfig.sanitize(e.target.value))}
+                    style={{ ...inputStyle, fontFamily: 'monospace' }}
+                  />
+                  <div style={{ fontSize: '11px', color: C.primary, marginTop: '4px', fontWeight: 600 }}>
+                    {bankAppConfig.hint}
+                  </div>
+                </div>
+
+                {/* Order 5: VKYC Stage / Status */}
+                <div>
+                  <label style={labelStyle}>VKYC Status</label>
+                  <select
+                    value={vkycStage}
+                    onChange={(e) => setVkycStage(e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="None">None</option>
+                    <option value="VKYC Pending">VKYC Pending</option>
+                    <option value="VKYC Complete">VKYC Complete</option>
+                    <option value="VKYC Failed">VKYC Failed</option>
+                  </select>
+                </div>
+
+                {/* Order 6: VKYC Link */}
+                <div>
+                  <label style={labelStyle}>VKYC Link (Optional)</label>
+                  <input
+                    type="url"
+                    placeholder="https://vkyc..."
+                    value={vkycUrl}
+                    onChange={(e) => setVkycUrl(e.target.value)}
+                    style={inputStyle}
+                  />
+                </div>
+
+                {/* Order 7: Dispatch Status */}
+                <div>
+                  <label style={labelStyle}>Dispatch Status</label>
+                  <select
+                    value={dispatchStatus}
+                    onChange={(e) => setDispatchStatus(e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="None">None</option>
+                    <option value="dispatch pending">dispatch pending</option>
+                    <option value="complete">complete</option>
+                    <option value="e-sign pending">e-sign pending</option>
+                    <option value="e-sign done">e-sign done</option>
+                    <option value="RTB(Error)">RTB(Error)</option>
+                  </select>
+                </div>
+
+                {/* Order 8: Operational Remarks */}
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>📝 Operational Remarks / Notes</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Enter operational remarks, process notes, or bank updates..."
+                    value={operationalRemarks}
+                    onChange={(e) => setOperationalRemarks(e.target.value)}
+                    style={{
+                      ...inputStyle,
+                      fontFamily: 'inherit',
+                      resize: 'vertical',
+                      minHeight: '74px'
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="submit"
+            disabled={submitting}
+            style={{
+              width: '100%',
+              padding: '14px',
+              border: 'none',
+              borderRadius: '12px',
+              background: submitting ? '#64748b' : `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})`,
+              color: '#fff',
+              fontSize: '15px',
+              fontWeight: 800,
+              cursor: submitting ? 'not-allowed' : 'pointer',
+              marginTop: '10px',
+              boxShadow: '0 4px 14px rgba(0,0,0,0.1)'
+            }}
+          >
+            {submitting ? 'Submitting Form...' : 'Save & Confirm Details →'}
+          </button>
+        </form>
+      </div>
+
+    </div>
+  );
+}

@@ -1,0 +1,737 @@
+const { query } = require('../../config/database');
+const { success } = require('../../utils/response/response');
+const appSettingsService = require('../products/application-settings.service');
+
+// GET /reports/overview — top-level numbers
+const getOverview = async (req, res, next) => {
+  try {
+    const { from_date, to_date } = req.query;
+    const isPartner = req.user.role === 'PARTNER';
+    const partnerId = isPartner ? req.partner.id : null;
+    const partnerScopeApps = isPartner ? ` AND partner_id = '${partnerId}'` : '';
+    const partnerScopeLeads = isPartner ? ` AND partner_id = '${partnerId}'` : '';
+    const partnerScopeWallet = isPartner ? ` WHERE partner_id = '${partnerId}'` : '';
+
+    let sql = `
+      SELECT
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE LOWER(process_type::text) IN ('lead_punching', 'partner_punch')) as lead_punching_count,
+        COUNT(*) FILTER (WHERE LOWER(process_type::text) IN ('linked_share', 'link_sharing')) as linked_share_count,
+        COUNT(*) FILTER (WHERE LOWER(process_type::text) IN ('direct_bank', 'customer_sell')) as direct_bank_count,
+        COUNT(*) FILTER (WHERE LOWER(process_type::text) = 'physical_process') as physical_process_count,
+        COUNT(*) FILTER (WHERE process_type IS NULL OR LOWER(process_type::text) IN ('co_browsing', 'co-browsing', 'card_assist', 'cobrowsing')) as co_browsing_count,
+        COUNT(*) FILTER (WHERE process_type IS NOT NULL AND LOWER(process_type::text) NOT IN ('lead_punching','partner_punch','linked_share','link_sharing','direct_bank','customer_sell','physical_process','co_browsing','co-browsing','card_assist','cobrowsing')) as invalid_process_count,
+        COUNT(*) FILTER (WHERE LOWER(status::text) IN ('approved','disbursed','commission_released','commission_received')) as approved,
+        COUNT(*) FILTER (WHERE LOWER(status::text) IN ('rejected','cancelled','declined')) as rejected,
+        COUNT(*) FILTER (WHERE LOWER(status::text) IN ('pending','details_submitted','submitted','under_review','operational_verified')) as pending,
+        COUNT(*) FILTER (WHERE LOWER(status::text) IN ('operational_verified','operational_approved','approved','commission_released','commission_received')) as pending_leads,
+        COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) as todays_apps,
+        COALESCE(SUM(commission_amount) FILTER (WHERE LOWER(status::text) IN ('approved','disbursed','commission_released','commission_received')), 0) as total_commission
+      FROM applications WHERE 1=1 ${partnerScopeApps}
+    `;
+
+    const values = [];
+    if (from_date && to_date) {
+      sql += ` AND created_at BETWEEN $1 AND $2`;
+      values.push(from_date, to_date + ' 23:59:59');
+    }
+
+    const [apps, Partners, wallet, leads, withdrawal, banks, products, recentPartners, adminsRes, customersRes, teamRes, employeesRes] = await Promise.all([
+      query(sql, values),
+      isPartner ? Promise.resolve({rows:[{}]}) : query(`
+        SELECT
+          COUNT(*) as total,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(u.status::text, 'active')) = 'active') as active,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(ap.kyc_status::text, 'pending')) IN ('pending', 'under_review', 'submitted', 'in_process')) as pending_kyc
+        FROM partner_profiles ap JOIN users u ON u.id = ap.user_id
+        WHERE (u.role IS NULL OR u.role IN ('PARTNER', 'TEAM_MEMBER') OR u.role NOT IN ('EMPLOYEE', 'ADMIN', 'HR', 'SUPER_ADMIN'))
+      `),
+      query(`
+        SELECT
+          COALESCE(SUM(total_earned), 0) as total_earned,
+          COALESCE(SUM(total_withdrawn), 0) as total_withdrawn,
+          COALESCE(SUM(hold_balance), 0) as total_pending,
+          COALESCE(SUM(available_balance), 0) as total_available
+        FROM partner_wallets
+        ${partnerScopeWallet}
+      `),
+      query(`
+        SELECT
+          COUNT(*) as total_leads,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(status::text, '')) IN ('approved', 'disbursed', 'super_admin_approved', 'commission_released', 'commission_received')) as approved_leads,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(status::text, '')) IN ('rejected', 'declined', 'cancelled')) as rejected_leads,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(status::text, '')) IN ('pending', 'details_submitted', 'under_review', 'submitted', 'operational_verified')) as pending_leads,
+          COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) as todays_leads
+        FROM leads WHERE 1=1 ${partnerScopeLeads}
+      `),
+      isPartner ? Promise.resolve({rows:[{}]}) : query(`
+        SELECT
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(status::text, 'pending')) IN ('pending', 'processing', 'submitted')) as pending_withdrawals,
+          COALESCE(SUM(amount) FILTER (WHERE LOWER(COALESCE(status::text, '')) IN ('processed', 'transferred', 'completed', 'released', 'approved')), 0) as total_commission_paid
+        FROM wallet_withdrawals
+      `),
+      query(`SELECT COUNT(*) as total_banks FROM banks`),
+      query(`SELECT COUNT(*) as total_products FROM products`),
+      isPartner ? Promise.resolve({rows:[]}) : query(`
+        SELECT p.id, p.first_name, p.last_name, p.partner_code, p.created_at, u.email, u.mobile, u.status
+        FROM partner_profiles p
+        JOIN users u ON u.id = p.user_id
+        WHERE (u.role IS NULL OR u.role IN ('PARTNER', 'TEAM_MEMBER') OR u.role NOT IN ('EMPLOYEE', 'ADMIN', 'HR', 'SUPER_ADMIN'))
+        ORDER BY p.created_at DESC
+        LIMIT 5
+      `),
+      isPartner ? Promise.resolve({rows:[{total_admins: 0, active_admins: 0}]}) : query(`
+        SELECT
+          COUNT(*) as total_admins,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(status::text, 'active')) = 'active') as active_admins
+        FROM users
+        WHERE UPPER(role::text) IN ('ADMIN', 'SUPER_ADMIN', 'SUPERADMIN', 'OPERATIONAL_HEAD')
+      `),
+      query(`SELECT COUNT(*) as total_customers FROM customers`),
+      isPartner ? Promise.resolve({rows:[{total_team: 0}]}) : query(`
+        SELECT COUNT(DISTINCT child_partner_id) as total_team FROM partner_team_relationships
+      `).catch(async () => {
+        return await query(`SELECT COUNT(*) as total_team FROM partner_profiles WHERE parent_partner_id IS NOT NULL`);
+      }),
+      isPartner ? Promise.resolve({rows:[{total_employees: 0, active_employees: 0}]}) : query(`
+        SELECT
+          COUNT(*) as total_employees,
+          COUNT(*) FILTER (WHERE LOWER(COALESCE(e.employee_status::text, '')) = 'active' OR LOWER(COALESCE(e.activation_status::text, '')) IN ('approved', 'active')) as active_employees
+        FROM employees e
+        LEFT JOIN users u ON u.id = e.user_id
+        WHERE (u.role IS NULL OR u.role = 'EMPLOYEE')
+          AND (e.designation NOT ILIKE '%HR%' AND e.designation NOT ILIKE '%Human Resource%')
+      `)
+    ]);
+
+    // calculate conversion rate & fallback statistics
+    const appsData = apps.rows[0] || {};
+    const leadsData = leads.rows[0] || {};
+    const withdrawalData = withdrawal.rows[0] || {};
+    const adminData = adminsRes?.rows?.[0] || {};
+    const customerData = customersRes?.rows?.[0] || {};
+    const teamData = teamRes?.rows?.[0] || {};
+    const employeeData = employeesRes?.rows?.[0] || { total_employees: 0, active_employees: 0 };
+
+    const conversion_rate = appsData.total > 0 ? ((appsData.approved / appsData.total) * 100).toFixed(2) : 0;
+
+    const totalLeads = (parseInt(leadsData.total_leads || 0, 10) > 0) ? parseInt(leadsData.total_leads, 10) : parseInt(appsData.total || 0, 10);
+    const approvedLeads = (parseInt(leadsData.approved_leads || 0, 10) > 0) ? parseInt(leadsData.approved_leads, 10) : parseInt(appsData.approved || 0, 10);
+    const rejectedLeads = (parseInt(leadsData.rejected_leads || 0, 10) > 0) ? parseInt(leadsData.rejected_leads, 10) : parseInt(appsData.rejected || 0, 10);
+    const pendingLeads = parseInt(appsData.pending_leads || 0, 10) || parseInt(leadsData.pending_leads || 0, 10);
+    const walletData = wallet.rows[0] || {};
+    const totalCommPaid = parseFloat(walletData.total_withdrawn || 0) || parseFloat(withdrawalData.total_commission_paid || 0);
+
+    return success(res, {
+      applications: { ...appsData, conversion_rate },
+      Partners: Partners.rows[0],
+      customers: customerData,
+      wallet: wallet.rows[0],
+      team: teamData,
+      employees: employeeData,
+      leads: {
+        ...leadsData,
+        total_leads: totalLeads,
+        approved_leads: approvedLeads,
+        rejected_leads: rejectedLeads,
+        pending_leads: pendingLeads
+      },
+      withdrawal: {
+        ...withdrawalData,
+        total_commission_paid: totalCommPaid
+      },
+      banks: banks.rows[0],
+      products: products.rows[0],
+      admins: adminData,
+      recent_partners: recentPartners.rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /reports/applications-by-product
+const applicationsByProduct = async (req, res, next) => {
+  try {
+    const { rows } = await query(`
+      SELECT p.name as product_name, b.short_code as bank_code, p.category,
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE a.status IN ('approved','disbursed')) as approved,
+        COALESCE(SUM(a.commission_amount) FILTER (WHERE a.status IN ('approved','disbursed')), 0) as commission
+      FROM applications a
+      JOIN products p ON p.id = a.product_id
+      JOIN banks b ON b.id = p.bank_id
+      GROUP BY p.id, p.name, b.short_code, p.category
+      ORDER BY total DESC
+    `);
+    return success(res, rows);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /reports/top-partners — Combined Partner & Employee Performance
+const topPartners = async (req, res, next) => {
+  try {
+    const { limit = 10, from_date, to_date, search } = req.query;
+
+    let dateFilterSql = '';
+    const params = [];
+    let pIdx = 1;
+
+    if (from_date && to_date) {
+      dateFilterSql = ` AND a.created_at BETWEEN $${pIdx++} AND $${pIdx++}`;
+      params.push(from_date, to_date + ' 23:59:59');
+    }
+
+    let searchSql = '';
+    if (search && String(search).trim()) {
+      searchSql = ` WHERE (LOWER(name) LIKE $${pIdx} OR LOWER(code) LIKE $${pIdx} OR LOWER(designation) LIKE $${pIdx})`;
+      params.push(`%${String(search).trim().toLowerCase()}%`);
+      pIdx++;
+    }
+
+    const limitVal = parseInt(limit, 10) || 100;
+    params.push(limitVal);
+
+    const querySql = `
+      SELECT 
+        code as partner_code,
+        first_name,
+        last_name,
+        name as full_name,
+        performer_type,
+        designation,
+        total_apps,
+        approved,
+        commission_earned
+      FROM (
+        -- 1. Partners
+        SELECT 
+          ap.partner_code as code,
+          ap.first_name,
+          ap.last_name,
+          CONCAT(ap.first_name, ' ', ap.last_name) as name,
+          'PARTNER' as performer_type,
+          COALESCE(u.designation, 'Partner') as designation,
+          COUNT(a.id)::int as total_apps,
+          COUNT(a.id) FILTER (WHERE LOWER(COALESCE(a.status::text, '')) IN ('approved','disbursed','commission_released','commission_received','super_admin_approved'))::int as approved,
+          COALESCE(SUM(a.commission_amount) FILTER (WHERE LOWER(COALESCE(a.status::text, '')) IN ('approved','disbursed','commission_released','commission_received','super_admin_approved')), 0)::float as commission_earned
+        FROM partner_profiles ap
+        LEFT JOIN users u ON u.id = ap.user_id
+        LEFT JOIN applications a ON a.partner_id = ap.id ${dateFilterSql}
+        WHERE (ap.kyc_status = 'approved' OR ap.kyc_status IS NULL OR u.status = 'active')
+        GROUP BY ap.id, ap.partner_code, ap.first_name, ap.last_name, u.designation
+
+        UNION ALL
+
+        -- 2. Employees
+        SELECT 
+          e.employee_id as code,
+          SPLIT_PART(e.full_name, ' ', 1) as first_name,
+          SUBSTRING(e.full_name FROM POSITION(' ' IN e.full_name) + 1) as last_name,
+          e.full_name as name,
+          'EMPLOYEE' as performer_type,
+          COALESCE(e.designation, u.designation, 'Team Leader') as designation,
+          COUNT(a.id)::int as total_apps,
+          COUNT(a.id) FILTER (WHERE LOWER(COALESCE(a.status::text, '')) IN ('approved','disbursed','commission_released','commission_received','super_admin_approved'))::int as approved,
+          COALESCE(SUM(a.commission_amount) FILTER (WHERE LOWER(COALESCE(a.status::text, '')) IN ('approved','disbursed','commission_released','commission_received','super_admin_approved')), 0)::float as commission_earned
+        FROM employees e
+        LEFT JOIN users u ON u.id = e.user_id
+        LEFT JOIN applications a ON a.employee_id = e.id ${dateFilterSql}
+        WHERE (e.employee_status = 'ACTIVE' OR u.status = 'active' OR e.employee_status IS NULL)
+        AND (e.employee_id IS NULL OR e.employee_id NOT IN (SELECT partner_code FROM partner_profiles WHERE partner_code IS NOT NULL))
+        GROUP BY e.id, e.employee_id, e.full_name, e.designation, u.designation
+      ) combined_performers
+      ${searchSql}
+      ORDER BY approved DESC, total_apps DESC, commission_earned DESC
+      LIMIT $${pIdx}
+    `;
+
+    const { rows } = await query(querySql, params);
+    return success(res, rows);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /reports/monthly-trend — last 12 months
+const monthlyTrend = async (req, res, next) => {
+  try {
+    const isPartner = req.user.role === 'PARTNER';
+    const partnerId = isPartner ? req.partner.id : null;
+    const partnerScopeApps = isPartner ? ` AND partner_id = '${partnerId}'` : '';
+
+    const { rows } = await query(`
+      SELECT
+        TO_CHAR(DATE_TRUNC('month', created_at), 'Mon YYYY') as month,
+        DATE_TRUNC('month', created_at) as month_date,
+        COUNT(*) as applications,
+        COUNT(*) FILTER (WHERE status IN ('approved','disbursed')) as approved,
+        COALESCE(SUM(commission_amount) FILTER (WHERE status IN ('approved','disbursed')), 0) as commission
+      FROM applications
+      WHERE created_at >= NOW() - INTERVAL '12 months' ${partnerScopeApps}
+      GROUP BY DATE_TRUNC('month', created_at)
+      ORDER BY month_date ASC
+    `);
+    return success(res, rows);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const exportPayoutsReport = async (req, res, next) => {
+  try {
+    const { from_date, to_date, status = 'approved' } = req.query;
+
+    let sql = `
+      SELECT 
+        a.app_number,
+        a.status,
+        a.created_at as application_date,
+        a.loan_amount as applied_amount,
+        a.approved_amount,
+        a.commission_amount,
+        c.full_name as customer_name,
+        p.name as product_name,
+        b.name as bank_name,
+        ap.partner_code,
+        ap.first_name || ' ' || ap.last_name as partner_name
+      FROM applications a
+      JOIN customers c ON c.id = a.customer_id
+      JOIN products p ON p.id = a.product_id
+      JOIN banks b ON b.id = p.bank_id
+      JOIN partner_profiles ap ON ap.id = a.partner_id
+      WHERE 1=1
+    `;
+    const values = [];
+    let idx = 1;
+
+    if (status === 'approved') {
+      sql += ` AND a.status IN ('approved', 'disbursed')`;
+    } else if (status !== 'all') {
+      sql += ` AND a.status = $${idx++}`;
+      values.push(status);
+    }
+
+    if (from_date) {
+      sql += ` AND a.created_at >= $${idx++}`;
+      values.push(from_date);
+    }
+    if (to_date) {
+      sql += ` AND a.created_at <= $${idx++}`;
+      values.push(to_date + ' 23:59:59');
+    }
+
+    sql += ` ORDER BY a.created_at DESC`;
+
+    const { rows } = await query(sql, values);
+
+    // Build CSV
+    const csvHeaders = [
+      "Application Number",
+      "Status",
+      "Application Date",
+      "Applied Amount",
+      "Approved Amount",
+      "Commission Amount",
+      "Customer Name",
+      "Product Name",
+      "Bank Name",
+      "Partner Code",
+      "Partner Name"
+    ];
+    
+    const csvLines = [csvHeaders.join(",")];
+    for (const row of rows) {
+      csvLines.push([
+        `"${row.app_number || ''}"`,
+        `"${row.status || ''}"`,
+        `"${row.application_date ? new Date(row.application_date).toISOString().split('T')[0] : ''}"`,
+        row.applied_amount || 0,
+        row.approved_amount || 0,
+        row.commission_amount || 0,
+        `"${(row.customer_name || '').replace(/"/g, '""')}"`,
+        `"${(row.product_name || '').replace(/"/g, '""')}"`,
+        `"${(row.bank_name || '').replace(/"/g, '""')}"`,
+        `"${row.partner_code || ''}"`,
+        `"${(row.partner_name || '').replace(/"/g, '""')}"`
+      ].join(","));
+    }
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=payouts_report_${Date.now()}.csv`);
+    return res.status(200).send(csvLines.join('\n'));
+  } catch (err) {
+    next(err);
+  }
+};
+
+const exportPartnersReport = async (req, res, next) => {
+  try {
+    const { rows: partners } = await query(`
+      SELECT 
+        ap.id,
+        ap.partner_code,
+        ap.first_name,
+        ap.last_name,
+        ap.kyc_status,
+        ap.company_name,
+        u.email,
+        u.mobile,
+        u.status as account_status,
+        u.created_at as registration_date,
+        COALESCE(w.available_balance, 0) as available_balance,
+        COALESCE(w.hold_balance, 0) as hold_balance,
+        COALESCE(w.total_earned, 0) as total_earned,
+        COALESCE(w.total_withdrawn, 0) as total_withdrawn
+      FROM partner_profiles ap
+      JOIN users u ON u.id = ap.user_id
+      LEFT JOIN partner_wallets w ON w.partner_id = ap.id
+      WHERE (u.role IS NULL OR u.role IN ('PARTNER', 'TEAM_MEMBER') OR u.role NOT IN ('EMPLOYEE', 'ADMIN', 'HR', 'SUPER_ADMIN'))
+      ORDER BY u.created_at DESC
+    `);
+
+    let totalActive = 0;
+    let totalBlocked = 0;
+    partners.forEach(p => {
+      const stat = (p.account_status || '').toLowerCase();
+      if (stat === 'active') totalActive++;
+      else if (stat === 'blocked') totalBlocked++;
+    });
+
+    return success(res, {
+      partners,
+      summary: {
+        total_partners: partners.length,
+        total_active_partners: totalActive,
+        total_blocked_partners: totalBlocked
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const getApplicationClickReport = async (req, res, next) => {
+  try {
+    const { product_id } = req.query;
+    const clicks = await appSettingsService.getClickAnalytics(product_id);
+    
+    const { rows: [overall] } = await query(`
+      SELECT 
+        COUNT(*)::int as total_clicks,
+        COUNT(*) FILTER (WHERE clicked_at >= NOW() - INTERVAL '30 days')::int as last_30_days,
+        COUNT(CASE WHEN partner_id IS NOT NULL THEN 1 END)::int as partner_clicks,
+        COUNT(CASE WHEN partner_id IS NULL THEN 1 END)::int as customer_clicks
+      FROM application_click_logs
+    `);
+
+    return success(res, {
+      clicks,
+      summary: {
+        total_clicks: overall?.total_clicks || 0,
+        last_30_days: overall?.last_30_days || 0,
+        partner_clicks: overall?.partner_clicks || 0,
+        customer_clicks: overall?.customer_clicks || 0
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+const getApplicationsReport = async (req, res, next) => {
+  try {
+    const isPartner = req.user.role === 'PARTNER';
+    const partnerId = isPartner ? req.partner.id : null;
+    const { from_date, to_date, search } = req.query;
+
+    let sql = `
+      SELECT 
+        a.id, a.app_number, a.status, a.created_at as application_date,
+        a.approved_amount, a.commission_amount,
+        c.full_name as customer_name,
+        p.name as product_name,
+        b.name as bank_name
+      FROM applications a
+      JOIN customers c ON c.id = a.customer_id
+      JOIN products p ON p.id = a.product_id
+      JOIN banks b ON b.id = p.bank_id
+      WHERE 1=1
+    `;
+    const values = [];
+    let idx = 1;
+
+    if (isPartner) {
+      sql += ` AND a.partner_id = $1`;
+      values.push(partnerId);
+      idx++;
+    }
+
+    if (from_date && to_date) {
+      sql += ` AND a.created_at BETWEEN ${idx} AND ${idx+1}`;
+      values.push(from_date, to_date + ' 23:59:59');
+      idx += 2;
+    }
+
+    if (search) {
+      sql += ` AND (a.app_number ILIKE ${idx} OR c.full_name ILIKE ${idx})`;
+      values.push(`%${search}%`);
+      idx++;
+    }
+
+    sql += ' ORDER BY a.created_at DESC';
+
+    const { rows } = await query(sql, values);
+    return success(res, rows);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const getCustomersReport = async (req, res, next) => {
+  try {
+    const isPartner = req.user.role === 'PARTNER';
+    const partnerId = isPartner ? req.partner.id : null;
+    
+    let sql = `
+      SELECT 
+        c.id, c.full_name as customer_name, c.mobile, c.email,
+        COUNT(a.id) as total_applications,
+        COUNT(a.id) FILTER (WHERE a.status IN ('approved','disbursed')) as approved_cards,
+        COUNT(a.id) FILTER (WHERE a.status = 'rejected') as rejected_cards,
+        COALESCE(SUM(a.commission_amount) FILTER (WHERE a.status IN ('approved','disbursed')), 0) as total_commission
+      FROM customers c
+      LEFT JOIN applications a ON a.customer_id = c.id
+      WHERE 1=1
+    `;
+    const values = [];
+
+    if (isPartner) {
+      // For partners, only show customers they have generated leads/applications for
+      sql += ` AND c.id IN (SELECT customer_id FROM applications WHERE partner_id = $1)`;
+      values.push(partnerId);
+    }
+
+    sql += ` GROUP BY c.id, c.full_name, c.mobile, c.email ORDER BY total_commission DESC, total_applications DESC`;
+
+    const { rows } = await query(sql, values);
+    return success(res, rows);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const reportService = require('./report.service.js');
+
+const getDashboardReportController = async (req, res, next) => {
+  try {
+    const partnerId = req.user.role === 'PARTNER' ? req.partner?.id : (req.query.partner_id || null);
+    const data = await reportService.getDashboardReport(partnerId, req.query);
+    return success(res, data);
+  } catch (err) { next(err); }
+};
+
+const getApplicationsReportController = async (req, res, next) => {
+  try {
+    const partnerId = req.user.role === 'PARTNER' ? req.partner?.id : (req.query.partner_id || null);
+    const data = await reportService.getApplicationsReport(partnerId, req.query);
+    return success(res, data);
+  } catch (err) { next(err); }
+};
+
+const getCustomersReportController = async (req, res, next) => {
+  try {
+    const partnerId = req.user.role === 'PARTNER' ? req.partner?.id : (req.query.partner_id || null);
+    const data = await reportService.getCustomersReport(partnerId, req.query);
+    return success(res, data);
+  } catch (err) { next(err); }
+};
+
+const getWalletReportController = async (req, res, next) => {
+  try {
+    const partnerId = req.user.role === 'PARTNER' ? req.partner?.id : (req.query.partner_id || null);
+    const data = await reportService.getWalletReport(partnerId, req.query);
+    return success(res, data);
+  } catch (err) { next(err); }
+};
+
+const getCommissionReportController = async (req, res, next) => {
+  try {
+    const partnerId = req.user.role === 'PARTNER' ? req.partner?.id : (req.query.partner_id || null);
+    const data = await reportService.getCommissionReport(partnerId, req.query);
+    return success(res, data);
+  } catch (err) { next(err); }
+};
+
+const getWithdrawalsReportController = async (req, res, next) => {
+  try {
+    const partnerId = req.user.role === 'PARTNER' ? req.partner?.id : (req.query.partner_id || null);
+    const data = await reportService.getWithdrawalsReport(partnerId, req.query);
+    return success(res, data);
+  } catch (err) { next(err); }
+};
+
+const getProductsReportController = async (req, res, next) => {
+  try {
+    const partnerId = req.user.role === 'PARTNER' ? req.partner?.id : (req.query.partner_id || null);
+    const data = await reportService.getProductsReport(partnerId, req.query);
+    return success(res, data);
+  } catch (err) { next(err); }
+};
+
+const getBanksReportController = async (req, res, next) => {
+  try {
+    const partnerId = req.user.role === 'PARTNER' ? req.partner?.id : (req.query.partner_id || null);
+    const data = await reportService.getBanksReport(partnerId, req.query);
+    return success(res, data);
+  } catch (err) { next(err); }
+};
+
+const getRevenueReportController = async (req, res, next) => {
+  try {
+    const data = await reportService.getRevenueReport(req.query);
+    return success(res, data);
+  } catch (err) { next(err); }
+};
+
+const postReportExportController = async (req, res, next) => {
+  try {
+    const partnerId = req.user.role === 'PARTNER' ? req.partner?.id : (req.body.partner_id || null);
+    const { report_type = 'dashboard', format = 'csv' } = req.body;
+    const result = await reportService.generateReportExport(partnerId, report_type, format, req.body);
+    return success(res, result, 'Report export generated successfully');
+  } catch (err) { next(err); }
+};
+
+const postScheduleReportController = async (req, res, next) => {
+  try {
+    const partnerId = req.user.role === 'PARTNER' ? req.partner?.id : (req.body.partner_id || null);
+    const { report_type, frequency = 'monthly', recipient_email } = req.body;
+    const result = await reportService.createScheduledReport(partnerId, report_type, frequency, recipient_email || req.user.email);
+    return success(res, result, 'Report schedule created successfully');
+  } catch (err) { next(err); }
+};
+
+// GET /reports/daily-analytics — Day-wise analysis for Employee Logins, New Applications, Approved Applications
+const getDailyAnalytics = async (req, res, next) => {
+  try {
+    const { days = 14 } = req.query;
+    const numDays = Math.min(Math.max(parseInt(days, 10) || 14, 7), 60);
+
+    const { rows } = await query(`
+      WITH date_series AS (
+        SELECT generate_series(
+          CURRENT_DATE - INTERVAL '1 day' * ($1::int - 1),
+          CURRENT_DATE,
+          INTERVAL '1 day'
+        )::date AS day_date
+      ),
+      apps_daily AS (
+        SELECT 
+          created_at::date AS day_date,
+          COUNT(*)::int AS new_applications,
+          COUNT(*) FILTER (WHERE LOWER(status::text) IN ('approved','disbursed','commission_released','commission_received','super_admin_approved'))::int AS approved_applications
+        FROM applications
+        WHERE created_at >= CURRENT_DATE - INTERVAL '1 day' * ($1::int + 2)
+        GROUP BY created_at::date
+      ),
+      emp_logins_daily AS (
+        SELECT 
+          login_date AS day_date,
+          COUNT(DISTINCT user_id)::int AS employee_logins
+        FROM (
+          -- 1. From login_history audit table
+          SELECT lh.user_id, lh.login_time::date AS login_date
+          FROM login_history lh
+          JOIN users u ON u.id = lh.user_id
+          WHERE (
+            UPPER(u.role::text) IN ('EMPLOYEE', 'SALES_EXECUTIVE', 'FIELD_EXECUTIVE', 'HR', 'TELECALLER', 'TEAM_LEADER', 'MANAGER', 'BRANCH_HEAD')
+            OR u.id IN (SELECT user_id FROM employees WHERE user_id IS NOT NULL)
+          )
+            AND LOWER(COALESCE(lh.status::text, 'success')) = 'success'
+            AND lh.login_time >= CURRENT_DATE - INTERVAL '1 day' * ($1::int + 2)
+
+          UNION
+
+          -- 2. From refresh_tokens session table
+          SELECT rt.user_id, rt.created_at::date AS login_date
+          FROM refresh_tokens rt
+          JOIN users u ON u.id = rt.user_id
+          WHERE (
+            UPPER(u.role::text) IN ('EMPLOYEE', 'SALES_EXECUTIVE', 'FIELD_EXECUTIVE', 'HR', 'TELECALLER', 'TEAM_LEADER', 'MANAGER', 'BRANCH_HEAD')
+            OR u.id IN (SELECT user_id FROM employees WHERE user_id IS NOT NULL)
+          )
+            AND rt.created_at >= CURRENT_DATE - INTERVAL '1 day' * ($1::int + 2)
+
+          UNION
+
+          -- 3. From users last_login timestamp
+          SELECT u.id AS user_id, u.last_login::date AS login_date
+          FROM users u
+          WHERE (
+            UPPER(u.role::text) IN ('EMPLOYEE', 'SALES_EXECUTIVE', 'FIELD_EXECUTIVE', 'HR', 'TELECALLER', 'TEAM_LEADER', 'MANAGER', 'BRANCH_HEAD')
+            OR u.id IN (SELECT user_id FROM employees WHERE user_id IS NOT NULL)
+          )
+            AND u.last_login IS NOT NULL
+            AND u.last_login >= CURRENT_DATE - INTERVAL '1 day' * ($1::int + 2)
+        ) combined_logins
+        GROUP BY login_date
+      )
+      SELECT 
+        TO_CHAR(ds.day_date, 'YYYY-MM-DD') AS date_iso,
+        TO_CHAR(ds.day_date, 'DD Mon YYYY') AS formatted_date,
+        COALESCE(e.employee_logins, 0)::int AS employee_logins,
+        COALESCE(a.new_applications, 0)::int AS new_applications,
+        COALESCE(a.approved_applications, 0)::int AS approved_applications
+      FROM date_series ds
+      LEFT JOIN apps_daily a ON a.day_date = ds.day_date
+      LEFT JOIN emp_logins_daily e ON e.day_date = ds.day_date
+      ORDER BY ds.day_date DESC;
+    `, [numDays]);
+
+    const totals = rows.reduce(
+      (acc, r) => {
+        acc.employee_logins += parseInt(r.employee_logins, 10) || 0;
+        acc.new_applications += parseInt(r.new_applications, 10) || 0;
+        acc.approved_applications += parseInt(r.approved_applications, 10) || 0;
+        return acc;
+      },
+      { employee_logins: 0, new_applications: 0, approved_applications: 0 }
+    );
+
+    return success(res, {
+      period_days: numDays,
+      daily_metrics: rows,
+      summary_totals: totals
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { 
+  getApplicationsReport,
+  getCustomersReport, 
+  getOverview, 
+  applicationsByProduct, 
+  topPartners, 
+  monthlyTrend, 
+  exportPayoutsReport, 
+  exportPartnersReport,
+  getApplicationClickReport,
+  getDashboardReportController,
+  getApplicationsReportController,
+  getCustomersReportController,
+  getWalletReportController,
+  getCommissionReportController,
+  getWithdrawalsReportController,
+  getProductsReportController,
+  getBanksReportController,
+  getRevenueReportController,
+  postReportExportController,
+  postScheduleReportController,
+  getDailyAnalytics
+};

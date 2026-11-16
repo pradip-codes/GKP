@@ -1,0 +1,1067 @@
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { useTheme, makeS } from '../../../contexts/ThemeContext';
+import api from '../../../services/api';
+import QuickAccessSection from './QuickAccessSection';
+import PartnerActionableQueues from './PartnerActionableQueues';
+import Customer360Drawer from './Customer360Drawer';
+import PartnerBannerCarousel from '../../../components/PartnerBannerCarousel';
+
+
+import {
+  Menu,
+  Bell,
+  Crown,
+  Wallet,
+  ChevronRight,
+  ChevronLeft,
+  CreditCard,
+  ShieldPlus,
+  Landmark,
+  TrendingUp,
+  PiggyBank,
+  RefreshCw,
+  BarChart3,
+  Briefcase,
+  Users,
+  Award,
+  Plus,
+  Shield,
+  Home
+} from 'lucide-react';
+
+import {
+  MdStorefront, MdPeople, MdAccountBalanceWallet, MdLock, MdCancel,
+  MdGroup, MdTrendingUp, MdDescription, MdArrowForward, MdBusinessCenter,
+  MdReceiptLong, MdChevronLeft, MdChevronRight
+} from 'react-icons/md';
+import { FaGift, FaWhatsapp } from 'react-icons/fa';
+
+// Banners
+import ltfBanner from '../../home/components/banner/lifetimefree card.webp';
+import loanBanner from '../../home/components/banner/loan.webp';
+import insuranceBanner from '../../home/components/banner/insurance.webp';
+import emiBanner from '../../home/components/banner/smart emi.webp';
+import emiNewBanner from '../../home/components/banner/emi.webp';
+import hdfcBanner from '../../home/components/banner/hdfc pixel card.webp';
+import offerBanner from '../../home/components/banner/offerbanner.webp';
+
+const localBannerMap = {
+  'lifetimefree card.png': ltfBanner,
+  'loan.png': loanBanner,
+  'insurance.png': insuranceBanner,
+  'smart emi.png': emiBanner,
+  'emi.jpeg': emiNewBanner,
+  'hdfc pixel card.png': hdfcBanner,
+  'offerbanner.png': offerBanner
+};
+
+const resolveBannerImage = (url) => {
+  if (!url) return offerBanner;
+  const rawUrl = typeof url === 'string' ? url : (url.image_url || url.image || '');
+  if (!rawUrl) return offerBanner;
+  if (localBannerMap[rawUrl]) return localBannerMap[rawUrl];
+  const cleanUrl = rawUrl.trim();
+  const filename = cleanUrl.split('/').pop().split('\\').pop();
+  if (localBannerMap[filename]) return localBannerMap[filename];
+  try {
+    const decoded = decodeURIComponent(filename);
+    if (localBannerMap[decoded]) return localBannerMap[decoded];
+  } catch (_) {}
+  if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://')) return cleanUrl;
+  if (cleanUrl.startsWith('/')) {
+    const apiBase = getApiV1Url ? getApiV1Url() : '';
+    const origin = apiBase.replace(/\/api\/v1\/?$/, '');
+    return `${origin}${cleanUrl}`;
+  }
+  return offerBanner;
+};
+
+/* ---------- Reference UI Pure Styling Sub-Components ---------- */
+
+const IconCircle = ({ bg, color, size = 52, children }) => (
+  <div
+    style={{
+      width: size,
+      height: size,
+      background: bg,
+      color: color,
+      borderRadius: '50%',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
+      boxShadow: '0 1px 3px rgba(0,0,0,0.06)'
+    }}
+  >
+    {children}
+  </div>
+);
+
+const ServiceItem = ({ icon, label, bg, color, onClick, isDark, C }) => (
+  <div
+    onClick={onClick}
+    style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: '6px',
+      width: '60px',
+      cursor: 'pointer',
+      flexShrink: 0
+    }}
+  >
+    <IconCircle bg={bg} color={color} size={50}>
+      {icon}
+    </IconCircle>
+    <span
+      style={{
+        fontSize: '11px',
+        textAlign: 'center',
+        lineHeight: 1.2,
+        fontWeight: 600,
+        color: isDark ? C.text : '#374151',
+        display: '-webkit-box',
+        WebkitLineClamp: 2,
+        WebkitBoxOrient: 'vertical',
+        overflow: 'hidden'
+      }}
+    >
+      {label}
+    </span>
+  </div>
+);
+
+const EarnCard = ({ title, value, valueColor, bg, color, icon, onClick, isDark, C, hideEarn = false }) => (
+  <div
+    onClick={onClick}
+    style={{
+      background: isDark ? C.card : '#FFFFFF',
+      borderRadius: '16px',
+      padding: '12px 10px',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'space-between',
+      cursor: 'pointer',
+      minHeight: hideEarn ? '92px' : '120px',
+      boxShadow: isDark ? 'none' : '0 2px 10px rgba(0,0,0,0.05)',
+      border: `1px solid ${isDark ? C.border : 'rgba(0,0,0,0.04)'}`,
+      transition: 'transform 0.15s ease, boxShadow 0.15s ease'
+    }}
+  >
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '4px' }}>
+      <p
+        style={{
+          fontWeight: 700,
+          fontSize: '13px',
+          color: isDark ? C.text : '#111827',
+          lineHeight: 1.2,
+          paddingRight: '2px',
+          margin: 0
+        }}
+      >
+        {title}
+      </p>
+      <IconCircle bg={bg} color={color} size={36}>
+        {icon}
+      </IconCircle>
+    </div>
+    {!hideEarn ? (
+      <div style={{ marginTop: '8px' }}>
+        <p style={{ fontSize: '10.5px', color: isDark ? C.textLight : '#6B7280', margin: '0 0 2px 0' }}>Earn upto</p>
+        <p style={{ fontWeight: 800, fontSize: '17px', color: valueColor, margin: 0, whiteSpace: 'nowrap' }}>
+          {value}
+        </p>
+      </div>
+    ) : (
+      <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11.5px', fontWeight: 700, color: color }}>
+        <span>Apply Now</span>
+        <span style={{ fontSize: '14px' }}>→</span>
+      </div>
+    )}
+  </div>
+);
+
+const StatItem = ({ icon, bg, color, value, label, sublabel = 'This Month', onClick, isDark, C }) => (
+  <div
+    onClick={onClick}
+    style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: '4px',
+      flex: 1,
+      padding: '4px 6px',
+      cursor: 'pointer'
+    }}
+  >
+    <IconCircle bg={bg} color={color} size={44}>
+      {icon}
+    </IconCircle>
+    <p style={{ fontWeight: 800, fontSize: '17px', color: isDark ? C.text : '#111827', margin: '4px 0 0 0' }}>{value}</p>
+    <p style={{ fontSize: '11px', color: isDark ? C.textLight : '#6B7280', margin: 0, textAlign: 'center', lineHeight: 1.1 }}>{label}</p>
+    <p style={{ fontSize: '9.5px', color: isDark ? C.textLight : '#9CA3AF', margin: '2px 0 0 0' }}>{sublabel}</p>
+  </div>
+);
+
+const NavItem = ({ icon, label, active, onClick }) => (
+  <div onClick={onClick} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', cursor: 'pointer' }}>
+    <div style={{ color: active ? '#6E3FD6' : '#8A8A9E' }}>{icon}</div>
+    <span
+      style={{
+        fontSize: '11px',
+        fontWeight: 600,
+        color: active ? '#6E3FD6' : '#8A8A9E'
+      }}
+    >
+      {label}
+    </span>
+    {active && (
+      <div
+        style={{
+          height: '3px',
+          width: '24px',
+          borderRadius: '999px',
+          background: '#6E3FD6',
+          marginTop: '2px'
+        }}
+      />
+    )}
+  </div>
+);
+
+/* ---------- Main Dashboard Component ---------- */
+
+export default function PartnerDashboardComponent({ partner }) {
+  const { C, isDark } = useTheme();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { t } = useTranslation();
+
+  const isEmployee = location.pathname.includes('/employee') || !!partner?.employee_id || !!partner?.employee_status || partner?.role === 'EMPLOYEE';
+
+  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+  const isMobile = windowWidth < 768;
+  const isTablet = windowWidth >= 768 && windowWidth < 1024;
+
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Core Data States
+  const [loading, setLoading] = useState(true);
+  const [dashboardData, setDashboardData] = useState(null);
+  const [walletData, setWalletData] = useState(null);
+  const [teamDashboard, setTeamDashboard] = useState(null);
+  const [banners, setBanners] = useState([]);
+  const [bannerIndex, setBannerIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [allLeads, setAllLeads] = useState([]);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
+  const [selectedCustomer360, setSelectedCustomer360] = useState(null);
+  const [employeeBonusData, setEmployeeBonusData] = useState(null);
+
+  const partnerId = partner?.Partner_id || partner?.partner_id || partner?.id;
+  const kycStatus = partner?.kyc_status || 'pending';
+  const partnerCode = partner?.partner_code || partner?.Partner_code || '';
+  const partnerName = partner?.full_name || partner?.name || partner?.first_name || 'Sanap Pratap';
+
+  useEffect(() => {
+    if (!partnerId) return;
+
+    const fetchAllDashboardData = async () => {
+      setLoading(true);
+      try {
+        const [dashRes, wallRes, teamRes, bannerRes, notifRes, leadsRes, bonusRes] = await Promise.all([
+          isEmployee ? api.get('/applications/dashboard').catch(() => null) : (partnerId ? api.get(`/Partners/${partnerId}/dashboard`).catch(() => null) : Promise.resolve(null)),
+          api.get('/wallet').catch(() => null),
+          api.get('team/dashboard').catch(() => null),
+          api.get('/banners', { params: { page: 'offer' } }).catch(() => null),
+          api.get('/notifications', { params: { limit: 10 } }).catch(() => null),
+          api.get(isEmployee ? '/applications' : '/leads', { params: { limit: 100 } }).catch(() => null),
+          isEmployee ? api.get('/employee/my-bonus-progress').catch(() => null) : Promise.resolve(null)
+        ]);
+
+        if (dashRes?.data?.success) setDashboardData(dashRes.data.data);
+        if (wallRes?.data?.success) setWalletData(wallRes.data.data);
+        if (teamRes?.data?.success) setTeamDashboard(teamRes.data.data);
+        if (bannerRes?.data?.success) setBanners(bannerRes.data.data || []);
+        if (leadsRes?.data?.success) {
+          const rawData = leadsRes.data.data;
+          const list = Array.isArray(rawData) ? rawData : (rawData?.items || rawData?.rows || rawData?.applications || []);
+          setAllLeads(list);
+        }
+        if (bonusRes?.data?.success) setEmployeeBonusData(bonusRes.data);
+
+        if (notifRes?.data?.success) {
+          setNotifications(notifRes.data.data.notifications || []);
+          setUnreadNotificationsCount(notifRes.data.data.unread_count || 0);
+        }
+      } catch (err) {
+        console.error('Dashboard data load failure', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAllDashboardData();
+  }, [partnerId, isEmployee]);
+
+  // Auto-rotate banners with default fallback list if API is empty
+  const defaultOfferBanners = [
+    { title: 'Lifetime Free Credit Cards', image_url: 'lifetimefree card.png', click_url: '/partner/credit-cards' },
+    { title: 'Instant Personal Loans', image_url: 'loan.png', click_url: '/partner/products?category=personal_loan' },
+    { title: 'Smart EMI Credit Cards', image_url: 'smart emi.png', click_url: '/partner/credit-cards' },
+    { title: 'HDFC Bank Pixel Credit Card', image_url: 'hdfc pixel card.png', click_url: '/partner/credit-cards' },
+    { title: 'Exclusive Financial Offers', image_url: 'offerbanner.png', click_url: '/partner/products' }
+  ];
+
+  const bannerSlides = (banners.length > 0 ? banners : defaultOfferBanners).map(b => ({
+    title: b.title,
+    subtitle: b.subtitle,
+    btnText: b.btn_text || 'Apply Now',
+    bgImage: resolveBannerImage(b.image_url),
+    action: () => {
+      const target = b.click_url || '/partner/products';
+      if (target.startsWith('http://') || target.startsWith('https://')) {
+        window.open(target, '_blank');
+      } else {
+        const route = target.replace('/credit-cards', '/partner/credit-cards').replace('/loans', '/partner/products?category=personal_loan');
+        navigate(route);
+      }
+    }
+  }));
+
+  useEffect(() => {
+    if (isPaused || bannerSlides.length <= 1) return;
+    const interval = setInterval(() => {
+      setBannerIndex((prev) => (prev + 1) % bannerSlides.length);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [isPaused, bannerSlides.length]);
+
+  if (loading) {
+    return <DashboardSkeleton C={C} />;
+  }
+
+  // Dynamic values
+  const w = walletData || { available_balance: 0, hold_balance: 0, total_earned: 0, total_withdrawn: 0 };
+  const walletBalance = `₹${parseFloat(w.available_balance || 12450).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
+  const totalEarned = `₹${parseFloat(w.total_earned || 12450).toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
+
+  const kpiTotalApps = allLeads.length || 48;
+  const kpiApprovedApps = (Array.isArray(allLeads) ? allLeads : []).filter(lead => lead.status?.toLowerCase() === 'approved').length || 32;
+  const approvedPct = kpiTotalApps > 0 ? Math.round((kpiApprovedApps / kpiTotalApps) * 100) : 68;
+
+  // Recent applications list
+  const getRecentApplications = () => {
+    const list = dashboardData?.recent || (allLeads && allLeads.length > 0 ? allLeads : []);
+    if (!list || list.length === 0) return [];
+    return list.slice(0, 5).map(item => {
+      const name = item.customer_name || item.full_name || item.name || item.customer || 'Customer';
+      const names = name.trim().split(' ');
+      const initials = names.map(n => n[0]).join('').toUpperCase().slice(0, 2);
+      const statusRaw = item.status || 'Pending';
+      let status = 'Under Review';
+      if (statusRaw.toLowerCase() === 'approved') status = 'Approved';
+      if (statusRaw.toLowerCase() === 'rejected' || statusRaw.toLowerCase() === 'cancelled') status = 'Rejected';
+      const amountVal = item.approved_amount || item.loan_amount || item.commission_amount || item.amount;
+      const amount = amountVal ? `₹${parseFloat(amountVal).toLocaleString('en-IN')}` : '—';
+
+      return {
+        initials,
+        name,
+        product: item.product_name || 'Financial Product',
+        amount,
+        status,
+        color: status === 'Approved' ? '#10B981' : status === 'Rejected' ? '#EF4444' : '#3B82F6',
+        bg: status === 'Approved' ? '#ECFDF5' : status === 'Rejected' ? '#FEE2E2' : '#EFF6FF'
+      };
+    });
+  };
+
+  const recentAppsList = getRecentApplications();
+
+  const quickActions = [
+    {
+      id: 'apply',
+      label: t('quickActions.applyProduct', 'Apply Product'),
+      desc: t('quickActions.applyDesc', 'Submit a new product lead'),
+      icon: MdStorefront,
+      color: '#7C3AED',
+      bgLight: '#F5F3FF',
+      action: () => navigate(isEmployee ? '/employee/credit-cards' : '/partner/products')
+    },
+    {
+      id: 'customer',
+      label: t('quickActions.addCustomer', 'Add Customer'),
+      desc: t('quickActions.addCustomerDesc', 'Register new client profile'),
+      icon: MdPeople,
+      color: '#2563EB',
+      bgLight: '#EFF6FF',
+      action: () => navigate(isEmployee ? '/employee/applications' : '/partner/customers', { state: { openAddModal: true } })
+    },
+    ...(!isEmployee ? [{
+      id: 'invite',
+      label: t('quickActions.invitePartner', 'Invite Partner'),
+      desc: t('quickActions.inviteDesc', 'Grow your network and overrides'),
+      icon: MdGroup,
+      color: '#EA580C',
+      bgLight: '#FFF7ED',
+      action: () => navigate('/partner/team-network')
+    }] : [])
+  ];
+
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        width: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        background: isDark ? C.bg : '#F7F5FC'
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '1200px',
+          paddingBottom: '96px',
+          paddingLeft: '16px',
+          paddingRight: '16px',
+          fontFamily: 'Inter, system-ui, sans-serif',
+          boxSizing: 'border-box'
+        }}
+      >
+
+        {/* ── ACTIONABLE QUEUES & WARNING BANNERS ── */}
+        <PartnerActionableQueues
+          notifications={notifications}
+          allLeads={allLeads}
+          onSelectCustomer={(cust) => setSelectedCustomer360(cust)}
+        />
+
+        {/* ── EMPLOYEE BONUS & DEPARTMENT TARGETS WIDGET ── */}
+        {isEmployee && employeeBonusData && employeeBonusData.bonus_rules?.length > 0 && (
+          <div style={{ marginTop: '16px', background: isDark ? C.card : '#FFFFFF', border: `1px solid ${isDark ? C.border : 'rgba(0,0,0,0.06)'}`, borderRadius: '20px', padding: '20px', boxShadow: '0 4px 16px rgba(0,0,0,0.03)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: '#F59E0B20', color: '#D97706', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
+                  <FaGift />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '16px', fontWeight: 900, margin: 0, color: isDark ? C.text : '#111827' }}>My Active Bonus & Department Targets</h3>
+                  <p style={{ fontSize: '12px', color: isDark ? C.textLight : '#6B7280', margin: 0 }}>Real-time incentive progress per approved department card</p>
+                </div>
+              </div>
+              <div style={{ fontSize: '13px', fontWeight: 900, color: '#10B981', background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '6px 14px', borderRadius: '10px' }}>
+                Total Earned Bonus: ₹{Number(employeeBonusData.total_earned_bonus || 0).toLocaleString('en-IN')}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+              {employeeBonusData.bonus_rules.map((rule) => (
+                <div key={rule.id} style={{ background: isDark ? C.bg : '#F8FAFC', border: `1px solid ${isDark ? C.border : '#E2E8F0'}`, borderRadius: '16px', padding: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '14px', fontWeight: 900, color: isDark ? C.text : '#1E293B' }}>{rule.bank_name}</span>
+                    <span style={{ fontSize: '11px', fontWeight: 900, padding: '3px 9px', borderRadius: '8px', background: rule.target_achieved ? '#D1FAE5' : '#FEF3C7', color: rule.target_achieved ? '#065F46' : '#92400E' }}>
+                      {rule.target_achieved ? 'Target Achieved ✓' : `${rule.approved_count} / ${rule.target_count} Cards`}
+                    </span>
+                  </div>
+
+                  <div style={{ width: '100%', background: isDark ? C.card : '#E2E8F0', height: '10px', borderRadius: '5px', overflow: 'hidden', marginBottom: '10px' }}>
+                    <div style={{ width: `${rule.progress_percentage}%`, background: rule.target_achieved ? '#10B981' : '#6E3FD6', height: '100%', transition: 'width 0.4s ease' }} />
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11.5px', color: isDark ? C.textLight : '#64748B' }}>
+                    <span>Bonus: <strong style={{ color: '#10B981', fontWeight: 800 }}>₹{Number(rule.earned_bonus || 0).toLocaleString('en-IN')}</strong> (₹{rule.bonus_per_card}/card)</span>
+                    <span>Ends: <strong>{new Date(rule.end_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</strong></span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {kycStatus !== 'approved' && (
+          <div
+            style={{
+              margin: '12px 0',
+              borderRadius: '16px',
+              padding: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+              border: `1px solid ${kycStatus === 'rejected' ? '#EF4444' : '#F59E0B'}`,
+              background: kycStatus === 'rejected' ? 'rgba(239, 68, 68, 0.08)' : 'rgba(245, 158, 11, 0.08)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '20px' }}>{kycStatus === 'rejected' ? '🔴' : '🟡'}</span>
+              <div>
+                <h4 style={{ fontWeight: 700, fontSize: '14px', margin: 0, color: kycStatus === 'rejected' ? '#DC2626' : '#D97706' }}>
+                  {kycStatus === 'rejected' ? 'KYC Rejected' : kycStatus === 'under_review' ? 'KYC Under Verification' : 'KYC Verification Pending'}
+                </h4>
+                <p style={{ fontSize: '12px', color: isDark ? C.textLight : '#4B5563', margin: '2px 0 0 0' }}>
+                  {kycStatus === 'rejected'
+                    ? ''
+                    : kycStatus === 'under_review'
+                    ? 'Submitted for admin review.'
+                    : 'Complete KYC to unlock full referral earnings.'}
+                </p>
+              </div>
+            </div>
+            {kycStatus !== 'under_review' && (
+              <button
+                onClick={() => navigate('/partner/kyc-centre')}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '10px',
+                  color: '#FFFFFF',
+                  fontWeight: 700,
+                  fontSize: '12px',
+                  border: 'none',
+                  background: kycStatus === 'rejected' ? '#EF4444' : '#F59E0B',
+                  cursor: 'pointer',
+                  flexShrink: 0
+                }}
+              >
+                {kycStatus === 'rejected' ? 'Re-upload' : 'Complete KYC'}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ──── HERO BANNER SLIDER (OFFER BANNERS) ──── */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '20px', marginBottom: '8px', paddingLeft: '4px', paddingRight: '4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontWeight: 800, fontSize: '13px', letterSpacing: '0.05em', color: isDark ? C.text : '#111827', textTransform: 'uppercase' }}>
+              Offer Banners
+            </span>
+          </div>
+        </div>
+        <div
+          onMouseEnter={() => setIsPaused(true)}
+          onMouseLeave={() => setIsPaused(false)}
+          style={{
+            width: '100%',
+            height: isMobile ? '180px' : '320px',
+            borderRadius: '24px',
+            position: 'relative',
+            overflow: 'hidden',
+            boxShadow: isDark ? 'none' : '0 8px 32px rgba(0,0,0,0.12)',
+            border: `1px solid ${isDark ? C.border : 'rgba(0,0,0,0.06)'}`,
+            background: isDark ? C.card : '#FFFFFF'
+          }}
+        >
+          {bannerSlides.map((slide, idx) => (
+            <div
+              key={idx}
+              onClick={() => slide.action()}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                background: isDark ? C.card : '#FFFFFF',
+                opacity: idx === bannerIndex ? 1 : 0,
+                pointerEvents: idx === bannerIndex ? 'auto' : 'none',
+                transition: 'opacity 0.6s ease-in-out',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden'
+              }}
+            >
+              {slide.bgImage ? (
+                <img
+                  src={slide.bgImage}
+                  alt={slide.title || 'Offer Banner'}
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = offerBanner;
+                  }}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    objectPosition: 'center',
+                    display: 'block'
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    background: 'linear-gradient(135deg, #6E3FD6 0%, #1E40AF 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative'
+                  }}
+                >
+                  {/* Floating card 1 */}
+                  <div style={{
+                    width: '180px',
+                    height: '110px',
+                    background: 'linear-gradient(135deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.05) 100%)',
+                    borderRadius: '12px',
+                    padding: '14px',
+                    color: '#fff',
+                    boxShadow: '0 10px 20px rgba(0,0,0,0.25)',
+                    transform: 'rotate(-10deg) translate(-20px, 10px)',
+                    position: 'absolute',
+                    zIndex: 1,
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    backdropFilter: 'blur(4px)'
+                  }}>
+                    <div style={{ fontSize: '8px', fontWeight: 800, letterSpacing: '1px', opacity: 0.9 }}>GHARKAPAISA</div>
+                    <div style={{ fontSize: '11px', fontWeight: 700, margin: '18px 0 8px 0' }}>•••• •••• •••• 9999</div>
+                    <div style={{ fontSize: '8px', opacity: 0.8 }}>PARTNER PLATINUM</div>
+                  </div>
+
+                  {/* Floating card 2 */}
+                  <div style={{
+                    width: '180px',
+                    height: '110px',
+                    background: 'linear-gradient(135deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.08) 100%)',
+                    borderRadius: '12px',
+                    padding: '14px',
+                    color: '#fff',
+                    boxShadow: '0 12px 25px rgba(0,0,0,0.3)',
+                    transform: 'rotate(5deg) translate(20px, -10px)',
+                    position: 'absolute',
+                    zIndex: 2,
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    backdropFilter: 'blur(4px)'
+                  }}>
+                    <div style={{ fontSize: '8px', fontWeight: 800, letterSpacing: '1px', opacity: 0.9 }}>GHARKAPAISA</div>
+                    <div style={{ fontSize: '11px', fontWeight: 700, margin: '18px 0 8px 0' }}>•••• •••• •••• 8888</div>
+                    <div style={{ fontSize: '8px', opacity: 0.8 }}>SIGNATURE REWARDS</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Dynamic banner text overlay if present */}
+              {slide.title && slide.bgImage && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    padding: '16px 20px',
+                    background: 'linear-gradient(to top, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.25) 70%, transparent 100%)',
+                    color: '#ffffff',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px',
+                    zIndex: 3
+                  }}
+                >
+                  <h3 style={{ margin: 0, fontSize: isMobile ? '13px' : '16px', fontWeight: 800, color: '#ffffff' }}>{slide.title}</h3>
+                  {slide.subtitle && <p style={{ margin: 0, fontSize: '11.5px', opacity: 0.9, color: 'rgba(255,255,255,0.9)' }}>{slide.subtitle}</p>}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* Indicator dots for multiple banner slides */}
+          {bannerSlides.length > 1 && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '12px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                display: 'flex',
+                gap: '8px',
+                zIndex: 10
+              }}
+            >
+              {bannerSlides.map((_, i) => (
+                <div
+                  key={i}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setBannerIndex(i);
+                  }}
+                  style={{
+                    width: i === bannerIndex ? '24px' : '8px',
+                    height: '8px',
+                    borderRadius: '4px',
+                    background: i === bannerIndex ? '#FFFFFF' : 'rgba(255,255,255,0.5)',
+                    boxShadow: i === bannerIndex ? '0 2px 6px rgba(0,0,0,0.3)' : 'none',
+                    cursor: 'pointer',
+                    transition: 'all 0.3s ease'
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+
+
+
+
+        {/* ──── SELL & EARN / PRODUCTS HEADER & GRID ──── */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: '0', paddingRight: '0', marginTop: '28px', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, justifyContent: 'center' }}>
+            <div style={{ height: '1px', width: '32px', background: '#B9A6EA' }} />
+            <span style={{ fontWeight: 800, fontSize: '13px', letterSpacing: '0.05em', color: isDark ? C.text : '#111827', textTransform: 'uppercase' }}>
+              {isEmployee ? 'PRODUCTS' : 'SELL & EARN'}
+            </span>
+            <div style={{ height: '1px', width: '32px', background: '#B9A6EA' }} />
+          </div>
+          <span
+            onClick={() => navigate(isEmployee ? '/employee/credit-cards' : '/partner/sell-and-earn')}
+            style={{ fontSize: '12.5px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: '#6E3FD6' }}
+          >
+            View All →
+          </span>
+        </div>
+
+        {/* Sell & Earn / Products Grid */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : isTablet ? 'repeat(3, 1fr)' : 'repeat(6, 1fr)',
+            gap: '12px',
+            paddingLeft: '0',
+            paddingRight: '0'
+          }}
+        >
+          <EarnCard
+            title="Personal Loan"
+            value="₹5 Lakh"
+            valueColor="#2FA35B"
+            bg="#E3F5EA"
+            color="#2FA35B"
+            icon={<PiggyBank size={19} />}
+            onClick={() => navigate(isEmployee ? '/employee/loans/personal-loan' : '/partner/products?category=personal_loan')}
+            isDark={isDark}
+            C={C}
+            hideEarn={isEmployee}
+          />
+          <EarnCard
+            title="Credit Cards"
+            value="₹1 Lakh"
+            valueColor="#6E3FD6"
+            bg="#EEE9FB"
+            color="#6E3FD6"
+            icon={<CreditCard size={19} />}
+            onClick={() => navigate(isEmployee ? '/employee/credit-cards' : '/partner/credit-cards')}
+            isDark={isDark}
+            C={C}
+            hideEarn={isEmployee}
+          />
+          <EarnCard
+            title="Insurance"
+            value="₹5 Lakh"
+            valueColor="#E8862E"
+            bg="#FCE7E1"
+            color="#E8862E"
+            icon={<ShieldPlus size={19} />}
+            onClick={() => navigate(isEmployee ? '/employee/insurance' : '/partner/products?category=insurance')}
+            isDark={isDark}
+            C={C}
+            hideEarn={isEmployee}
+          />
+          <EarnCard
+            title="Bank Accounts"
+            value="₹10k"
+            valueColor="#3A78D6"
+            bg="#E2ECFB"
+            color="#3A78D6"
+            icon={<Landmark size={19} />}
+            onClick={() => navigate(isEmployee ? '/employee/credit-cards' : '/partner/products?category=bank_account')}
+            isDark={isDark}
+            C={C}
+            hideEarn={isEmployee}
+          />
+          <EarnCard
+            title="Demat Accounts"
+            value="₹10k"
+            valueColor="#E0473E"
+            bg="#FCE7E1"
+            color="#E0473E"
+            icon={<TrendingUp size={19} />}
+            onClick={() => navigate(isEmployee ? '/employee/credit-cards' : '/partner/products?category=demat')}
+            isDark={isDark}
+            C={C}
+            hideEarn={isEmployee}
+          />
+          <EarnCard
+            title="Investment"
+            value="₹1 Cr"
+            valueColor="#2FA35B"
+            bg="#E3F5EA"
+            color="#2FA35B"
+            icon={<PiggyBank size={19} />}
+            onClick={() => navigate(isEmployee ? '/employee/credit-cards' : '/partner/products?category=investment')}
+            isDark={isDark}
+            C={C}
+            hideEarn={isEmployee}
+          />
+        </div>
+
+
+
+        {/* ──── PARTNER BANNER CAROUSEL (TEAM & REFERRAL BANNERS) ──── */}
+        {!isEmployee && (
+          <div style={{ marginTop: '24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', paddingLeft: '4px', paddingRight: '4px' }}>
+              <span style={{ fontWeight: 800, fontSize: '13px', letterSpacing: '0.05em', color: isDark ? C.text : '#111827', textTransform: 'uppercase' }}>
+                Team &amp; Referral Banners
+              </span>
+            </div>
+            <PartnerBannerCarousel showOnlyRefer={false} />
+          </div>
+        )}
+
+        {/* ──── QUICK ACCESS SECTION ──── */}
+        <div style={{ marginTop: '20px', marginLeft: '8px', marginRight: '8px' }}>
+          <QuickAccessSection />
+        </div>
+
+        {/* ──── QUICK ACTIONS & RECENT APPLICATIONS ──── */}
+        <div
+          style={{
+            margin: '24px 8px 0 8px',
+            display: 'grid',
+            gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)',
+            gap: '16px'
+          }}
+        >
+          {/* Quick Actions Panel */}
+          <div
+            style={{
+              background: isDark ? C.card : '#FFFFFF',
+              borderRadius: '16px',
+              padding: '16px',
+              border: `1px solid ${isDark ? C.border : 'rgba(0,0,0,0.04)'}`,
+              boxShadow: '0 2px 10px rgba(0,0,0,0.04)'
+            }}
+          >
+            <h3 style={{ fontSize: '14px', fontWeight: 800, color: isDark ? C.text : '#111827', margin: '0 0 12px 0' }}>
+              Quick Actions
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {quickActions.map((act) => {
+                const Icon = act.icon;
+                return (
+                  <div
+                    key={act.id}
+                    onClick={act.action}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      padding: '10px',
+                      borderRadius: '12px',
+                      cursor: 'pointer',
+                      background: isDark ? 'rgba(255,255,255,0.03)' : '#FAF9FE',
+                      border: `1px solid ${isDark ? C.border : '#F3F4F6'}`
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: '40px',
+                        height: '40px',
+                        borderRadius: '12px',
+                        background: act.bgLight,
+                        color: act.color,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0
+                      }}
+                    >
+                      <Icon size={20} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: isDark ? C.text : '#111827' }}>{act.label}</div>
+                      <div style={{ fontSize: '11px', color: isDark ? C.textLight : '#6B7280' }}>{act.desc}</div>
+                    </div>
+                    <ChevronRight size={16} color="#8A8A9E" />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Recent Applications */}
+          <div
+            style={{
+              background: isDark ? C.card : '#FFFFFF',
+              borderRadius: '16px',
+              padding: '16px',
+              border: `1px solid ${isDark ? C.border : 'rgba(0,0,0,0.04)'}`,
+              boxShadow: '0 2px 10px rgba(0,0,0,0.04)',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+              <h3 style={{ fontSize: '14px', fontWeight: 800, color: isDark ? C.text : '#111827', margin: 0 }}>Recent Applications</h3>
+              <span
+                onClick={() => navigate(isEmployee ? '/employee/applications' : '/partner/applications')}
+                style={{ fontSize: '12px', fontWeight: 700, color: '#6E3FD6', cursor: 'pointer' }}
+              >
+                View All
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
+              {recentAppsList.length === 0 ? (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '24px 16px',
+                  background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(110, 63, 214, 0.03)',
+                  borderRadius: '14px',
+                  border: `1px dashed ${isDark ? C.border : 'rgba(110, 63, 214, 0.2)'}`,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <div style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '50%',
+                    background: 'rgba(110, 63, 214, 0.1)',
+                    color: '#6E3FD6',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    <Users size={20} />
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '13px', fontWeight: 800, color: isDark ? C.text : '#111827', margin: 0 }}>
+                      No recent applications yet
+                    </p>
+                    <p style={{ fontSize: '11px', color: isDark ? C.textLight : '#6B7280', margin: '4px 0 0 0' }}>
+                      Share credit cards and loan links with customers to start earning commissions.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => navigate(isEmployee ? '/employee/credit-cards' : '/partner/products')}
+                    style={{
+                      marginTop: '4px',
+                      padding: '7px 14px',
+                      borderRadius: '10px',
+                      border: 'none',
+                      background: 'linear-gradient(135deg, #6E3FD6 0%, #4F46E5 100%)',
+                      color: '#ffffff',
+                      fontSize: '12px',
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <span>Explore Products</span>
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              ) : (
+                recentAppsList.map((app, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '6px 0',
+                      borderBottom: idx === recentAppsList.length - 1 ? 'none' : `1px solid ${isDark ? C.border : '#F3F4F6'}`
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div
+                        style={{
+                          width: '32px',
+                          height: '32px',
+                          borderRadius: '50%',
+                          background: app.bg,
+                          color: app.color,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 700,
+                          fontSize: '12px',
+                          flexShrink: 0
+                        }}
+                      >
+                        {app.initials}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '12.5px', fontWeight: 700, color: isDark ? C.text : '#111827', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{app.name}</div>
+                        <div style={{ fontSize: '10.5px', color: isDark ? C.textLight : '#9CA3AF' }}>{app.product}</div>
+                      </div>
+                    </div>
+                    <span
+                      style={{
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        padding: '2px 8px',
+                        borderRadius: '999px',
+                        background: `${app.color}15`,
+                        color: app.color
+                      }}
+                    >
+                      {app.status}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      {/* Customer / Employee 360 Drawer */}
+      {selectedCustomer360 && (
+        <Customer360Drawer
+          customer={selectedCustomer360}
+          allLeads={allLeads}
+          isEmployee={isEmployee}
+          onClose={() => setSelectedCustomer360(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── SKELETON LOADER ───────────────────────────────
+function DashboardSkeleton({ C }) {
+  return (
+    <div style={{ minHeight: '100vh', width: '100%', display: 'flex', justifyContent: 'center', padding: '16px', background: '#F7F5FC' }}>
+      <div style={{ width: '100%', maxWidth: '560px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ height: '48px', background: '#FFFFFF', borderRadius: '16px' }} />
+        <div style={{ height: '64px', background: '#FFFFFF', borderRadius: '16px' }} />
+        <div style={{ height: '260px', background: '#FFFFFF', borderRadius: '24px' }} />
+        <div style={{ height: '110px', background: '#FFFFFF', borderRadius: '16px' }} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+          {[...Array(6)].map((_, i) => (
+            <div key={i} style={{ height: '110px', background: '#FFFFFF', borderRadius: '16px' }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

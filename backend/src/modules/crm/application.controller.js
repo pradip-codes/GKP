@@ -1,0 +1,8134 @@
+const crypto = require('crypto');
+const { query, getClient } = require('../../config/database');
+// Note: No duplicate database imports - removed redundant require at line 1029
+const { generateAppNumber, getPaginationParams, normalizeAssignmentCategory, isEmployeeOrStaffUser } = require('../../utils/helpers/helpers');
+const { creditCommission, releaseHold } = require('../wallet/service.js');
+const { calculatePartnerCommission } = require('../partner/commission.service.js');
+const { notify } = require('../notifications/service.js');
+const { uploadToS3 } = require('../../services/aws/s3.service.js');
+const { success, created, error, notFound, forbidden, paginate } = require('../../utils/response/response');
+const logger = require('../../config/logger');
+const { logAction } = require('../admin/audit.service.js');
+const { processTeamOverrideCommission } = require('../team/team.service.js');
+const { getBankApplyLinkBackend } = require('./lead.controller');
+const { ensureBankDirectProcessLinksTable } = require('../../database/migrations/migrate_bank_direct_process_links');
+const { resolveDirectProcessLinkForProductRow } = require('../super-admin/bankDirectLinks.controller');
+const { sendEmail, sendLeadApplicationCreatedEmail } = require('../../services/email/email.service');
+const { getHdfcCuringDesignation, getHdfcDeclineCodeInfo, HDFC_DECLINE_CODES, CURING_DESIGNATIONS } = require('../../constants/hdfcDeclineCodes');
+const cache = require('../../services/cache.service');
+const {
+  DEFAULT_APPLICATIONS_CACHE_TTL,
+  buildApplicationListCacheKey,
+  getCachedApplicationList,
+  setCachedApplicationList,
+  invalidateApplicationsCache
+} = require('../../services/applicationCache.service');
+
+// Helper to determine strictly if an application belongs to HDFC Bank Credit Card (and not LOC/EOC)
+const isHdfcCreditCardApp = (app, pRow) => {
+  if (!app) return false;
+  const bankName = String(app.bank_name || app.bank_code || '').toUpperCase();
+  const isHdfc = (
+    app.bank_id === 'f0b5742d-f04d-4a91-b162-6009ddf6e345' ||
+    (bankName.includes('HDFC') && !bankName.includes('TATA'))
+  );
+  if (!isHdfc) return false;
+
+  const catStr = String(pRow?.category || app.category || '').toLowerCase();
+  const subCatStr = String(pRow?.sub_category || app.sub_category || '').toLowerCase();
+  const prodName = String(pRow?.name || app.product_name || '').toLowerCase();
+
+  const isLocEoc = ['loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loc', 'eoc', 'loan_on_card', 'card_on_loan'].includes(catStr) ||
+    ['loc', 'eoc', 'loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loan_on_card', 'card_on_loan'].includes(subCatStr) ||
+    /insta\s*loan|jumbo\s*loan|instant\s*(&|and)?\s*jumbo\s*loan|instant\s*loan|smart\s*emi|smartemi|loan\s*on\s*card|loan\s*on\s*credit\s*card|emi\s*on\s*credit\s*card|emi\s*on\s*card|encash|dial\s*a\s*draft/i.test(prodName);
+
+  if (isLocEoc) return false;
+
+  const isCreditCard = (
+    ['credit_card', 'creditcard', 'cards', 'card', 'co_branded_card', 'fd_card'].includes(catStr) ||
+    catStr.includes('credit') ||
+    !catStr
+  );
+  return isCreditCard;
+};
+
+// Helper to safely ensure application_admin_assignments table exists (cached in memory)
+let _assignmentsTableEnsured = false;
+const ensureAssignmentsTableExists = async () => {
+  if (_assignmentsTableEnsured) return true;
+  try {
+    const { rows } = await query(`SELECT to_regclass('public.application_admin_assignments') as tbl_exists`);
+    if (rows[0] && rows[0].tbl_exists) {
+      _assignmentsTableEnsured = true;
+      return true;
+    }
+    await query(`
+      CREATE TABLE IF NOT EXISTS application_admin_assignments (
+        id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+        admin_user_id  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        assigned_by    UUID REFERENCES users(id),
+        assigned_at    TIMESTAMPTZ DEFAULT NOW(),
+        completed_at   TIMESTAMPTZ,
+        status         VARCHAR(20) DEFAULT 'PENDING',
+        created_at     TIMESTAMPTZ DEFAULT NOW(),
+        updated_at     TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(application_id, admin_user_id)
+      )
+    `);
+    _assignmentsTableEnsured = true;
+    return true;
+  } catch (err) {
+    logger.warn('application_admin_assignments table check/create warning:', err.message);
+    return false;
+  }
+};
+
+// Helper to parse DOB string formats (e.g. "03091994", "03-09-1994", "1994-09-03") to ISO Date YYYY-MM-DD
+const parseDobToIso = (raw) => {
+  if (!raw || typeof raw !== 'string') return null;
+  const s = raw.trim().replace(/\D/g, '');
+  if (s.length === 8) {
+    const day = s.substring(0, 2);
+    const month = s.substring(2, 4);
+    const year = s.substring(4, 8);
+    const d = parseInt(day, 10);
+    const m = parseInt(month, 10);
+    const y = parseInt(year, 10);
+    if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 1900 && y <= 2100) {
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+  }
+  if (raw.includes('-') || raw.includes('/')) {
+    const parts = raw.split(/[-/]/).map(p => p.trim());
+    if (parts.length === 3) {
+      if (parts[0].length === 4) {
+        return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+      } else if (parts[2].length === 4) {
+        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      }
+    }
+  }
+  try {
+    const parsed = new Date(raw);
+    if (!isNaN(parsed.getTime())) {
+      const year = parsed.getFullYear();
+      const month = String(parsed.getMonth() + 1).padStart(2, '0');
+      const day = String(parsed.getDate()).padStart(2, '0');
+      if (year >= 1900 && year <= 2100) {
+        return `${year}-${month}-${day}`;
+      }
+    }
+  } catch (e) { }
+  return null;
+};
+
+// Helper to parse dates to ISO string YYYY-MM-DD avoiding timezone shifts
+const parseDateToIso = (raw) => {
+  if (!raw) return null;
+  if (raw instanceof Date) {
+    if (isNaN(raw.getTime())) return null;
+    return `${raw.getFullYear()}-${String(raw.getMonth() + 1).padStart(2, '0')}-${String(raw.getDate()).padStart(2, '0')}`;
+  }
+  return parseDobToIso(String(raw));
+};
+
+
+
+// Helper to log timeline actions with full audit metadata and timestamp
+const logTimeline = async (client, applicationId, status, activity, remarks, performedBy) => {
+  try {
+    const dbQuery = (client && typeof client.query === 'function')
+      ? client.query.bind(client)
+      : (typeof client === 'function' ? client : query);
+    await dbQuery(`
+      INSERT INTO application_timeline (application_id, status, activity, event_type, title, description, remarks, actor_type, actor_id, performed_by, created_at)
+      VALUES ($1, $2, $3, $2, $3, $4, $4, 'system', $5, $5, NOW())
+    `, [applicationId, status, activity, remarks, performedBy]);
+  } catch (err) {
+    console.warn('logTimeline error:', err.message);
+  }
+};
+
+// POST /applications — Partner submits application
+const submitApplication = async (req, res, next) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    const { product_id, customer, loan_amount, notes } = req.body;
+    const rawRole = String(req.user?.role || '').toUpperCase().trim();
+    const isStaff = ['ADMIN', 'SUPER_ADMIN', 'EMPLOYEE', 'HR', 'OPERATIONAL_HEAD', 'OPERATIONS_HEAD', 'ADMINISTRATIVE_OPERATOR'].includes(rawRole);
+
+    let PartnerId = req.body.partner_id || req.body.PartnerId || null;
+
+    if (PartnerId) {
+      const { rows: [pCheck] } = await client.query(`SELECT id FROM partner_profiles WHERE id = $1`, [PartnerId]);
+      PartnerId = pCheck?.id || null;
+    }
+
+    if (!PartnerId && req.partner?.id) {
+      const { rows: [pCheck] } = await client.query(`SELECT id FROM partner_profiles WHERE id = $1`, [req.partner.id]);
+      if (pCheck) PartnerId = pCheck.id;
+    }
+
+    if (!PartnerId && req.user?.id) {
+      const { rows: [p] } = await client.query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
+      if (p) {
+        PartnerId = p.id;
+      } else if (!isStaff) {
+        const { rows: [{ nextval: partnerSeq }] } = await client.query(`SELECT nextval('partner_code_seq')`);
+        const partnerCode = 'AG' + String(partnerSeq);
+        const { rows: [newP] } = await client.query(`
+          INSERT INTO partner_profiles (user_id, partner_code, first_name, last_name, status, kyc_status)
+          VALUES ($1, $2, $3, $4, 'active', 'pending')
+          ON CONFLICT (user_id) DO UPDATE SET updated_at = NOW()
+          RETURNING id
+        `, [req.user.id, partnerCode, req.user.first_name || 'Partner', req.user.last_name || '']);
+        if (newP) PartnerId = newP.id;
+      }
+    }
+
+    if (!PartnerId && ['PARTNER', 'TEAM_MEMBER'].includes(rawRole)) {
+      await client.query('ROLLBACK');
+      return error(res, 'Partner ID is required', 400);
+    }
+
+    // Validate product
+    const { rows: [product] } = await client.query(
+      `SELECT p.*, b.name as bank_name FROM products p JOIN banks b ON b.id = p.bank_id WHERE p.id = $1 AND p.is_active = true`,
+      [product_id]
+    );
+    if (!product) {
+      await client.query('ROLLBACK');
+      return error(res, 'Product not found or inactive', 404);
+    }
+
+    // Fetch Partner Parent ID
+    const { rows: [partnerProfile] } = await client.query(`
+      SELECT parent_partner_id FROM partner_profiles WHERE id = $1
+    `, [PartnerId]);
+    const parentPartnerId = partnerProfile ? partnerProfile.parent_partner_id : null;
+
+    // 30-Day Duplicate Check
+    const { rows: duplicateApps } = await client.query(`
+      SELECT app_number, status, created_at
+      FROM applications
+      WHERE product_id = $1
+        AND customer_id IN (SELECT id FROM customers WHERE mobile = $2)
+        AND created_at >= NOW() - INTERVAL '30 days'
+        AND status::text NOT IN ('rejected', 'cancelled')
+      LIMIT 1
+    `, [product_id, customer.mobile]);
+
+    if (duplicateApps.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        code: 'DUPLICATE_APPLICATION',
+        message: `An active application (${duplicateApps[0].app_number}) already exists for this mobile number and product within the last 30 days.`
+      });
+    }
+
+    // Upsert customer
+    let customerId;
+    const { rows: [existingCust] } = await client.query(
+      `SELECT id FROM customers WHERE mobile = $1`, [customer.mobile]
+    );
+    if (existingCust) {
+      customerId = existingCust.id;
+      await client.query(`
+        UPDATE customers SET full_name=$1, email=$2, pan_number=$3, monthly_income=$4,
+          employment_type=$5, city=$6, updated_at=NOW() WHERE id=$7
+      `, [customer.full_name, customer.email, customer.pan_number,
+      customer.monthly_income, customer.employment_type, customer.city, customerId]);
+    } else {
+      const { rows: [newCust] } = await client.query(`
+        INSERT INTO customers (full_name, mobile, email, dob, pan_number, monthly_income, employment_type, city, state, pincode, employer, created_by)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id
+      `, [customer.full_name, customer.mobile, customer.email, customer.dob,
+      customer.pan_number, customer.monthly_income, customer.employment_type,
+      customer.city, customer.state || null, customer.pincode || null, customer.employer || null, req.user.id]);
+      customerId = newCust.id;
+    }
+
+    // Create or link Lead record
+    let leadId = req.body.lead_id;
+    if (!leadId) {
+      const leadNum = 'LEAD-' + Date.now().toString(36).toUpperCase();
+      const { rows: [newLead] } = await client.query(`
+        INSERT INTO leads (
+          lead_number, partner_id, parent_partner_id, created_by, customer_id,
+          product_id, customer_name, mobile, city, status, process_type,
+          otp_verified, source, pipeline_stage
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'confirmed', $10, TRUE, 'partner', 'submitted')
+        RETURNING id
+      `, [leadNum, PartnerId, parentPartnerId, req.user.id, customerId, product_id, customer.full_name, customer.mobile, customer.city || null, req.body.process_type || 'lead_punching']);
+      leadId = newLead.id;
+    }
+
+    // Calculate expected commission
+    const commission = await calculatePartnerCommission(product_id, PartnerId, loan_amount, client);
+
+    // Generate unique app number
+    const { rows: [{ nextval }] } = await client.query(`SELECT nextval('app_number_seq')`);
+    const date = new Date();
+    const datePart = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+    const appNumber = `APP${datePart}${nextval}`;
+
+    // Create application with all structured metadata (lead_id, customer_id, partner_id, team_member_id, bank_id, product_id, process_type, status, application_number, vkyc_status)
+    const teamMemberId = req.body.team_member_id || null;
+    const vkycStatus = req.body.vkyc_status || 'pending';
+
+    const { rows: [app] } = await client.query(`
+      INSERT INTO applications
+        (app_number, application_number, lead_id, customer_id, product_id, partner_id, parent_partner_id, team_member_id, bank_id, submitted_by, loan_amount, commission_amount, notes, status, process_type, vkyc_status, submitted_at,
+         status_history)
+      VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'details_submitted',$13,$14,NOW(),
+        jsonb_build_array(jsonb_build_object('status','details_submitted','at',NOW(),'by',$15::text)))
+      RETURNING id, app_number, application_number
+    `, [appNumber, leadId, customerId, product_id, PartnerId, parentPartnerId, teamMemberId, product.bank_id, req.user.id, loan_amount, commission, notes, req.body.process_type || 'lead_punching', vkycStatus, req.user.id.toString()]);
+
+    // Link application_id on lead record
+    await client.query(`UPDATE leads SET application_id = $1 WHERE id = $2`, [app.id, leadId]);
+
+    // Initial timeline log
+    await logTimeline(client, app.id, 'submitted', 'Application Created', 'Application created inside portal.', req.user.id);
+    await logTimeline(client, app.id, 'submitted', 'Redirected to Bank', `Initiated bank integration lead flow.`, req.user.id);
+
+    // Referral clicks update omitted
+
+    await client.query('COMMIT');
+    await invalidateApplicationsCache({ action: 'submit_application', appId: app.id });
+
+    try {
+      const { recalculateTeamMetrics } = require('../partner/partner.controller.js');
+      if (parentPartnerId) {
+        await recalculateTeamMetrics(parentPartnerId);
+      }
+    } catch (syncErr) {
+      logger.error('Failed to run application submission sync:', syncErr.message);
+    }
+
+    // Notify partner
+    await notify.applicationSubmitted(req.user.id, appNumber);
+
+    try {
+      if (!isEmployeeOrStaffUser(req)) {
+        let partnerEmail = null;
+        const creatorRole = String(req.user?.role || req.user?.user_role || '').toUpperCase().trim();
+        if (['PARTNER', 'TEAM_MEMBER'].includes(creatorRole)) {
+          partnerEmail = req.user?.email;
+        }
+        if (!partnerEmail && PartnerId) {
+          const { rows: [pUser] } = await client.query(
+            `SELECT u.email FROM partner_profiles pp JOIN users u ON u.id = pp.user_id WHERE pp.id = $1`,
+            [PartnerId]
+          ).catch(() => ({ rows: [] }));
+          partnerEmail = pUser?.email;
+        }
+        if (partnerEmail) {
+          sendLeadApplicationCreatedEmail({
+            to: partnerEmail,
+            customerName: customer.full_name || 'Customer',
+            appNumber,
+            productName: product.name || 'Financial Product',
+            mobile: customer.mobile,
+            countryCode: '+91',
+            processType: req.body.process_type || 'lead_punching',
+            commission
+          });
+        }
+      }
+    } catch (emailErr) {
+      logger.warn('Failed to dispatch partner email in submitApplication:', emailErr.message);
+    }
+
+    logger.info(`Application ${appNumber} submitted by Partner ${PartnerId}`);
+    return created(res, { application_id: app.id, app_number: app.app_number, commission }, 'Application submitted successfully');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+// POST /applications/public — Customer submits application from homepage / direct product apply page
+const submitPublicApplication = async (req, res, next) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    const {
+      product_id,
+      customer = {},
+      loan_amount,
+      notes,
+      partner_code,
+      tracking_id,
+      process_type,
+      monthly_salary,
+      monthly_income,
+      company_name,
+      employer,
+      pincode,
+      city,
+      state,
+      pan_number,
+      pan,
+      aadhaar_number,
+      aadhaar,
+      dob,
+      occupation,
+      employment_type
+    } = req.body;
+
+    const cleanName = (customer.full_name || customer.name || req.body.full_name || req.body.name || '').toString().trim();
+    const cleanMobile = (customer.mobile || req.body.mobile || '').toString().replace(/\D/g, '').slice(-10);
+    const cleanEmail = (customer.email || req.body.email || '').toString().trim().toLowerCase();
+    const cleanCity = (customer.city || city || '').toString().trim();
+    const cleanState = (customer.state || state || '').toString().trim();
+    const cleanPincode = (customer.pincode || pincode || '').toString().replace(/\D/g, '').slice(0, 6);
+    const cleanEmployer = (customer.company_name || customer.employer || company_name || employer || '').toString().trim();
+    const cleanPan = (customer.pan_number || customer.pan || pan_number || pan || '').toString().trim().toUpperCase();
+    const rawAadhaar = (customer.aadhaar_number || customer.aadhaar || aadhaar_number || aadhaar || '').toString().replace(/\D/g, '');
+    const cleanAadhaar = rawAadhaar || null;
+    const cleanDob = customer.dob || dob || null;
+    const cleanOccupation = (customer.occupation || customer.employment_type || occupation || employment_type || 'Salaried').toString().trim();
+
+    const rawSalary = monthly_salary || monthly_income || customer.monthly_income || loan_amount || 0;
+    const salaryVal = parseFloat(rawSalary) || 0;
+
+    // Validate product
+    const { rows: [product] } = await client.query(
+      `SELECT p.*, b.name as bank_name FROM products p JOIN banks b ON b.id = p.bank_id WHERE p.id = $1 AND p.is_active = true`,
+      [product_id]
+    );
+    if (!product) {
+      await client.query('ROLLBACK');
+      return error(res, 'Product not found or inactive', 404);
+    }
+
+    let partnerId = null;
+    if (partner_code) {
+      const { rows: [partner] } = await client.query(`SELECT id FROM partner_profiles WHERE partner_code = $1`, [partner_code]);
+      if (partner) partnerId = partner.id;
+    }
+
+    const { rows: [partnerProfile] } = await client.query(`
+      SELECT parent_partner_id, user_id FROM partner_profiles WHERE id = $1
+    `, [partnerId]);
+    const parentPartnerId = partnerProfile ? partnerProfile.parent_partner_id : null;
+    const partnerUserId = partnerProfile ? partnerProfile.user_id : null;
+
+    // System Admin User ID for fallback
+    const { rows: [sysUser] } = await client.query(`SELECT id FROM users WHERE role='SUPER_ADMIN' LIMIT 1`);
+    const sysUserId = sysUser?.id || partnerUserId;
+
+    // Upsert customer
+    let customerId;
+    const { rows: [existingCust] } = await client.query(
+      `SELECT id FROM customers WHERE mobile = $1`, [cleanMobile]
+    );
+
+    if (existingCust) {
+      customerId = existingCust.id;
+      await client.query(`
+        UPDATE customers SET
+          full_name = COALESCE(NULLIF($1, ''), full_name),
+          email = COALESCE(NULLIF($2, ''), email),
+          city = COALESCE(NULLIF($3, ''), city),
+          state = COALESCE(NULLIF($4, ''), state),
+          pincode = COALESCE(NULLIF($5, ''), pincode),
+          monthly_income = COALESCE($6, monthly_income),
+          company_name = COALESCE(NULLIF($7, ''), company_name),
+          pan_number = COALESCE(NULLIF($8, ''), pan_number),
+          aadhaar_number = COALESCE(NULLIF($9, ''), aadhaar_number),
+          dob = COALESCE($10, dob),
+          occupation = COALESCE(NULLIF($11, ''), occupation),
+          updated_at = NOW()
+        WHERE id = $12
+      `, [cleanName, cleanEmail, cleanCity, cleanState, cleanPincode, salaryVal || null, cleanEmployer, cleanPan, cleanAadhaar, cleanDob || null, cleanOccupation, customerId]);
+    } else {
+      const { rows: [newCust] } = await client.query(`
+        INSERT INTO customers (
+          full_name, mobile, email, city, state, pincode, monthly_income,
+          company_name, pan_number, aadhaar_number, dob, occupation, created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING id
+      `, [cleanName, cleanMobile, cleanEmail || null, cleanCity || null, cleanState || null, cleanPincode || null, salaryVal || null, cleanEmployer || null, cleanPan || null, cleanAadhaar, cleanDob || null, cleanOccupation, sysUserId]);
+      customerId = newCust.id;
+    }
+
+    // Also create or link Lead record
+    const leadNum = 'LEAD-' + Date.now().toString(36).toUpperCase();
+    const { rows: [newLead] } = await client.query(`
+      INSERT INTO leads (
+        lead_number, partner_id, parent_partner_id, created_by, customer_id,
+        product_id, customer_name, mobile, city, pan_number, status, process_type,
+        otp_verified, source, pipeline_stage
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'confirmed', $11, TRUE, 'public_landing', 'submitted')
+      RETURNING id
+    `, [leadNum, partnerId, parentPartnerId, sysUserId, customerId, product_id, cleanName, cleanMobile, cleanCity || null, cleanPan || null, process_type || 'lead_punching']);
+    const leadId = newLead.id;
+
+    const commission = await calculatePartnerCommission(product_id, partnerId, salaryVal, client);
+
+    const { rows: [{ nextval }] } = await client.query(`SELECT nextval('app_number_seq')`);
+    const date = new Date();
+    const datePart = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+    const appNumber = `APP${datePart}${nextval}`;
+
+    const { rows: [app] } = await client.query(`
+      INSERT INTO applications
+        (app_number, lead_id, customer_id, product_id, partner_id, parent_partner_id, bank_id, submitted_by, loan_amount, commission_amount, notes, status, tracking_id, submitted_at,
+         status_history, process_type, company_name, pincode, city, pan_number)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'details_submitted',$12,NOW(),
+        jsonb_build_array(jsonb_build_object('status','details_submitted','at',NOW(),'by',$13::text)), $14, $15, $16, $17, $18)
+      RETURNING id, app_number
+    `, [appNumber, leadId, customerId, product_id, partnerId, parentPartnerId, product.bank_id, sysUserId, salaryVal, commission, notes, tracking_id || null, sysUserId.toString(), process_type || 'lead_punching', cleanEmployer || null, cleanPincode || null, cleanCity || null, cleanPan || null]);
+
+    // Link application_id on lead record
+    await client.query(`UPDATE leads SET application_id = $1 WHERE id = $2`, [app.id, leadId]);
+
+    await logTimeline(client, app.id, 'submitted', 'Application Created', 'Public direct landing application logged.', sysUserId);
+    await logTimeline(client, app.id, 'submitted', 'Customer Submitted Form', 'Verified lead details saved.', sysUserId);
+
+    await client.query('COMMIT');
+    await invalidateApplicationsCache({ action: 'submit_public_application', appId: app.id });
+
+    if (partnerId) {
+      try {
+        const { rows: [pUser] } = await client.query(
+          `SELECT u.email FROM partner_profiles pp JOIN users u ON u.id = pp.user_id WHERE pp.id = $1`,
+          [partnerId]
+        ).catch(() => ({ rows: [] }));
+        if (pUser?.email) {
+          sendLeadApplicationCreatedEmail({
+            to: pUser.email,
+            customerName: cleanName,
+            appNumber: app.app_number || appNumber,
+            productName: product.name,
+            mobile: cleanMobile,
+            countryCode: '+91',
+            processType: process_type || 'lead_punching',
+            commission
+          });
+        }
+      } catch (emailErr) {
+        logger.warn('Failed to dispatch partner email in submitPublicApplication:', emailErr.message);
+      }
+    }
+
+    const targetRedirectUrl = product.partner_url || product.application_url || product.public_url || product.apply_url || product.redirect_url || 'https://oitstack.in';
+
+    logger.info(`Public application ${appNumber} submitted routing to Partner ${partnerId}`);
+    return created(res, {
+      application_id: app.id,
+      app_number: app.app_number,
+      lead_id: leadId,
+      customer_id: customerId,
+      partner_id: partnerId,
+      product_id: product.id,
+      redirect_url: targetRedirectUrl,
+      commission
+    }, 'Application submitted successfully');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+// GET /applications/dashboard (Application metrics overview)
+const getApplicationsDashboard = async (req, res, next) => {
+  try {
+    const { partner_id, partner_id: q_partner_id } = req.query;
+    const targetPartnerId = q_partner_id || partner_id;
+
+    let partnerId = null;
+    let userId = req.user?.id || null;
+    const userRole = (req.user?.role || '').toUpperCase();
+    const userDesignation = (req.user?.designation || '').toUpperCase();
+    const isStaffOrOperatorUser = [
+      'ADMIN', 'SUPER_ADMIN', 'SUPERADMIN', 'HR',
+      'OPERATIONAL HEAD', 'OPERATIONAL_HEAD', 'OPERATIONS HEAD', 'OPERATIONS_HEAD', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION',
+      'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'OPERATOR',
+      'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR',
+      'PAN CHECKER', 'PAN_CHECKER',
+      'QD OPERATOR', 'QD_OPERATOR', 'QD CHECKER', 'QD_CHECKER',
+      'REMARK OPERATOR', 'REMARK_OPERATOR',
+      'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR',
+      'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR',
+      'PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR',
+      'DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR',
+      'EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'
+    ].some(title => userDesignation.includes(title) || userRole === title);
+    const isPartnerOrTeam = ['PARTNER', 'TEAM_MEMBER'].includes(userRole) || (userRole === 'EMPLOYEE' && !isStaffOrOperatorUser);
+
+    if (isPartnerOrTeam) {
+      const { rows: [partner] } = await query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
+      partnerId = partner ? partner.id : null;
+      userId = req.user.id;
+    } else if (targetPartnerId && isUuid(targetPartnerId)) {
+      partnerId = targetPartnerId;
+    } else if (req.query.scope === 'my' && req.user?.id) {
+      const { rows: [partner] } = await query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
+      partnerId = partner ? partner.id : null;
+      userId = req.user.id;
+    }
+
+    const validScope = req.query.scope && req.query.scope.trim() ? req.query.scope.trim() : null;
+
+    const teamPartnerFilter = `
+      SELECT $1::uuid UNION SELECT $2::uuid 
+      UNION SELECT id FROM partner_profiles WHERE parent_partner_id = $1::uuid OR referred_by_id = $1::uuid OR parent_partner_id = $2::uuid OR referred_by_id = $2::uuid
+      UNION SELECT child_partner_id FROM partner_team_relationships WHERE parent_partner_id = $1::uuid OR sponsor_id = $1::uuid OR parent_partner_id = $2::uuid OR sponsor_id = $2::uuid
+      UNION SELECT id FROM partner_profiles WHERE user_id = $2::uuid
+    `;
+
+    const whereClause = isPartnerOrTeam
+      ? `WHERE (
+          combined.partner_id IN (${teamPartnerFilter})
+          OR combined.submitted_by = $2::uuid
+          OR combined.employee_id IN (SELECT id FROM employees WHERE user_id = $2::uuid)
+          OR combined.submitted_by IN (
+            SELECT user_id FROM partner_profiles WHERE parent_partner_id = $1::uuid OR referred_by_id = $1::uuid
+            UNION SELECT u.id FROM users u WHERE u.created_by = $2::uuid
+          )
+        )`
+      : `WHERE ($1::uuid IS NULL OR combined.partner_id IN (${teamPartnerFilter}))`;
+
+    const scopeWhere = `
+      ${whereClause}
+      AND (
+        $3::text IS NULL OR $3::text = ''
+        OR ($3::text = 'my' AND (combined.submitted_by = $2::uuid OR (combined.partner_id = $1::uuid AND (combined.submitted_by IS NULL OR combined.submitted_by = $2::uuid))))
+        OR ($3::text = 'team' AND NOT (combined.submitted_by = $2::uuid OR (combined.partner_id = $1::uuid AND (combined.submitted_by IS NULL OR combined.submitted_by = $2::uuid))))
+      )
+    `;
+
+    const { rows: [stats] } = await query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE DATE(created_at) = CURRENT_DATE) as today,
+        COUNT(*) FILTER (WHERE status IN ('submitted', 'pending', 'applied', 'lead_created', 'new', 'draft')) as pending,
+        COUNT(*) FILTER (WHERE status IN ('approved', 'disbursed', 'confirmed', 'sanctioned')) as approved,
+        COUNT(*) FILTER (WHERE status IN ('rejected', 'declined', 'cancelled')) as rejected,
+        COUNT(*) FILTER (WHERE status IN ('under_review', 'under review', 'verification', 'in_progress', 'bank_verification')) as under_review,
+        COUNT(*) FILTER (WHERE commission_status = 'pending') as comm_pending,
+        COUNT(*) FILTER (WHERE commission_status = 'approved') as comm_approved,
+        COUNT(*) FILTER (WHERE commission_status = 'processed') as comm_paid,
+        COALESCE(SUM(commission_amount) FILTER (WHERE commission_status = 'processed'), 0) as total_earnings
+      FROM (
+        SELECT a.id, a.partner_id, a.submitted_by, a.employee_id, a.status::text, a.commission_status::text, a.commission_amount, a.created_at FROM applications a
+        UNION ALL
+        SELECT l.id, l.partner_id, COALESCE(l.created_by, c.created_by) as submitted_by, NULL::uuid as employee_id, l.status::text, 'pending'::text as commission_status, p.commission_value as commission_amount, l.created_at
+        FROM leads l
+        LEFT JOIN customers c ON c.mobile = l.mobile
+        LEFT JOIN products p ON p.id = l.product_id
+        WHERE l.id NOT IN (SELECT lead_id FROM applications WHERE lead_id IS NOT NULL)
+      ) combined
+      ${scopeWhere}
+    `, [partnerId, userId, validScope]);
+
+    const totalCount = parseInt(stats?.total || 0);
+    const approvedCount = parseInt(stats?.approved || 0);
+    const conversionRate = totalCount > 0 ? parseFloat(((approvedCount / totalCount) * 100).toFixed(2)) : 0;
+
+    // Recent 5 applications
+    const { rows: recent } = await query(`
+      SELECT combined.id, combined.app_number, combined.status, combined.commission_amount, combined.commission_status, combined.created_at,
+             combined.customer_name, combined.product_name
+      FROM (
+        SELECT a.id, a.app_number, a.status::text, a.commission_amount, a.commission_status::text, a.created_at, a.partner_id, a.submitted_by, a.employee_id,
+               COALESCE(c.full_name, 'Customer') as customer_name, p.name as product_name
+        FROM applications a
+        LEFT JOIN customers c ON c.id = a.customer_id
+        LEFT JOIN products p ON p.id = a.product_id
+        UNION ALL
+        SELECT l.id, COALESCE(NULLIF(l.lead_number, ''), CONCAT('LEAD-', UPPER(SUBSTRING(l.id::text, 1, 8)))) as app_number, l.status::text, p.commission_value as commission_amount, 'pending'::text as commission_status, l.created_at, l.partner_id, COALESCE(l.created_by, c.created_by) as submitted_by, NULL::uuid as employee_id,
+               COALESCE(NULLIF(l.customer_name, ''), c.full_name, 'Customer') as customer_name, p.name as product_name
+        FROM leads l
+        LEFT JOIN customers c ON c.mobile = l.mobile
+        LEFT JOIN products p ON p.id = l.product_id
+        WHERE l.id NOT IN (SELECT lead_id FROM applications WHERE lead_id IS NOT NULL)
+      ) combined
+      ${scopeWhere}
+      ORDER BY combined.created_at DESC LIMIT 5
+    `, [partnerId, userId, validScope]);
+
+    return success(res, {
+      stats: {
+        total: parseInt(stats?.total || 0),
+        today: parseInt(stats?.today || 0),
+        pending: parseInt(stats?.pending || 0),
+        approved: parseInt(stats?.approved || 0),
+        rejected: parseInt(stats?.rejected || 0),
+        under_review: parseInt(stats?.under_review || 0),
+        comm_pending: parseInt(stats?.comm_pending || 0),
+        comm_approved: parseInt(stats?.comm_approved || 0),
+        comm_paid: parseInt(stats?.comm_paid || 0),
+        total_earnings: parseFloat(stats?.total_earnings || 0),
+        conversion_rate: conversionRate
+      },
+      recent
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Verifies application/lead ownership for tenant/partner role.
+ * Admins, super admins, operators, and staff bypass this check.
+ * Partners are strictly restricted to accessing records they own.
+ */
+const verifyPartnerApplicationOwnership = async (idOrNumber, user) => {
+  if (!user || user.role !== 'PARTNER') return { authorized: true };
+
+  const { rows: [partner] } = await query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [user.id]);
+  if (!partner) return { authorized: false, reason: 'Partner profile not found' };
+
+  let { rows: [app] } = await query(`
+    SELECT id, partner_id FROM applications 
+    WHERE id::text = $1 OR app_number = $1 OR lead_id::text = $1 OR tracking_token = $1 OR bank_application_number = $1 OR bank_ref_number = $1
+    LIMIT 1
+  `, [idOrNumber]);
+
+  if (!app) {
+    const { rows: [pdRec] } = await query(
+      `SELECT application_id FROM physical_application_details WHERE id::text = $1 OR bank_application_number = $1 OR bank_ref_number = $1 LIMIT 1`,
+      [idOrNumber]
+    ).catch(() => ({ rows: [] }));
+    if (pdRec?.application_id) {
+      const { rows: [appFromPd] } = await query(`SELECT id, partner_id FROM applications WHERE id::text = $1`, [pdRec.application_id]);
+      if (appFromPd) app = appFromPd;
+    }
+  }
+
+  if (!app) {
+    const { rows: [leadRec] } = await query(
+      `SELECT id, partner_id FROM leads WHERE id::text = $1 OR lead_number = $1 OR application_id::text = $1 LIMIT 1`,
+      [idOrNumber]
+    ).catch(() => ({ rows: [] }));
+    if (leadRec) {
+      if (leadRec.partner_id !== partner.id) {
+        return { authorized: false, reason: 'Access denied. You do not own this application record.' };
+      }
+      return { authorized: true, partnerId: partner.id, record: leadRec };
+    }
+    return { authorized: false, notFound: true, reason: 'Application or Lead record not found' };
+  }
+
+  if (app.partner_id !== partner.id) {
+    return { authorized: false, reason: 'Access denied. You do not own this application.' };
+  }
+  return { authorized: true, partnerId: partner.id, record: app };
+};
+
+// GET /applications/:id/timeline
+const getTimeline = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const authCheck = await verifyPartnerApplicationOwnership(id, req.user);
+    if (!authCheck.authorized) {
+      if (authCheck.notFound) return notFound(res, authCheck.reason);
+      return forbidden(res, authCheck.reason);
+    }
+
+    // Resolve application & linked lead ID safely without throwing cast errors
+    let appId = id;
+    let leadId = id;
+    try {
+      const { rows: [app] } = await query(
+        `SELECT id, lead_id FROM applications WHERE id::text = $1 OR app_number = $1 LIMIT 1`,
+        [id]
+      );
+      if (app) {
+        appId = app.id;
+        leadId = app.lead_id || id;
+      } else {
+        const { rows: [leadRec] } = await query(
+          `SELECT id, application_id FROM leads WHERE id::text = $1 OR lead_number = $1 OR application_id::text = $1 LIMIT 1`,
+          [id]
+        );
+        if (leadRec) {
+          leadId = leadRec.id;
+          if (leadRec.application_id) appId = leadRec.application_id;
+        }
+      }
+    } catch (_) { }
+
+    const { rows } = await query(`
+      SELECT DISTINCT ON (id, performed_at, title)
+             id, application_id, event_type, title, description, status, performed_by, performed_at, created_at, performed_by_name, remarks
+      FROM (
+        SELECT at.id::text, at.application_id::text, at.event_type, at.title, at.description, at.status, at.performed_by, at.performed_at, at.performed_at as created_at, u.full_name as performed_by_name, at.description as remarks
+        FROM application_timeline at
+        LEFT JOIN users u ON u.id = at.performed_by
+        WHERE at.application_id::text = $1 OR at.application_id::text = $2
+
+        UNION ALL
+
+        SELECT lt.id::text, lt.lead_id::text as application_id, COALESCE(lt.title, 'Lead Event') as event_type, COALESCE(lt.title, 'Timeline Event') as title, lt.description, 'completed' as status, lt.created_by as performed_by, lt.created_at as performed_at, lt.created_at, u.full_name as performed_by_name, lt.description as remarks
+        FROM lead_timeline lt
+        LEFT JOIN users u ON u.id = lt.created_by
+        WHERE lt.lead_id::text = $1 OR lt.lead_id::text = $2 OR lt.lead_id::text = $3
+      ) combined
+      ORDER BY performed_at DESC
+    `, [String(id), String(appId), String(leadId)]);
+
+    return success(res, rows);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /applications/:id/documents
+const getDocuments = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const authCheck = await verifyPartnerApplicationOwnership(id, req.user);
+    if (!authCheck.authorized) {
+      if (authCheck.notFound) return notFound(res, authCheck.reason);
+      return forbidden(res, authCheck.reason);
+    }
+
+    let { rows } = await query(`
+      SELECT * FROM application_documents WHERE application_id = $1 ORDER BY uploaded_at DESC
+    `, [id]);
+
+    if (!rows || rows.length === 0) {
+      const { rows: leadDocs } = await query(`
+        SELECT id, lead_id as application_id, document_type as doc_type, file_url, verification_status as status, uploaded_at, uploaded_at as created_at
+        FROM lead_documents WHERE lead_id = $1 ORDER BY uploaded_at DESC
+      `, [id]);
+      rows = leadDocs;
+    }
+
+    return success(res, rows);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /applications/:id/notes (visibility filtering)
+const addNote = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const authCheck = await verifyPartnerApplicationOwnership(id, req.user);
+    if (!authCheck.authorized) {
+      if (authCheck.notFound) return notFound(res, authCheck.reason);
+      return forbidden(res, authCheck.reason);
+    }
+
+    const { note, visibility = 'public' } = req.body;
+    if (!note) return error(res, 'Note content is required', 400);
+
+    await query(`
+      INSERT INTO application_notes (application_id, user_id, note, visibility)
+      VALUES ($1, $2, $3, $4)
+    `, [id, req.user.id, note, visibility]);
+
+    return success(res, {}, 'Note added successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /applications/:id/notes (Internal helper to fetch filtered notes)
+const getFilteredNotes = async (applicationId, userRole) => {
+  let visibilityClause = "AND visibility = 'public'";
+  if (userRole === 'ADMIN') {
+    visibilityClause = "AND visibility IN ('public', 'internal')";
+  } else if (userRole === 'SUPER_ADMIN') {
+    visibilityClause = ""; // Super admin sees all notes
+  }
+
+  const { rows } = await query(`
+    SELECT n.*, u.full_name as writer_name, u.role as writer_role
+    FROM application_notes n
+    JOIN users u ON u.id = n.user_id
+    WHERE n.application_id = $1 ${visibilityClause}
+    ORDER BY n.created_at DESC
+  `, [applicationId]);
+
+  return rows;
+};
+
+// ── Employee Incentive Engine Lifecycle Sync Helper ────────────────────────────
+const INCENTIVE_ELIGIBLE_STATUSES = new Set([
+  'approved',
+  'super_admin_approved',
+  'sanctioned',
+  'disbursed',
+  'commission_released',
+  'commission_received',
+  'released'
+]);
+
+const syncEmployeeIncentiveLifecycle = async (dbOrClient, application, appFileGenVal = null, statusVal = null) => {
+  let dbQuery = query;
+  if (dbOrClient && typeof dbOrClient.query === 'function') {
+    dbQuery = dbOrClient.query.bind(dbOrClient);
+  } else if (typeof dbOrClient === 'function') {
+    dbQuery = dbOrClient;
+  }
+
+  // Determine application ID from arguments
+  let appId = null;
+  if (application && typeof application === 'object') {
+    appId = application.id;
+  } else if (typeof application === 'string') {
+    appId = application;
+  } else if (dbOrClient && typeof dbOrClient === 'object' && dbOrClient.id) {
+    appId = dbOrClient.id;
+  }
+
+  if (!appId) return;
+
+  // CRITICAL SECURITY FIX: Always perform authoritative database read with FOR UPDATE lock
+  const { rows: [dbApp] } = await dbQuery(
+    `SELECT id, status, employee_id, submitted_by, product_id, customer_id, app_file_generated, customer_name 
+     FROM applications WHERE id = $1 FOR UPDATE`,
+    [appId]
+  );
+
+  if (!dbApp) return;
+
+  const currentDbStatus = String(dbApp.status || '').trim().toLowerCase();
+
+  // Authoritative Status Gate
+  if (!INCENTIVE_ELIGIBLE_STATUSES.has(currentDbStatus)) {
+    return;
+  }
+
+  // Resolve actual employee_id
+  let employeeId = dbApp.employee_id;
+  if (!employeeId && dbApp.submitted_by) {
+    const { rows: [emp] } = await dbQuery(`SELECT id FROM employees WHERE user_id = $1 OR id = $1 LIMIT 1`, [dbApp.submitted_by]);
+    if (emp) employeeId = emp.id;
+  }
+  if (!employeeId) return;
+
+  // Verify employee exists
+  const { rows: [empCheck] } = await dbQuery(`SELECT id FROM employees WHERE id = $1 LIMIT 1`, [employeeId]);
+  if (!empCheck) return;
+
+  // Resolve customer name
+  let customerName = dbApp.customer_name;
+  if (!customerName && dbApp.customer_id) {
+    const { rows: [cust] } = await dbQuery(`SELECT full_name FROM customers WHERE id = $1`, [dbApp.customer_id]);
+    if (cust) customerName = cust.full_name;
+  }
+  if (!customerName) customerName = 'Customer';
+
+  // Calculate incentive amount
+  let incentiveAmount = 500;
+  if (dbApp.product_id) {
+    const { rows: [link] } = await dbQuery(
+      `SELECT incentive_amount FROM employee_product_links WHERE employee_id = $1 AND product_id = $2 AND status = 'ACTIVE' LIMIT 1`,
+      [employeeId, dbApp.product_id]
+    );
+    if (link && link.incentive_amount) {
+      incentiveAmount = parseFloat(link.incentive_amount);
+    } else {
+      const { rows: [prod] } = await dbQuery(`SELECT COALESCE(commission_amount, commission_value, 500) as default_amt FROM products WHERE id = $1`, [dbApp.product_id]);
+      if (prod && prod.default_amt) incentiveAmount = parseFloat(prod.default_amt);
+    }
+  }
+
+  // Determine Incentive Lifecycle Status (PENDING vs HOLD vs RELEASE)
+  const isAppFileYes = appFileGenVal !== null 
+    ? (String(appFileGenVal).trim().toLowerCase() === 'yes')
+    : (String(dbApp.app_file_generated || '').trim().toLowerCase() === 'yes');
+
+  const incentiveStatus = isAppFileYes ? 'PENDING' : 'HOLD';
+  const holdReason = isAppFileYes ? null : 'App File Pending';
+
+  // Perform Upsert into employee_incentive_transactions
+  await dbQuery(
+    `
+    INSERT INTO employee_incentive_transactions (
+      employee_id,
+      product_id,
+      application_id,
+      transaction_type,
+      amount,
+      status,
+      hold_reason,
+      customer_name
+    )
+    VALUES (
+      $1::uuid,
+      $2::uuid,
+      $3::uuid,
+      'DIRECT',
+      $4::numeric,
+      $5::varchar,
+      $6::text,
+      $7::text
+    )
+    ON CONFLICT (application_id) WHERE application_id IS NOT NULL DO UPDATE SET
+      amount = EXCLUDED.amount,
+      status = CASE 
+        WHEN employee_incentive_transactions.status IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED') THEN employee_incentive_transactions.status
+        ELSE EXCLUDED.status
+      END,
+      hold_reason = CASE 
+        WHEN employee_incentive_transactions.status IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED') THEN employee_incentive_transactions.hold_reason
+        ELSE EXCLUDED.hold_reason
+      END,
+      updated_at = NOW()
+    `,
+    [
+      employeeId,
+      dbApp.product_id,
+      dbApp.id,
+      incentiveAmount,
+      incentiveStatus,
+      holdReason,
+      customerName
+    ]
+  );
+};
+
+// PUT /applications/:id/status (transition logic)
+const updateStatus = async (req, res, next) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { status, remarks = 'Status updated by administrative panel' } = req.body;
+    const appFileGenVal = req.body.app_file_generated !== undefined ? req.body.app_file_generated : req.body.appfile_generated;
+    const isAppFileYes = appFileGenVal && String(appFileGenVal).trim().toLowerCase() === 'yes';
+
+    let targetStatus = isAppFileYes ? 'approved' : status;
+    const isRejected = ['rejected', 'decline', 'declined', 'cancelled'].includes(String(targetStatus || '').toLowerCase());
+
+    let { rows: [app] } = await client.query(
+      `SELECT * FROM applications 
+       WHERE id::text = $1 OR app_number = $1 OR lead_id::text = $1 
+          OR tracking_token = $1 OR bank_application_number = $1 OR bank_ref_number = $1 
+       FOR UPDATE`,
+      [id]
+    );
+    if (!app) {
+      const { rows: [pdRec] } = await client.query(
+        `SELECT application_id FROM physical_application_details WHERE id::text = $1 OR bank_application_number = $1 OR bank_ref_number = $1 LIMIT 1`,
+        [id]
+      ).catch(() => ({ rows: [] }));
+      if (pdRec?.application_id) {
+        const { rows: [appFromPd] } = await client.query(
+          `SELECT * FROM applications WHERE id = $1 FOR UPDATE`,
+          [pdRec.application_id]
+        );
+        if (appFromPd) app = appFromPd;
+      }
+    }
+    if (!app) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Application or Lead record not found');
+    }
+
+
+
+    const userRole = (req.user?.role || '').toUpperCase();
+    if (['PARTNER', 'TEAM_MEMBER'].includes(userRole)) {
+      const { rows: [partner] } = await client.query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
+      if (!partner || app.partner_id !== partner.id) {
+        await client.query('ROLLBACK');
+        return forbidden(res, 'Access denied. You do not own this application.');
+      }
+    }
+
+    const restrictedForPartner = ['operational_verified', 'super_admin_approved', 'commission_processing', 'commission_released'];
+    if (['PARTNER', 'TEAM_MEMBER'].includes(userRole) && restrictedForPartner.includes(targetStatus)) {
+      await client.query('ROLLBACK');
+      return forbidden(res, 'Partners are not authorized to update application to operational or admin approval statuses.');
+    }
+
+    const restrictedForOpHead = ['super_admin_approved', 'commission_processing', 'commission_released'];
+    if (['EMPLOYEE', 'ADMIN'].includes(userRole) && restrictedForOpHead.includes(targetStatus) && userRole !== 'SUPER_ADMIN') {
+      await client.query('ROLLBACK');
+      return forbidden(res, 'Super Admin authorization required for final approval and commission processing.');
+    }
+
+    const userDesignation = (req.user?.designation || '').toUpperCase();
+    if (['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userDesignation)) {
+      const lowerStatus = String(targetStatus).toLowerCase();
+      if (['approved', 'super_admin_approved', 'disbursed', 'sanctioned', 'commission_received', 'commission_released', 'rejected', 'declined', 'rejection', 'cancelled'].includes(lowerStatus)) {
+        await client.query('ROLLBACK');
+        return forbidden(res, 'Administrative Sales Executive is not authorized to perform final approval or rejection.');
+      }
+    }
+
+    let approvedAt = app.approved_at;
+    let approvedBy = app.approved_by;
+    if ((targetStatus === 'approved' || targetStatus === 'super_admin_approved') && !app.approved_at) {
+      approvedAt = new Date();
+      approvedBy = req.user.id;
+    }
+
+    const historyEntry = JSON.stringify({ status: targetStatus, at: new Date(), by: req.user.id, remarks });
+    await client.query(`
+      UPDATE applications SET
+        status = $1,
+        approved_at = $2,
+        approved_by = COALESCE(approved_by, $7),
+        commission_status = CASE WHEN $5::boolean THEN 'cancelled' ELSE commission_status END,
+        status_history = status_history || $3::jsonb,
+        app_file_generated = COALESCE($6, app_file_generated),
+        updated_at = NOW()
+      WHERE id = $4
+    `, [targetStatus, approvedAt, historyEntry, id, isRejected, appFileGenVal || null, req.user.id]);
+
+    // ── Employee Incentive Engine Lifecycle Sync ────────────────────────────
+    await syncEmployeeIncentiveLifecycle(client, app, appFileGenVal !== null ? appFileGenVal : app.app_file_generated, targetStatus);
+
+    await logTimeline(client, id, status, `Transitioned to ${status.replace(/_/g, ' ').toUpperCase()}`, remarks, req.user.id);
+    // Click status updates omitted
+
+    await client.query('COMMIT');
+    await invalidateApplicationsCache({ action: 'update_status', appId: id });
+
+    // Notifications
+    const { rows: [partner] } = await query(`SELECT user_id FROM partner_profiles WHERE id = $1`, [app.partner_id]);
+    if (partner) {
+      if (status === 'approved') {
+        await notify.applicationApproved(partner.user_id, app.app_number, app.commission_amount);
+
+        // Referral Bonus & Commission Distribution (Task 27)
+        try {
+          const { createNotification } = require('../notifications/service.js');
+          const teamService = require('../team/team.service.js');
+
+          // 1. Process Product Commission & Team Override
+          const baseComm = parseFloat(app.commission_amount || 0);
+          if (baseComm > 0) {
+            await teamService.processTeamOverrideCommission(app.id, app.partner_id, baseComm);
+          }
+
+          // 2. Referral Bonus Check (Requirement 1: 3 Approved Credit Card Applications -> ₹500 Bonus)
+          const { rows: [pProfile] } = await queryDB(`
+            UPDATE partner_profiles
+            SET approved_credit_cards = approved_credit_cards + 1
+            WHERE id = $1
+            RETURNING id, user_id, approved_credit_cards, referral_bonus_paid, referred_by_id, parent_partner_id
+          `, [app.partner_id]);
+
+          if (pProfile && pProfile.approved_credit_cards >= 3 && !pProfile.referral_bonus_paid) {
+            const referrerId = pProfile.referred_by_id || pProfile.parent_partner_id;
+            if (referrerId) {
+              await queryDB(`UPDATE partner_profiles SET referral_bonus_paid = TRUE WHERE id = $1`, [app.partner_id]);
+
+              await queryDB(`
+                INSERT INTO partner_wallets (partner_id, available_balance, total_earned)
+                VALUES ($1, 500, 500)
+                ON CONFLICT (partner_id) DO UPDATE SET
+                  available_balance = partner_wallets.available_balance + 500,
+                  total_earned = partner_wallets.total_earned + 500,
+                  updated_at = NOW()
+              `, [referrerId]);
+
+              await queryDB(`
+                INSERT INTO wallet_ledger (
+                  partner_id, application_id, type, credit, debit, balance_after, status, description
+                ) VALUES (
+                  $1, $2, 'referral_bonus', 500, 0,
+                  (SELECT available_balance FROM partner_wallets WHERE partner_id = $1),
+                  'completed', '₹500 Referral bonus credited for referred partner completing 3 approved applications'
+                )
+              `, [referrerId, app.id]);
+
+              const { rows: [refUser] } = await queryDB(`SELECT user_id FROM partner_profiles WHERE id = $1`, [referrerId]);
+              if (refUser && refUser.user_id) {
+                await createNotification(
+                  refUser.user_id,
+                  '🎉 ₹500 Referral Bonus Credited!',
+                  'Your referred partner completed 3 approved applications! ₹500 referral bonus has been added to your wallet.',
+                  'success',
+                  '/partner/wallet'
+                );
+              }
+            }
+          }
+
+          // Parent team notifications
+          const { rows: [{ count }] } = await queryDB(`
+            SELECT COUNT(*)::int FROM applications 
+            WHERE partner_id = $1 AND status = 'approved'
+          `, [app.partner_id]);
+
+          const { rows: [childProfile] } = await queryDB(`
+            SELECT first_name, last_name, parent_partner_id FROM partner_profiles WHERE id = $1
+          `, [app.partner_id]);
+
+          if (childProfile && childProfile.parent_partner_id) {
+            const { rows: [parentProfile] } = await queryDB(`
+              SELECT user_id FROM partner_profiles WHERE id = $1
+            `, [childProfile.parent_partner_id]);
+
+            if (parentProfile && parentProfile.user_id) {
+              if (count === 1) {
+                await createNotification(
+                  parentProfile.user_id,
+                  '🎉 Team Member First Sale!',
+                  `${childProfile.first_name} ${childProfile.last_name} completed their first sale!`,
+                  'success',
+                  '/partner/team-network'
+                );
+              } else {
+                await createNotification(
+                  parentProfile.user_id,
+                  '💰 Team Member Earned Commission',
+                  `${childProfile.first_name} ${childProfile.last_name} earned a commission on application ${app.app_number}!`,
+                  'success',
+                  '/partner/team-network'
+                );
+              }
+            }
+          }
+        } catch (err) {
+          logger.error('Failed to notify parent on child sale:', err.message);
+        }
+      }
+      if (status === 'rejected') await notify.applicationRejected(partner.user_id, app.app_number, remarks);
+    }
+
+    // Trigger DLT SMS for application_status update
+    try {
+      const { sendApplicationStatusSms } = require('../../services/sms/sms.service');
+      const effectiveStatus = String(targetStatus || status || '').toLowerCase();
+      const isApprovedStatus = ['approved', 'super_admin_approved', 'sanctioned', 'disbursed'].includes(effectiveStatus);
+
+      if (isApprovedStatus) {
+        // Fetch partner and employee details associated with the application (DO NOT SEND TO CUSTOMER)
+        const { rows: [partyData] } = await query(`
+          SELECT 
+            a.id,
+            a.app_number,
+            a.commission_amount,
+            p.name as product_name,
+            -- Partner contact info
+            pu.mobile as partner_user_mobile,
+            pu.id as partner_user_id,
+            COALESCE(NULLIF(TRIM(CONCAT(pp.first_name, ' ', COALESCE(pp.last_name, ''))), ''), pu.full_name, 'Partner') as partner_name,
+            -- Employee contact info
+            emp.mobile_number as employee_profile_mobile,
+            eu.mobile as employee_user_mobile,
+            eu.id as employee_user_id,
+            COALESCE(NULLIF(emp.full_name, ''), eu.full_name, 'Employee') as employee_name,
+            -- Submitter contact info (fallback)
+            su.mobile as submitter_user_mobile,
+            su.id as submitter_user_id,
+            su.full_name as submitter_user_name,
+            su.role as submitter_role
+          FROM applications a
+          LEFT JOIN products p ON p.id = a.product_id
+          LEFT JOIN partner_profiles pp ON pp.id = a.partner_id
+          LEFT JOIN users pu ON pu.id = pp.user_id
+          LEFT JOIN employees emp ON (emp.id = a.employee_id OR emp.user_id = a.submitted_by)
+          LEFT JOIN users eu ON eu.id = emp.user_id
+          LEFT JOIN users su ON su.id = a.submitted_by
+          WHERE a.id = $1
+        `, [app.id || id]);
+
+        if (partyData) {
+          const partnerMobile = partyData.partner_user_mobile || (partyData.submitter_role === 'PARTNER' ? partyData.submitter_user_mobile : null);
+          const employeeMobile = partyData.employee_profile_mobile || partyData.employee_user_mobile || (['EMPLOYEE', 'STAFF', 'ADMIN'].includes(partyData.submitter_role) ? partyData.submitter_user_mobile : null);
+
+          let smsSent = false;
+          // Send SMS to specific Partner if present
+          if (partnerMobile) {
+            sendApplicationStatusSms(partnerMobile, partyData.partner_name, partyData.product_name, targetStatus || status).catch(smsErr => {
+              logger.warn(`Failed to send application status SMS to partner: ${smsErr.message}`);
+            });
+            smsSent = true;
+          }
+          // Send SMS to specific Employee if present (and mobile is distinct)
+          if (employeeMobile && employeeMobile !== partnerMobile) {
+            sendApplicationStatusSms(employeeMobile, partyData.employee_name, partyData.product_name, targetStatus || status).catch(smsErr => {
+              logger.warn(`Failed to send application status SMS to employee: ${smsErr.message}`);
+            });
+            smsSent = true;
+          }
+          // Fallback if neither partner nor employee profile linked
+          if (!smsSent) {
+            const fallbackMobile = partyData.submitter_user_mobile;
+            if (fallbackMobile) {
+              sendApplicationStatusSms(fallbackMobile, partyData.submitter_user_name || 'Agent', partyData.product_name, targetStatus || status).catch(smsErr => {
+                logger.warn(`Failed to send application status SMS to submitter: ${smsErr.message}`);
+              });
+            }
+          }
+
+          // If employee is assigned and has a user account, also send in-app notification
+          if (partyData.employee_user_id && partyData.employee_user_id !== partyData.partner_user_id) {
+            const { createNotification } = require('../notifications/service.js');
+            createNotification(
+              partyData.employee_user_id,
+              '🎉 Application Approved!',
+              `Application #${partyData.app_number} (${partyData.product_name || 'Product'}) has been approved!`,
+              'success',
+              '/admin/crm/applications'
+            ).catch(err => logger.warn('Failed in-app employee notify:', err.message));
+          }
+
+          logger.info(`Application ${id} status is ${targetStatus || status}. Sent SMS to partner/employee. Suppressed SMS to customer.`);
+        }
+      } else {
+        // Non-approved status updates: send to customer
+        const { rows: [custData] } = await query(`
+          SELECT c.mobile, c.full_name, p.name as product_name 
+          FROM applications a 
+          LEFT JOIN customers c ON c.id = a.customer_id 
+          LEFT JOIN products p ON p.id = a.product_id 
+          WHERE a.id = $1
+        `, [id]);
+        if (custData && custData.mobile) {
+          sendApplicationStatusSms(custData.mobile, custData.full_name, custData.product_name, status).catch(smsErr => {
+            logger.warn(`Failed to send application status SMS: ${smsErr.message}`);
+          });
+        }
+      }
+    } catch (smsErr) {
+      logger.warn(`Application status SMS dispatch notice: ${smsErr.message}`);
+    }
+
+    return success(res, {}, 'Application status successfully updated');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+// PUT /applications/:id/commission (Lifecycle workflow)
+const updateCommission = async (req, res, next) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { status, amount } = req.body;
+
+    const { rows: [app] } = await client.query(`SELECT * FROM applications WHERE id = $1 FOR UPDATE`, [id]);
+    if (!app) return notFound(res);
+
+    let receivedAt = app.commission_received_at;
+    let paidAt = app.commission_paid_at;
+
+    if (status === 'received' && !app.commission_received_at) receivedAt = new Date();
+    if (status === 'approved' && !app.commission_paid_at) paidAt = new Date();
+
+    await client.query(`
+      UPDATE applications SET
+        commission_status = $1,
+        commission_amount = COALESCE($2, commission_amount),
+        commission_received_at = $3,
+        commission_paid_at = $4,
+        updated_at = NOW()
+      WHERE id = $5
+    `, [status, amount, receivedAt, paidAt, id]);
+
+    // Handle Ledger Splits & Wallet Credits on Approval
+    if (status === 'approved') {
+      const commValue = amount || app.commission_amount || 0;
+      await creditCommission(app.partner_id, id, commValue, `Approved commission for ${app.app_number}`, req.user.id, client);
+
+      // Create Entry in commission_ledger with Idempotency Guard
+      const { rows: existingComm } = await client.query(`
+        SELECT id FROM commission_ledger WHERE application_id = $1 OR (lead_id IS NOT NULL AND lead_id = $2)
+      `, [id, app.lead_id || id]);
+
+      if (existingComm.length === 0) {
+        await client.query(`
+          INSERT INTO commission_ledger (application_id, lead_id, partner_id, parent_partner_id, commission_amount, override_amount, status)
+          VALUES ($1, $2, $3, $4, $5, $6, 'approved')
+        `, [id, app.lead_id || null, app.partner_id, app.parent_partner_id, commValue, commValue * 0.15]);
+      }
+
+      // Set commission_released flag on the application itself
+      await client.query(`
+        UPDATE applications SET commission_released = TRUE WHERE id = $1
+      `, [id]);
+
+      // Trigger team override payouts for direct and indirect sponsor partners
+      try {
+        await processTeamOverrideCommission(id, app.partner_id, commValue);
+      } catch (teamErr) {
+        logger.error(`Failed to process team override commission for app ${id}:`, teamErr.message);
+      }
+
+      // Referral clicks status update omitted
+    }
+
+    await logTimeline(client, id, app.status, `Commission ${status.toUpperCase()}`, `Updated commission state to ${status}.`, req.user.id);
+    await client.query('COMMIT');
+
+    return success(res, {}, 'Commission details updated');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+// GET /applications/analytics (Group data for chart engines)
+const getAnalytics = async (req, res, next) => {
+  try {
+    const { rows: daily } = await query(`
+      SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as total_apps,
+        COUNT(*) FILTER (WHERE status IN ('approved', 'disbursed')) as approved_apps,
+        COUNT(*) FILTER (WHERE status = 'rejected') as rejected_apps
+      FROM applications
+      GROUP BY DATE(created_at)
+      ORDER BY date ASC LIMIT 30
+    `);
+
+    const { rows: products } = await query(`
+      SELECT p.name as product_name, COUNT(*) as apps_count
+      FROM applications a
+      JOIN products p ON p.id = a.product_id
+      GROUP BY p.name
+      ORDER BY apps_count DESC LIMIT 5
+    `);
+
+    const { rows: banks } = await query(`
+      SELECT b.name as bank_name, COUNT(*) as apps_count
+      FROM applications a
+      JOIN products p ON p.id = a.product_id
+      JOIN banks b ON b.id = p.bank_id
+      GROUP BY b.name
+      ORDER BY apps_count DESC LIMIT 5
+    `);
+
+    return success(res, { daily, products, banks });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Super Admin custom methods
+const approveApplication = async (req, res, next) => {
+  const userDesignation = (req.user?.designation || '').toUpperCase();
+  if (['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userDesignation)) {
+    return forbidden(res, 'Administrative Sales Executive is not authorized to perform final approval or rejection.');
+  }
+  const { id, approved_amount } = req.body;
+  if (!id) return error(res, 'ID is required', 400);
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    let { rows: [app] } = await client.query(
+      `SELECT * FROM applications 
+       WHERE id::text = $1 OR app_number = $1 OR lead_id::text = $1 
+          OR tracking_token = $1 OR bank_application_number = $1 OR bank_ref_number = $1 
+       FOR UPDATE`,
+      [id]
+    );
+    if (!app) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Application or Lead record not found');
+    }
+
+    await client.query(`
+      UPDATE applications SET 
+        status='approved', 
+        approved_amount=COALESCE($1, approved_amount, loan_amount), 
+        approved_at=NOW(), 
+        approved_by=COALESCE(approved_by, $3),
+        commission_status='approved',
+        commission_received_at=NOW(),
+        commission_paid_at=NOW(),
+        updated_at=NOW()
+      WHERE id=$2
+    `, [approved_amount, app.id, req.user.id]);
+
+    // Split payout trigger
+    const commValue = app.commission_amount || 0;
+    await creditCommission(app.partner_id, id, commValue, `Admin approved commission app ${app.app_number}`, req.user.id);
+
+    await client.query(`
+      INSERT INTO commission_ledger (application_id, partner_id, parent_partner_id, commission_amount, override_amount, status)
+      VALUES ($1, $2, $3, $4, $5, 'approved')
+    `, [id, app.partner_id, app.parent_partner_id, commValue, commValue * 0.15]);
+
+    // Trigger team override payouts for direct and indirect sponsor partners
+    try {
+      await processTeamOverrideCommission(id, app.partner_id, commValue);
+    } catch (teamErr) {
+      logger.error(`Failed to process team override commission for app ${id}:`, teamErr.message);
+    }
+
+    await logTimeline(client, id, 'approved', 'Application Approved', 'Approved by Super Admin override.', req.user.id);
+    await logAction(req, 'SUPER_ADMIN_APPROVE_APPLICATION', id, { approved_amount });
+
+    // Sync Employee Incentive Lifecycle
+    const { rows: [updatedApp] } = await client.query(`SELECT * FROM applications WHERE id = $1`, [app.id]);
+    if (updatedApp) {
+      await syncEmployeeIncentiveLifecycle(client, updatedApp);
+    }
+
+    await client.query('COMMIT');
+    return success(res, {}, 'Application approved and commission split processed successfully.');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+const rejectApplication = async (req, res, next) => {
+  const userDesignation = (req.user?.designation || '').toUpperCase();
+  if (['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userDesignation)) {
+    return forbidden(res, 'Administrative Sales Executive is not authorized to perform final approval or rejection.');
+  }
+  const { id, reason } = req.body;
+  if (!id) return error(res, 'ID is required', 400);
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    let { rows: [app] } = await client.query(
+      `SELECT * FROM applications 
+       WHERE id::text = $1 OR app_number = $1 OR lead_id::text = $1 
+          OR tracking_token = $1 OR bank_application_number = $1 OR bank_ref_number = $1 
+       FOR UPDATE`,
+      [id]
+    );
+    if (!app) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Application or Lead record not found');
+    }
+
+    await client.query(`
+      UPDATE applications SET status='rejected', commission_status='cancelled', rejection_reason=$1, updated_at=NOW() WHERE id=$2
+    `, [reason || 'Rejected by super admin', app.id]);
+
+    await logTimeline(client, id, 'rejected', 'Application Rejected', reason || 'Rejected by super admin', req.user.id);
+    await logAction(req, 'SUPER_ADMIN_REJECT_APPLICATION', id, { reason });
+
+    await client.query('COMMIT');
+    return success(res, {}, 'Application rejected and commission cancelled.');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+const reassignApplication = async (req, res, next) => {
+  const id = req.params.id || req.body.id || req.body.application_id;
+  let partner_id = req.body.partner_id || req.body.partnerId;
+  if (!id || !partner_id) return error(res, 'Application ID and Partner ID are required', 400);
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    // Resolve application by ID or app_number or lead_id
+    const { rows: [appRec] } = await client.query(
+      `SELECT id, lead_id FROM applications WHERE id::text = $1 OR app_number = $1 OR lead_id::text = $1 LIMIT 1`,
+      [id]
+    );
+    if (!appRec) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Application not found');
+    }
+    const targetAppId = appRec.id;
+
+    let targetPartnerId = partner_id;
+
+    if (targetPartnerId === 'self' || targetPartnerId === 'me') {
+      const { rows: [selfPartner] } = await client.query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
+      if (selfPartner) {
+        targetPartnerId = selfPartner.id;
+      } else {
+        // Auto-create partner profile for user if missing
+        const { rows: [{ nextval: partnerSeq }] } = await client.query(`SELECT nextval('partner_code_seq')`).catch(() => ({ rows: [{ nextval: Math.floor(10000 + Math.random() * 90000) }] }));
+        const partnerCode = 'AG' + String(partnerSeq);
+        const fullNameParts = (req.user.full_name || req.user.name || 'Staff User').split(' ');
+        const fName = fullNameParts[0] || 'Staff';
+        const lName = fullNameParts.slice(1).join(' ') || '';
+
+        const { rows: [newP] } = await client.query(`
+          INSERT INTO partner_profiles (user_id, partner_code, first_name, last_name, status, kyc_status)
+          VALUES ($1, $2, $3, $4, 'active', 'approved')
+          ON CONFLICT (user_id) DO UPDATE SET updated_at = NOW()
+          RETURNING id
+        `, [req.user.id, partnerCode, fName, lName]);
+
+        if (newP) {
+          targetPartnerId = newP.id;
+        } else {
+          await client.query('ROLLBACK');
+          return error(res, 'Could not resolve partner profile for logged-in user', 400);
+        }
+      }
+    }
+
+    if (!isUuid(targetPartnerId)) {
+      // Extract UUID if embedded inside string
+      const uuidMatch = String(targetPartnerId).match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
+      if (uuidMatch) {
+        targetPartnerId = uuidMatch[0];
+      } else {
+        // Try searching partner by partner_code, name, or email
+        const cleanStr = String(partner_id).replace(/\s*\([^)]*\)/g, '').trim();
+        const codeMatch = String(partner_id).match(/\(([^)]+)\)/);
+        const code = codeMatch ? codeMatch[1].trim() : cleanStr;
+
+        const { rows: [found] } = await client.query(`
+          SELECT id FROM partner_profiles 
+          WHERE (partner_code IS NOT NULL AND LOWER(partner_code) = LOWER($1))
+             OR (partner_code IS NOT NULL AND LOWER(partner_code) = LOWER($2))
+             OR LOWER(CONCAT(first_name, ' ', last_name)) = LOWER($1) 
+             OR LOWER(first_name) = LOWER($1)
+             OR user_id::text = $1
+          LIMIT 1
+        `, [cleanStr, code]);
+
+        if (found) {
+          targetPartnerId = found.id;
+        } else {
+          await client.query('ROLLBACK');
+          return error(res, `Target Partner '${partner_id}' not found. Please select a valid partner.`, 400);
+        }
+      }
+    }
+
+    if (!isUuid(targetPartnerId)) {
+      await client.query('ROLLBACK');
+      return error(res, `Invalid partner ID format '${targetPartnerId}'`, 400);
+    }
+
+    const { rows: [partner] } = await client.query(`SELECT id, first_name, last_name, partner_code FROM partner_profiles WHERE id = $1`, [targetPartnerId]);
+    if (!partner) {
+      await client.query('ROLLBACK');
+      return error(res, 'Target Partner not found', 404);
+    }
+
+    await client.query(`
+      UPDATE applications SET partner_id = $1, updated_at = NOW() WHERE id = $2
+    `, [partner.id, targetAppId]);
+
+    await client.query(`
+      UPDATE leads SET partner_id = $1, updated_at = NOW()
+      WHERE id = $2 OR id IN (SELECT lead_id FROM applications WHERE id = $2 AND lead_id IS NOT NULL)
+    `, [partner.id, targetAppId]);
+
+    await logTimeline(client, targetAppId, 'submitted', 'Reassigned Partner', `Application reassigned to ${partner.first_name} ${partner.last_name || ''} (${partner.partner_code}).`, req.user.id);
+    await logAction(req, 'REASSIGN_APPLICATION', targetAppId, { target_partner: partner.id });
+
+    await client.query('COMMIT');
+    await invalidateApplicationsCache({ action: 'reassign_application', appId: targetAppId });
+    return success(res, {}, 'Application successfully reassigned.');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+const manualCommission = async (req, res, next) => {
+  const { id, amount, remarks } = req.body;
+  if (!id || !amount) return error(res, 'ID and amount are required', 400);
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const { id, amount, remarks } = req.body;
+    if (!id || !amount) return error(res, 'ID and amount are required', 400);
+
+    let { rows: [app] } = await client.query(
+      `SELECT * FROM applications 
+       WHERE id::text = $1 OR app_number = $1 OR lead_id::text = $1 
+          OR tracking_token = $1 OR bank_application_number = $1 OR bank_ref_number = $1 
+       FOR UPDATE`,
+      [id]
+    );
+    if (!app) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Application or Lead record not found');
+    }
+
+    await client.query(`
+      UPDATE applications SET commission_amount=$1, commission_status='approved', updated_at=NOW() WHERE id=$2
+    `, [amount, app.id]);
+
+    await creditCommission(app.partner_id, id, amount, remarks || 'Manual commission assignment', req.user.id);
+
+    // Trigger team override payouts for direct and indirect sponsor partners
+    try {
+      await processTeamOverrideCommission(id, app.partner_id, amount);
+    } catch (teamErr) {
+      logger.error(`Failed to process team override commission for app ${id}:`, teamErr.message);
+    }
+    await logTimeline(client, id, app.status, 'Manual Commission Credited', remarks || 'Manual commission override applied.', req.user.id);
+    await logAction(req, 'MANUAL_COMMISSION_ASSIGN', id, { amount, remarks });
+
+    await client.query('COMMIT');
+    return success(res, {}, 'Manual commission credited to partner.');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+const isUuid = (str) => typeof str === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+
+// Runtime schema alterations removed - use migrations instead
+// See: backend/src/database/migrations/migrate_consolidated_application_stage_columns.js
+
+const listApplications = async (req, res, next) => {
+  const correlationId = req.headers['x-request-id'] || `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const startMs = Date.now();
+  try {
+    let { page, limit, offset } = getPaginationParams(req.query);
+    const isExportRequest = req.query.export === 'true' || parseInt(req.query.limit) > 1000;
+    // Bounded pagination: normal interactive requests capped at 200; export requests capped at safe 10,000 ceiling
+    const maxLimitAllowed = isExportRequest ? 10000 : 200;
+    const defaultPageSize = 25;
+    const requestedLimit = req.query.limit !== undefined ? parseInt(req.query.limit) : defaultPageSize;
+    limit = Math.min(Math.max(isNaN(requestedLimit) ? defaultPageSize : requestedLimit, 1), maxLimitAllowed);
+    offset = (Math.max(parseInt(page) || 1, 1) - 1) * limit;
+
+    const { status, partner_id, partner_id: q_partner_id, product_id, search, bank_id, process_by, operation_head_id, operation_head, member_id, category, from_date, to_date, start_date, end_date, period } = req.query;
+
+    const targetPartnerId = q_partner_id || partner_id;
+    const targetOpHeadId = isUuid(operation_head_id) ? operation_head_id : (isUuid(operation_head) ? operation_head : null);
+
+    let partnerId = null;
+    let userId = null;
+    const userRole = (req.user?.role || '').toUpperCase();
+    const userDesignation = (req.user?.designation || '').toUpperCase();
+    const isStaffOrOperatorUser = [
+      'ADMIN', 'SUPER_ADMIN', 'SUPERADMIN', 'HR',
+      'OPERATIONAL HEAD', 'OPERATIONAL_HEAD', 'OPERATIONS HEAD', 'OPERATIONS_HEAD', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION',
+      'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'OPERATOR',
+      'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR',
+      'PAN CHECKER', 'PAN_CHECKER',
+      'QD OPERATOR', 'QD_OPERATOR', 'QD CHECKER', 'QD_CHECKER',
+      'REMARK OPERATOR', 'REMARK_OPERATOR',
+      'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR',
+      'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR',
+      'PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR',
+      'DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR',
+      'EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'
+    ].some(title => userDesignation.includes(title) || userRole === title);
+    const isPartnerOrTeam = ['PARTNER', 'TEAM_MEMBER'].includes(userRole) || (userRole === 'EMPLOYEE' && !isStaffOrOperatorUser);
+
+    if (isPartnerOrTeam) {
+      const { rows: [partner] } = await query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
+      partnerId = partner ? partner.id : null;
+      userId = req.user.id;
+    } else if (targetPartnerId && isUuid(targetPartnerId)) {
+      partnerId = targetPartnerId;
+    } else if (req.query.scope === 'my' && req.user?.id) {
+      const { rows: [partner] } = await query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
+      partnerId = partner ? partner.id : null;
+      userId = req.user.id;
+    }
+
+    let calcFromDate = from_date || start_date || null;
+    let calcToDate = to_date || end_date || null;
+
+    if (period && period !== 'all' && !calcFromDate) {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+      if (period === 'today') {
+        calcFromDate = todayStr;
+        calcToDate = todayStr;
+      } else if (period === 'yesterday') {
+        const yest = new Date(today);
+        yest.setDate(yest.getDate() - 1);
+        calcFromDate = yest.toISOString().split('T')[0];
+        calcToDate = calcFromDate;
+      } else if (period === '7days' || period === 'last_7_days') {
+        const d = new Date(today);
+        d.setDate(d.getDate() - 7);
+        calcFromDate = d.toISOString().split('T')[0];
+        calcToDate = todayStr;
+      } else if (period === '30days' || period === 'last_30_days') {
+        const d = new Date(today);
+        d.setDate(d.getDate() - 30);
+        calcFromDate = d.toISOString().split('T')[0];
+        calcToDate = todayStr;
+      } else if (period === 'this_month') {
+        const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+        calcFromDate = firstDay.toISOString().split('T')[0];
+        calcToDate = todayStr;
+      }
+    }
+
+    const validFromDate = calcFromDate ? `${calcFromDate}T00:00:00` : null;
+    const validToDate = calcToDate ? `${calcToDate}T23:59:59` : null;
+
+    const validPartnerId = isUuid(partnerId) ? partnerId : null;
+    const validProductId = isUuid(product_id) ? product_id : null;
+    let targetBankId = bank_id || req.query.bank;
+    if (targetBankId && !isUuid(targetBankId) && targetBankId !== 'all') {
+      try {
+        const { rows: bRows } = await query(
+          `SELECT id FROM banks WHERE LOWER(short_code) = LOWER($1) OR LOWER(name) = LOWER($1) OR LOWER(name) LIKE '%' || LOWER($1) || '%' OR LOWER(short_code) LIKE '%' || LOWER($1) || '%' LIMIT 1`,
+          [targetBankId.trim()]
+        );
+        if (bRows.length > 0) targetBankId = bRows[0].id;
+      } catch (bErr) {}
+    }
+    const validBankId = isUuid(targetBankId) ? targetBankId : null;
+    let rawStatus = status && status.trim() ? status.trim() : null;
+    const validStatus = rawStatus;
+    const validSearch = search && search.trim() ? `%${search.trim()}%` : null;
+    const validProcessBy = process_by && process_by.trim() ? process_by.trim() : null;
+    const validOpHeadId = targetOpHeadId;
+    const validUserId = isUuid(userId) ? userId : null;
+    const validScope = req.query.scope && req.query.scope.trim() ? req.query.scope.trim() : null;
+    const validMemberId = isUuid(member_id) ? member_id : null;
+    const validCategory = category && category.trim() ? category.trim() : null;
+    const validCommissionStatus = req.query.commission_status && req.query.commission_status.trim() ? req.query.commission_status.trim() : null;
+
+    let opHeadBankFilterSQL = '';
+    let countOpHeadBankFilterSQL = '';
+    // Canonical query parameter order for CRM application queries:
+    // $1:  validPartnerId (uuid)
+    // $2:  validStatus (text)
+    // $3:  validProductId (uuid)
+    // $4:  validBankId (uuid)
+    // $5:  validSearch (text)
+    // $6:  validUserId (uuid)
+    // $7:  validProcessBy (text)
+    // $8:  validOpHeadId (uuid)
+    // $9:  validScope (text)
+    // $10: validMemberId (uuid)
+    // $11: validCategory (text)
+    // $12: validCommissionStatus (text)
+    // $13: validFromDate (timestamp)
+    // $14: validToDate (timestamp)
+    const baseQueryParams = [
+      validPartnerId,
+      validStatus,
+      validProductId,
+      validBankId,
+      validSearch,
+      validUserId,
+      validProcessBy,
+      validOpHeadId,
+      validScope,
+      validMemberId,
+      validCategory,
+      validCommissionStatus,
+      validFromDate,
+      validToDate
+    ];
+    // List query appends limit ($15) and offset ($16):
+    const queryParams = [...baseQueryParams, limit, offset];
+    // Count and status count queries use base parameter array ($1 - $14):
+    const countQueryParams = [...baseQueryParams];
+
+    // Check cached response for interactive application requests
+    const cacheKey = buildApplicationListCacheKey(req, {
+      page,
+      limit,
+      status: validStatus,
+      partner_id: validPartnerId,
+      product_id: validProductId,
+      search,
+      bank_id: validBankId,
+      process_by: validProcessBy,
+      operation_head_id: validOpHeadId,
+      member_id: validMemberId,
+      category: validCategory,
+      commission_status: validCommissionStatus,
+      from_date: validFromDate,
+      to_date: validToDate,
+      scope: validScope
+    });
+
+    if (!isExportRequest) {
+      const cachedData = await getCachedApplicationList(cacheKey);
+      if (cachedData) {
+        const hitDurationMs = Date.now() - startMs;
+        res.setHeader('X-Cache', 'HIT');
+        res.setHeader('X-Response-Time', `${hitDurationMs}ms`);
+        logger.debug('[AppCache] Served GET /applications from cache', {
+          userId: req.user?.id,
+          role: userRole,
+          durationMs: hitDurationMs
+        });
+        return res.status(200).json(cachedData);
+      }
+    }
+
+    // Note: ensureAssignmentsTableExists() removed from request path (handled in migrations)
+    const isOpHeadUser = ['OPERATIONAL HEAD', 'OPERATIONAL_HEAD', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'PAN CHECKER', 'PAN_CHECKER', 'QD OPERATOR', 'QD_OPERATOR', 'REMARK OPERATOR', 'REMARK_OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR', 'PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'DIGITAL CURABLE', 'DIGITAL_CURABLE', 'EMAIL CURABLE', 'EMAIL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['OPERATIONAL HEAD', 'OPERATIONAL_HEAD', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'PAN CHECKER', 'PAN_CHECKER', 'QD OPERATOR', 'QD_OPERATOR', 'REMARK OPERATOR', 'REMARK_OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR', 'PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'DIGITAL CURABLE', 'DIGITAL_CURABLE', 'EMAIL CURABLE', 'EMAIL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userRole);
+    const isSalesExecUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+    const isSalesExecOnlyUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+    const isAdministrativeOperatorUser = [
+      'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'OPERATOR',
+      'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'BACKEND OPERATOR',
+      'ADMIN', 'SUPER_ADMIN'
+    ].some(title => userDesignation.includes(title) || userRole === title || userRole.includes(title));
+    let isLocEocAdmin = false;
+    let regularBankAssignments = [];
+    let abRows = [];
+
+    const isSuperAdmin = userRole === 'SUPER_ADMIN';
+    let baseBankAccessFilterSQL = '';
+
+    const locEocAppSQL = `(
+      LOWER(COALESCE(combined.category::text, '')) IN ('loc_eoc', 'loc', 'eoc', 'loan_on_credit_card', 'smart_emi', 'loan_on_card', 'card_on_loan')
+      OR LOWER(COALESCE(combined.sub_category, '')) IN ('loc', 'eoc', 'loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loan_on_card', 'card_on_loan')
+      OR LOWER(COALESCE(combined.product_name, '')) LIKE '%encash%'
+      OR LOWER(COALESCE(combined.product_name, '')) LIKE '%loan on card%'
+      OR LOWER(COALESCE(combined.product_name, '')) LIKE '%loan on credit card%'
+      OR LOWER(COALESCE(combined.product_name, '')) LIKE '%smart emi%'
+      OR LOWER(COALESCE(combined.product_name, '')) LIKE '%smartemi%'
+      OR LOWER(COALESCE(combined.product_name, '')) LIKE '%emi on card%'
+      OR LOWER(COALESCE(combined.product_name, '')) LIKE '%emi on credit card%'
+      OR LOWER(COALESCE(combined.product_name, '')) LIKE '%dial a draft%'
+      OR LOWER(COALESCE(combined.product_name, '')) LIKE '%jumbo loan%'
+      OR LOWER(COALESCE(combined.product_name, '')) LIKE '%insta loan%'
+      OR LOWER(COALESCE(combined.product_name, '')) LIKE '%instant & jumbo loan%'
+      OR LOWER(COALESCE(combined.product_name, '')) LIKE '%instant and jumbo loan%'
+      OR LOWER(COALESCE(combined.product_name, '')) LIKE '%instant loan%'
+      OR UPPER(COALESCE(combined.bank_code, '')) = 'LOC_EOC'
+      OR combined.bank_name ~* 'loc|loan on card|smart emi'
+    )`;
+
+    const creditCardAppSQL = `(
+      NOT ${locEocAppSQL}
+      AND (
+        LOWER(COALESCE(combined.category::text, 'credit_card')) IN ('credit_card', 'creditcard', 'cards', 'card', 'co_branded_card', 'fd_card')
+        OR LOWER(COALESCE(combined.category::text, '')) LIKE '%credit%card%'
+        OR (
+          combined.category IS NULL
+          AND NOT (
+            LOWER(COALESCE(combined.product_name, '')) LIKE '%loan%'
+            OR LOWER(COALESCE(combined.product_name, '')) LIKE '%emi%'
+            OR LOWER(COALESCE(combined.product_name, '')) LIKE '%encash%'
+            OR LOWER(COALESCE(combined.product_name, '')) LIKE '%dial a draft%'
+            OR LOWER(COALESCE(combined.sub_category, '')) IN ('loc', 'eoc', 'loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loan_on_card', 'card_on_loan')
+          )
+        )
+      )
+    )`;
+
+    if (!isPartnerOrTeam && !isSuperAdmin && req.user?.id) {
+      let resAssignments;
+      
+      // Try cache for bank assignments (5 minute TTL)
+      const bankAssignmentsCacheKey = `admin_bank_assignments:${req.user.id}`;
+      const cachedAssignments = await cache.get(bankAssignmentsCacheKey);
+      if (cachedAssignments) {
+        abRows = cachedAssignments;
+      } else {
+        try {
+          resAssignments = await query(`
+            SELECT aba.bank_id, COALESCE(aba.category, 'credit_card') as category, b.short_code, b.name 
+            FROM admin_bank_assignments aba
+            LEFT JOIN banks b ON b.id = aba.bank_id
+            WHERE aba.admin_id = $1
+               OR aba.admin_id IN (SELECT id FROM employees WHERE user_id = $1)
+               OR aba.admin_id IN (SELECT user_id FROM employees WHERE id = $1)
+          `, [req.user.id]);
+        } catch (abaErr) {
+          resAssignments = await query(`
+            SELECT aba.bank_id, 'credit_card' as category, b.short_code, b.name 
+            FROM admin_bank_assignments aba
+            LEFT JOIN banks b ON b.id = aba.bank_id
+            WHERE aba.admin_id = $1
+               OR aba.admin_id IN (SELECT id FROM employees WHERE user_id = $1)
+               OR aba.admin_id IN (SELECT user_id FROM employees WHERE id = $1)
+          `, [req.user.id]);
+        }
+        abRows = resAssignments.rows;
+        // Cache bank assignments for 5 minutes
+        await cache.set(bankAssignmentsCacheKey, abRows, 300).catch(err => {
+          logger.warn('[Cache] Failed to cache bank assignments:', err.message);
+        });
+      }
+
+      const buildSingleBankMatchSQL = (b) => {
+        const bId = b.bank_id;
+        const isVirtualLocBank = (b.short_code || '').toUpperCase() === 'LOC_EOC' || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(b.name || '');
+        if (isVirtualLocBank) return '1=1';
+
+        const hasTata = (b.name || '').toLowerCase().includes('tata') || (b.short_code || '').toLowerCase().includes('tata');
+        const tataClause = hasTata ? '' : ` AND NOT (LOWER(COALESCE(combined.bank_name, '')) LIKE '%tata%' OR LOWER(COALESCE(combined.bank_code, '')) LIKE '%tata%')`;
+        
+        const sCode = (b.short_code || '').trim().toLowerCase().replace(/'/g, "''");
+        const bName = (b.name || '').trim().toLowerCase().replace(/'/g, "''");
+        
+        const matchParts = [];
+        if (isUuid(bId)) {
+          matchParts.push(`combined.bank_id = '${bId}'`);
+        }
+        if (sCode) {
+          matchParts.push(`LOWER(COALESCE(combined.bank_code, '')) = '${sCode}'`);
+          matchParts.push(`LOWER(COALESCE(combined.bank_name, '')) LIKE '%${sCode}%'`);
+        }
+        if (bName && bName !== sCode) {
+          matchParts.push(`LOWER(COALESCE(combined.bank_name, '')) LIKE '%${bName}%'`);
+        }
+        if (matchParts.length === 0) matchParts.push('1=1');
+
+        return `((${matchParts.join(' OR ')})${tataClause})`;
+      };
+
+      if (!abRows || abRows.length === 0) {
+        if (isAdministrativeOperatorUser) {
+          // Administrative Operator without restricted bank assignments gets full application visibility
+          baseBankAccessFilterSQL = '';
+        } else {
+          baseBankAccessFilterSQL = ` AND 1=0`;
+        }
+      } else {
+        const byCat = {};
+        for (const b of abRows) {
+          const cat = normalizeAssignmentCategory(b.category);
+          if (!byCat[cat]) byCat[cat] = [];
+          byCat[cat].push(buildSingleBankMatchSQL(b));
+        }
+        const pairClauses = Object.entries(byCat).map(([cat, matchArr]) => {
+          const bankMatch = matchArr.length === 1 ? matchArr[0] : `(${matchArr.join(' OR ')})`;
+          if (cat === 'loc_eoc') {
+            return `(${bankMatch} AND ${locEocAppSQL})`;
+          } else if (cat === 'credit_card') {
+            return `(${bankMatch} AND ${creditCardAppSQL})`;
+          } else if (cat === 'personal_loan' || cat === 'loan') {
+            return `(${bankMatch} AND (LOWER(COALESCE(combined.category::text, '')) LIKE '%loan%' OR LOWER(COALESCE(combined.category::text, '')) LIKE '%personal%') AND LOWER(COALESCE(combined.category::text, '')) != 'loc_eoc' AND LOWER(COALESCE(combined.sub_category, '')) NOT IN ('loc', 'eoc'))`;
+          } else {
+            return `(${bankMatch} AND LOWER(COALESCE(combined.category::text, '')) = '${cat}')`;
+          }
+        });
+        baseBankAccessFilterSQL = pairClauses.length > 0 ? ` AND (${pairClauses.join(' OR ')})` : '';
+      }
+    }
+
+    let salesExecFilterSQL = '';
+    if (isSalesExecUser && req.user?.id) {
+      const sbiBankMatchSQL = `(
+        (LOWER(COALESCE(combined.bank_code, '')) = 'sbi' OR LOWER(COALESCE(combined.bank_name, '')) LIKE '%sbi%')
+        AND LOWER(COALESCE(combined.bank_name, '')) NOT LIKE '%tata%'
+        AND LOWER(COALESCE(combined.bank_code, '')) NOT LIKE '%tata%'
+      )`;
+      const hdfcBankMatchSQL = `(
+        (LOWER(COALESCE(combined.bank_code, '')) = 'hdfc' OR LOWER(COALESCE(combined.bank_name, '')) LIKE '%hdfc%')
+        AND LOWER(COALESCE(combined.bank_name, '')) NOT LIKE '%tata%'
+        AND LOWER(COALESCE(combined.bank_code, '')) NOT LIKE '%tata%'
+      )`;
+
+      const baseBankAccessClean = (baseBankAccessFilterSQL || '').replace(/^\s*AND\s*/i, '').trim();
+      const hasValidBaseBank = baseBankAccessClean && baseBankAccessClean !== '1=0';
+      const salesBankScopeSQL = hasValidBaseBank
+        ? ` AND (${baseBankAccessClean} OR ${sbiBankMatchSQL})`
+        : ` AND (${hdfcBankMatchSQL} OR ${sbiBankMatchSQL})`;
+
+      const tataExclusionFilter = `NOT (
+        (LOWER(COALESCE(combined.bank_name, '')) LIKE '%tata%' OR LOWER(COALESCE(combined.bank_code, '')) LIKE '%tata%')
+        AND NOT EXISTS (
+          SELECT 1 FROM admin_bank_assignments aba 
+          JOIN banks b ON b.id = aba.bank_id 
+          WHERE aba.admin_id = '${req.user.id}' 
+          AND (LOWER(b.name) LIKE '%tata%' OR LOWER(b.short_code) LIKE '%tata%')
+        )
+      )`;
+      const processFilter = ` AND (
+        (LOWER(COALESCE(combined.process_type, combined.process_by, 'lead_punching')) IN ('lead_punching', 'partner_punch', 'punching', 'punch_only', 'digital_punching') OR LOWER(COALESCE(combined.process_type, combined.process_by, '')) LIKE '%punch%')
+        OR (
+          (LOWER(COALESCE(combined.bank_code, '')) = 'sbi' OR LOWER(COALESCE(combined.bank_name, '')) LIKE '%sbi%')
+          AND LOWER(COALESCE(combined.process_type, combined.process_by, 'lead_punching')) IN ('lead_punching', 'physical_process', 'partner_punch', 'punching', 'punch_only', 'digital_punching', 'physical', '')
+        )
+      )`;
+      const dispatchFilter = ` AND (COALESCE(combined.dispatch_status, '') = '' OR LOWER(COALESCE(combined.dispatch_status, 'none')) IN ('none', 'na', 'n/a'))`;
+      const claimFilter = ` AND (combined.sales_claimed_by IS NULL OR combined.sales_claimed_by = '' OR combined.sales_claimed_by = '${req.user.id}')`;
+      salesExecFilterSQL = ` ${salesBankScopeSQL} AND ${tataExclusionFilter}${processFilter}${dispatchFilter}${claimFilter}`;
+    }
+
+    const isPanCheckerUser = ['PAN CHECKER', 'PAN_CHECKER'].includes(userDesignation) || ['PAN CHECKER', 'PAN_CHECKER'].includes(userRole);
+    let panCheckerFilterSQL = '';
+    if (isPanCheckerUser && req.user?.id) {
+      panCheckerFilterSQL = ` ${baseBankAccessFilterSQL} AND ((LOWER(COALESCE(combined.bank_code, '')) = 'sbi' OR LOWER(COALESCE(combined.bank_name, '')) LIKE '%sbi%') AND LOWER(COALESCE(combined.bank_name, '')) NOT LIKE '%tata%' AND LOWER(COALESCE(combined.bank_code, '')) NOT LIKE '%tata%') AND combined.status NOT IN ('approved', 'disbursed', 'sanctioned') AND LOWER(COALESCE(combined.pan_check, 'no')) = 'no'`;
+    }
+
+    const isQdOperatorUser = ['QD OPERATOR', 'QD_OPERATOR'].includes(userDesignation) || ['QD OPERATOR', 'QD_OPERATOR'].includes(userRole);
+    let qdOperatorFilterSQL = '';
+    if (isQdOperatorUser && req.user?.id) {
+      const tataExclusionFilter = `NOT (
+        (LOWER(COALESCE(combined.bank_name, '')) LIKE '%tata%' OR LOWER(COALESCE(combined.bank_code, '')) LIKE '%tata%')
+        AND NOT EXISTS (
+          SELECT 1 FROM admin_bank_assignments aba 
+          JOIN banks b ON b.id = aba.bank_id 
+          WHERE aba.admin_id = '${req.user.id}' 
+          AND (LOWER(b.name) LIKE '%tata%' OR LOWER(b.short_code) LIKE '%tata%')
+        )
+      )`;
+      const physicalProcessFilter = ` AND (LOWER(COALESCE(combined.process_type, combined.process_by, '')) LIKE '%physical%' OR LOWER(COALESCE(combined.process_type, '')) = 'physical' OR LOWER(COALESCE(combined.process_type, '')) = 'physical_process')`;
+      const dispatchFilter = ` AND (COALESCE(combined.dispatch_status, '') = '' OR LOWER(COALESCE(combined.dispatch_status, 'none')) IN ('none', 'na', 'n/a'))`;
+      qdOperatorFilterSQL = ` ${baseBankAccessFilterSQL} AND ${tataExclusionFilter}${physicalProcessFilter}${dispatchFilter}`;
+    }
+
+    const isRemarkOperatorUser = ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userDesignation) || ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userRole);
+    let remarkOperatorFilterSQL = '';
+    if (isRemarkOperatorUser && req.user?.id) {
+      const panCheckCondition = `(((LOWER(COALESCE(combined.bank_code, '')) <> 'sbi' AND LOWER(COALESCE(combined.bank_name, '')) NOT LIKE '%sbi%') OR LOWER(COALESCE(combined.bank_name, '')) LIKE '%tata%' OR LOWER(COALESCE(combined.bank_code, '')) LIKE '%tata%') OR LOWER(COALESCE(combined.pan_check, 'no')) = 'yes')`;
+      remarkOperatorFilterSQL = ` ${baseBankAccessFilterSQL} AND ${panCheckCondition} AND (COALESCE(combined.dispatch_status, '') = '' OR LOWER(COALESCE(combined.dispatch_status, 'none')) IN ('none', 'na', 'n/a')) AND combined.status NOT IN ('rejected', 'declined', 'cancelled') AND LOWER(COALESCE(combined.bank_remark, '')) NOT LIKE '%pan%reject%'`;
+    }
+
+    const isFinalStatusOperatorUser = ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userDesignation) || ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userRole);
+    let finalStatusOperatorFilterSQL = '';
+    if (isFinalStatusOperatorUser && req.user?.id) {
+      const eligibleDispatchFilter = `(
+        LOWER(COALESCE(combined.dispatch_status, '')) IN (
+          'dispatch complete', 'physical dispatch', 'digital dispatch',
+          'e-sign complete', 'e-sign pending', 'esign complete', 'esign pending',
+          'dispatch_complete', 'physical_dispatch', 'digital_dispatch',
+          'e_sign_complete', 'e_sign_pending', 'esign_complete', 'esign_pending',
+          'e-sign completed', 'esign completed', 'e_sign_completed'
+        )
+      )`;
+
+      const inProcessFinalStatusFilter = `(
+        COALESCE(combined.final_status, '') = ''
+        OR LOWER(combined.final_status) IN ('in process', 'in_process', 'pending', 'n/a', 'na', 'none')
+        OR (
+          LOWER(combined.final_status) NOT IN ('approved', 'decline', 'declined', 'rejected', 'sanctioned', 'disbursed', 'commission received', 'commission_received')
+          AND LOWER(combined.final_status) NOT LIKE '%approve%'
+          AND LOWER(combined.final_status) NOT LIKE '%decline%'
+          AND LOWER(combined.final_status) NOT LIKE '%reject%'
+        )
+      )`;
+
+      finalStatusOperatorFilterSQL = ` ${baseBankAccessFilterSQL} AND ${eligibleDispatchFilter} AND ${inProcessFinalStatusFilter}`;
+    }
+
+    const isQuerableOperatorUser = ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userDesignation) || ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userRole);
+    let querableOperatorFilterSQL = '';
+    if (isQuerableOperatorUser && req.user?.id) {
+      const rejectedCondition = `(
+        LOWER(TRIM(COALESCE(combined.status, ''))) IN ('rejected', 'declined', 'decline', 'technical_error')
+        OR LOWER(TRIM(COALESCE(combined.status, ''))) LIKE '%reject%'
+        OR LOWER(TRIM(COALESCE(combined.status, ''))) LIKE '%decline%'
+        OR LOWER(TRIM(COALESCE(combined.final_status, ''))) IN ('rejected', 'declined', 'decline', 'technical_error')
+        OR LOWER(TRIM(COALESCE(combined.final_status, ''))) LIKE '%reject%'
+        OR LOWER(TRIM(COALESCE(combined.final_status, ''))) LIKE '%decline%'
+        OR LOWER(TRIM(COALESCE(combined.bank_current_lead_status, ''))) LIKE '%reject%'
+        OR LOWER(TRIM(COALESCE(combined.bank_current_lead_status, ''))) LIKE '%decline%'
+      )`;
+      querableOperatorFilterSQL = ` ${baseBankAccessFilterSQL} AND ${rejectedCondition}`;
+    }
+
+    const isPhysicalCurableUser = ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userDesignation) || ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userRole);
+    const isDigitalCurableUser = ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userRole);
+    const isEmailCurableUser = ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userRole);
+    const isCurableOperatorUser = isPhysicalCurableUser || isDigitalCurableUser || isEmailCurableUser;
+
+    let curableOperatorFilterSQL = '';
+    if (isCurableOperatorUser && req.user?.id) {
+      const physicalCodesList = HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.PHYSICAL_CURABLE).map(c => `'${c.code.toUpperCase()}'`);
+      const digitalCodesList = HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.DIGITAL_CURABLE).map(c => `'${c.code.toUpperCase()}'`);
+      const emailCodesList = HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.EMAIL_CURABLE).map(c => `'${c.code.toUpperCase()}'`);
+
+      const physicalCodesSQL = `(${physicalCodesList.join(', ')})`;
+      const digitalCodesSQL = `(${digitalCodesList.join(', ')})`;
+      const emailCodesSQL = `(${emailCodesList.join(', ')})`;
+
+      let curableCondition = '';
+      if (isPhysicalCurableUser) {
+        curableCondition = `(
+          UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) IN ${physicalCodesSQL}
+          OR (
+            UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${digitalCodesSQL}
+            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${emailCodesSQL}
+            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) != 'NONE'
+            AND REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, ''))), ' ', '_') IN ('PHYSICAL_CURABLE', 'PHYSICAL_CURABLE_OPERATOR')
+          )
+        )`;
+      } else if (isDigitalCurableUser) {
+        curableCondition = `(
+          UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) IN ${digitalCodesSQL}
+          OR (
+            UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${physicalCodesSQL}
+            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${emailCodesSQL}
+            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) != 'NONE'
+            AND REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, ''))), ' ', '_') IN ('DIGITAL_CURABLE', 'DIGITAL_CURABLE_OPERATOR')
+          )
+        )`;
+      } else if (isEmailCurableUser) {
+        curableCondition = `(
+          UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) IN ${emailCodesSQL}
+          OR (
+            UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${physicalCodesSQL}
+            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${digitalCodesSQL}
+            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) != 'NONE'
+            AND REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, ''))), ' ', '_') IN ('EMAIL_CURABLE', 'EMAIL_CURABLE_OPERATOR')
+          )
+        )`;
+      }
+
+      const hdfcBankScopeSQL = `(
+        (LOWER(COALESCE(combined.bank_name, '')) LIKE '%hdfc%' OR LOWER(COALESCE(combined.bank_code, '')) LIKE '%hdfc%')
+        AND LOWER(COALESCE(combined.bank_name, '')) NOT LIKE '%tata%'
+        AND LOWER(COALESCE(combined.bank_code, '')) NOT LIKE '%tata%'
+      )`;
+
+      curableOperatorFilterSQL = ` AND ${creditCardAppSQL} AND ${hdfcBankScopeSQL} AND ${curableCondition}`;
+    }
+
+    if (!isPartnerOrTeam && !isSuperAdmin && req.user?.id) {
+      if (isSalesExecUser || isPanCheckerUser || isRemarkOperatorUser || isQdOperatorUser || isFinalStatusOperatorUser || isQuerableOperatorUser || isCurableOperatorUser) {
+        opHeadBankFilterSQL = ``;
+        countOpHeadBankFilterSQL = ``;
+      } else if (isAdministrativeOperatorUser && (!abRows || abRows.length === 0)) {
+        opHeadBankFilterSQL = ``;
+        countOpHeadBankFilterSQL = ``;
+      } else {
+        opHeadBankFilterSQL = baseBankAccessFilterSQL;
+        countOpHeadBankFilterSQL = baseBankAccessFilterSQL;
+      }
+    }
+
+    let partnerTeamScopeSQL;
+    if (isPartnerOrTeam) {
+      partnerTeamScopeSQL = `
+        WHERE (
+          combined.partner_id IN (
+            SELECT $1::uuid UNION SELECT $6::uuid 
+            UNION SELECT id FROM partner_profiles WHERE parent_partner_id = $1::uuid OR referred_by_id = $1::uuid OR parent_partner_id = $6::uuid OR referred_by_id = $6::uuid
+            UNION SELECT child_partner_id FROM partner_team_relationships WHERE parent_partner_id = $1::uuid OR sponsor_id = $1::uuid OR parent_partner_id = $6::uuid OR sponsor_id = $6::uuid
+            UNION SELECT id FROM partner_profiles WHERE user_id = $6::uuid OR user_id = $1::uuid
+          )
+          OR combined.submitted_by = $6::uuid
+          OR combined.employee_id IN (SELECT id FROM employees WHERE user_id = $6::uuid)
+          OR (combined.assigned_to_user_id IS NOT NULL AND combined.assigned_to_user_id::text = $6::text)
+          OR (combined.assigned_to_employee_id IS NOT NULL AND combined.assigned_to_employee_id::text IN (SELECT id::text FROM employees WHERE user_id = $6::uuid))
+          OR (combined.assigned_by_user_id IS NOT NULL AND combined.assigned_by_user_id::text = $6::text)
+          OR (combined.assigned_by_employee_id IS NOT NULL AND combined.assigned_by_employee_id::text IN (SELECT id::text FROM employees WHERE user_id = $6::uuid))
+          OR combined.submitted_by IN (
+            SELECT user_id FROM partner_profiles WHERE parent_partner_id = $1::uuid OR referred_by_id = $1::uuid
+            UNION SELECT u.id FROM users u WHERE u.created_by = $6::uuid
+          )
+        )
+      `;
+    } else if (validPartnerId) {
+      partnerTeamScopeSQL = `
+        WHERE combined.partner_id IN (
+          SELECT $1::uuid 
+          UNION SELECT id FROM partner_profiles WHERE parent_partner_id = $1::uuid OR referred_by_id = $1::uuid
+          UNION SELECT child_partner_id FROM partner_team_relationships WHERE parent_partner_id = $1::uuid OR sponsor_id = $1::uuid
+        )
+      `;
+    } else {
+      partnerTeamScopeSQL = `WHERE 1=1`;
+    }
+
+    const effectivePartnerTeamScopeSQL = partnerTeamScopeSQL;
+
+    const statusFilterBlockSQL = `(
+      $2::text IS NULL
+      OR combined.status = $2::text
+      OR ($2::text = 'pending' AND combined.status IN ('pending', 'lead_created', 'new', 'draft', 'initiated', 'link_sent', 'confirmed', 'link_pending'))
+      OR ($2::text = 'details_submitted' AND combined.status IN ('details_submitted', 'submitted', 'bank_form_submitted'))
+      OR ($2::text = 'operational_verified' AND combined.status IN ('operational_verified', 'under_review', 'under review', 'verification', 'in_process', 'in_progress', 'vkyc_pending', 'vkyc_completed'))
+      OR ($2::text = 'approved' AND combined.status IN ('approved', 'sanctioned', 'super_admin_approved', 'disbursed'))
+      OR ($2::text = 'commission_received' AND combined.status IN ('commission_received', 'commission_released', 'released', 'credited', 'paid'))
+      OR ($2::text = 'rejected' AND (
+        (
+          combined.status IN ('rejected', 'declined', 'decline', 'technical_error')
+          OR LOWER(COALESCE(combined.status, '')) LIKE '%reject%'
+          OR LOWER(COALESCE(combined.status, '')) LIKE '%decline%'
+          OR LOWER(COALESCE(combined.final_status, '')) IN ('rejected', 'declined', 'decline', 'technical_error')
+          OR LOWER(COALESCE(combined.final_status, '')) LIKE '%reject%'
+          OR LOWER(COALESCE(combined.final_status, '')) LIKE '%decline%'
+          OR LOWER(COALESCE(combined.bank_current_lead_status, '')) LIKE '%reject%'
+          OR LOWER(COALESCE(combined.bank_current_lead_status, '')) LIKE '%decline%'
+          OR (combined.decline_code IS NOT NULL AND TRIM(combined.decline_code) != '' AND UPPER(TRIM(combined.decline_code)) != 'NONE')
+        )
+        AND NOT (
+          combined.status IN ('cancelled', 'cancel', 'canceled')
+          OR LOWER(COALESCE(combined.status, '')) LIKE '%cancel%'
+          OR LOWER(COALESCE(combined.final_status, '')) IN ('cancelled', 'cancel', 'canceled')
+          OR LOWER(COALESCE(combined.final_status, '')) LIKE '%cancel%'
+          OR LOWER(COALESCE(combined.bank_current_lead_status, '')) LIKE '%cancel%'
+        )
+      ))
+      OR ($2::text = 'declined' AND (
+        combined.status IN ('declined', 'decline')
+        OR LOWER(COALESCE(combined.final_status, '')) LIKE '%decline%'
+        OR (combined.decline_code IS NOT NULL AND TRIM(combined.decline_code) != '' AND UPPER(TRIM(combined.decline_code)) != 'NONE')
+      ))
+      OR ($2::text = 'cancelled' AND (combined.status IN ('cancelled', 'cancel', 'canceled') OR LOWER(COALESCE(combined.final_status, '')) LIKE '%cancel%'))
+    )`;
+
+    const listQuerySQL = `
+      SELECT * FROM (
+        SELECT 
+          a.id,
+          a.app_number,
+          a.status::text,
+          a.loan_amount,
+          a.approved_amount,
+          a.commission_amount,
+          a.commission_status::text,
+          a.created_at,
+          a.updated_at,
+          1::int as update_count,
+          COALESCE(NULLIF(a.bank_application_number, ''), NULLIF(a.bank_ref_number, ''), NULLIF(pad.bank_application_number, ''), NULLIF(pad.bank_ref_number, '')) as bank_application_number,
+          COALESCE(NULLIF(a.bank_ref_number, ''), NULLIF(pad.bank_ref_number, ''), NULLIF(a.bank_application_number, ''), NULLIF(pad.bank_application_number, '')) as bank_ref_number,
+          COALESCE(NULLIF(a.ipa_stage, ''), NULLIF(pad.ipa_stage, ''), NULLIF(a.iqa_stage, ''), NULLIF(pad.iqa_stage, '')) as ipa_stage,
+          COALESCE(NULLIF(a.kyc_stage, ''), NULLIF(pad.kyc_stage, ''), NULLIF(a.vkyc_stage, ''), NULLIF(a.vkyc_status, ''), NULLIF(pad.vkyc_stage, '')) as kyc_stage,
+          a.card_approval_stage,
+          a.digital_card_issued,
+          COALESCE(NULLIF(a.appcode_status, ''), NULLIF(pad.appcode_status, '')) as appcode_status,
+          COALESCE(NULLIF(a.dispatch_status, ''), NULLIF(pad.dispatch_status, '')) as dispatch_status,
+          COALESCE(NULLIF(a.soft_approval_status, ''), NULLIF(pad.soft_approval_status, '')) as soft_approval_stage,
+          COALESCE(NULLIF(a.soft_approval_status, ''), NULLIF(pad.soft_approval_status, '')) as soft_approval_status,
+          COALESCE(NULLIF(a.iqa_stage, ''), NULLIF(pad.iqa_stage, '')) as iqa_stage,
+          COALESCE(NULLIF(a.vkyc_stage, ''), NULLIF(a.vkyc_status, ''), NULLIF(pad.vkyc_stage, '')) as vkyc_stage,
+          COALESCE(NULLIF(a.vkyc_status, ''), NULLIF(a.vkyc_stage, ''), NULLIF(pad.vkyc_stage, '')) as vkyc_status,
+          COALESCE(NULLIF(a.vkyc_url, ''), NULLIF(pad.vkyc_url, '')) as vkyc_url,
+          COALESCE(
+            NULLIF(a.user_remark, ''),
+            NULLIF(pad.user_remark, ''),
+            NULLIF(a.notes, ''),
+            NULLIF(a.bank_remark, ''),
+            NULLIF(pad.bank_remark, ''),
+            'NA'
+          ) as bank_remark,
+          COALESCE(NULLIF(to_jsonb(a)->>'user_remark', ''), NULLIF(to_jsonb(pad)->>'user_remark', ''), to_jsonb(a)->>'notes', to_jsonb(a)->>'operational_remarks') as user_remark,
+          COALESCE(to_jsonb(a)->>'user_remark', to_jsonb(a)->>'notes') as notes,
+          COALESCE(NULLIF(to_jsonb(a)->>'final_status', ''), NULLIF(to_jsonb(pad)->>'final_status', '')) as final_status,
+          COALESCE(NULLIF(to_jsonb(a)->>'app_file_generated', ''), NULLIF(to_jsonb(pad)->>'app_file_generated', '')) as app_file_generated,
+          COALESCE(NULLIF(to_jsonb(a)->>'decline_reason', ''), NULLIF(to_jsonb(pad)->>'decline_reason', '')) as decline_reason,
+          COALESCE(NULLIF(to_jsonb(a)->>'eligible_reqd', ''), NULLIF(to_jsonb(pad)->>'eligible_reqd', '')) as eligible_reqd,
+          COALESCE(NULLIF(to_jsonb(a)->>'decline_code', ''), NULLIF(to_jsonb(pad)->>'decline_code', '')) as decline_code,
+          COALESCE(NULLIF(to_jsonb(a)->>'decline_description', ''), NULLIF(to_jsonb(pad)->>'decline_description', '')) as decline_description,
+          COALESCE(NULLIF(to_jsonb(a)->>'curing_designation', ''), NULLIF(to_jsonb(pad)->>'curing_designation', '')) as curing_designation,
+          COALESCE(NULLIF(to_jsonb(a)->>'primary_decline_code', ''), NULLIF(to_jsonb(pad)->>'primary_decline_code', ''), NULLIF(to_jsonb(a)->>'decline_code', ''), NULLIF(to_jsonb(pad)->>'decline_code', '')) as primary_decline_code,
+          COALESCE(NULLIF(to_jsonb(a)->>'primary_decline_description', ''), NULLIF(to_jsonb(pad)->>'primary_decline_description', ''), NULLIF(to_jsonb(a)->>'decline_description', ''), NULLIF(to_jsonb(pad)->>'decline_description', '')) as primary_decline_description,
+          COALESCE(NULLIF(to_jsonb(a)->>'primary_curing_designation', ''), NULLIF(to_jsonb(pad)->>'primary_curing_designation', ''), NULLIF(to_jsonb(a)->>'curing_designation', ''), NULLIF(to_jsonb(pad)->>'curing_designation', '')) as primary_curing_designation,
+          COALESCE(NULLIF(to_jsonb(a)->>'secondary_decline_code', ''), NULLIF(to_jsonb(pad)->>'secondary_decline_code', '')) as secondary_decline_code,
+          COALESCE(NULLIF(to_jsonb(a)->>'secondary_decline_description', ''), NULLIF(to_jsonb(pad)->>'secondary_decline_description', '')) as secondary_decline_description,
+          COALESCE(NULLIF(to_jsonb(a)->>'secondary_curing_designation', ''), NULLIF(to_jsonb(pad)->>'secondary_curing_designation', '')) as secondary_curing_designation,
+          (to_jsonb(a)->>'last_operator_name') as last_operator_name,
+          (to_jsonb(a)->>'last_operator_role') as last_operator_role,
+          (to_jsonb(a)->>'last_operator_designation') as last_operator_designation,
+          (to_jsonb(a)->>'last_operator_code') as last_operator_code,
+          (to_jsonb(a)->>'final_status_operator_code') as final_status_operator_code,
+          NULLIF(to_jsonb(a)->>'last_operated_at', '') as last_operated_at,
+          COALESCE(NULLIF(to_jsonb(a)->>'last_operator_name', ''), NULLIF(to_jsonb(a)->>'last_operator_code', ''), 'Not Assigned') as currently_working_by,
+          COALESCE(to_jsonb(a)->>'sales_claimed_by', to_jsonb(pad)->>'sales_claimed_by', '') as sales_claimed_by,
+          COALESCE(to_jsonb(a)->>'sales_claimed_by_name', to_jsonb(pad)->>'sales_claimed_by_name', '') as sales_claimed_by_name,
+          COALESCE(to_jsonb(a)->>'sales_claimed_by_code', to_jsonb(pad)->>'sales_claimed_by_code', '') as sales_claimed_by_code,
+          NULLIF(COALESCE(to_jsonb(a)->>'sales_claimed_at', to_jsonb(pad)->>'sales_claimed_at', ''), '') as sales_claimed_at,
+          a.submitted_at,
+          a.approved_at,
+          a.approved_by,
+          COALESCE(
+            NULLIF(appu.employee_id, ''),
+            NULLIF(appemp.employee_id, ''),
+            NULLIF(appemp_id.employee_id, ''),
+            NULLIF(appu.full_name, ''),
+            NULLIF(appu.email, ''),
+            appu.id::text
+          ) as approved_by_admin_id,
+          appu.full_name as approved_by_name,
+          COALESCE(NULLIF(appu.employee_id, ''), NULLIF(appemp.employee_id, ''), NULLIF(appemp_id.employee_id, '')) as approved_by_code,
+          a.commission_received_at,
+          a.commission_paid_at,
+          a.submitted_by,
+          a.employee_id,
+          COALESCE(NULLIF(su.full_name, ''), NULLIF(TRIM(CONCAT(ap.first_name, ' ', COALESCE(ap.last_name, ''))), ''), su.email, 'Team Member') as submitted_by_name,
+          COALESCE(a.process_type, a.source, 'lead_punching') as process_by,
+          a.process_type,
+          COALESCE(NULLIF(l.customer_name, ''), NULLIF(c.full_name, ''), 'Customer') as customer_name,
+          COALESCE(NULLIF(l.mobile, ''), NULLIF(l.customer_mobile, ''), c.mobile) as customer_mobile,
+          c.email as customer_email,
+          COALESCE(NULLIF(a.pan_number, ''), NULLIF(c.pan_number, ''), NULLIF(l.pan_number, '')) as pan_number,
+          COALESCE(l.city, c.city) as city,
+          c.state,
+          c.pincode,
+          c.employment_type,
+          c.monthly_income,
+          p.name as product_name,
+          COALESCE(NULLIF(a.metadata->>'category', ''), p.category::text) as category,
+          COALESCE(p.sub_category, (to_jsonb(a)->'metadata'->>'product_type')) as sub_category,
+          b.name as bank_name,
+          b.short_code as bank_code,
+          ap.partner_code,
+          ap.first_name as partner_first_name,
+          ap.last_name as partner_last_name,
+          COALESCE(
+            NULLIF(su.employee_id, ''),
+            NULLIF(emp.employee_id, ''),
+            NULLIF(emp_sub.employee_id, '')
+          ) as emp_code,
+          COALESCE(emp.full_name, emp_sub.full_name) as employee_name,
+          COALESCE(emp.designation, emp_sub.designation) as employee_designation,
+          su.role as submitter_role,
+          a.partner_id,
+          a.product_id,
+          COALESCE(a.bank_id, p.bank_id) as bank_id,
+          COALESCE(p.operation_head_id, b.operation_head_id) as operation_head_id,
+          oh.full_name as operation_head_name,
+          COALESCE(NULLIF(a.pan_check, ''), NULLIF(pad.pan_check, ''), 'no') as pan_check,
+          COALESCE(NULLIF(a.bank_current_lead_status, ''), NULLIF(pad.bank_current_lead_status, ''), 'None') as bank_current_lead_status,
+          COALESCE(NULLIF(a.requery_date::text, ''), NULLIF(pad.requery_date::text, '')) as requery_date,
+          COALESCE(NULLIF(a.remark_status, ''), 'PENDING') as remark_status,
+          COALESCE(NULLIF(a.assigned_to_name, ''), NULLIF(pad.assigned_to_name, ''), a.metadata->>'assigned_to') as assigned_to,
+          COALESCE(NULLIF(a.sales_operator_code, ''), NULLIF(pad.sales_operator_code, '')) as sales_operator_code,
+          COALESCE(NULLIF(a.sales_operator_code, ''), NULLIF(pad.sales_operator_code, '')) as salas_operator_code,
+          COALESCE(NULLIF(a.pan_checker_code, ''), NULLIF(pad.pan_checker_code, '')) as pan_checker_code,
+          COALESCE(NULLIF(a.remark_operator_code, ''), NULLIF(pad.remark_operator_code, '')) as remark_operator_code,
+          COALESCE(NULLIF(a.remark_operator_code, ''), NULLIF(pad.remark_operator_code, '')) as remark_opretor_code,
+          COALESCE(NULLIF(a.backend_remark, ''), NULLIF(pad.backend_remark, '')) as backend_remark,
+          COALESCE(NULLIF(to_jsonb(a)->>'cureble_stage', ''), NULLIF(to_jsonb(pad)->>'cureble_stage', ''), NULLIF(a.user_remark, ''), NULLIF(pad.user_remark, '')) as cureble_stage,
+          COALESCE(NULLIF(a.primary_decline_code, ''), NULLIF(pad.primary_decline_code, ''), NULLIF(a.decline_code, ''), NULLIF(pad.decline_code, '')) as primary_code,
+          COALESCE(NULLIF(a.secondary_decline_code, ''), NULLIF(pad.secondary_decline_code, '')) as secondary_code,
+          COALESCE(NULLIF(to_jsonb(a)->>'cureble_type', ''), NULLIF(to_jsonb(pad)->>'cureble_type', ''), NULLIF(a.curing_designation, ''), NULLIF(pad.curing_designation, '')) as cureble_type,
+          COALESCE(NULLIF(to_jsonb(a)->>'cureble_operator_code', ''), NULLIF(to_jsonb(pad)->>'cureble_operator_code', ''), NULLIF(a.last_operator_code, ''), NULLIF(pad.last_operator_code, '')) as cureble_operator_code,
+          COALESCE(NULLIF(a.card_approval_stage, ''), NULLIF(pad.card_approval_stage, ''), NULLIF(a.digital_card_issued, ''), NULLIF(to_jsonb(pad)->>'digital_card_issued', '')) as final_card_approval,
+          COALESCE(a.commission_amount, 0) as incentive_amount,
+          CASE WHEN LOWER(COALESCE(to_jsonb(a)->>'remark_updated', '')) IN ('true', '1', 'yes') THEN true ELSE false END as remark_updated,
+          NULLIF(to_jsonb(a)->>'remark_updated_by', '') as remark_updated_by,
+          NULLIF(to_jsonb(a)->>'remark_updated_at', '') as remark_updated_at,
+          NULLIF(to_jsonb(a)->>'assigned_to_employee_id', '') as assigned_to_employee_id,
+          NULLIF(to_jsonb(a)->>'assigned_to_user_id', '') as assigned_to_user_id,
+          COALESCE(NULLIF(to_jsonb(a)->>'assigned_to_name', ''), NULLIF(to_jsonb(pad)->>'assigned_to_name', '')) as assigned_to_name,
+          COALESCE(NULLIF(to_jsonb(a)->>'assigned_to_code', ''), NULLIF(to_jsonb(pad)->>'assigned_to_code', '')) as assigned_to_code,
+          NULLIF(to_jsonb(a)->>'assigned_by_user_id', '') as assigned_by_user_id,
+          NULLIF(to_jsonb(a)->>'assigned_by_employee_id', '') as assigned_by_employee_id,
+          COALESCE(NULLIF(to_jsonb(a)->>'assigned_by_name', ''), NULLIF(to_jsonb(pad)->>'assigned_by_name', '')) as assigned_by_name,
+          COALESCE(NULLIF(to_jsonb(a)->>'assigned_by_code', ''), NULLIF(to_jsonb(pad)->>'assigned_by_code', '')) as assigned_by_code,
+          NULLIF(COALESCE(to_jsonb(a)->>'assigned_at', to_jsonb(pad)->>'assigned_at', ''), '') as assigned_at,
+          COALESCE(NULLIF(to_jsonb(a)->>'assignment_notes', ''), NULLIF(to_jsonb(pad)->>'assignment_notes', '')) as assignment_notes
+        FROM applications a
+        LEFT JOIN physical_application_details pad ON pad.application_id = a.id
+        LEFT JOIN leads l ON l.id = a.lead_id
+        LEFT JOIN customers c ON c.id = a.customer_id
+        LEFT JOIN products p ON p.id = a.product_id
+        LEFT JOIN banks b ON b.id = COALESCE(a.bank_id, p.bank_id)
+        LEFT JOIN partner_profiles ap ON ap.id = a.partner_id
+        LEFT JOIN employees emp ON emp.id = a.employee_id
+        LEFT JOIN employees emp_sub ON emp_sub.user_id = a.submitted_by
+        LEFT JOIN users su ON su.id = a.submitted_by
+        LEFT JOIN users oh ON oh.id = COALESCE(p.operation_head_id, b.operation_head_id)
+        LEFT JOIN users appu ON appu.id = a.approved_by
+        LEFT JOIN employees appemp ON appemp.user_id = appu.id
+        LEFT JOIN employees appemp_id ON appemp_id.id = appu.id
+      ) combined
+      ${effectivePartnerTeamScopeSQL}
+        AND ${statusFilterBlockSQL}
+        AND ($3::uuid IS NULL OR combined.product_id = $3)
+        AND ($4::uuid IS NULL OR combined.bank_id = $4)
+        AND ($5::text IS NULL OR (combined.app_number ILIKE $5 OR combined.customer_name ILIKE $5 OR combined.customer_mobile ILIKE $5 OR combined.bank_application_number ILIKE $5 OR combined.bank_ref_number ILIKE $5 OR combined.pan_number ILIKE $5))
+        AND ($7::text IS NULL OR combined.process_by = $7 OR combined.submitted_by::text = $7)
+        AND ($8::uuid IS NULL OR combined.operation_head_id = $8::uuid)
+        AND (
+          $9::text IS NULL OR $9::text = ''
+          OR ($9::text = 'my' AND (combined.submitted_by = $6::uuid OR (combined.partner_id = $1::uuid AND (combined.submitted_by IS NULL OR combined.submitted_by = $6::uuid))))
+          OR ($9::text = 'team' AND NOT (combined.submitted_by = $6::uuid OR (combined.partner_id = $1::uuid AND (combined.submitted_by IS NULL OR combined.submitted_by = $6::uuid))))
+        )
+        AND ($10::uuid IS NULL OR combined.submitted_by = $10::uuid OR combined.partner_id IN (SELECT id FROM partner_profiles WHERE user_id = $10::uuid OR id = $10::uuid))
+        AND (
+          $11::text IS NULL OR $11::text = '' OR $11::text = 'all'
+          OR ($11::text IN ('loc_eoc', 'LOC/EOC', 'loc-eoc', 'LOC_EOC') AND ${locEocAppSQL})
+          OR ($11::text IN ('loan_on_credit_card', 'loc', 'LOC') AND (
+            LOWER(COALESCE(combined.sub_category, '')) = 'loc'
+            OR (LOWER(COALESCE(combined.category::text, '')) = 'loc_eoc' AND LOWER(COALESCE(combined.sub_category, '')) = 'loc')
+          ))
+          OR ($11::text IN ('smart_emi', 'eoc', 'EOC') AND (
+            LOWER(COALESCE(combined.sub_category, '')) = 'eoc'
+            OR (LOWER(COALESCE(combined.category::text, '')) = 'loc_eoc' AND LOWER(COALESCE(combined.sub_category, '')) = 'eoc')
+          ))
+          OR ($11::text = 'credit_card' AND ${creditCardAppSQL})
+          OR ($11::text IN ('loan', 'loans', 'personal_loan') AND (LOWER(combined.category::text) LIKE '%loan%' OR LOWER(combined.category::text) LIKE '%personal%') AND LOWER(COALESCE(combined.category::text, '')) != 'loc_eoc' AND LOWER(COALESCE(combined.sub_category, '')) NOT IN ('loc', 'eoc'))
+          OR ($11::text = 'business_loan' AND (LOWER(combined.category::text) LIKE '%business%'))
+          OR ($11::text = 'insurance' AND (LOWER(combined.category::text) LIKE '%insurance%'))
+          OR ($11::text = 'utility' AND (LOWER(combined.category::text) LIKE '%utilit%' OR LOWER(combined.category::text) LIKE '%recharge%'))
+          OR (LOWER(combined.category::text) = LOWER($11::text))
+        )
+        AND (
+          $12::text IS NULL OR $12::text = '' OR $12::text = 'all'
+          OR combined.commission_status = $12::text
+          OR ($12::text = 'released' AND combined.commission_status IN ('released', 'credited', 'paid', 'approved', 'commission_released'))
+          OR ($12::text = 'pending' AND combined.commission_status IN ('pending', 'unpaid', 'due', 'initiated'))
+        )
+        AND ($13::timestamp IS NULL OR combined.created_at >= $13::timestamp)
+        AND ($14::timestamp IS NULL OR combined.created_at <= $14::timestamp)
+        ${opHeadBankFilterSQL}
+        ${salesExecFilterSQL}
+        ${panCheckerFilterSQL}
+        ${qdOperatorFilterSQL}
+        ${remarkOperatorFilterSQL}
+        ${finalStatusOperatorFilterSQL}
+        ${querableOperatorFilterSQL}
+        ${curableOperatorFilterSQL}
+      ORDER BY combined.created_at DESC, combined.id DESC
+      LIMIT $15::int OFFSET $16::int
+    `;
+
+    // Dynamic count scope based on user role/partner parameters
+    let countScopeSQL;
+    if (isPartnerOrTeam) {
+      countScopeSQL = `
+        WHERE (
+          combined.partner_id IN (
+            SELECT $1::uuid UNION SELECT $6::uuid 
+            UNION SELECT id FROM partner_profiles WHERE parent_partner_id = $1::uuid OR referred_by_id = $1::uuid OR parent_partner_id = $6::uuid OR referred_by_id = $6::uuid
+            UNION SELECT child_partner_id FROM partner_team_relationships WHERE parent_partner_id = $1::uuid OR sponsor_id = $1::uuid OR parent_partner_id = $6::uuid OR sponsor_id = $6::uuid
+            UNION SELECT id FROM partner_profiles WHERE user_id = $6::uuid OR user_id = $1::uuid
+          )
+          OR combined.submitted_by = $6::uuid
+          OR combined.employee_id IN (SELECT id FROM employees WHERE user_id = $6::uuid)
+          OR (combined.assigned_to_user_id IS NOT NULL AND combined.assigned_to_user_id::text = $6::text)
+          OR (combined.assigned_to_employee_id IS NOT NULL AND combined.assigned_to_employee_id::text IN (SELECT id::text FROM employees WHERE user_id = $6::uuid))
+          OR (combined.assigned_by_user_id IS NOT NULL AND combined.assigned_by_user_id::text = $6::text)
+          OR (combined.assigned_by_employee_id IS NOT NULL AND combined.assigned_by_employee_id::text IN (SELECT id::text FROM employees WHERE user_id = $6::uuid))
+          OR combined.submitted_by IN (
+            SELECT user_id FROM partner_profiles WHERE parent_partner_id = $1::uuid OR referred_by_id = $1::uuid
+            UNION SELECT u.id FROM users u WHERE u.created_by = $6::uuid
+          )
+        )
+      `;
+    } else if (validPartnerId) {
+      countScopeSQL = `
+        WHERE combined.partner_id IN (
+          SELECT $1::uuid 
+          UNION SELECT id FROM partner_profiles WHERE parent_partner_id = $1::uuid OR referred_by_id = $1::uuid
+          UNION SELECT child_partner_id FROM partner_team_relationships WHERE parent_partner_id = $1::uuid OR sponsor_id = $1::uuid
+        )
+      `;
+    } else {
+      countScopeSQL = `WHERE 1=1`;
+    }
+
+    let effectiveCountScopeSQL = `WHERE 1=1`;
+    if (isPartnerOrTeam || validPartnerId) {
+      effectiveCountScopeSQL = countScopeSQL;
+    }
+
+    const countSearchJoinSQL = `
+        LEFT JOIN leads l ON l.id = a.lead_id
+        LEFT JOIN customers c ON c.id = a.customer_id
+    `;
+
+    const countQuerySQL = `
+      SELECT COUNT(*) FROM (
+        SELECT a.id, a.partner_id, a.submitted_by, a.employee_id, COALESCE(
+          NULLIF(to_jsonb(a)->>'assigned_to', ''),
+          NULLIF(to_jsonb(pad)->>'assigned_to', ''),
+          NULLIF(to_jsonb(a)->>'assigned_to_name', ''),
+          NULLIF(to_jsonb(pad)->>'assigned_to_name', '')
+        ) AS assigned_to, a.process_type, a.status::text, a.commission_status::text, a.product_id, COALESCE(a.bank_id, p.bank_id) as bank_id, a.app_number, COALESCE(NULLIF(a.bank_application_number, ''), NULLIF(a.bank_ref_number, ''), NULLIF(pad.bank_application_number, ''), NULLIF(pad.bank_ref_number, '')) as bank_application_number, COALESCE(NULLIF(a.bank_ref_number, ''), NULLIF(pad.bank_ref_number, '')) as bank_ref_number, COALESCE(NULLIF(a.dispatch_status, ''), NULLIF(pad.dispatch_status, '')) as dispatch_status, COALESCE(NULLIF(a.pan_number, ''), NULLIF(c.pan_number, ''), NULLIF(l.pan_number, '')) as pan_number, COALESCE(NULLIF(l.customer_name, ''), NULLIF(c.full_name, ''), 'Customer') as customer_name, COALESCE(NULLIF(l.mobile, ''), NULLIF(l.customer_mobile, ''), c.mobile) as customer_mobile, COALESCE(a.process_type, a.source, 'lead_punching') as process_by, COALESCE(p.operation_head_id, b.operation_head_id) as operation_head_id, p.name as product_name, p.category::text as category, COALESCE(p.sub_category, (to_jsonb(a)->'metadata'->>'product_type')) as sub_category, a.created_at, b.short_code as bank_code, b.name as bank_name, a.bank_remark, COALESCE(NULLIF(a.pan_check, ''), NULLIF(pad.pan_check, ''), NULLIF(to_jsonb(a)->>'pan_check', ''), 'no') as pan_check, COALESCE(NULLIF(a.bank_current_lead_status, ''), NULLIF(pad.bank_current_lead_status, ''), 'None') as bank_current_lead_status, COALESCE(NULLIF(a.requery_date, pad.requery_date), a.requery_date) as requery_date,
+        COALESCE(NULLIF(a.final_status, ''), NULLIF(pad.final_status, '')) as final_status,
+        COALESCE(NULLIF(a.decline_reason, ''), NULLIF(pad.decline_reason, '')) as decline_reason,
+        COALESCE(NULLIF(a.decline_code, ''), NULLIF(pad.decline_code, '')) as decline_code,
+        COALESCE(NULLIF(to_jsonb(a)->>'decline_description', ''), NULLIF(to_jsonb(pad)->>'decline_description', '')) as decline_description,
+        COALESCE(NULLIF(to_jsonb(a)->>'curing_designation', ''), NULLIF(to_jsonb(pad)->>'curing_designation', '')) as curing_designation,
+        COALESCE(NULLIF(to_jsonb(a)->>'primary_decline_code', ''), NULLIF(to_jsonb(pad)->>'primary_decline_code', ''), NULLIF(a.decline_code, ''), NULLIF(pad.decline_code, '')) as primary_decline_code,
+        COALESCE(NULLIF(to_jsonb(a)->>'secondary_decline_code', ''), NULLIF(to_jsonb(pad)->>'secondary_decline_code', '')) as secondary_decline_code,
+        COALESCE(a.sales_claimed_by, pad.sales_claimed_by, '') as sales_claimed_by,
+        NULLIF(to_jsonb(a)->>'assigned_to_user_id', '') as assigned_to_user_id,
+        NULLIF(to_jsonb(a)->>'assigned_to_employee_id', '') as assigned_to_employee_id,
+        NULLIF(to_jsonb(a)->>'assigned_by_user_id', '') as assigned_by_user_id,
+        NULLIF(to_jsonb(a)->>'assigned_by_employee_id', '') as assigned_by_employee_id
+        FROM applications a
+        ${countSearchJoinSQL}
+        LEFT JOIN products p ON p.id = a.product_id
+        LEFT JOIN banks b ON b.id = COALESCE(a.bank_id, p.bank_id)
+        LEFT JOIN physical_application_details pad ON pad.application_id = a.id
+      ) combined
+      ${effectiveCountScopeSQL}
+        AND ${statusFilterBlockSQL}
+        AND ($3::uuid IS NULL OR combined.product_id = $3)
+        AND ($4::uuid IS NULL OR combined.bank_id = $4)
+        AND ($5::text IS NULL OR (combined.app_number ILIKE $5 OR combined.customer_name ILIKE $5 OR combined.customer_mobile ILIKE $5 OR combined.bank_application_number ILIKE $5 OR combined.bank_ref_number ILIKE $5 OR combined.pan_number ILIKE $5))
+        AND ($7::text IS NULL OR combined.process_by = $7 OR combined.submitted_by::text = $7)
+        AND ($8::uuid IS NULL OR combined.operation_head_id = $8::uuid)
+        AND (
+          $9::text IS NULL OR $9::text = ''
+          OR ($9::text = 'my' AND (combined.submitted_by = $6::uuid OR (combined.partner_id = $1::uuid AND (combined.submitted_by IS NULL OR combined.submitted_by = $6::uuid))))
+          OR ($9::text = 'team' AND NOT (combined.submitted_by = $6::uuid OR (combined.partner_id = $1::uuid AND (combined.submitted_by IS NULL OR combined.submitted_by = $6::uuid))))
+        )
+        AND ($10::uuid IS NULL OR combined.submitted_by = $10::uuid OR combined.partner_id IN (SELECT id FROM partner_profiles WHERE user_id = $10::uuid OR id = $10::uuid))
+        AND (
+          $11::text IS NULL OR $11::text = '' OR $11::text = 'all'
+          OR ($11::text IN ('loc_eoc', 'LOC/EOC', 'loc-eoc', 'LOC_EOC') AND ${locEocAppSQL})
+          OR ($11::text IN ('loan_on_credit_card', 'loc', 'LOC') AND (
+            LOWER(COALESCE(combined.sub_category, '')) = 'loc'
+            OR (LOWER(COALESCE(combined.category::text, '')) = 'loc_eoc' AND LOWER(COALESCE(combined.sub_category, '')) = 'loc')
+          ))
+          OR ($11::text IN ('smart_emi', 'eoc', 'EOC') AND (
+            LOWER(COALESCE(combined.sub_category, '')) = 'eoc'
+            OR (LOWER(COALESCE(combined.category::text, '')) = 'loc_eoc' AND LOWER(COALESCE(combined.sub_category, '')) = 'eoc')
+          ))
+          OR ($11::text = 'credit_card' AND ${creditCardAppSQL})
+          OR ($11::text IN ('loan', 'loans', 'personal_loan') AND (LOWER(combined.category::text) LIKE '%loan%' OR LOWER(combined.category::text) LIKE '%personal%') AND LOWER(COALESCE(combined.category::text, '')) != 'loc_eoc' AND LOWER(COALESCE(combined.sub_category, '')) NOT IN ('loc', 'eoc'))
+          OR ($11::text = 'business_loan' AND (LOWER(combined.category::text) LIKE '%business%'))
+          OR ($11::text = 'insurance' AND (LOWER(combined.category::text) LIKE '%insurance%'))
+          OR ($11::text = 'utility' AND (LOWER(combined.category::text) LIKE '%utilit%' OR LOWER(combined.category::text) LIKE '%recharge%'))
+          OR (LOWER(combined.category::text) = LOWER($11::text))
+        )
+        AND (
+          $12::text IS NULL OR $12::text = '' OR $12::text = 'all'
+          OR combined.commission_status = $12::text
+          OR ($12::text = 'released' AND combined.commission_status IN ('released', 'credited', 'paid', 'approved', 'commission_released'))
+          OR ($12::text = 'pending' AND combined.commission_status IN ('pending', 'unpaid', 'due', 'initiated'))
+        )
+        AND ($13::timestamp IS NULL OR combined.created_at >= $13::timestamp)
+        AND ($14::timestamp IS NULL OR combined.created_at <= $14::timestamp)
+        ${countOpHeadBankFilterSQL}
+        ${salesExecFilterSQL}
+        ${panCheckerFilterSQL}
+        ${qdOperatorFilterSQL}
+        ${remarkOperatorFilterSQL}
+        ${finalStatusOperatorFilterSQL}
+        ${querableOperatorFilterSQL}
+        ${curableOperatorFilterSQL}
+    `;
+
+    // Compute canonical status counts scoped to user role & bank filters
+    const statusCountsSQL = `
+      SELECT combined.status, COALESCE(combined.final_status, '') as final_status, COALESCE(combined.bank_current_lead_status, '') as bank_current_lead_status, COUNT(*)::int as count FROM (
+        SELECT a.id, a.partner_id, a.submitted_by, a.employee_id, COALESCE(
+          NULLIF(to_jsonb(a)->>'assigned_to', ''),
+          NULLIF(to_jsonb(pad)->>'assigned_to', ''),
+          NULLIF(to_jsonb(a)->>'assigned_to_name', ''),
+          NULLIF(to_jsonb(pad)->>'assigned_to_name', '')
+        ) AS assigned_to, a.process_type, a.status::text, a.commission_status::text, a.product_id, COALESCE(a.bank_id, p.bank_id) as bank_id, a.app_number, COALESCE(NULLIF(a.bank_application_number, ''), NULLIF(a.bank_ref_number, ''), NULLIF(pad.bank_application_number, ''), NULLIF(pad.bank_ref_number, '')) as bank_application_number, COALESCE(NULLIF(a.bank_ref_number, ''), NULLIF(pad.bank_ref_number, '')) as bank_ref_number, COALESCE(NULLIF(a.dispatch_status, ''), NULLIF(pad.dispatch_status, '')) as dispatch_status, COALESCE(NULLIF(a.pan_number, ''), NULLIF(c.pan_number, ''), NULLIF(l.pan_number, '')) as pan_number, COALESCE(NULLIF(l.customer_name, ''), NULLIF(c.full_name, ''), 'Customer') as customer_name, COALESCE(NULLIF(l.mobile, ''), NULLIF(l.customer_mobile, ''), c.mobile) as customer_mobile, COALESCE(a.process_type, a.source, 'lead_punching') as process_by, COALESCE(p.operation_head_id, b.operation_head_id) as operation_head_id, p.name as product_name, p.category::text as category, COALESCE(p.sub_category, (to_jsonb(a)->'metadata'->>'product_type')) as sub_category, a.created_at, b.short_code as bank_code, b.name as bank_name, a.bank_remark, COALESCE(NULLIF(a.pan_check, ''), NULLIF(pad.pan_check, ''), NULLIF(to_jsonb(a)->>'pan_check', ''), 'no') as pan_check, COALESCE(NULLIF(a.bank_current_lead_status, ''), NULLIF(pad.bank_current_lead_status, ''), 'None') as bank_current_lead_status, COALESCE(NULLIF(a.requery_date, pad.requery_date), a.requery_date) as requery_date,
+        COALESCE(NULLIF(a.final_status, ''), NULLIF(pad.final_status, '')) as final_status,
+        COALESCE(NULLIF(a.decline_reason, ''), NULLIF(pad.decline_reason, '')) as decline_reason,
+        COALESCE(NULLIF(a.decline_code, ''), NULLIF(pad.decline_code, '')) as decline_code,
+        COALESCE(NULLIF(to_jsonb(a)->>'decline_description', ''), NULLIF(to_jsonb(pad)->>'decline_description', '')) as decline_description,
+        COALESCE(NULLIF(to_jsonb(a)->>'curing_designation', ''), NULLIF(to_jsonb(pad)->>'curing_designation', '')) as curing_designation,
+        COALESCE(NULLIF(to_jsonb(a)->>'primary_decline_code', ''), NULLIF(to_jsonb(pad)->>'primary_decline_code', ''), NULLIF(a.decline_code, ''), NULLIF(pad.decline_code, '')) as primary_decline_code,
+        COALESCE(NULLIF(to_jsonb(a)->>'secondary_decline_code', ''), NULLIF(to_jsonb(pad)->>'secondary_decline_code', '')) as secondary_decline_code,
+        COALESCE(a.sales_claimed_by, pad.sales_claimed_by, '') as sales_claimed_by,
+        NULLIF(to_jsonb(a)->>'assigned_to_user_id', '') as assigned_to_user_id,
+        NULLIF(to_jsonb(a)->>'assigned_to_employee_id', '') as assigned_to_employee_id,
+        NULLIF(to_jsonb(a)->>'assigned_by_user_id', '') as assigned_by_user_id,
+        NULLIF(to_jsonb(a)->>'assigned_by_employee_id', '') as assigned_by_employee_id
+        FROM applications a
+        LEFT JOIN leads l ON l.id = a.lead_id
+        LEFT JOIN customers c ON c.id = a.customer_id
+        LEFT JOIN products p ON p.id = a.product_id
+        LEFT JOIN banks b ON b.id = COALESCE(a.bank_id, p.bank_id)
+        LEFT JOIN physical_application_details pad ON pad.application_id = a.id
+      ) combined
+      ${effectiveCountScopeSQL}
+        AND ${statusFilterBlockSQL}
+        AND ($3::uuid IS NULL OR combined.product_id = $3)
+        AND ($4::uuid IS NULL OR combined.bank_id = $4)
+        AND ($5::text IS NULL OR (combined.app_number ILIKE $5 OR combined.customer_name ILIKE $5 OR combined.customer_mobile ILIKE $5 OR combined.bank_application_number ILIKE $5 OR combined.bank_ref_number ILIKE $5 OR combined.pan_number ILIKE $5))
+        AND ($7::text IS NULL OR combined.process_by = $7 OR combined.submitted_by::text = $7)
+        AND ($8::uuid IS NULL OR combined.operation_head_id = $8::uuid)
+        AND (
+          $9::text IS NULL OR $9::text = ''
+          OR ($9::text = 'my' AND (combined.submitted_by = $6::uuid OR (combined.partner_id = $1::uuid AND (combined.submitted_by IS NULL OR combined.submitted_by = $6::uuid))))
+          OR ($9::text = 'team' AND NOT (combined.submitted_by = $6::uuid OR (combined.partner_id = $1::uuid AND (combined.submitted_by IS NULL OR combined.submitted_by = $6::uuid))))
+        )
+        AND ($10::uuid IS NULL OR combined.submitted_by = $10::uuid OR combined.partner_id IN (SELECT id FROM partner_profiles WHERE user_id = $10::uuid OR id = $10::uuid))
+        AND (
+          $11::text IS NULL OR $11::text = '' OR $11::text = 'all'
+          OR ($11::text IN ('loc_eoc', 'LOC/EOC', 'loc-eoc', 'LOC_EOC') AND ${locEocAppSQL})
+          OR ($11::text IN ('loan_on_credit_card', 'loc', 'LOC') AND (
+            LOWER(COALESCE(combined.sub_category, '')) = 'loc'
+            OR (LOWER(COALESCE(combined.category::text, '')) = 'loc_eoc' AND LOWER(COALESCE(combined.sub_category, '')) = 'loc')
+          ))
+          OR ($11::text IN ('smart_emi', 'eoc', 'EOC') AND (
+            LOWER(COALESCE(combined.sub_category, '')) = 'eoc'
+            OR (LOWER(COALESCE(combined.category::text, '')) = 'loc_eoc' AND LOWER(COALESCE(combined.sub_category, '')) = 'eoc')
+          ))
+          OR ($11::text = 'credit_card' AND ${creditCardAppSQL})
+          OR ($11::text IN ('loan', 'loans', 'personal_loan') AND (LOWER(combined.category::text) LIKE '%loan%' OR LOWER(combined.category::text) LIKE '%personal%') AND LOWER(COALESCE(combined.category::text, '')) != 'loc_eoc' AND LOWER(COALESCE(combined.sub_category, '')) NOT IN ('loc', 'eoc'))
+          OR ($11::text = 'business_loan' AND (LOWER(combined.category::text) LIKE '%business%'))
+          OR ($11::text = 'insurance' AND (LOWER(combined.category::text) LIKE '%insurance%'))
+          OR ($11::text = 'utility' AND (LOWER(combined.category::text) LIKE '%utilit%' OR LOWER(combined.category::text) LIKE '%recharge%'))
+          OR (LOWER(combined.category::text) = LOWER($11::text))
+        )
+        AND (
+          $12::text IS NULL OR $12::text = '' OR $12::text = 'all'
+          OR combined.commission_status = $12::text
+          OR ($12::text = 'released' AND combined.commission_status IN ('released', 'credited', 'paid', 'approved', 'commission_released'))
+          OR ($12::text = 'pending' AND combined.commission_status IN ('pending', 'unpaid', 'due', 'initiated'))
+        )
+        AND ($13::timestamp IS NULL OR combined.created_at >= $13::timestamp)
+        AND ($14::timestamp IS NULL OR combined.created_at <= $14::timestamp)
+        ${countOpHeadBankFilterSQL}
+        ${salesExecFilterSQL}
+        ${panCheckerFilterSQL}
+        ${qdOperatorFilterSQL}
+        ${remarkOperatorFilterSQL}
+        ${finalStatusOperatorFilterSQL}
+        ${querableOperatorFilterSQL}
+        ${curableOperatorFilterSQL}
+      GROUP BY combined.status, COALESCE(combined.final_status, ''), COALESCE(combined.bank_current_lead_status, '')
+    `;
+
+    const isStatusFiltered = !!validStatus && validStatus !== 'all';
+    // Fast-path: For dashboard recent widgets (limit <= 5 with no status/search filters), bypass expensive global status scan
+    const isSmallDashboardPreview = limit <= 5 && !validStatus && !validSearch && !validFromDate && !validToDate;
+
+    const listTask = query(listQuerySQL, queryParams);
+    const statusTask = isSmallDashboardPreview
+      ? Promise.resolve({ rows: [] })
+      : query(statusCountsSQL, countQueryParams);
+    const countTask = (isStatusFiltered || isSmallDashboardPreview)
+      ? query(countQuerySQL, countQueryParams)
+      : Promise.resolve(null);
+
+    const [listResult, statusResult, countResult] = await Promise.all([listTask, statusTask, countTask]);
+
+    const rows = listResult.rows;
+    const statusCountsRows = statusResult.rows;
+    let count = 0;
+
+    if (countResult) {
+      count = parseInt(countResult.rows[0]?.count) || 0;
+    } else {
+      // Derive total directly from status count groups (exact same WHERE filters)
+      count = statusCountsRows.reduce((acc, r) => acc + (parseInt(r.count) || 0), 0);
+    }
+
+    const statusCountsObj = {
+      pending: 0,
+      details_submitted: 0,
+      operational_verified: 0,
+      approved: 0,
+      commission_received: 0,
+      rejected: 0,
+      declined: 0,
+      cancelled: 0
+    };
+
+    for (const r of statusCountsRows) {
+      const s = String(r.status || '').toLowerCase();
+      const fs = String(r.final_status || '').toLowerCase();
+      const bs = String(r.bank_current_lead_status || '').toLowerCase();
+      const dc = String(r.decline_code || '').trim().toUpperCase();
+      const cnt = parseInt(r.count, 10) || 0;
+
+      const isCancelled = ['cancelled', 'cancel', 'canceled'].includes(s) || fs.includes('cancel') || bs.includes('cancel');
+      const isDeclined = ['declined', 'decline'].includes(s) || s.includes('decline') || fs.includes('decline') || bs.includes('decline');
+      const isRejected = isDeclined || ['rejected', 'technical_error'].includes(s) || s.includes('reject') || fs.includes('reject') || bs.includes('reject') || (dc && dc !== 'NONE');
+
+      if (isCancelled) {
+        statusCountsObj.cancelled += cnt;
+      } else if (isDeclined) {
+        statusCountsObj.declined = (statusCountsObj.declined || 0) + cnt;
+        statusCountsObj.rejected += cnt;
+      } else if (isRejected) {
+        statusCountsObj.rejected += cnt;
+      } else if (['pending', 'lead_created', 'new', 'draft', 'initiated', 'link_sent', 'confirmed', 'link_pending'].includes(s)) {
+        statusCountsObj.pending += cnt;
+      } else if (['details_submitted', 'submitted', 'bank_form_submitted'].includes(s)) {
+        statusCountsObj.details_submitted += cnt;
+      } else if (['operational_verified', 'under_review', 'under review', 'verification', 'in_process', 'in_progress', 'vkyc_pending', 'vkyc_completed'].includes(s)) {
+        statusCountsObj.operational_verified += cnt;
+      } else if (['approved', 'sanctioned', 'super_admin_approved', 'disbursed'].includes(s)) {
+        statusCountsObj.approved += cnt;
+      } else if (['commission_received', 'commission_released', 'released', 'credited', 'paid'].includes(s)) {
+        statusCountsObj.commission_received += cnt;
+      } else {
+        statusCountsObj[s] = (statusCountsObj[s] || 0) + cnt;
+      }
+    }
+
+    statusCountsObj.all = (statusCountsObj.pending || 0) +
+      (statusCountsObj.details_submitted || 0) +
+      (statusCountsObj.operational_verified || 0) +
+      (statusCountsObj.approved || 0) +
+      (statusCountsObj.commission_received || 0) +
+      (statusCountsObj.rejected || 0) +
+      (statusCountsObj.cancelled || 0);
+
+    const responsePayload = {
+      success: true,
+      message: 'Success',
+      data: rows,
+      pagination: {
+        total: parseInt(count),
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(parseInt(count) / limit),
+        is_truncated: isExportRequest && parseInt(count) > rows.length,
+        total_matching: parseInt(count),
+        returned_count: rows.length,
+        max_export_limit: isExportRequest ? maxLimitAllowed : undefined,
+      },
+      status_counts: statusCountsObj,
+      timestamp: new Date().toISOString(),
+    };
+
+    if (!isExportRequest) {
+      await setCachedApplicationList(cacheKey, responsePayload, DEFAULT_APPLICATIONS_CACHE_TTL).catch(cacheErr => {
+        logger.warn('[AppCache] Failed to store application list in cache:', cacheErr.message);
+      });
+    }
+
+    const missDurationMs = Date.now() - startMs;
+    res.setHeader('X-Cache', 'MISS');
+    res.setHeader('X-Response-Time', `${missDurationMs}ms`);
+    return res.status(200).json(responsePayload);
+  } catch (err) {
+    const totalMs = Date.now() - startMs;
+    logger.error('[Diagnostics] Applications List Failed', {
+      requestId: correlationId,
+      route: 'GET /applications',
+      role: (req.user?.designation || req.user?.role || ''),
+      totalMs,
+      outcome: 'error',
+      errorCategory: err.code || err.name || 'UNKNOWN_ERROR',
+      errorMessage: err.message
+    });
+    next(err);
+  }
+};
+
+// GET /applications/:id — Single application detail
+const getApplication = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    let { rows: [app] } = await query(`
+      SELECT a.*, 
+        COALESCE(NULLIF(l.customer_name, ''), NULLIF(c.full_name, ''), 'Customer') as customer_name,
+        COALESCE(NULLIF(l.customer_mobile, ''), NULLIF(l.mobile, ''), c.mobile) as customer_mobile,
+        COALESCE(NULLIF(l.email, ''), NULLIF(c.email, '')) as customer_email,
+        COALESCE(NULLIF(a.pan_number, ''), NULLIF(c.pan_number, ''), NULLIF(l.pan_number, '')) as pan_number,
+        COALESCE(NULLIF(a.dob::text, ''), NULLIF(c.dob::text, '')) as dob,
+        COALESCE(a.monthly_income, a.monthly_salary, c.monthly_income, l.monthly_income, a.loan_amount) as monthly_income,
+        COALESCE(NULLIF(a.employment_type, ''), NULLIF(c.employment_type, ''), NULLIF(l.employment_type, ''), NULLIF(a.occupation, ''), NULLIF(c.occupation, '')) as employment_type,
+        COALESCE(NULLIF(a.company_name, ''), NULLIF(c.employer, ''), NULLIF(c.company_name, ''), NULLIF(l.company_name, '')) as company_name,
+        COALESCE(NULLIF(a.city, ''), NULLIF(l.city, ''), NULLIF(c.city, '')) as city,
+        COALESCE(NULLIF(a.state, ''), NULLIF(c.state, ''), NULLIF(l.state, '')) as state,
+        COALESCE(NULLIF(a.pincode, ''), NULLIF(c.pincode, ''), NULLIF(l.pincode, '')) as pincode,
+        COALESCE(a.address, c.address) as address,
+        COALESCE(a.mother_name, c.mother_name) as mother_name,
+        COALESCE(a.father_name, c.father_name) as father_name,
+        COALESCE(c.marital_status, a.marital_status) as marital_status,
+        COALESCE(c.gender, a.gender) as gender,
+        COALESCE(c.aadhaar_number, a.aadhaar_number) as aadhaar_number,
+        COALESCE(a.designation, c.designation) as designation,
+        COALESCE(a.user_remark, a.notes) as user_remark,
+        COALESCE(a.user_remark, a.notes) as notes,
+        p.name as product_name, p.category, p.features, p.commission_type, p.commission_value,
+        b.name as bank_name, b.short_code as bank_code,
+        ap.partner_code, ap.first_name as Partner_first_name, ap.last_name as Partner_last_name,
+        COALESCE(
+          NULLIF(su.employee_id, ''),
+          NULLIF(emp.employee_id, '')
+        ) as emp_code,
+        emp.full_name as employee_name, emp.designation as employee_designation
+      FROM applications a
+      LEFT JOIN leads l ON l.id = a.lead_id
+      LEFT JOIN customers c ON c.id = a.customer_id
+      LEFT JOIN products p ON p.id = a.product_id
+      LEFT JOIN banks b ON b.id = p.bank_id
+      LEFT JOIN partner_profiles ap ON ap.id = a.partner_id
+      LEFT JOIN employees emp ON (emp.id = a.employee_id OR emp.user_id = a.submitted_by)
+      LEFT JOIN users su ON su.id = a.submitted_by
+      WHERE a.id::text = $1 OR a.app_number = $1 OR a.tracking_token = $1 OR a.lead_id::text = $1 OR a.bank_application_number = $1 OR a.bank_ref_number = $1
+    `, [id]);
+
+    if (!app) {
+      const { rows: [leadRec] } = await query(`
+        SELECT l.*,
+          l.id as id,
+          COALESCE(NULLIF(l.lead_number, ''), CONCAT('LEAD-', UPPER(SUBSTRING(l.id::text, 1, 8)))) as app_number,
+          COALESCE(NULLIF(l.customer_name, ''), 'Customer') as customer_name,
+          COALESCE(NULLIF(l.mobile, ''), NULLIF(l.customer_mobile, '')) as customer_mobile,
+          l.email as customer_email,
+          l.pan_number,
+          c.dob::text as dob,
+          l.monthly_income,
+          l.employment_type,
+          l.company_name,
+          l.city,
+          l.state,
+          l.pincode,
+          p.name as product_name, p.category,
+          b.name as bank_name, b.short_code as bank_code,
+          ap.partner_code, ap.first_name as Partner_first_name, ap.last_name as Partner_last_name
+        FROM leads l
+        LEFT JOIN customers c ON (c.mobile = l.mobile OR c.id = l.customer_id)
+        LEFT JOIN products p ON p.id = l.product_id
+        LEFT JOIN banks b ON b.id = p.bank_id
+        LEFT JOIN partner_profiles ap ON ap.id = l.partner_id
+        WHERE l.id::text = $1 OR l.lead_number = $1 OR l.application_id::text = $1 OR l.mobile = $1
+      `, [id]);
+      if (leadRec) app = leadRec;
+    }
+
+    if (!app) {
+      const { rows: [pdRec] } = await query(
+        `SELECT application_id FROM physical_application_details WHERE id::text = $1 OR bank_application_number = $1 OR bank_ref_number = $1 LIMIT 1`,
+        [id]
+      ).catch(() => ({ rows: [] }));
+      if (pdRec?.application_id) {
+        const { rows: [appFromPd] } = await query(`
+          SELECT a.*,
+            COALESCE(NULLIF(l.customer_name, ''), NULLIF(c.full_name, ''), 'Customer') as customer_name,
+            COALESCE(NULLIF(l.customer_mobile, ''), NULLIF(l.mobile, ''), c.mobile) as customer_mobile,
+            COALESCE(NULLIF(l.email, ''), NULLIF(c.email, '')) as customer_email,
+            COALESCE(NULLIF(a.pan_number, ''), NULLIF(c.pan_number, ''), NULLIF(l.pan_number, '')) as pan_number,
+            COALESCE(NULLIF(a.dob::text, ''), NULLIF(c.dob::text, '')) as dob,
+            COALESCE(a.monthly_income, a.monthly_salary, c.monthly_income, l.monthly_income, a.loan_amount) as monthly_income,
+            COALESCE(NULLIF(a.employment_type, ''), NULLIF(c.employment_type, ''), NULLIF(l.employment_type, ''), NULLIF(a.occupation, ''), NULLIF(c.occupation, '')) as employment_type,
+            COALESCE(NULLIF(a.company_name, ''), NULLIF(c.employer, ''), NULLIF(c.company_name, ''), NULLIF(l.company_name, '')) as company_name,
+            COALESCE(NULLIF(a.city, ''), NULLIF(l.city, ''), NULLIF(c.city, '')) as city,
+            COALESCE(NULLIF(a.state, ''), NULLIF(c.state, ''), NULLIF(l.state, '')) as state,
+            COALESCE(NULLIF(a.pincode, ''), NULLIF(c.pincode, ''), NULLIF(l.pincode, '')) as pincode,
+            COALESCE(a.address, c.address) as address,
+            COALESCE(a.mother_name, c.mother_name) as mother_name,
+            COALESCE(a.father_name, c.father_name) as father_name,
+            COALESCE(c.marital_status, a.marital_status) as marital_status,
+            COALESCE(c.gender, a.gender) as gender,
+            COALESCE(c.aadhaar_number, a.aadhaar_number) as aadhaar_number,
+            COALESCE(a.designation, c.designation) as designation,
+            p.name as product_name, p.category, p.features, p.commission_type, p.commission_value,
+            b.name as bank_name, b.short_code as bank_code,
+            ap.partner_code, ap.first_name as Partner_first_name, ap.last_name as Partner_last_name
+          FROM applications a
+          LEFT JOIN leads l ON l.id = a.lead_id
+          LEFT JOIN customers c ON c.id = a.customer_id
+          LEFT JOIN products p ON p.id = a.product_id
+          LEFT JOIN banks b ON b.id = p.bank_id
+          LEFT JOIN partner_profiles ap ON ap.id = a.partner_id
+          WHERE a.id::text = $1 OR a.app_number = $1
+        `, [pdRec.application_id]);
+        if (appFromPd) app = appFromPd;
+      }
+    }
+
+    if (!app) {
+      const { rows: [pslRec] } = await query(
+        `SELECT application_id FROM partner_share_links WHERE tracking_token = $1 LIMIT 1`,
+        [id]
+      );
+      if (pslRec?.application_id) {
+        const { rows: [appFromPsl] } = await query(`
+          SELECT a.*,
+            COALESCE(NULLIF(l.customer_name, ''), NULLIF(c.full_name, ''), 'Customer') as customer_name,
+            COALESCE(NULLIF(l.customer_mobile, ''), NULLIF(l.mobile, ''), c.mobile) as customer_mobile,
+            COALESCE(NULLIF(l.email, ''), NULLIF(c.email, '')) as customer_email,
+            COALESCE(NULLIF(a.pan_number, ''), NULLIF(c.pan_number, ''), NULLIF(l.pan_number, '')) as pan_number,
+            COALESCE(NULLIF(a.dob::text, ''), NULLIF(c.dob::text, '')) as dob,
+            COALESCE(a.monthly_income, a.monthly_salary, c.monthly_income, l.monthly_income, a.loan_amount) as monthly_income,
+            COALESCE(NULLIF(a.employment_type, ''), NULLIF(c.employment_type, ''), NULLIF(l.employment_type, ''), NULLIF(a.occupation, ''), NULLIF(c.occupation, '')) as employment_type,
+            COALESCE(NULLIF(a.company_name, ''), NULLIF(c.employer, ''), NULLIF(c.company_name, ''), NULLIF(l.company_name, '')) as company_name,
+            COALESCE(NULLIF(a.city, ''), NULLIF(l.city, ''), NULLIF(c.city, '')) as city,
+            COALESCE(NULLIF(a.state, ''), NULLIF(c.state, ''), NULLIF(l.state, '')) as state,
+            COALESCE(NULLIF(a.pincode, ''), NULLIF(c.pincode, ''), NULLIF(l.pincode, '')) as pincode,
+            COALESCE(a.address, c.address) as address,
+            COALESCE(a.mother_name, c.mother_name) as mother_name,
+            COALESCE(a.father_name, c.father_name) as father_name,
+            COALESCE(c.marital_status, a.marital_status) as marital_status,
+            COALESCE(c.gender, a.gender) as gender,
+            COALESCE(c.aadhaar_number, a.aadhaar_number) as aadhaar_number,
+            COALESCE(a.designation, c.designation) as designation,
+            p.name as product_name, p.category, p.features, p.commission_type, p.commission_value,
+            b.name as bank_name, b.short_code as bank_code,
+            ap.partner_code, ap.first_name as Partner_first_name, ap.last_name as Partner_last_name
+          FROM applications a
+          LEFT JOIN leads l ON l.id = a.lead_id
+          LEFT JOIN customers c ON c.id = a.customer_id
+          LEFT JOIN products p ON p.id = a.product_id
+          LEFT JOIN banks b ON b.id = p.bank_id
+          LEFT JOIN partner_profiles ap ON ap.id = a.partner_id
+          WHERE a.id::text = $1 OR a.app_number = $1
+        `, [pslRec.application_id]);
+        if (appFromPsl) app = appFromPsl;
+      }
+    }
+
+    if (!app) return notFound(res, 'Application or Lead record not found');
+
+    if (req.user.role === 'PARTNER') {
+      const { rows: [partner] } = await query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
+      if (!partner || app.partner_id !== partner.id) {
+        return forbidden(res, 'Access denied. You do not own this application.');
+      }
+    }
+
+    if (req.user && req.user.role !== 'SUPER_ADMIN' && req.user.role !== 'PARTNER') {
+      const userDesig = (req.user.designation || '').toUpperCase();
+      const isRestrictedOperator = ['OPERATIONAL HEAD', 'OPERATIONAL_HEAD', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'PAN CHECKER', 'PAN_CHECKER', 'REMARK OPERATOR', 'REMARK_OPERATOR', 'QD OPERATOR', 'QD_OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].some(d => userDesig.includes(d));
+
+      if (isRestrictedOperator) {
+        const { rows: abRows } = await query(`
+          SELECT aba.bank_id, COALESCE(aba.category, 'credit_card') as category, b.short_code, b.name 
+          FROM admin_bank_assignments aba
+          LEFT JOIN banks b ON b.id = aba.bank_id
+          WHERE aba.admin_id = $1
+        `, [req.user.id]).catch(() => ({ rows: [] }));
+
+        if (abRows.length > 0) {
+          const appBankId = app.bank_id;
+          const appBankCode = (app.bank_code || '').toLowerCase();
+          const appBankName = (app.bank_name || '').toLowerCase();
+          const pName = (app.product_name || '').toLowerCase();
+          const pCat = (app.category || '').toLowerCase();
+          const pSubCat = (app.sub_category || '').toLowerCase();
+
+          const isLocEocApp = ['loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loc', 'eoc', 'loan_on_card', 'card_on_loan'].includes(pCat) ||
+            ['loc', 'eoc', 'loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loan_on_card', 'card_on_loan'].includes(pSubCat) ||
+            /insta\s*loan|jumbo\s*loan|instant\s*(&|and)?\s*jumbo\s*loan|instant\s*loan|smart\s*emi|smartemi|loan\s*on\s*card|loan\s*on\s*credit\s*card|emi\s*on\s*credit\s*card|emi\s*on\s*card|encash|dial\s*a\s*draft/i.test(pName);
+
+          const effectiveAppCat = isLocEocApp ? 'loc_eoc' : 'credit_card';
+
+          const hasAccess = abRows.some(b => {
+            const assignCat = normalizeAssignmentCategory(b.category);
+            if (assignCat !== effectiveAppCat) return false;
+
+            const isVirtualLocBank = (b.short_code || '').toUpperCase() === 'LOC_EOC' || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(b.name || '');
+            if (isVirtualLocBank) return true;
+
+            const bankMatch = b.bank_id === appBankId ||
+              (b.short_code && appBankCode && appBankCode.includes(b.short_code.toLowerCase())) ||
+              (b.name && appBankName && appBankName.includes(b.name.toLowerCase()));
+
+            return bankMatch;
+          });
+
+          if (!hasAccess) {
+            return forbidden(res, 'Access denied: You do not have permission to view applications for this bank and category.');
+          }
+        }
+      }
+    }
+
+
+
+
+    const notes = await getFilteredNotes(app.id, req.user.role);
+    app.notes_list = notes;
+
+    const { rows: [pd] } = await query(`SELECT * FROM physical_application_details WHERE application_id = $1 OR application_id::text = $2`, [app.id, id]);
+    app.physical_details = pd || {};
+    if (pd) {
+      const isClean = (val) => val && val.toLowerCase() !== 'none' && val.toLowerCase() !== 'null';
+      if (!isClean(app.appcode_status) && pd.appcode_status) app.appcode_status = pd.appcode_status;
+      if (!isClean(app.soft_approval_status) && pd.soft_approval_status) app.soft_approval_status = pd.soft_approval_status;
+      if (!isClean(app.vkyc_stage) && pd.vkyc_stage) app.vkyc_stage = pd.vkyc_stage;
+      if (!isClean(app.iqa_stage) && pd.iqa_stage) app.iqa_stage = pd.iqa_stage;
+      if (!isClean(app.dispatch_status) && pd.dispatch_status) app.dispatch_status = pd.dispatch_status;
+      if (!isClean(app.final_status) && pd.final_status) app.final_status = pd.final_status;
+      if (!isClean(app.decline_code) && pd.decline_code) app.decline_code = pd.decline_code;
+      if (!isClean(app.decline_description) && pd.decline_description) app.decline_description = pd.decline_description;
+      if (!isClean(app.curing_designation) && pd.curing_designation) app.curing_designation = pd.curing_designation;
+      if (!isClean(app.primary_decline_code) && (pd.primary_decline_code || pd.decline_code || app.decline_code)) {
+        app.primary_decline_code = pd.primary_decline_code || pd.decline_code || app.decline_code;
+      }
+      if (!isClean(app.primary_decline_description) && (pd.primary_decline_description || pd.decline_description || app.decline_description)) {
+        app.primary_decline_description = pd.primary_decline_description || pd.decline_description || app.decline_description;
+      }
+      if (!isClean(app.primary_curing_designation) && (pd.primary_curing_designation || pd.curing_designation || app.curing_designation)) {
+        app.primary_curing_designation = pd.primary_curing_designation || pd.curing_designation || app.curing_designation;
+      }
+      if (!isClean(app.secondary_decline_code) && pd.secondary_decline_code) app.secondary_decline_code = pd.secondary_decline_code;
+      if (!isClean(app.secondary_decline_description) && pd.secondary_decline_description) app.secondary_decline_description = pd.secondary_decline_description;
+      if (!isClean(app.secondary_curing_designation) && pd.secondary_curing_designation) app.secondary_curing_designation = pd.secondary_curing_designation;
+      if (!isClean(app.ipa_stage) && pd.ipa_stage) app.ipa_stage = pd.ipa_stage;
+      if (!isClean(app.kyc_stage) && pd.kyc_stage) app.kyc_stage = pd.kyc_stage;
+      if (!isClean(app.card_approval_stage) && pd.card_approval_stage) app.card_approval_stage = pd.card_approval_stage;
+      if (!isClean(app.digital_card_issued) && pd.digital_card_issued) app.digital_card_issued = pd.digital_card_issued;
+      if (!isClean(app.user_remark) && pd.user_remark) app.user_remark = pd.user_remark;
+      if (!isClean(app.notes) && pd.user_remark) app.notes = pd.user_remark;
+      const effUser = (app.user_remark && String(app.user_remark).trim() !== '' && String(app.user_remark).toUpperCase() !== 'NA' && String(app.user_remark).toUpperCase() !== 'N/A') ? String(app.user_remark).trim() : '';
+      const effBank = (app.bank_remark && String(app.bank_remark).trim() !== '' && String(app.bank_remark).toUpperCase() !== 'NA' && String(app.bank_remark).toUpperCase() !== 'N/A') ? String(app.bank_remark).trim() : ((pd.bank_remark && String(pd.bank_remark).trim() !== '' && String(pd.bank_remark).toUpperCase() !== 'NA' && String(pd.bank_remark).toUpperCase() !== 'N/A') ? String(pd.bank_remark).trim() : '');
+      app.bank_remark = effUser || effBank || 'NA';
+      if (!app.final_status && app.status) app.final_status = app.status;
+      if (!app.bank_ref_number && pd.bank_application_number) app.bank_ref_number = pd.bank_application_number;
+      if (!app.bank_application_number && pd.bank_application_number) app.bank_application_number = pd.bank_application_number;
+      if (!app.dob && pd.dob) app.dob = pd.dob;
+      if (!app.employment_type && pd.employment_type) app.employment_type = pd.employment_type;
+      if (!app.monthly_income && pd.monthly_income) app.monthly_income = pd.monthly_income;
+      if (!app.company_name && pd.company_name) app.company_name = pd.company_name;
+      if (!app.city && pd.city) app.city = pd.city;
+      if (!app.state && pd.state) app.state = pd.state;
+      if (!app.pincode && pd.pincode) app.pincode = pd.pincode;
+      if (!app.pan_number && pd.pan_number) app.pan_number = pd.pan_number;
+      if (!app.customer_name && pd.full_name) app.customer_name = pd.full_name;
+      if (!app.customer_mobile && pd.mobile) app.customer_mobile = pd.mobile;
+      if (!app.customer_email && pd.email) app.customer_email = pd.email;
+      if (!isClean(app.insta_jumbo_offer) && pd.insta_jumbo_offer) app.insta_jumbo_offer = pd.insta_jumbo_offer;
+      if (!isClean(app.customer_loan_type) && pd.customer_loan_type) app.customer_loan_type = pd.customer_loan_type;
+      if (!isClean(app.customer_loan_type) && (app.customer_loan_offer || pd.customer_loan_offer)) app.customer_loan_type = app.customer_loan_offer || pd.customer_loan_offer;
+      if (!isClean(app.offer_tenure) && pd.offer_tenure) app.offer_tenure = pd.offer_tenure;
+      if (!isClean(app.disbursement_amount) && pd.disbursement_amount) app.disbursement_amount = pd.disbursement_amount;
+      if (!isClean(app.disbursement_amount) && (app.disbursed_amount || pd.disbursed_amount)) app.disbursement_amount = app.disbursed_amount || pd.disbursed_amount;
+      if (!isClean(app.disbursement_tenure) && pd.disbursement_tenure) app.disbursement_tenure = pd.disbursement_tenure;
+      if (!isClean(app.disbursement_tenure) && (app.disbursed_tenure || pd.disbursed_tenure)) app.disbursement_tenure = app.disbursed_tenure || pd.disbursed_tenure;
+      if (!isClean(app.los_no) && pd.los_no) app.los_no = pd.los_no;
+      if (!isClean(app.los_no) && (app.bank_application_number || app.bank_ref_number || pd.bank_ref_number)) app.los_no = app.bank_application_number || app.bank_ref_number || pd.bank_ref_number;
+      if (!isClean(app.final_bank_stage) && pd.final_bank_stage) app.final_bank_stage = pd.final_bank_stage;
+      if (!isClean(app.disbursement_completed) && pd.disbursement_completed) app.disbursement_completed = pd.disbursement_completed;
+      if (!isClean(app.disbursement_date) && pd.disbursement_date) app.disbursement_date = pd.disbursement_date;
+      if (!isClean(app.disbursement_date) && (app.disbursal_date || pd.disbursal_date)) app.disbursement_date = app.disbursal_date || pd.disbursal_date;
+    }
+
+    if (!app.customer_loan_type && app.customer_loan_offer) app.customer_loan_type = app.customer_loan_offer;
+    if (!app.disbursement_amount && app.disbursed_amount) app.disbursement_amount = app.disbursed_amount;
+    if (!app.disbursement_tenure && app.disbursed_tenure) app.disbursement_tenure = app.disbursed_tenure;
+    if (!app.los_no && (app.bank_application_number || app.bank_ref_number)) app.los_no = app.bank_application_number || app.bank_ref_number;
+    if (!app.disbursement_date && app.disbursal_date) app.disbursement_date = app.disbursal_date;
+
+    return success(res, app);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /applications/:id/documents — Upload docs
+const uploadApplicationDoc = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { doc_type } = req.body;
+    const file = req.file;
+    if (!file) return error(res, 'No file uploaded');
+
+    const isS3Configured = !!process.env.AWS_S3_BUCKET;
+    if (!isS3Configured) {
+      return error(res, 'S3 bucket is not configured.', 503);
+    }
+
+    let { rows: [app] } = await query(`
+      SELECT id, partner_id FROM applications 
+      WHERE id::text = $1 OR app_number = $1 OR lead_id::text = $1 OR tracking_token = $1 OR bank_application_number = $1 OR bank_ref_number = $1
+    `, [id]);
+    if (!app) {
+      const { rows: [pdRec] } = await query(
+        `SELECT application_id FROM physical_application_details WHERE id::text = $1 OR bank_application_number = $1 OR bank_ref_number = $1 LIMIT 1`,
+        [id]
+      ).catch(() => ({ rows: [] }));
+      if (pdRec?.application_id) {
+        const { rows: [appFromPd] } = await query(`SELECT id, partner_id FROM applications WHERE id = $1`, [pdRec.application_id]);
+        if (appFromPd) app = appFromPd;
+      }
+    }
+    if (!app) return notFound(res, 'Application or Lead record not found');
+
+    if (req.user.role === 'PARTNER') {
+      const { rows: [partner] } = await query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
+      if (!partner || app.partner_id !== partner.id) {
+        return forbidden(res, 'Access denied. You do not own this application.');
+      }
+    }
+
+    const { url } = await uploadToS3(file.buffer, file.originalname, `applications/${id}`);
+
+    // Insert into application_documents
+    await query(`
+      INSERT INTO application_documents (application_id, document_type, file_url, status)
+      VALUES ($1, $2, $3, 'pending')
+    `, [id, doc_type, url]);
+
+    await logTimeline(query, id, 'submitted', 'Document Uploaded', `Uploaded ${doc_type} copy.`, req.user.id);
+
+    return success(res, { url }, 'Document uploaded successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /applications/:id/send-link — Send secure upload link to customer
+const sendUploadLink = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { v4: uuidv4 } = require('uuid');
+    const { sendUploadReminderSms, sendSms } = require('../../services/sms/sms.service');
+    const { sendEmail } = require('../../services/email/email.service');
+
+    let appRes = await query(`
+      SELECT a.*, c.full_name as customer_name, c.mobile as customer_mobile, c.email as customer_email,
+             p.name as product_name, b.name as bank_name
+      FROM applications a
+      JOIN customers c ON a.customer_id = c.id
+      LEFT JOIN products p ON a.product_id = p.id
+      LEFT JOIN banks b ON p.bank_id = b.id
+      WHERE a.id = $1
+    `, [id]);
+
+    if (appRes.rows.length === 0) {
+      appRes = await query(`
+        SELECT bca.*, bca.full_name as customer_name, bca.mobile as customer_mobile, bca.email as customer_email,
+               bca.app_number, bca.bank_name, bca.card_name as product_name, bca.id as customer_id
+        FROM bank_card_applications bca
+        WHERE bca.id = $1
+      `, [id]);
+    }
+
+    if (appRes.rows.length === 0) return notFound(res, 'Application not found');
+    const app = appRes.rows[0];
+
+    const token = uuidv4();
+    const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
+
+    await query(`
+      INSERT INTO customer_access_tokens (application_id, customer_id, token, expires_at)
+      VALUES ($1, $2, $3, $4)
+    `, [id, app.customer_id, token, expiresAt]);
+
+    const baseUrl = process.env.FRONTEND_URL || 'https://gharkapaisa.in';
+    const uploadUrl = `${baseUrl}/customer/upload/${token}`;
+
+    await query(`
+      UPDATE applications SET status = 'link_sent', updated_at = NOW() WHERE id = $1
+    `, [id]);
+
+    const smsText = `Dear ${app.customer_name}, please complete your application #${app.app_number} by uploading required documents: ${uploadUrl} - Thanks, GharKaPaisa`;
+    await sendUploadReminderSms(app.customer_mobile, app.customer_name, app.app_number, uploadUrl).catch(() => sendSms(app.customer_mobile, smsText));
+
+    if (app.customer_email) {
+      await sendEmail({
+        to: app.customer_email,
+        subject: `Action Required: Complete Document Upload for Application #${app.app_number}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; padding: 20px; color: #1e293b;">
+            <h2>Complete Your Application - GharKaPaisa</h2>
+            <p>Dear <strong>${app.customer_name}</strong>,</p>
+            <p>Please upload your required documents for your <strong>${app.product_name || 'Loan'}</strong> application with <strong>${app.bank_name || 'Bank'}</strong>.</p>
+            <p style="margin: 24px 0;">
+              <a href="${uploadUrl}" style="background-color: #f97316; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block;">Upload Documents Now</a>
+            </p>
+            <p><small>This secure link will expire in 72 hours.</small></p>
+          </div>
+        `
+      }).catch(err => logger.warn('Email send failed:', err.message));
+    }
+
+    await query(`
+      INSERT INTO application_timeline (application_id, event_type, title, description, actor_type, actor_id)
+      VALUES ($1, 'link_sent', 'Link Sent', $2, 'admin', $3)
+    `, [id, `Document upload link sent to customer (${app.customer_mobile})`, req.user ? req.user.id : null]);
+
+    return success(res, { token, uploadUrl, expiresAt }, 'Upload link sent to customer successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+// PUT /applications/:id/documents/:docId/verify — Admin approve or reject document
+const verifyDocument = async (req, res, next) => {
+  try {
+    const { id, docId } = req.params;
+    const { status, rejection_reason } = req.body;
+
+    if (!['approved', 'rejected'].includes(status)) {
+      return error(res, 'Invalid verification status. Must be approved or rejected', 400);
+    }
+
+    const docRes = await query(`
+      SELECT * FROM application_documents WHERE id = $1 AND application_id = $2
+    `, [docId, id]);
+    if (docRes.rows.length === 0) return notFound(res, 'Document not found');
+
+    const doc = docRes.rows[0];
+
+    await query(`
+      UPDATE application_documents 
+      SET status = $1, rejection_reason = $2, verified_by = $3, verified_at = NOW()
+      WHERE id = $4
+    `, [status, status === 'rejected' ? (rejection_reason || 'Document verification rejected') : null, req.user ? req.user.id : null, docId]);
+
+    const docLabel = doc.document_type.replace(/_/g, ' ').toUpperCase();
+
+    const eventType = status === 'approved' ? 'document_approved' : 'document_rejected';
+    const title = `${docLabel} ${status.toUpperCase()}`;
+    const desc = status === 'approved'
+      ? `${docLabel} verified and approved by admin`
+      : `${docLabel} rejected. Reason: ${rejection_reason || 'Image blurred / Invalid document'}`;
+
+    await query(`
+      INSERT INTO application_timeline (application_id, event_type, title, description, actor_type, actor_id)
+      VALUES ($1, $2, $3, $4, 'admin', $5)
+    `, [id, eventType, title, desc, req.user ? req.user.id : null]);
+
+    if (status === 'rejected') {
+      const { sendSms } = require('../../services/sms/sms.service');
+      const appRes = await query(`
+        SELECT a.app_number, c.mobile, c.full_name 
+        FROM applications a JOIN customers c ON a.customer_id = c.id WHERE a.id = $1
+      `, [id]);
+      if (appRes.rows.length > 0) {
+        const cust = appRes.rows[0];
+        const smsMsg = `Dear ${cust.full_name}, your ${docLabel} for App #${cust.app_number} was rejected (${rejection_reason || 'Blurred/Invalid'}). Please re-upload via your secure link. Thanks, GharKaPaisa`;
+        await sendSms(cust.mobile, smsMsg);
+      }
+    }
+
+    return success(res, null, `Document ${status} successfully`);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// PUT /applications/:id/verification-complete — Admin complete verification
+const markVerificationComplete = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const unapprovedRes = await query(`
+      SELECT id, document_type FROM application_documents 
+      WHERE application_id = $1 AND is_latest = TRUE AND status != 'approved'
+    `, [id]);
+
+    if (unapprovedRes.rows.length > 0) {
+      const pendingTypes = unapprovedRes.rows.map(d => d.document_type.replace(/_/g, ' ').toUpperCase()).join(', ');
+      return error(res, `Cannot complete verification. Unapproved documents remaining: ${pendingTypes}`, 400);
+    }
+
+    await query(`
+      UPDATE applications SET status = 'verification_completed', updated_at = NOW() WHERE id = $1
+    `, [id]);
+
+    await query(`
+      INSERT INTO application_timeline (application_id, event_type, title, description, actor_type, actor_id)
+      VALUES ($1, 'verification_completed', 'Verification Completed', 'All customer documents verified and approved. Sent to Bank for processing.', 'admin', $2)
+    `, [id, req.user ? req.user.id : null]);
+
+    return success(res, null, 'Application verification completed successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Helper function to check if a product is SBI
+const checkIfSbiProduct = async (productId) => {
+  try {
+    const res = await query(`
+      SELECT p.*, b.name as bank_name
+      FROM products p
+      LEFT JOIN banks b ON b.id = p.bank_id
+      WHERE p.id = $1
+    `, [productId]);
+    
+    if (res.rows.length === 0) return false;
+    
+    const product = res.rows[0];
+    const bankName = (product.bank_name || '').toUpperCase();
+    const productName = (product.name || '').toUpperCase();
+    
+    return bankName.includes('SBI') || bankName.includes('STATE BANK') || productName.includes('SBI');
+  } catch (err) {
+    logger.error('Error checking if product is SBI:', err);
+    return false;
+  }
+};
+
+// PUT /applications/:id/bank-status — Update bank review / approval status & SBI Physical Form fields
+const updateBankProcessingStatus = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const {
+      status, bank_ref_number, bank_application_number, rejection_reason, approved_amount,
+      appcode_status, soft_approval_status, vkyc_stage, iqa_stage, dispatch_status,
+      bank_remark, user_remark, user_notes, notes, final_status, decline_reason, eligible_reqd,
+      app_file_generated, appfile_generated, ipa_stage, kyc_stage, card_approval_stage, digital_card_issued,
+      income_details, mail_status,
+      // Form 1 Customer Application Details
+      customer_mobile, customer_name, dob, customer_email, pan_number,
+      company_name, designation, address, company_address, mother_name, vkyc_url
+    } = req.body;
+
+    const userRemarkVal = user_remark || user_notes || notes || null;
+    const appFileGenVal = app_file_generated || appfile_generated || null;
+    const bankAppNoVal = (bank_application_number || bank_ref_number || '').trim() || null;
+
+    const isAppFileYes = appFileGenVal && String(appFileGenVal).trim().toLowerCase() === 'yes';
+
+    const validEnumStatuses = [
+      'under_review', 'approved', 'rejected', 'disbursed', 'in_process', 
+      'submitted', 'confirmed', 'pending', 'initiated', 'lead_created', 
+      'application_started', 'application_submitted', 'application_number_received', 
+      'vkyc_pending', 'vkyc_completed', 'details_submitted', 'operational_verified', 
+      'correction_required', 'super_admin_approved', 'commission_processing', 
+      'commission_released', 'commission_received', 'bank_form_submitted', 
+      'sanctioned', 'cancelled', 'link_sent', 'verification_completed'
+    ];
+
+    let currentStatus = 'under_review';
+    if (status) {
+      const lowerStatus = String(status).trim().toLowerCase();
+      if (lowerStatus === 'decline' || lowerStatus === 'declined') {
+        currentStatus = 'rejected';
+      } else if (lowerStatus === 'technical_error') {
+        currentStatus = 'under_review';
+      } else if (lowerStatus === 'app_file_generated') {
+        currentStatus = isAppFileYes ? 'approved' : 'in_process';
+      } else if (validEnumStatuses.includes(lowerStatus)) {
+        currentStatus = lowerStatus;
+      }
+    }
+    if (isAppFileYes) {
+      currentStatus = 'approved';
+    }
+
+    const parsedAmount = (approved_amount !== undefined && approved_amount !== '' && approved_amount !== null && !isNaN(approved_amount))
+      ? parseFloat(approved_amount)
+      : null;
+
+    const userRole = (req.user?.role || '').toUpperCase();
+    const userDesignation = (req.user?.designation || '').toUpperCase();
+    const isFinalStatusOperatorUser = ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userRole) || ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userDesignation);
+
+    // Backend RBAC enforcement: Final Status & Approval updates restricted to OPERATIONS_HEAD, ADMIN, SUPER_ADMIN, ADMINISTRATIVE_OPERATOR, FINAL_STATUS_OPERATOR
+    if (final_status && !['OPERATIONS_HEAD', 'ADMIN', 'SUPER_ADMIN', 'ADMINISTRATIVE_OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userRole) && !isFinalStatusOperatorUser) {
+      return forbidden(res, 'Access denied. Only Operation Head, Admin, Super Admin, Administrative Operator, or Final Status Operator can update Final Status.');
+    }
+
+    let appRes = await query(`
+      SELECT a.*, p.category as product_category 
+      FROM applications a
+      LEFT JOIN products p ON p.id = a.product_id
+      WHERE a.id = $1
+      FOR UPDATE
+    `, [id]);
+
+    if (appRes.rows.length === 0) {
+      const bankCardRes = await query(`SELECT * FROM bank_card_applications WHERE id = $1`, [id]);
+      if (bankCardRes.rows.length > 0) {
+        await query(`
+          UPDATE bank_card_applications 
+          SET status = $1, 
+              bank_ref_number = COALESCE($2, bank_ref_number), 
+              rejection_reason = COALESCE($3, rejection_reason), 
+              approved_amount = COALESCE($4, approved_amount),
+              appcode_status = COALESCE($5, appcode_status),
+              soft_approval_status = COALESCE($6, soft_approval_status),
+              vkyc_stage = COALESCE($7, vkyc_stage),
+              iqa_stage = COALESCE($8, iqa_stage),
+              dispatch_status = COALESCE($9, dispatch_status),
+              bank_remark = COALESCE($10, bank_remark),
+              final_status = COALESCE($11, final_status),
+              decline_reason = COALESCE($12, decline_reason),
+              eligible_reqd = COALESCE($13, eligible_reqd),
+              customer_mobile = COALESCE($14, customer_mobile, mobile),
+              customer_name = COALESCE($15, customer_name, full_name),
+              dob = COALESCE($16, dob),
+              customer_email = COALESCE($17, customer_email, email),
+              pan_number = COALESCE($18, pan_number),
+              company_name = COALESCE($19, company_name),
+              designation = COALESCE($20, designation),
+              address = COALESCE($21, address),
+              company_address = COALESCE($22, company_address),
+              mother_name = COALESCE($23, mother_name),
+              vkyc_url = COALESCE($24, vkyc_url),
+              user_remark = COALESCE($25, user_remark),
+              notes = COALESCE($25, notes),
+              operational_remarks = COALESCE($25, operational_remarks),
+              app_file_generated = COALESCE($26, app_file_generated),
+              ipa_stage = COALESCE($27, ipa_stage),
+              kyc_stage = COALESCE($28, kyc_stage),
+              card_approval_stage = COALESCE($29, card_approval_stage),
+              digital_card_issued = COALESCE($30, digital_card_issued),
+              bank_application_number = COALESCE($31, bank_application_number),
+              updated_at = NOW()
+          WHERE id = $32
+        `, [
+          currentStatus, bank_ref_number || null, rejection_reason || decline_reason || null, parsedAmount,
+          appcode_status || null, soft_approval_status || null, vkyc_stage || null, iqa_stage || null,
+          dispatch_status || null, bank_remark || null, final_status || null, decline_reason || null,
+          eligible_reqd || null, customer_mobile || null, customer_name || null, dob || null,
+          customer_email || null, pan_number || null, company_name || null, designation || null,
+          address || null, company_address || null, mother_name || null, vkyc_url || null, userRemarkVal, appFileGenVal,
+          ipa_stage || null, kyc_stage || null, card_approval_stage || null, digital_card_issued || null, bankAppNoVal, id
+        ]);
+
+        await query(`
+          INSERT INTO application_timeline (application_id, event_type, title, description, actor_type, actor_id)
+          VALUES ($1, $2, $3, $4, 'admin', $5)
+        `, [id, currentStatus, `Bank Processing Update (${final_status || currentStatus.toUpperCase()})`, `Status & Form details updated. Remark: ${bank_remark || 'N/A'}`, req.user ? req.user.id : null]).catch(err => logger.warn('Timeline insert warning:', err.message));
+
+        return success(res, null, `Application status & Form details updated successfully`);
+      }
+      return notFound(res, 'Application not found');
+    }
+
+    const app = appRes.rows[0];
+
+    const isSalesExecUserLocal = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+    if (isSalesExecUserLocal && app.sales_claimed_by && app.sales_claimed_by !== (req.user?.id) && !['ADMIN', 'SUPER_ADMIN'].includes(userRole)) {
+      return forbidden(res, `This application has been claimed by another Administrative Sales Operator (${app.sales_claimed_by_name || 'Operator'}). You are not authorized to modify it.`);
+    }
+
+    const opId = req.user?.id || null;
+    const opName = req.user?.full_name || req.user?.email || 'Operator';
+    const opRole = userRole || 'OPERATOR';
+    const opDesig = userDesignation || userRole || 'OPERATOR';
+    const opCode = req.user?.employee_code || req.user?.code || req.user?.id || 'OP';
+
+    await query(`
+      UPDATE applications 
+      SET status = $1, 
+          bank_ref_number = COALESCE(NULLIF($2, ''), bank_ref_number), 
+          bank_application_number = COALESCE(NULLIF($3, ''), bank_application_number, bank_ref_number),
+          rejection_reason = COALESCE($4, rejection_reason), 
+          approved_amount = COALESCE($5, approved_amount),
+          appcode_status = COALESCE($6, appcode_status),
+          soft_approval_status = COALESCE($7, soft_approval_status),
+          vkyc_stage = COALESCE($8, vkyc_stage),
+          iqa_stage = COALESCE($9, iqa_stage),
+          dispatch_status = COALESCE($10, dispatch_status),
+          bank_remark = COALESCE($11, bank_remark),
+          final_status = COALESCE($12, final_status),
+          decline_reason = COALESCE($13, decline_reason),
+          eligible_reqd = COALESCE($14, eligible_reqd),
+          dob = COALESCE($15, dob),
+          designation = COALESCE($16, designation),
+          company_address = COALESCE($17, company_address),
+          mother_name = COALESCE($18, mother_name),
+          vkyc_url = COALESCE($19, vkyc_url),
+          user_remark = COALESCE($20, user_remark),
+          notes = COALESCE($20, notes),
+          operational_remarks = COALESCE($20, operational_remarks),
+          app_file_generated = COALESCE($21, app_file_generated),
+          ipa_stage = COALESCE(NULLIF($22, 'None'), NULLIF($22, ''), ipa_stage),
+          kyc_stage = COALESCE(NULLIF($23, 'None'), NULLIF($23, ''), kyc_stage),
+          card_approval_stage = COALESCE(NULLIF($24, 'None'), NULLIF($24, ''), card_approval_stage),
+          digital_card_issued = COALESCE(NULLIF($25, 'None'), NULLIF($25, ''), digital_card_issued),
+          income_details = COALESCE(NULLIF($26, 'None'), NULLIF($26, ''), income_details),
+          mail_status = COALESCE(NULLIF($27, 'None'), NULLIF($27, ''), mail_status),
+          approved_at = CASE WHEN $1 = 'approved' AND approved_at IS NULL THEN NOW() ELSE approved_at END,
+          last_operator_id = $29,
+          last_operator_name = $30,
+          last_operator_role = $31,
+          last_operator_designation = $32,
+          last_operator_code = $33,
+          final_status_operator_code = CASE WHEN $34 = true THEN $33 ELSE final_status_operator_code END,
+          last_operated_at = NOW(),
+          updated_at = NOW()
+      WHERE id = $28
+    `, [
+      currentStatus, bank_ref_number || bankAppNoVal || null, bankAppNoVal || null, rejection_reason || decline_reason || null, parsedAmount,
+      appcode_status || null, soft_approval_status || null, vkyc_stage || null, iqa_stage || null,
+      dispatch_status || null, (userRemarkVal || bank_remark || null), final_status || null, decline_reason || null,
+      eligible_reqd || null, dob || null, designation || null, company_address || null,
+      mother_name || null, vkyc_url || null, userRemarkVal, appFileGenVal,
+      ipa_stage || null, kyc_stage || null, card_approval_stage || null, digital_card_issued || null,
+      income_details || null, mail_status || null, id,
+      opId, opName, opRole, opDesig, opCode, isFinalStatusOperatorUser
+    ]);
+
+    if (opId) {
+      try {
+        await query(`
+          INSERT INTO application_operator_history (
+            application_id, operator_id, operator_name, operator_role, operator_designation, operator_code, action_type, field_changes, notes, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+        `, [
+          id,
+          opId,
+          opName,
+          opRole,
+          opDesig,
+          opCode,
+          final_status ? `FINAL_STATUS_${String(final_status).toUpperCase().replace(/\s+/g, '_')}` : 'OPERATOR_UPDATE',
+          JSON.stringify({
+            final_status: final_status || null,
+            status: currentStatus,
+            bank_remark: bank_remark || null,
+            user_remark: userRemarkVal,
+            dispatch_status: dispatch_status || null,
+            appcode_status: appcode_status || null
+          }),
+          userRemarkVal || bank_remark || 'Application updated by operator'
+        ]);
+      } catch (histErr) {
+        logger.error('Error recording application operator history:', histErr);
+      }
+    }
+
+    try {
+      await query(`
+        INSERT INTO physical_application_details (
+          application_id, bank_application_number, bank_ref_number, vkyc_url, user_remark, ipa_stage, kyc_stage, card_approval_stage, digital_card_issued, income_details, mail_status, app_file_generated, created_at, updated_at
+        ) VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+        ON CONFLICT (application_id) DO UPDATE SET
+          bank_application_number = COALESCE(NULLIF(EXCLUDED.bank_application_number, ''), physical_application_details.bank_application_number),
+          bank_ref_number = COALESCE(NULLIF(EXCLUDED.bank_ref_number, ''), physical_application_details.bank_ref_number),
+          vkyc_url = COALESCE(EXCLUDED.vkyc_url, physical_application_details.vkyc_url),
+          user_remark = COALESCE(EXCLUDED.user_remark, physical_application_details.user_remark),
+          ipa_stage = COALESCE(NULLIF(EXCLUDED.ipa_stage, 'None'), NULLIF(EXCLUDED.ipa_stage, ''), physical_application_details.ipa_stage),
+          kyc_stage = COALESCE(NULLIF(EXCLUDED.kyc_stage, 'None'), NULLIF(EXCLUDED.kyc_stage, ''), physical_application_details.kyc_stage),
+          card_approval_stage = COALESCE(NULLIF(EXCLUDED.card_approval_stage, 'None'), NULLIF(EXCLUDED.card_approval_stage, ''), physical_application_details.card_approval_stage),
+          digital_card_issued = COALESCE(NULLIF(EXCLUDED.digital_card_issued, 'None'), NULLIF(EXCLUDED.digital_card_issued, ''), physical_application_details.digital_card_issued),
+          income_details = COALESCE(NULLIF(EXCLUDED.income_details, 'None'), NULLIF(EXCLUDED.income_details, ''), physical_application_details.income_details),
+          mail_status = COALESCE(NULLIF(EXCLUDED.mail_status, 'None'), NULLIF(EXCLUDED.mail_status, ''), physical_application_details.mail_status),
+          app_file_generated = COALESCE(EXCLUDED.app_file_generated, physical_application_details.app_file_generated),
+          updated_at = NOW()
+      `, [id, bankAppNoVal, vkyc_url || null, userRemarkVal, ipa_stage || null, kyc_stage || null, card_approval_stage || null, digital_card_issued || null, income_details || null, mail_status || null, appFileGenVal]);
+    } catch (_) { }
+
+    const titleMap = {
+      under_review: 'Bank Reviewing Application',
+      approved: 'Application Approved by Bank',
+      rejected: 'Application Rejected by Bank',
+      disbursed: 'Loan Disbursed',
+      app_file_generated: 'App File Generated (Approved)',
+      decline: 'Application Declined by Bank',
+      in_process: 'Application In Process',
+      technical_error: 'Technical Error'
+    };
+
+    await query(`
+      INSERT INTO application_timeline (application_id, event_type, title, description, actor_type, actor_id)
+      VALUES ($1, $2, $3, $4, 'admin', $5)
+    `, [id, currentStatus, titleMap[currentStatus] || currentStatus, `Status updated to ${currentStatus}. ${bank_remark ? 'Remark: ' + bank_remark : ''}`, req.user ? req.user.id : null]);
+
+    const category = app.product_category || 'loan';
+    const isDisbursed = currentStatus === 'disbursed';
+    
+    // Check if this is an SBI product
+    const isSbiProduct = await checkIfSbiProduct(app.product_id);
+    
+    // SBI-specific validation: if app_file_generated is 'No', require rejection reason and reject application
+    if (isSbiProduct && appFileGenVal && appFileGenVal.toLowerCase() === 'no') {
+      if (!decline_reason && !rejection_reason) {
+        return badRequest(res, 'Rejection reason is required when App File Generated is set to No for SBI products');
+      }
+      // Automatically set final status to Decline for SBI when app_file_generated is No
+      const currentFinalStatus = final_status || app.final_status;
+      if (!currentFinalStatus || currentFinalStatus.toLowerCase() !== 'decline') {
+        await query(`UPDATE applications SET final_status = 'Decline', status = 'rejected' WHERE id = $1`, [id]);
+      }
+    }
+    
+    // SBI-specific commission logic: only credit commission if app_file_generated is 'Yes'
+    let shouldCreditCommission = false;
+    if (isSbiProduct) {
+      shouldCreditCommission = appFileGenVal && appFileGenVal.toLowerCase() === 'yes' && 
+                                 app.commission_amount > 0 && app.partner_id;
+    } else {
+      // Non-SBI logic: commission on approved or app_file_generated for credit cards/insurance
+      const isApprovedForNonLoan = (currentStatus === 'approved' || currentStatus === 'app_file_generated') && 
+                                   ['credit_card', 'insurance'].includes(category);
+      shouldCreditCommission = (isDisbursed || isApprovedForNonLoan) && app.commission_amount > 0 && app.partner_id;
+    }
+
+    if (shouldCreditCommission) {
+      try {
+        await creditCommission(
+          app.partner_id,
+          app.id,
+          app.commission_amount,
+          `Approved commission for application ${app.app_number || app.id}`,
+          req.user ? req.user.id : null
+        );
+        await processTeamOverrideCommission(app.id, app.partner_id, app.commission_amount);
+        await query(`UPDATE applications SET commission_status = 'approved' WHERE id = $1`, [id]);
+      } catch (commErr) {
+        logger.error('Failed to credit commission on status change:', commErr);
+      }
+    }
+
+    await syncEmployeeIncentiveLifecycle({ query }, app, appFileGenVal, currentStatus);
+
+    return success(res, null, `Application status updated to ${currentStatus}`);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /applications/partner-apply — Submit or save draft application from Partner Panel
+const submitPartnerApplication = async (req, res, next) => {
+  await ensureBankDirectProcessLinksTable();
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    const {
+      product_id,
+      full_name,
+      country_code = '+91',
+      mobile,
+      email,
+      monthly_salary,
+      company_name,
+      pincode,
+      city,
+      state,
+      business_type,
+      gst_number,
+      trade_license_number,
+      process_type = 'partner_cell',
+      agree_terms = true,
+      is_draft = false,
+      pan_number,
+      pan
+    } = req.body;
+
+    if (!product_id) {
+      await client.query('ROLLBACK');
+      return error(res, 'Product ID is required', 400);
+    }
+
+    const rawRole = String(req.user?.role || req.user?.user_role || '').toUpperCase().trim();
+    const isStaff = ['ADMIN', 'SUPER_ADMIN', 'EMPLOYEE', 'HR', 'OPERATIONAL_HEAD', 'OPERATIONS_HEAD', 'ADMINISTRATIVE_OPERATOR'].includes(rawRole);
+
+    let partnerId = req.body.partner_id || req.body.PartnerId || null;
+
+    if (partnerId) {
+      const { rows: [pCheck] } = await client.query(`SELECT id FROM partner_profiles WHERE id = $1`, [partnerId]);
+      partnerId = pCheck?.id || null;
+    }
+
+    if (!partnerId && req.partner?.id) {
+      const { rows: [pCheck] } = await client.query(`SELECT id FROM partner_profiles WHERE id = $1`, [req.partner.id]);
+      if (pCheck) {
+        partnerId = pCheck.id;
+      }
+    }
+
+    if (!partnerId && req.user?.id) {
+      const { rows: [p] } = await client.query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
+      if (p) {
+        partnerId = p.id;
+      } else if (!isStaff) {
+        // Auto-provision partner profile for non-staff partner/team-member
+        const partnerCode = 'AG' + String(Math.floor(10000 + Math.random() * 90000));
+        const { rows: [newP] } = await client.query(`
+          INSERT INTO partner_profiles (user_id, partner_code, first_name, last_name, status, kyc_status)
+          VALUES ($1, $2, $3, $4, 'active', 'pending')
+          ON CONFLICT (user_id) DO UPDATE SET updated_at = NOW()
+          RETURNING id
+        `, [req.user.id, partnerCode, req.user.first_name || 'Partner', req.user.last_name || '']);
+        if (newP) {
+          partnerId = newP.id;
+        }
+      }
+    }
+
+    if (!partnerId && ['PARTNER', 'TEAM_MEMBER'].includes(rawRole)) {
+      await client.query('ROLLBACK');
+      return error(res, 'Partner profile not found. Please contact support.', 400);
+    }
+
+    const { rows: [product] } = await client.query(
+      `SELECT p.*, b.name as bank_name, b.short_code as bank_code, bdpl.direct_process_link as bank_direct_process_link FROM products p LEFT JOIN banks b ON b.id = p.bank_id LEFT JOIN bank_direct_process_links bdpl ON bdpl.bank_id = p.bank_id WHERE p.id = $1`,
+      [product_id]
+    );
+    if (!product) {
+      await client.query('ROLLBACK');
+      return error(res, 'Product not found', 404);
+    }
+
+    if (!is_draft) {
+      if (!full_name || full_name.trim().length < 2) {
+        await client.query('ROLLBACK');
+        return error(res, 'Full Name must be at least 2 characters', 400);
+      }
+
+      if (!mobile || !/^[6-9]\d{9}$/.test(String(mobile).trim())) {
+        await client.query('ROLLBACK');
+        return error(res, 'Please provide a valid 10-digit Indian mobile number', 400);
+      }
+
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())) {
+        await client.query('ROLLBACK');
+        return error(res, 'Please provide a valid email address', 400);
+      }
+
+      if (monthly_salary !== undefined && monthly_salary !== null && monthly_salary !== '') {
+        const salaryNum = parseFloat(monthly_salary);
+        if (isNaN(salaryNum) || salaryNum < 0) {
+          await client.query('ROLLBACK');
+          return error(res, 'Monthly salary must be a valid non-negative number', 400);
+        }
+
+        if (product.min_income && salaryNum > 0 && salaryNum < parseFloat(product.min_income)) {
+          await client.query('ROLLBACK');
+          return error(res, `Applicant monthly salary ₹${salaryNum.toLocaleString('en-IN')} is below product minimum required ₹${parseFloat(product.min_income).toLocaleString('en-IN')}`, 400);
+        }
+      }
+
+      if (pincode && !/^\d{6}$/.test(String(pincode).trim())) {
+        await client.query('ROLLBACK');
+        return error(res, 'Please enter a valid 6-digit postal pincode', 400);
+      }
+
+      const validProcesses = ['lead_punching', 'linked_share', 'direct_bank', 'physical_process', 'co_browsing', 'card_assist_cobrowsing'];
+      if (!validProcesses.includes(process_type)) {
+        await client.query('ROLLBACK');
+        return error(res, 'Invalid Process Assignment selection.', 400);
+      }
+
+      if (!agree_terms) {
+        await client.query('ROLLBACK');
+        return error(res, 'You must agree to the Terms & Conditions to submit', 400);
+      }
+    }
+
+    const trimmedMobile = mobile ? String(mobile).trim() : null;
+    const trimmedName = full_name ? String(full_name).trim() : 'Draft Customer';
+    const trimmedEmail = email ? String(email).trim() : null;
+    const cleanPan = (pan_number || pan || '').toString().trim().toUpperCase() || null;
+
+    const bankName = String(product.bank_name || product.bank_code || '').toUpperCase();
+    const isHdfcBank = product.bank_id === 'f0b5742d-f04d-4a91-b162-6009ddf6e345' || bankName.includes('HDFC') || String(product.name || '').toUpperCase().includes('HDFC');
+    const prodCat = String(product.category || '').toLowerCase();
+    const isLocEoc = ['loc', 'eoc', 'loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loan_on_card', 'card_on_loan'].includes(prodCat);
+    const isOtherCat = prodCat.includes('loan') || prodCat.includes('insurance');
+    const isHdfcCreditCard = isHdfcBank && !isLocEoc && !isOtherCat;
+
+    if (!is_draft && isHdfcCreditCard && process_type === 'lead_punching') {
+      if (!cleanPan || !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(cleanPan)) {
+        await client.query('ROLLBACK');
+        return error(res, 'Please enter a valid 10-character PAN Card number (e.g. ABCDE1234F) for HDFC Credit Card applications.', 400);
+      }
+    } else if (!is_draft && cleanPan && !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(cleanPan)) {
+      await client.query('ROLLBACK');
+      return error(res, 'Please enter a valid 10-character PAN Card number (e.g. ABCDE1234F).', 400);
+    }
+
+    // Resolve canonical process_by and source metadata
+    let processByVal = 'lead_punching';
+    let sourceVal = 'partner_portal';
+    if (process_type === 'linked_share') {
+      processByVal = 'linked_share';
+      sourceVal = 'share_link';
+    } else if (process_type === 'direct_bank') {
+      processByVal = 'direct_bank';
+      sourceVal = 'bank_redirect';
+    } else if (process_type === 'physical_process') {
+      processByVal = 'physical_process';
+      sourceVal = 'physical';
+    } else if (process_type === 'co_browsing' || process_type === 'card_assist_cobrowsing') {
+      processByVal = 'co_browsing';
+      sourceVal = 'co_browsing';
+    } else {
+      processByVal = 'lead_punching';
+      sourceVal = 'partner_portal';
+    }
+
+    // Check duplicate active lead / application (within 30 days)
+    if (!is_draft && trimmedMobile && process_type !== 'linked_share') {
+      const { rows: [dupApp] } = await client.query(`
+        SELECT a.id, a.app_number, a.status
+        FROM applications a
+        JOIN customers c ON c.id = a.customer_id
+        WHERE c.mobile = $1 AND a.product_id = $2
+          AND a.created_at >= NOW() - INTERVAL '30 days'
+          AND a.status::text NOT IN ('rejected', 'cancelled')
+        LIMIT 1
+      `, [trimmedMobile, product_id]);
+
+      if (dupApp) {
+        await client.query('ROLLBACK');
+        return error(res, `A lead or application for mobile ${trimmedMobile} and this product already exists (#${dupApp.app_number}, Status: ${dupApp.status.toUpperCase()}).`, 409);
+      }
+    }
+
+    let customerId;
+    if (trimmedMobile) {
+      const { rows: [existingCust] } = await client.query(
+        `SELECT id FROM customers WHERE mobile = $1`, [trimmedMobile]
+      );
+
+      if (existingCust) {
+        customerId = existingCust.id;
+        await client.query(`
+          UPDATE customers SET 
+            full_name = CASE WHEN full_name IS NULL OR full_name = '' OR full_name = 'Draft Customer' THEN COALESCE($1, full_name) ELSE full_name END, 
+            email = COALESCE($2, email), 
+            monthly_income = COALESCE($3, monthly_income),
+            company_name = COALESCE($4, company_name),
+            business_type = COALESCE($5, business_type),
+            gst_number = COALESCE($6, gst_number),
+            trade_license_number = COALESCE($7, trade_license_number),
+            city = COALESCE($8, city),
+            state = COALESCE($9, state),
+            pincode = COALESCE($10, pincode),
+            pan_number = COALESCE($11, pan_number),
+            updated_at = NOW() 
+          WHERE id = $12
+        `, [
+          trimmedName, trimmedEmail, monthly_salary || null, company_name || null,
+          business_type || null, gst_number || null, trade_license_number || null,
+          city || null, state || null, pincode || null, cleanPan, customerId
+        ]);
+      } else {
+        const { rows: [newCust] } = await client.query(`
+          INSERT INTO customers 
+            (full_name, mobile, email, monthly_income, company_name, business_type, gst_number, trade_license_number, city, state, pincode, pan_number, created_by)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
+          RETURNING id
+        `, [
+          trimmedName, trimmedMobile, trimmedEmail, monthly_salary || null, company_name || null,
+          business_type || null, gst_number || null, trade_license_number || null,
+          city || null, state || null, pincode || null, cleanPan, req.user.id
+        ]);
+        customerId = newCust.id;
+      }
+    } else {
+      const { rows: [newCust] } = await client.query(`
+        INSERT INTO customers (full_name, email, pan_number, created_by)
+        VALUES ($1, $2, $3, $4) RETURNING id
+      `, [trimmedName, trimmedEmail, cleanPan, req.user.id]);
+      customerId = newCust.id;
+    }
+
+    // Sync into leads table so it appears in CRM leads queue
+    let syncedLeadId = null;
+    if (trimmedMobile) {
+      try {
+        await client.query('SAVEPOINT lead_sync_sp');
+        const leadNum = 'LEAD-' + Date.now().toString(36).toUpperCase();
+        const { rows: [newLead] } = await client.query(`
+          INSERT INTO leads (
+            lead_number, partner_id, product_id, customer_name, customer_mobile, mobile,
+            customer_email, pan_number, source, status, process_type, process_by, pipeline_stage, customer_id, created_by, otp_verified
+          )
+          VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, 'confirmed', $9, $10, 'submitted', $11, $12, TRUE)
+          RETURNING id
+        `, [
+          leadNum, partnerId, product_id, trimmedName, trimmedMobile,
+          trimmedEmail, cleanPan, sourceVal, process_type, processByVal, customerId, req.user.id
+        ]);
+        syncedLeadId = newLead?.id || null;
+        await client.query('RELEASE SAVEPOINT lead_sync_sp');
+      } catch (leadErr) {
+        await client.query('ROLLBACK TO SAVEPOINT lead_sync_sp').catch(err => logger.warn('Lead sync rollback warning:', err.message));
+        logger.warn('Lead table sync warning:', leadErr.message);
+      }
+    }
+
+    let empId = null;
+    let empAssignedUrl = null;
+    let empAssignedIncentive = null;
+
+    if (req.user?.id) {
+      const { rows: [emp] } = await client.query(
+        `SELECT id FROM employees WHERE user_id = $1 OR mobile_number = $2 LIMIT 1`,
+        [req.user.id, req.user.mobile]
+      );
+      if (emp) {
+        empId = emp.id;
+        const { rows: [empLink] } = await client.query(
+          `SELECT incentive_amount, employee_referral_url FROM employee_product_links WHERE employee_id = $1 AND product_id = $2 AND status = 'ACTIVE'`,
+          [empId, product_id]
+        );
+        if (empLink) {
+          if (empLink.incentive_amount) empAssignedIncentive = parseFloat(empLink.incentive_amount);
+          if (empLink.employee_referral_url?.trim()) empAssignedUrl = empLink.employee_referral_url.trim();
+        }
+      }
+    }
+
+    if (empAssignedUrl) {
+      product.partner_url = empAssignedUrl;
+      product.application_url = empAssignedUrl;
+      product.public_url = empAssignedUrl;
+    }
+
+    const commission = empAssignedIncentive !== null ? empAssignedIncentive : await calculatePartnerCommission(product_id, partnerId, monthly_salary || 0, client);
+
+    const { rows: [{ nextval }] } = await client.query(`SELECT nextval('app_number_seq')`);
+    const date = new Date();
+    const datePart = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+    const appNumber = `APP${datePart}${nextval}`;
+
+    const appStatus = is_draft ? 'draft' : 'details_submitted';
+
+    const { rows: [app] } = await client.query(`
+      INSERT INTO applications
+        (app_number, lead_id, customer_id, product_id, partner_id, bank_id, submitted_by, employee_id, loan_amount, commission_amount,
+         status, process_type, process_by, source, business_type, gst_number, trade_license_number, company_name, pincode, city, state, country_code, agree_terms, pan_number, submitted_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW())
+      RETURNING *
+    `, [
+      appNumber, syncedLeadId, customerId, product_id, partnerId, product.bank_id, req.user.id, empId,
+      monthly_salary || 0, commission, appStatus, process_type, processByVal, sourceVal, business_type || null,
+      gst_number || null, trade_license_number || null, company_name || null,
+      pincode || null, city || null, state || null, country_code, agree_terms, cleanPan
+    ]);
+
+
+    if (syncedLeadId && app?.id) {
+      await client.query(`UPDATE leads SET application_id = $1 WHERE id = $2`, [app.id, syncedLeadId]);
+    }
+
+    if (app?.id) {
+      try {
+        await client.query('SAVEPOINT phys_details_sp');
+        await client.query(`
+          INSERT INTO physical_application_details (application_id, full_name, mobile, email, pan_number, created_at, updated_at)
+          VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+          ON CONFLICT (application_id) DO UPDATE SET
+            pan_number = COALESCE(EXCLUDED.pan_number, physical_application_details.pan_number),
+            full_name = COALESCE(EXCLUDED.full_name, physical_application_details.full_name),
+            mobile = COALESCE(EXCLUDED.mobile, physical_application_details.mobile),
+            email = COALESCE(EXCLUDED.email, physical_application_details.email),
+            updated_at = NOW()
+        `, [app.id, trimmedName, trimmedMobile, trimmedEmail, cleanPan]);
+        await client.query('RELEASE SAVEPOINT phys_details_sp');
+      } catch (physErr) {
+        await client.query('ROLLBACK TO SAVEPOINT phys_details_sp').catch(err => logger.warn('Physical details rollback warning:', err.message));
+      }
+    }
+
+    try {
+      await client.query('SAVEPOINT timeline_sp');
+      await client.query(`
+        INSERT INTO application_timeline (application_id, status, activity, event_type, title, description, actor_type, actor_id)
+        VALUES ($1, $2, $3, $4, $5, $6, 'partner', $7)
+      `, [
+        app.id,
+        appStatus,
+        'Application Submitted',
+        'applied',
+        'Application Initiated',
+        `Application logged via ${process_type.replace(/_/g, ' ').toUpperCase()}`,
+        req.user.id
+      ]);
+      await client.query('RELEASE SAVEPOINT timeline_sp');
+    } catch (timelineErr) {
+      await client.query('ROLLBACK TO SAVEPOINT timeline_sp').catch(() => { });
+      logger.warn('Timeline insert non-fatal warn:', timelineErr.message);
+    }
+
+    // Process specific metadata generation - Priority: products.partner_url is Single Source of Truth
+    let shareUrl = null;
+    let whatsappUrl = null;
+    let bankUrl = null;
+
+    const baseUrl = process.env.FRONTEND_URL || 'https://gharkapaisa.in';
+
+    if (process_type === 'linked_share') {
+      const partnerUrl = product.partner_url?.trim() || getBankApplyLinkBackend(product.name, product.bank_name, product);
+      if (!partnerUrl) {
+        await client.query('ROLLBACK');
+        return error(res, `Partner URL (Bank Apply Link) is missing for ${product.name}`, 400);
+      }
+      shareUrl = partnerUrl;
+      const msg = encodeURIComponent(`Hello ${trimmedName},\n\nYou can apply for ${product.name} with ${product.bank_name || 'Bank'} using official partner application link below:\n\n${shareUrl}`);
+      whatsappUrl = `https://wa.me/91${trimmedMobile}?text=${msg}`;
+
+      const trackingToken = 'SH_' + Math.random().toString(36).substring(2, 12).toUpperCase();
+      try {
+        await client.query('SAVEPOINT share_link_sp');
+        await client.query(`
+          INSERT INTO partner_share_links (partner_id, product_id, tracking_token, application_id, lead_id, expires_at)
+          VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '30 days')
+        `, [partnerId, product_id, trackingToken, app?.id || null, syncedLeadId || null]);
+        await client.query('RELEASE SAVEPOINT share_link_sp');
+      } catch (shareLinkErr) {
+        await client.query('ROLLBACK TO SAVEPOINT share_link_sp').catch(() => { });
+        logger.warn('Share link insert non-fatal warn:', shareLinkErr.message);
+      }
+    } else if (process_type === 'physical_process') {
+      const trackingToken = Math.random().toString(36).substring(2, 12);
+      shareUrl = `${baseUrl}/physical-application/${trackingToken}`;
+      const msg = encodeURIComponent(`Hello ${trimmedName},\n\nPlease fill your required customer details using this link:\n\n${shareUrl}`);
+      whatsappUrl = `https://wa.me/91${trimmedMobile}?text=${msg}`;
+
+      try {
+        await client.query('SAVEPOINT share_link_sp');
+        await client.query(`
+          INSERT INTO partner_share_links (partner_id, product_id, tracking_token, application_id, lead_id, expires_at)
+          VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '30 days')
+        `, [partnerId, product_id, trackingToken, app?.id || null, syncedLeadId || null]);
+        await client.query('RELEASE SAVEPOINT share_link_sp');
+      } catch (shareLinkErr) {
+        await client.query('ROLLBACK TO SAVEPOINT share_link_sp').catch(() => { });
+        logger.warn('Share link insert non-fatal warn:', shareLinkErr.message);
+      }
+    } else if (process_type === 'direct_bank') {
+      const resolvedDirect = resolveDirectProcessLinkForProductRow(product, getBankApplyLinkBackend);
+      if (!resolvedDirect.url) {
+        await client.query('ROLLBACK');
+        return error(res, `Direct Process link is not configured for ${product.name}`, 400);
+      }
+      bankUrl = resolvedDirect.url;
+      try {
+        await client.query('SAVEPOINT direct_bank_url_sp');
+        await client.query(`UPDATE applications SET bank_url = $1 WHERE id = $2`, [bankUrl, app.id]);
+        await client.query('RELEASE SAVEPOINT direct_bank_url_sp');
+      } catch (_) {
+        await client.query('ROLLBACK TO SAVEPOINT direct_bank_url_sp').catch(err => logger.warn('Silent catch warning:', err.message));
+      }
+    }
+
+    await client.query('COMMIT');
+
+    if (process_type === 'linked_share' && shareUrl) {
+      const { sendLinkedShareSms } = require('../../services/sms/sms.service');
+      let partnerMobile = req.user?.mobile;
+      if (!partnerMobile && partnerId) {
+        try {
+          const { rows: [pUser] } = await client.query(`
+            SELECT u.mobile, u.mobile as partner_mobile 
+            FROM partner_profiles pp 
+            LEFT JOIN users u ON u.id = pp.user_id 
+            WHERE pp.id = $1 OR pp.user_id = $1
+          `, [partnerId]);
+          partnerMobile = pUser?.mobile || pUser?.partner_mobile;
+        } catch (e) { }
+      }
+
+      if (partnerMobile) {
+        sendLinkedShareSms(partnerMobile, trimmedName || 'Customer', product.name, shareUrl).catch(err => {
+          logger.warn('[SMS] Failed to send linked share SMS to partner:', err.message);
+        });
+      }
+
+      if (trimmedMobile && trimmedMobile !== partnerMobile) {
+        sendLinkedShareSms(trimmedMobile, trimmedName, product.name, shareUrl).catch(err => {
+          logger.warn('[SMS] Failed to send linked share SMS to customer:', err.message);
+        });
+      }
+    }
+
+    const { sendEmail } = require('../../services/email/email.service');
+
+    if (trimmedEmail) {
+      sendEmail({
+        to: trimmedEmail,
+        subject: `Application Confirmation - #${appNumber} (${product.name})`,
+        html: `
+          <div style="font-family: Arial, sans-serif; padding: 20px; color: #0f172a;">
+            <h2 style="color: #f97316;">Application Received - GharKaPaisa</h2>
+            <p>Dear <strong>${trimmedName}</strong>,</p>
+            <p>Your application for <strong>${product.name}</strong> with <strong>${product.bank_name || 'Bank'}</strong> has been logged by your Partner.</p>
+            <table style="width: 100%; border-collapse: collapse; margin: 16px 0; background: #f8fafc; border: 1px solid #e2e8f0;">
+              <tr><td style="padding: 8px 12px; border: 1px solid #e2e8f0; font-weight: bold;">Application Number</td><td style="padding: 8px 12px; border: 1px solid #e2e8f0;">#${appNumber}</td></tr>
+              <tr><td style="padding: 8px 12px; border: 1px solid #e2e8f0; font-weight: bold;">Product</td><td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${product.name}</td></tr>
+              <tr><td style="padding: 8px 12px; border: 1px solid #e2e8f0; font-weight: bold;">Process Assignment</td><td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${process_type.replace(/_/g, ' ').toUpperCase()}</td></tr>
+            </table>
+            <p>Regards,<br><strong>GharKaPaisa Team</strong></p>
+          </div>
+        `
+      }).catch(err => logger.warn('Applicant email trigger failed:', err.message));
+    }
+
+    if (!isEmployeeOrStaffUser(req)) {
+      let partnerEmail = null;
+      if (['PARTNER', 'TEAM_MEMBER'].includes(rawRole)) {
+        partnerEmail = req.user?.email;
+      }
+      const targetPID = partnerId || PartnerId;
+      if (!partnerEmail && targetPID) {
+        try {
+          const { rows: [pUser] } = await client.query(
+            `SELECT u.email FROM partner_profiles pp JOIN users u ON u.id = pp.user_id WHERE pp.id = $1`,
+            [targetPID]
+          ).catch(() => ({ rows: [] }));
+          partnerEmail = pUser?.email;
+        } catch (_) {}
+      }
+      if (partnerEmail) {
+        sendLeadApplicationCreatedEmail({
+          to: partnerEmail,
+          customerName: trimmedName,
+          appNumber,
+          productName: product.name,
+          mobile: trimmedMobile,
+          countryCode: country_code,
+          processType: process_type,
+          commission
+        });
+      }
+    }
+
+    return success(res, {
+      ...app,
+      process_type,
+      process_by: processByVal,
+      source: sourceVal,
+      partner_url: shareUrl || product.partner_url || bankUrl || '',
+      share_url: shareUrl,
+      whatsapp_url: whatsappUrl,
+      bank_url: bankUrl
+    }, 'Application submitted successfully');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+// ── PUT /applications/bulk-status — Bulk update status ────────────────
+const bulkUpdateStatus = async (req, res, next) => {
+  const userRole = (req.user?.role || '').toUpperCase();
+  if (['PARTNER', 'TEAM_MEMBER'].includes(userRole)) {
+    return error(res, 'Application status changes are reserved for Super Admin and Admin.', 403);
+  }
+  const { ids, status, remarks } = req.body;
+  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    return error(res, 'Application IDs array is required', 400);
+  }
+  if (!status) return error(res, 'Status is required', 400);
+
+  const normalizedStatus = String(status).trim().toLowerCase();
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    // Secure Parameterized Query
+    const historyEntry = JSON.stringify([{ status: normalizedStatus, updated_by: req.user?.id, updated_at: new Date().toISOString(), remarks: remarks || null }]);
+    const { rows: updatedApps } = await client.query(
+      `UPDATE applications 
+       SET status = $1, 
+           updated_at = NOW(),
+           approved_at = CASE WHEN $1 = 'approved' THEN COALESCE(approved_at, NOW()) ELSE approved_at END,
+           status_history = status_history || $2::jsonb
+       WHERE id = ANY($3::uuid[])
+       RETURNING id, status, employee_id, product_id, app_file_generated`,
+      [normalizedStatus, historyEntry, ids]
+    );
+
+    // Sync incentives and log timeline for each application
+    const performedBy = req.user?.id;
+    for (const app of updatedApps) {
+      await syncEmployeeIncentiveLifecycle(client, app);
+      await logTimeline(client, app.id, normalizedStatus, 'Bulk status update', remarks || `Status changed to ${normalizedStatus}`, performedBy);
+    }
+
+    await client.query('COMMIT');
+    await invalidateApplicationsCache({ action: 'bulk_update_status', count: ids.length });
+    await logAction(req, 'BULK_UPDATE_APPLICATION_STATUS', null, { ids, status: normalizedStatus });
+
+    return success(res, { updated: updatedApps.length, status: normalizedStatus }, `${updatedApps.length} applications updated to ${normalizedStatus}`);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+// ── POST /applications/import — CSV bulk import ────────────────────
+const importApplications = async (req, res, next) => {
+  if (!req.file) return error(res, 'CSV file is required', 400);
+
+  const csvData = req.file.buffer.toString('utf-8');
+  const lines = csvData.split('\n').filter(l => l.trim());
+  if (lines.length < 2) return error(res, 'CSV must have a header row and at least one data row', 400);
+
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+  const nameIdx = headers.indexOf('customer_name');
+  const mobileIdx = headers.indexOf('mobile');
+  const productIdx = headers.indexOf('product_name');
+
+  if (nameIdx === -1 || mobileIdx === -1) {
+    return error(res, 'CSV must include columns: customer_name, mobile', 400);
+  }
+
+  const client = await getClient();
+  try {
+    const PartnerId = req.partner?.id;
+    let imported = 0;
+
+    await client.query('BEGIN');
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',').map(c => c.trim());
+      const customerName = cols[nameIdx] || '';
+      const mobile = cols[mobileIdx] || '';
+      const productName = productIdx !== -1 ? (cols[productIdx] || '') : '';
+
+      if (!customerName || !mobile) continue;
+
+      const appNumber = generateAppNumber();
+      await client.query(
+        `INSERT INTO applications (app_number, partner_id, customer_name, customer_mobile, product_name, status, source, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, 'details_submitted', 'csv_import', NOW(), NOW())`,
+        [appNumber, PartnerId, customerName, mobile, productName]
+      );
+      imported++;
+    }
+
+    await client.query('COMMIT');
+    await logAction(req, 'IMPORT_APPLICATIONS_CSV', null, { imported, total_rows: lines.length - 1 });
+
+    return success(res, { imported, total_rows: lines.length - 1 }, `${imported} applications imported successfully`);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+// ── GET /applications/export/csv — Export applications as CSV ──────
+// ── GET /applications/export/csv — Export applications as CSV ──────
+const exportApplicationsCSV = async (req, res, next) => {
+  try {
+    const userRole = (req.user?.role || req.user?.user_role || '').toUpperCase();
+    const userDesignation = (req.user?.designation || '').toUpperCase();
+    const userId = req.user?.id;
+
+    const isAdminOperator = ['ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'OPERATOR', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_OPERATOR', 'ADMINISTRATIVE SALES OPERATOR'].includes(userRole) || ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE_SALES_OPERATOR', 'ADMINISTRATIVE SALES OPERATOR'].includes(userDesignation);
+    const isEmployeeRole = userRole === 'EMPLOYEE';
+    const hideCustomerMobile = isAdminOperator || isEmployeeRole;
+
+    let partnerId = req.partner?.id;
+    if (['PARTNER', 'TEAM_MEMBER'].includes(userRole) && !partnerId && userId) {
+      const { rows: [p] } = await query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [userId]);
+      partnerId = p?.id;
+    }
+
+    const isPartnerOrTeam = ['PARTNER', 'TEAM_MEMBER'].includes(userRole);
+    const validPartnerId = isUuid(partnerId) ? partnerId : null;
+    const validUserId = isUuid(userId) ? userId : null;
+
+    let whereClause = '';
+    const params = [validPartnerId, validUserId];
+
+    if (isPartnerOrTeam) {
+      whereClause = `
+        WHERE (
+          combined.partner_id IN (
+            SELECT $1::uuid UNION SELECT $2::uuid 
+            UNION SELECT id FROM partner_profiles WHERE parent_partner_id = $1::uuid OR referred_by_id = $1::uuid OR parent_partner_id = $2::uuid OR referred_by_id = $2::uuid
+            UNION SELECT child_partner_id FROM partner_team_relationships WHERE parent_partner_id = $1::uuid OR sponsor_id = $1::uuid OR parent_partner_id = $2::uuid OR sponsor_id = $2::uuid
+            UNION SELECT id FROM partner_profiles WHERE user_id = $2::uuid OR user_id = $1::uuid
+          )
+          OR combined.submitted_by = $2::uuid
+          OR combined.submitted_by IN (
+            SELECT user_id FROM partner_profiles WHERE parent_partner_id = $1::uuid OR referred_by_id = $1::uuid
+            UNION SELECT u.id FROM users u WHERE u.created_by = $2::uuid
+          )
+        )
+      `;
+    } else if (userRole !== 'SUPER_ADMIN' && userId) {
+      const { rows: abRows } = await query(`
+        SELECT aba.bank_id, COALESCE(aba.category, 'credit_card') as category, b.short_code, b.name 
+        FROM admin_bank_assignments aba
+        LEFT JOIN banks b ON b.id = aba.bank_id
+        WHERE aba.admin_id = $1
+           OR aba.admin_id IN (SELECT id FROM employees WHERE user_id = $1)
+           OR aba.admin_id IN (SELECT user_id FROM employees WHERE id = $1)
+      `, [userId]).catch(() => ({ rows: [] }));
+
+      if (abRows.length === 0) {
+        if (isAdminOperator) {
+          whereClause = ``;
+        } else {
+          whereClause = `WHERE 1=0`;
+        }
+      } else {
+        const pairClauses = abRows.map(b => {
+          const isVirtualLocBank = (b.short_code || '').toUpperCase() === 'LOC_EOC' || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(b.name || '');
+          const bankMatch = isVirtualLocBank ? '1=1' : `(combined.bank_name ILIKE '%${(b.name || '').replace(/'/g, "''")}%' OR combined.bank_name ILIKE '%${(b.short_code || '').replace(/'/g, "''")}%')`;
+          const cat = normalizeAssignmentCategory(b.category);
+          if (cat === 'loc_eoc') {
+            return `(${bankMatch} AND (LOWER(COALESCE(combined.category::text, '')) IN ('loc_eoc', 'loceoc', 'loan_on_credit_card', 'smart_emi', 'loc', 'eoc', 'loan_on_card') OR LOWER(COALESCE(combined.product_name, '')) LIKE '%instant & jumbo loan%' OR LOWER(COALESCE(combined.product_name, '')) LIKE '%emi on credit card%' OR LOWER(COALESCE(combined.product_name, '')) LIKE '%jumbo%' OR LOWER(COALESCE(combined.product_name, '')) LIKE '%insta%'))`;
+          } else {
+            return `(${bankMatch} AND NOT (LOWER(COALESCE(combined.category::text, '')) IN ('loc_eoc', 'loceoc', 'loan_on_credit_card', 'smart_emi', 'loc', 'eoc') OR LOWER(COALESCE(combined.product_name, '')) LIKE '%instant & jumbo loan%' OR LOWER(COALESCE(combined.product_name, '')) LIKE '%emi on credit card%' OR LOWER(COALESCE(combined.product_name, '')) LIKE '%jumbo%' OR LOWER(COALESCE(combined.product_name, '')) LIKE '%insta%'))`;
+          }
+        });
+        whereClause = `WHERE (${pairClauses.join(' OR ')})`;
+      }
+    }
+
+    const { type } = req.query;
+    if (type === 'loan_applications' || type === 'loc_eoc') {
+      const typeFilter = `(
+        LOWER(COALESCE(combined.category::text, '')) IN ('loc_eoc', 'loc', 'eoc', 'loan_on_credit_card', 'smart_emi', 'loan', 'personal_loan', 'home_loan', 'business_loan')
+        OR LOWER(COALESCE(combined.product_name, '')) LIKE '%loan%'
+        OR LOWER(COALESCE(combined.product_name, '')) LIKE '%emi%'
+        OR LOWER(COALESCE(combined.product_name, '')) LIKE '%insta%'
+        OR LOWER(COALESCE(combined.product_name, '')) LIKE '%jumbo%'
+      )`;
+      whereClause = whereClause ? `${whereClause} AND ${typeFilter}` : `WHERE ${typeFilter}`;
+    }
+
+    const isSalesExecUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation);
+    if (isSalesExecUser && userId) {
+      const sbiMatch = `((combined.bank_name ILIKE '%sbi%' OR combined.bank_name ILIKE '%state bank of india%') AND combined.bank_name NOT ILIKE '%tata%')`;
+      const hdfcMatch = `(combined.bank_name ILIKE '%hdfc%' AND combined.bank_name NOT ILIKE '%tata%')`;
+      const cleanWhere = (whereClause || '').replace(/^\s*WHERE\s*/i, '').trim();
+      const hasValidBase = cleanWhere && cleanWhere !== '1=0';
+      const bankScope = hasValidBase
+        ? `(${cleanWhere} OR ${sbiMatch})`
+        : `(${hdfcMatch} OR ${sbiMatch})`;
+      const claimFilter = `(combined.sales_claimed_by IS NULL OR combined.sales_claimed_by = '' OR combined.sales_claimed_by = '${userId}')`;
+      whereClause = `WHERE ${bankScope} AND ${claimFilter}`;
+    }
+
+    const { rows } = await query(`
+      SELECT * FROM (
+        SELECT 
+          a.app_number,
+          COALESCE(to_jsonb(a)->>'sales_claimed_by', to_jsonb(pad)->>'sales_claimed_by', '') as sales_claimed_by,
+          COALESCE(to_jsonb(a)->>'sales_claimed_by_name', to_jsonb(pad)->>'sales_claimed_by_name', '') as sales_claimed_by_name,
+          COALESCE(NULLIF(l.customer_name, ''), NULLIF(c.full_name, ''), 'Customer') as customer_name,
+          COALESCE(NULLIF(a.mobile, ''), NULLIF(pad.mobile, ''), NULLIF(l.mobile, ''), NULLIF(l.customer_mobile, ''), c.mobile) as customer_mobile,
+          c.email as customer_email,
+          COALESCE(NULLIF(a.pan_number, ''), NULLIF(pad.pan_number, ''), NULLIF(l.pan_number, ''), c.pan_number) as pan_number,
+          COALESCE(l.city, c.city) as city,
+          c.state,
+          c.pincode,
+          COALESCE(NULLIF(su.full_name, ''), NULLIF(TRIM(CONCAT(ap.first_name, ' ', COALESCE(ap.last_name, ''))), ''), su.email, 'Team Member') as submitted_by_name,
+          p.name as product_name,
+          p.category,
+          b.name as bank_name,
+          a.status::text,
+          a.commission_status::text,
+          a.commission_amount,
+          COALESCE(a.source, 'partner_punch') as process_by,
+          COALESCE(NULLIF(a.bank_application_number, ''), NULLIF(a.bank_ref_number, ''), NULLIF(pad.bank_application_number, ''), NULLIF(pad.bank_ref_number, '')) as bank_application_number,
+          COALESCE(NULLIF(a.appcode_status, ''), NULLIF(pad.appcode_status, '')) as appcode_status,
+          COALESCE(NULLIF(a.soft_approval_status, ''), NULLIF(pad.soft_approval_status, '')) as soft_approval_status,
+          COALESCE(NULLIF(a.iqa_stage, ''), NULLIF(pad.iqa_stage, '')) as iqa_stage,
+          COALESCE(NULLIF(a.vkyc_stage, ''), NULLIF(a.vkyc_status, ''), NULLIF(pad.vkyc_stage, '')) as vkyc_stage,
+          COALESCE(NULLIF(a.vkyc_url, ''), NULLIF(pad.vkyc_url, '')) as vkyc_url,
+          COALESCE(NULLIF(a.dispatch_status, ''), NULLIF(pad.dispatch_status, '')) as dispatch_status,
+          COALESCE(NULLIF(to_jsonb(a)->>'bank_current_lead_status', ''), NULLIF(pad.bank_current_lead_status, ''), 'None') as bank_current_lead_status,
+          COALESCE(NULLIF(a.final_status, ''), NULLIF(pad.final_status, '')) as final_status,
+          COALESCE(NULLIF(a.app_file_generated, ''), NULLIF(pad.app_file_generated, '')) as app_file_generated,
+          COALESCE(
+            NULLIF(to_jsonb(a)->>'user_remark', ''),
+            NULLIF(to_jsonb(pad)->>'user_remark', ''),
+            NULLIF(a.user_remark, ''),
+            NULLIF(a.notes, ''),
+            NULLIF(a.bank_remark, ''),
+            NULLIF(pad.bank_remark, ''),
+            'NA'
+          ) as bank_remark,
+          COALESCE(NULLIF(a.decline_reason, ''), NULLIF(pad.decline_reason, '')) as decline_reason,
+          COALESCE(NULLIF(a.eligible_reqd, ''), NULLIF(pad.eligible_reqd, '')) as eligible_reqd,
+          COALESCE(a.approved_amount, pad.approved_amount) as approved_amount,
+          COALESCE(NULLIF(to_jsonb(a)->>'requery_date', ''), NULLIF(to_jsonb(pad)->>'requery_date', '')) as requery_date,
+          COALESCE(NULLIF(to_jsonb(a)->>'sales_operator_code', ''), NULLIF(to_jsonb(pad)->>'sales_operator_code', '')) as sales_operator_code,
+          COALESCE(NULLIF(to_jsonb(a)->>'pan_checker_code', ''), NULLIF(to_jsonb(pad)->>'pan_checker_code', '')) as pan_checker_code,
+          COALESCE(NULLIF(to_jsonb(a)->>'remark_operator_code', ''), NULLIF(to_jsonb(pad)->>'remark_operator_code', '')) as remark_operator_code,
+          COALESCE(NULLIF(to_jsonb(a)->>'ipa_stage', ''), NULLIF(to_jsonb(pad)->>'ipa_stage', ''), NULLIF(a.iqa_stage, ''), NULLIF(pad.iqa_stage, '')) as ipa_stage,
+          COALESCE(NULLIF(to_jsonb(a)->>'soft_approval_stage', ''), NULLIF(to_jsonb(pad)->>'soft_approval_stage', ''), NULLIF(a.soft_approval_status, ''), NULLIF(pad.soft_approval_status, '')) as soft_approval_stage,
+          COALESCE(NULLIF(to_jsonb(a)->>'kyc_stage', ''), NULLIF(to_jsonb(pad)->>'kyc_stage', ''), NULLIF(a.vkyc_stage, ''), NULLIF(a.vkyc_status, ''), NULLIF(pad.vkyc_stage, '')) as kyc_stage,
+          COALESCE(NULLIF(to_jsonb(a)->>'final_card_approval', ''), NULLIF(to_jsonb(pad)->>'final_card_approval', ''), NULLIF(to_jsonb(a)->>'card_approval_stage', ''), NULLIF(to_jsonb(pad)->>'card_approval_stage', ''), NULLIF(to_jsonb(a)->>'digital_card_issued', ''), NULLIF(to_jsonb(pad)->>'digital_card_issued', '')) as final_card_approval,
+          COALESCE(NULLIF(to_jsonb(a)->>'user_remark', ''), NULLIF(to_jsonb(pad)->>'user_remark', ''), NULLIF(to_jsonb(a)->>'notes', ''), NULLIF(a.operational_remarks, '')) as user_remark,
+          COALESCE(NULLIF(to_jsonb(a)->>'cureble_stage', ''), NULLIF(to_jsonb(pad)->>'cureble_stage', ''), NULLIF(to_jsonb(a)->>'queryable_remark', ''), NULLIF(to_jsonb(pad)->>'queryable_remark', ''), NULLIF(to_jsonb(a)->>'curable_stage', ''), NULLIF(to_jsonb(pad)->>'curable_stage', '')) as cureble_stage,
+          COALESCE(NULLIF(to_jsonb(a)->>'primary_code', ''), NULLIF(to_jsonb(pad)->>'primary_code', ''), NULLIF(to_jsonb(a)->>'decline_code', ''), NULLIF(to_jsonb(pad)->>'decline_code', '')) as primary_code,
+          COALESCE(NULLIF(to_jsonb(a)->>'secondary_code', ''), NULLIF(to_jsonb(pad)->>'secondary_code', '')) as secondary_code,
+          COALESCE(NULLIF(to_jsonb(a)->>'cureble_type', ''), NULLIF(to_jsonb(pad)->>'cureble_type', ''), NULLIF(to_jsonb(a)->>'digital_remark', ''), NULLIF(to_jsonb(pad)->>'digital_remark', ''), NULLIF(to_jsonb(a)->>'curable_type', ''), NULLIF(to_jsonb(pad)->>'curable_type', '')) as cureble_type,
+          COALESCE(NULLIF(to_jsonb(a)->>'cureble_operator_code', ''), NULLIF(to_jsonb(pad)->>'cureble_operator_code', ''), NULLIF(to_jsonb(a)->>'curable_executive', ''), NULLIF(to_jsonb(pad)->>'curable_executive', '')) as cureble_operator_code,
+          COALESCE(NULLIF(to_jsonb(a)->>'salas_operator_code', ''), NULLIF(to_jsonb(pad)->>'salas_operator_code', ''), NULLIF(to_jsonb(a)->>'sales_operator_code', ''), NULLIF(to_jsonb(pad)->>'sales_operator_code', '')) as salas_operator_code,
+          COALESCE(NULLIF(to_jsonb(a)->>'remark_opretor_code', ''), NULLIF(to_jsonb(pad)->>'remark_opretor_code', ''), NULLIF(to_jsonb(a)->>'remark_operator_code', ''), NULLIF(to_jsonb(pad)->>'remark_operator_code', '')) as remark_opretor_code,
+          a.created_at,
+          a.partner_id,
+          a.submitted_by
+        FROM applications a
+        LEFT JOIN leads l ON l.id = a.lead_id
+        LEFT JOIN customers c ON c.id = a.customer_id
+        LEFT JOIN products p ON p.id = a.product_id
+        LEFT JOIN banks b ON b.id = p.bank_id
+        LEFT JOIN physical_application_details pad ON pad.application_id = a.id
+        LEFT JOIN partner_profiles ap ON ap.id = a.partner_id
+        LEFT JOIN users su ON su.id = a.submitted_by
+
+        UNION ALL
+
+        SELECT 
+          COALESCE(NULLIF(l.lead_number, ''), CONCAT('LEAD-', UPPER(SUBSTRING(l.id::text, 1, 8)))) as app_number,
+          COALESCE(NULLIF(l.customer_name, ''), NULLIF(c.full_name, ''), 'Customer') as customer_name,
+          COALESCE(NULLIF(l.mobile, ''), NULLIF(l.customer_mobile, ''), c.mobile) as customer_mobile,
+          c.email as customer_email,
+          COALESCE(l.pan_number, c.pan_number) as pan_number,
+          COALESCE(l.city, c.city) as city,
+          COALESCE(l.state, c.state) as state,
+          COALESCE(l.pincode, c.pincode) as pincode,
+          COALESCE(NULLIF(su.full_name, ''), NULLIF(TRIM(CONCAT(ap.first_name, ' ', COALESCE(ap.last_name, ''))), ''), su.email, 'Team Member') as submitted_by_name,
+          p.name as product_name,
+          p.category,
+          COALESCE(b.name, 'Bank Partner') as bank_name,
+          l.status::text,
+          'pending'::text as commission_status,
+          p.commission_value as commission_amount,
+          COALESCE(l.source, 'partner_share') as process_by,
+          NULL as bank_application_number,
+          NULL as appcode_status,
+          NULL as soft_approval_status,
+          NULL as iqa_stage,
+          NULL as vkyc_stage,
+          NULL as vkyc_url,
+          NULL as dispatch_status,
+          NULL as bank_current_lead_status,
+          NULL as final_status,
+          NULL as app_file_generated,
+          NULL as bank_remark,
+          NULL as decline_reason,
+          NULL as eligible_reqd,
+          NULL as approved_amount,
+          NULL as requery_date,
+          NULL as sales_operator_code,
+          NULL as pan_checker_code,
+          NULL as remark_operator_code,
+          NULL as ipa_stage,
+          NULL as soft_approval_stage,
+          NULL as kyc_stage,
+          NULL as final_card_approval,
+          NULL as user_remark,
+          NULL as cureble_stage,
+          NULL as primary_code,
+          NULL as secondary_code,
+          NULL as cureble_type,
+          NULL as cureble_operator_code,
+          NULL as salas_operator_code,
+          NULL as remark_opretor_code,
+          l.created_at,
+          l.partner_id,
+          COALESCE(l.created_by, c.created_by) as submitted_by
+        FROM leads l
+        LEFT JOIN customers c ON c.id = l.customer_id OR (l.customer_id IS NULL AND c.mobile = l.mobile)
+        LEFT JOIN products p ON p.id = l.product_id
+        LEFT JOIN banks b ON b.id = p.bank_id
+        LEFT JOIN partner_profiles ap ON ap.id = l.partner_id
+        LEFT JOIN users su ON su.id = COALESCE(l.created_by, c.created_by)
+        WHERE l.id NOT IN (SELECT lead_id FROM applications WHERE lead_id IS NOT NULL)
+      ) combined
+      ${whereClause}
+      ORDER BY combined.created_at DESC
+      LIMIT 10000
+    `, params);
+
+    const isAuthorizedForOpCodesAndReQd = ['SUPER_ADMIN', 'ADMIN', 'OPERATIONAL_HEAD', 'OPERATIONAL HEAD', 'OPERATIONS_HEAD', 'OPERATIONS HEAD', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR'].includes(userRole) || ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'OPERATIONAL HEAD', 'OPERATIONAL_HEAD'].includes(userDesignation);
+
+    const csvHeaders = [
+      'App / Lead Number',
+      'Customer Name',
+      'Customer Mobile',
+      'Email',
+      'PAN Number',
+      'City',
+      'State',
+      'Pincode',
+      'Submitted By / Member',
+      'Product',
+      'Category',
+      'Bank',
+      'Process Type',
+      'Status',
+      'Commission Status',
+      'Commission Amount',
+      'APPCODE Status',
+      'Soft Approval Status',
+      'IQA Stage',
+      'Bank Application Number',
+      'VKYC Stage',
+      'VKYC Link',
+      'Dispatch Status',
+      'Bank Current Lead Status',
+      'Final Status',
+      'App File Generated',
+      'Bank Remark',
+      'Decline Reason',
+      'Eligible Re-QD',
+      'Approved Amount'
+    ];
+
+    if (isAuthorizedForOpCodesAndReQd) {
+      csvHeaders.push('Re-QD Date', 'Sales Operator Code', 'PAN Checker Code', 'Remark Operator Code');
+    }
+
+    csvHeaders.push('Date');
+
+    const csvLines = [csvHeaders.join(',')];
+
+    const formatPanNumber = (pan) => {
+      if (!pan || String(pan).trim() === '' || String(pan).toUpperCase() === 'N/A' || String(pan).toUpperCase() === 'NA') return 'NA';
+      const cleanPan = String(pan).trim().toUpperCase();
+      if (isAdminOperator || isEmployeeRole) {
+        if (cleanPan.length >= 6) {
+          return 'XXXXXX' + cleanPan.slice(6);
+        }
+        return 'XXXXXX';
+      }
+      return cleanPan;
+    };
+
+    const formatBankAppNumber = (bankAppNo, sysAppNo) => {
+      if (!bankAppNo || String(bankAppNo).trim() === '' || String(bankAppNo).toUpperCase() === 'N/A' || String(bankAppNo).toUpperCase() === 'NA') return 'NA';
+      if (sysAppNo && String(bankAppNo).trim() === String(sysAppNo).trim()) return 'NA';
+      return String(bankAppNo).trim();
+    };
+
+    const requestedBank = (req.query.bank || req.query.bank_id || '').toLowerCase();
+    let isHdfcExport = requestedBank.includes('hdfc') || (req.query.format || '').toLowerCase() === 'hdfc';
+    if (!isHdfcExport && (requestedBank === 'f0b5742d-f04d-4a91-b162-6009ddf6e345' || requestedBank === '1eacfa67-1187-48c7-adde-8a6edcfe9969')) {
+      isHdfcExport = true;
+    }
+    if (!isHdfcExport && isUuid(requestedBank)) {
+      try {
+        const { rows: bRows } = await query(`SELECT name, short_code FROM banks WHERE id = $1 LIMIT 1`, [requestedBank]);
+        if (bRows.length > 0) {
+          const bName = `${bRows[0].name || ''} ${bRows[0].short_code || ''}`.toLowerCase();
+          if (bName.includes('hdfc')) isHdfcExport = true;
+        }
+      } catch (e) {}
+    }
+    if (!isHdfcExport && ['PHYSICAL_CURABLE', 'DIGITAL_CURABLE', 'EMAIL_CURABLE', 'PHYSICAL CURABLE', 'DIGITAL CURABLE', 'EMAIL CURABLE'].some(r => userRole.includes(r) || userDesignation.includes(r))) {
+      isHdfcExport = true;
+    }
+    if (!isHdfcExport && rows.length > 0 && rows.every(r => (r.bank_name || '').toLowerCase().includes('hdfc') || (r.product_name || '').toLowerCase().includes('hdfc'))) {
+      isHdfcExport = true;
+    }
+
+    if (isHdfcExport) {
+      const hdfcHeaders = [
+        'Application no',
+        'Customer name',
+        'Mobile number',
+        'Email ID',
+        'Pan no',
+        'City',
+        'State',
+        'Pincode',
+        'Product name',
+        'Bank name',
+        'Process type',
+        'Reference/ code',
+        'Status',
+        'Incentive amount',
+        'Bank application no',
+        'IPA STAGE',
+        'Soft approval stage',
+        'KYC stage',
+        'KYC link',
+        'Dispatch status',
+        'Final status form bank',
+        'Final card approval',
+        'User remark',
+        'Bank remark',
+        'Cureble stage',
+        'Primary code',
+        'Secondary code',
+        'Cureble type',
+        'Cureble operator code',
+        'Salas operator code',
+        'Remark opretor code',
+        'Decline reason',
+        'Created date'
+      ];
+
+      const formatCsvField = (val) => {
+        if (val === null || val === undefined) return '""';
+        return `"${String(val).replace(/[\r\n]+/g, ' ').replace(/"/g, '""')}"`;
+      };
+
+      const hdfcLines = [hdfcHeaders.map(formatCsvField).join(',')];
+      const hdfcRows = rows.filter(r => (r.bank_name || '').toLowerCase().includes('hdfc') || (r.product_name || '').toLowerCase().includes('hdfc'));
+
+      for (const row of (hdfcRows.length > 0 ? hdfcRows : rows)) {
+        const mobVal = hideCustomerMobile ? 'REDACTED' : (row.customer_mobile || '');
+        const panVal = formatPanNumber(row.pan_number);
+        const bankAppNoVal = formatBankAppNumber(row.bank_application_number, row.app_number);
+        const vkycLink = (row.vkyc_url && String(row.vkyc_url).trim() !== '' && String(row.vkyc_url).toUpperCase() !== 'N/A') ? row.vkyc_url : 'NA';
+        const finalStatus = (row.final_status && String(row.final_status).trim() !== '' && String(row.final_status).toUpperCase() !== 'N/A') ? row.final_status : (row.bank_current_lead_status || 'NA');
+        const userRemarkClean = (row.user_remark && String(row.user_remark).trim() !== '' && String(row.user_remark).toUpperCase() !== 'N/A' && String(row.user_remark).toUpperCase() !== 'NA') ? String(row.user_remark).trim() : 'NA';
+        const rawBankClean = (row.bank_remark && String(row.bank_remark).trim() !== '' && String(row.bank_remark).toUpperCase() !== 'N/A' && String(row.bank_remark).toUpperCase() !== 'NA') ? String(row.bank_remark).trim() : 'NA';
+        const userRemark = userRemarkClean;
+        const bankRemark = userRemarkClean !== 'NA' ? userRemarkClean : rawBankClean;
+        const declineReason = (row.decline_reason && String(row.decline_reason).trim() !== '' && String(row.decline_reason).toUpperCase() !== 'N/A') ? row.decline_reason : 'NA';
+
+        const rowValues = [
+          formatCsvField(row.app_number || ''),
+          formatCsvField(row.customer_name || 'N/A'),
+          formatCsvField(mobVal),
+          formatCsvField(row.customer_email || 'N/A'),
+          formatCsvField(panVal),
+          formatCsvField(row.city || 'N/A'),
+          formatCsvField(row.state || 'N/A'),
+          formatCsvField(row.pincode || 'N/A'),
+          formatCsvField(row.product_name || 'N/A'),
+          formatCsvField(row.bank_name || 'HDFC Bank'),
+          formatCsvField((row.process_by || 'Direct Link').replace(/_/g, ' ')),
+          formatCsvField(row.submitted_by_name || 'N/A'),
+          formatCsvField((row.status || 'pending').replace(/_/g, ' ')),
+          formatCsvField(row.incentive_amount ?? row.commission_amount ?? 0),
+          formatCsvField(bankAppNoVal),
+          formatCsvField(row.ipa_stage || 'NA'),
+          formatCsvField(row.soft_approval_stage || row.soft_approval_status || 'NA'),
+          formatCsvField(row.kyc_stage || row.vkyc_stage || 'NA'),
+          formatCsvField(vkycLink),
+          formatCsvField(row.dispatch_status || 'NA'),
+          formatCsvField(finalStatus),
+          formatCsvField(row.final_card_approval || 'NA'),
+          formatCsvField(userRemark),
+          formatCsvField(bankRemark),
+          formatCsvField(row.cureble_stage || 'NA'),
+          formatCsvField(row.primary_code || 'NA'),
+          formatCsvField(row.secondary_code || 'NA'),
+          formatCsvField(row.cureble_type || 'NA'),
+          formatCsvField(row.cureble_operator_code || 'NA'),
+          formatCsvField(row.salas_operator_code || row.sales_operator_code || 'NA'),
+          formatCsvField(row.remark_opretor_code || row.remark_operator_code || 'NA'),
+          formatCsvField(declineReason),
+          formatCsvField(row.created_at ? new Date(row.created_at).toLocaleDateString('en-IN') : 'N/A')
+        ];
+        hdfcLines.push(rowValues.join(','));
+      }
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename=hdfc_gharkapaisa_dump_${Date.now()}.csv`);
+      return res.send(hdfcLines.join('\n'));
+    }
+
+    for (const row of rows) {
+      const mobVal = hideCustomerMobile ? 'REDACTED' : (row.customer_mobile || '');
+      const panVal = formatPanNumber(row.pan_number);
+      const bankAppNoVal = formatBankAppNumber(row.bank_application_number, row.app_number);
+
+      const rawBankStr = `${row.bank_name || ''} ${row.product_name || ''}`.toLowerCase();
+      const isSbiRec = rawBankStr.includes('sbi') || rawBankStr.includes('state bank') || (row.appcode_status && row.appcode_status !== 'NA') || (row.iqa_stage && row.iqa_stage !== 'NA') || (row.dispatch_status && row.dispatch_status !== 'NA');
+      const isHdfcRec = rawBankStr.includes('hdfc') || rawBankStr.includes('tata') || (row.bank_current_lead_status && row.bank_current_lead_status !== 'NA') || (row.eligible_reqd && row.eligible_reqd !== 'NA');
+
+      // SBI-exclusive remark & final form fields
+      const appcodeStatus = isSbiRec ? (row.appcode_status || 'NA') : 'NA';
+      const softApprovalStatus = isSbiRec ? (row.soft_approval_status || 'NA') : 'NA';
+      const iqaStage = isSbiRec ? (row.iqa_stage || 'NA') : 'NA';
+      const dispatchStatus = isSbiRec ? (row.dispatch_status || 'NA') : 'NA';
+      const appFileGen = isSbiRec ? (row.app_file_generated || 'NA') : 'NA';
+
+      // HDFC-exclusive remark & final form fields
+      const bankCurrentLeadStatus = isHdfcRec ? (row.bank_current_lead_status || 'NA') : 'NA';
+
+      const rawVkyc = row.vkyc_stage || '';
+      const vkycStage = (isSbiRec || isHdfcRec) ? (rawVkyc || 'NA') : (rawVkyc || 'NA');
+      const vkycLink = (row.vkyc_url && String(row.vkyc_url).trim() !== '' && String(row.vkyc_url).toUpperCase() !== 'N/A') ? row.vkyc_url : 'NA';
+      
+      const finalStatus = (row.final_status && String(row.final_status).trim() !== '' && String(row.final_status).toUpperCase() !== 'N/A') ? String(row.final_status).replace(/"/g, '""') : 'NA';
+      const rawUserClean = (row.user_remark && String(row.user_remark).trim() !== '' && String(row.user_remark).toUpperCase() !== 'N/A' && String(row.user_remark).toUpperCase() !== 'NA') ? String(row.user_remark).trim() : '';
+      const rawBankClean = (row.bank_remark && String(row.bank_remark).trim() !== '' && String(row.bank_remark).toUpperCase() !== 'N/A' && String(row.bank_remark).toUpperCase() !== 'NA') ? String(row.bank_remark).trim() : '';
+      const effectiveBankRem = rawUserClean || rawBankClean || 'NA';
+      const bankRemark = String(effectiveBankRem).replace(/"/g, '""');
+      const declineReason = (row.decline_reason && String(row.decline_reason).trim() !== '' && String(row.decline_reason).toUpperCase() !== 'N/A') ? String(row.decline_reason).replace(/"/g, '""') : 'NA';
+      const eligibleReqd = (row.eligible_reqd && String(row.eligible_reqd).trim() !== '' && String(row.eligible_reqd).toUpperCase() !== 'N/A') ? String(row.eligible_reqd).replace(/"/g, '""') : 'NA';
+
+      const rowValues = [
+        `"${(row.app_number || '').replace(/"/g, '""')}"`,
+        `"${(row.customer_name || '').replace(/"/g, '""')}"`,
+        `"${mobVal}"`,
+        `"${(row.customer_email || '').replace(/"/g, '""')}"`,
+        `"${panVal.replace(/"/g, '""')}"`,
+        `"${(row.city || '').replace(/"/g, '""')}"`,
+        `"${(row.state || '').replace(/"/g, '""')}"`,
+        `"${(row.pincode || '').replace(/"/g, '""')}"`,
+        `"${(row.submitted_by_name || '').replace(/"/g, '""')}"`,
+        `"${(row.product_name || '').replace(/"/g, '""')}"`,
+        `"${(row.category || '').replace(/"/g, '""')}"`,
+        `"${(row.bank_name || '').replace(/"/g, '""')}"`,
+        `"${(row.process_by || '').replace(/"/g, '""')}"`,
+        `"${(row.status || '').replace(/"/g, '""')}"`,
+        `"${(row.commission_status || '').replace(/"/g, '""')}"`,
+        `"₹${row.commission_amount || 0}"`,
+        `"${appcodeStatus.replace(/"/g, '""')}"`,
+        `"${softApprovalStatus.replace(/"/g, '""')}"`,
+        `"${iqaStage.replace(/"/g, '""')}"`,
+        `"${bankAppNoVal.replace(/"/g, '""')}"`,
+        `"${vkycStage.replace(/"/g, '""')}"`,
+        `"${vkycLink.replace(/"/g, '""')}"`,
+        `"${dispatchStatus.replace(/"/g, '""')}"`,
+        `"${bankCurrentLeadStatus.replace(/"/g, '""')}"`,
+        `"${finalStatus.replace(/"/g, '""')}"`,
+        `"${appFileGen.replace(/"/g, '""')}"`,
+        `"${bankRemark}"`,
+        `"${declineReason}"`,
+        `"${eligibleReqd.replace(/"/g, '""')}"`,
+        `"₹${row.approved_amount || 0}"`
+      ];
+
+      if (isAuthorizedForOpCodesAndReQd) {
+        const reqdDateStr = row.requery_date ? new Date(row.requery_date).toISOString().split('T')[0] : 'NA';
+        const salesOpCode = row.sales_operator_code || 'NA';
+        const panCheckerOpCode = row.pan_checker_code || 'NA';
+        const remarkOpCode = row.remark_operator_code || 'NA';
+
+        rowValues.push(
+          `"${reqdDateStr.replace(/"/g, '""')}"`,
+          `"${salesOpCode.replace(/"/g, '""')}"`,
+          `"${panCheckerOpCode.replace(/"/g, '""')}"`,
+          `"${remarkOpCode.replace(/"/g, '""')}"`
+        );
+      }
+
+      rowValues.push(`"${row.created_at ? new Date(row.created_at).toISOString() : ''}"`);
+
+      csvLines.push(rowValues.join(','));
+    }
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=applications_export_${Date.now()}.csv`);
+    return res.send(csvLines.join('\n'));
+  } catch (err) {
+    next(err);
+  }
+};
+
+const updateApplicationDetails = async (req, res, next) => {
+  if (req.body && (req.body.claim_request === true || req.body.action === 'claim_request')) {
+    return claimApplicationRequest(req, res, next);
+  }
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const {
+      bank_application_number,
+      bank_ref_number,
+      vkyc_status,
+      vkyc_url,
+      salary_slip_url,
+      pan_card_url,
+      monthly_salary,
+      pan_number,
+      status,
+      remarks,
+      metadata,
+      full_name,
+      customer_name,
+      mobile,
+      customer_mobile,
+      email,
+      customer_email,
+      pincode,
+      city,
+      state,
+      bank_id,
+      product_id,
+      loan_amount,
+      dob,
+      employment_type,
+      employer,
+      company_name,
+      designation,
+      mother_name,
+      address1,
+      address2,
+      landmark,
+      address,
+      appcode_status,
+      soft_approval_status,
+      vkyc_stage,
+      iqa_stage,
+      dispatch_status,
+      bank_remark,
+      user_remark,
+      notes,
+      user_notes,
+      final_status,
+      app_file_generated,
+      appfile_generated,
+      decline_reason,
+      eligible_reqd,
+      approved_amount,
+      ipa_stage,
+      kyc_stage,
+      income_details,
+      mail_status,
+      card_approval_stage,
+      digital_card_issued,
+      pan_check,
+      bank_current_lead_status,
+      bank_lead_status,
+      requery_date,
+      re_query_date,
+      bank_smart_emi_offer,
+      bank_smart_emi_tenure,
+      disbursed_smart_emi,
+      disbursed_smart_emi_tenure,
+      smart_emi_offer_status,
+      final_smart_emi_disburse,
+      final_tenure,
+      offer_decline_reason,
+      eligible_for_incentive,
+      insta_jumbo_offer,
+      customer_loan_offer,
+      customer_loan_type,
+      offer_tenure,
+      disbursed_amount,
+      disbursement_amount,
+      disbursed_tenure,
+      disbursement_tenure,
+      los_no,
+      final_loan_disbursed,
+      final_loan_tenure,
+      final_bank_stage,
+      disbursement_completed,
+      disbursement_date,
+      disbursal_date,
+      decline_code,
+      decline_description
+    } = req.body;
+
+    const effectiveInstaJumboOffer = insta_jumbo_offer !== undefined ? insta_jumbo_offer : undefined;
+    const effectiveCustomerLoanType = customer_loan_type !== undefined ? customer_loan_type : customer_loan_offer;
+    const effectiveOfferTenure = offer_tenure !== undefined ? offer_tenure : undefined;
+    const effectiveDisbursementAmount = disbursement_amount !== undefined ? disbursement_amount : disbursed_amount;
+    const effectiveDisbursementTenure = disbursement_tenure !== undefined ? disbursement_tenure : disbursed_tenure;
+    const resolvedBankAppNumber = (
+      (bank_application_number !== undefined && bank_application_number !== null && String(bank_application_number).trim() !== '') ? String(bank_application_number).trim() :
+      (bank_ref_number !== undefined && bank_ref_number !== null && String(bank_ref_number).trim() !== '') ? String(bank_ref_number).trim() :
+      (los_no !== undefined && los_no !== null && String(los_no).trim() !== '') ? String(los_no).trim() :
+      ''
+    );
+    const effectiveLosNo = resolvedBankAppNumber;
+    const effectiveFinalBankStage = final_bank_stage !== undefined ? final_bank_stage : undefined;
+    const effectiveDisbursementCompleted = disbursement_completed !== undefined ? disbursement_completed : undefined;
+    const effectiveDisbursementDate = (disbursement_date !== undefined ? disbursement_date : disbursal_date) || undefined;
+    const parsedDisbursementDate = parseDateToIso(effectiveDisbursementDate);
+
+    let { rows: [app] } = await client.query(
+      `SELECT * FROM applications 
+       WHERE id::text = $1 OR app_number = $1 OR lead_id::text = $1 
+          OR tracking_token = $1 OR bank_application_number = $1 OR bank_ref_number = $1`,
+      [id]
+    );
+    let isLeadOnly = false;
+    if (!app) {
+      const { rows: [leadRec] } = await client.query(
+        `SELECT * FROM leads 
+         WHERE id::text = $1 OR lead_number = $1 OR application_id::text = $1 OR mobile = $1`,
+        [id]
+      );
+      if (leadRec) {
+        app = leadRec;
+        isLeadOnly = true;
+      }
+    }
+    if (!app) {
+      const { rows: [pdRec] } = await client.query(
+        `SELECT application_id FROM physical_application_details 
+         WHERE id::text = $1 OR bank_application_number = $1 OR bank_ref_number = $1 LIMIT 1`,
+        [id]
+      ).catch(() => ({ rows: [] }));
+      if (pdRec?.application_id) {
+        const { rows: [appFromPd] } = await client.query(`SELECT * FROM applications WHERE id::text = $1 OR app_number = $1`, [pdRec.application_id]);
+        if (appFromPd) app = appFromPd;
+      }
+    }
+    if (!app) {
+      const { rows: [pslRec] } = await client.query(
+        `SELECT application_id FROM partner_share_links WHERE tracking_token = $1 LIMIT 1`,
+        [id]
+      );
+      if (pslRec?.application_id) {
+        const { rows: [appFromPsl] } = await client.query(`SELECT * FROM applications WHERE id::text = $1 OR app_number = $1`, [pslRec.application_id]);
+        if (appFromPsl) app = appFromPsl;
+      }
+    }
+
+    if (!app) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Application or Lead record not found');
+    }
+
+    const userRole = (req.user?.role || '').toUpperCase();
+    if (['PARTNER', 'TEAM_MEMBER'].includes(userRole)) {
+      const { rows: [partner] } = await client.query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
+      if (!partner || app.partner_id !== partner.id) {
+        await client.query('ROLLBACK');
+        return forbidden(res, 'Access denied. You do not own this application.');
+      }
+    }
+
+    const userDesignation = (req.user?.designation || '').toUpperCase();
+    const isPanCheckerUser = ['PAN CHECKER', 'PAN_CHECKER'].includes(userDesignation) || ['PAN CHECKER', 'PAN_CHECKER'].includes(userRole);
+    const isOpsOrAdmin = ['SUPER_ADMIN', 'ADMIN', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'OPERATIONS_HEAD', 'OPERATIONAL_HEAD', 'EMPLOYEE', 'TELECALLER', 'SALES_EXECUTIVE', 'MANAGER', 'TEAM_LEADER', 'FIELD_OPERATOR', 'PARTNER'].includes(userRole) || ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR'].includes(userDesignation) || !!req.user;
+
+    const isSalesExecUserLocal = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+    if (isSalesExecUserLocal && app.sales_claimed_by && app.sales_claimed_by !== req.user?.id && !['ADMIN', 'SUPER_ADMIN'].includes(userRole)) {
+      await client.query('ROLLBACK');
+      return forbidden(res, `This application has been claimed by another Administrative Sales Operator (${app.sales_claimed_by_name || 'Operator'}). You are not authorized to modify it.`);
+    }
+
+    const isRestrictedAdminStatus = ['approved', 'rejected', 'disbursed', 'commission_released', 'super_admin_approved'].includes((status || '').toLowerCase());
+    if (['PARTNER', 'TEAM_MEMBER'].includes(userRole) && status && status !== app.status && isRestrictedAdminStatus) {
+      await client.query('ROLLBACK');
+      return error(res, 'Marking application status as Approved or Rejected is reserved for Super Admin and Operations Head.', 403);
+    }
+    const isRestrictedApprovalStatus = ['approved', 'disbursed', 'commission_released', 'super_admin_approved'].includes((status || '').toLowerCase());
+    if (status && status !== app.status && isRestrictedApprovalStatus && !['SUPER_ADMIN', 'ADMIN', 'OPERATIONS_HEAD', 'OPERATIONAL_HEAD'].includes(userRole)) {
+      await client.query('ROLLBACK');
+      return error(res, 'Marking application status as Approved is reserved for Super Admin and Operations Head.', 403);
+    }
+    if (status === 'operational_verified' && status !== app.status && !isOpsOrAdmin) {
+      await client.query('ROLLBACK');
+      return error(res, 'Marking application status as Operational Verified is reserved for Administrative Operators.', 403);
+    }
+
+    const appNumToSave = (resolvedBankAppNumber || effectiveLosNo || bank_application_number || bank_ref_number || '').trim();
+    const employerToSave = employer || company_name || null;
+    const parsedDob = parseDobToIso(dob);
+
+    // Support dual decline codes: primary_decline_code (governs curable routing) and secondary_decline_code
+    const rawPrimaryDeclineCode = req.body.primary_decline_code !== undefined ? req.body.primary_decline_code : decline_code;
+    const rawSecondaryDeclineCode = req.body.secondary_decline_code !== undefined ? req.body.secondary_decline_code : undefined;
+    const rawPrimaryDeclineDesc = req.body.primary_decline_description !== undefined ? req.body.primary_decline_description : decline_description;
+    const rawSecondaryDeclineDesc = req.body.secondary_decline_description !== undefined ? req.body.secondary_decline_description : undefined;
+
+    const effectiveDeclineCodeInput = (rawPrimaryDeclineCode !== undefined && rawPrimaryDeclineCode !== null) ? String(rawPrimaryDeclineCode).trim() : (req.body.decline_code ? String(req.body.decline_code).trim() : undefined);
+    const effectiveDeclineDescInput = (rawPrimaryDeclineDesc !== undefined && rawPrimaryDeclineDesc !== null) ? String(rawPrimaryDeclineDesc).trim() : (req.body.decline_description ? String(req.body.decline_description).trim() : undefined);
+
+    let effectiveSecondaryDeclineCode = (rawSecondaryDeclineCode !== undefined && rawSecondaryDeclineCode !== null) ? String(rawSecondaryDeclineCode).trim() : undefined;
+    let derivedSecondaryCuringDesignation = undefined;
+    let derivedSecondaryDeclineDesc = (rawSecondaryDeclineDesc !== undefined && rawSecondaryDeclineDesc !== null) ? String(rawSecondaryDeclineDesc).trim() : undefined;
+
+    if (effectiveSecondaryDeclineCode !== undefined) {
+      if (effectiveSecondaryDeclineCode.toUpperCase() === 'NONE' || effectiveSecondaryDeclineCode === '') {
+        effectiveSecondaryDeclineCode = 'None';
+        derivedSecondaryCuringDesignation = null;
+        derivedSecondaryDeclineDesc = 'None';
+      } else {
+        const secInfo = getHdfcDeclineCodeInfo(effectiveSecondaryDeclineCode);
+        if (secInfo) {
+          effectiveSecondaryDeclineCode = secInfo.code;
+          derivedSecondaryCuringDesignation = secInfo.designation;
+          derivedSecondaryDeclineDesc = derivedSecondaryDeclineDesc || secInfo.description || secInfo.type;
+        }
+      }
+    }
+
+    let pRow = null;
+    if (app && app.product_id) {
+      const { rows: [p] } = await client.query(`SELECT id, name, category, sub_category, bank_id FROM products WHERE id = $1`, [app.product_id]).catch(() => ({ rows: [] }));
+      pRow = p;
+    }
+    let bRow = null;
+    const effectiveBankId = app?.bank_id || pRow?.bank_id;
+    if (effectiveBankId) {
+      const { rows: [b] } = await client.query(`SELECT id, name, short_code FROM banks WHERE id = $1`, [effectiveBankId]).catch(() => ({ rows: [] }));
+      bRow = b;
+    }
+    const appWithBank = {
+      ...app,
+      bank_id: effectiveBankId,
+      bank_name: bRow?.name || app?.bank_name,
+      bank_code: bRow?.short_code || app?.bank_code,
+      product_name: pRow?.name || app?.product_name
+    };
+
+    const isHdfcCC = isHdfcCreditCardApp(appWithBank, pRow);
+
+    const isDeclinedStatus = (
+      String(final_status || '').toLowerCase().includes('decline') ||
+      String(final_status || '').toLowerCase().includes('reject') ||
+      String(status || '').toLowerCase().includes('decline') ||
+      String(status || '').toLowerCase().includes('reject')
+    );
+
+    let effectiveDeclineCode = effectiveDeclineCodeInput;
+    let derivedCuringDesignation = undefined;
+    let derivedDeclineDesc = effectiveDeclineDescInput;
+
+    if (effectiveDeclineCode) {
+      if (String(effectiveDeclineCode).trim().toUpperCase() === 'NONE') {
+        effectiveDeclineCode = 'None';
+        derivedCuringDesignation = null;
+        derivedDeclineDesc = 'None';
+        if (isHdfcCC && isDeclinedStatus && String(final_status || '').toLowerCase() === 'decline') {
+          await client.query('ROLLBACK');
+          return error(res, 'Please select a valid Primary decline code (such as CIBIL decline or an HDFC decline code) when marking final approval status as Decline for HDFC Credit Card.', 400);
+        }
+      } else {
+        const declineInfo = getHdfcDeclineCodeInfo(effectiveDeclineCode);
+        if (declineInfo) {
+          effectiveDeclineCode = declineInfo.code;
+          derivedCuringDesignation = declineInfo.designation;
+          derivedDeclineDesc = derivedDeclineDesc || declineInfo.description || declineInfo.type;
+        } else if (isHdfcCC) {
+          await client.query('ROLLBACK');
+          return error(res, `Invalid HDFC Primary decline code: "${effectiveDeclineCode}". Please select a valid decline code from the list.`, 400);
+        }
+      }
+    } else if (isHdfcCC && isDeclinedStatus && String(final_status || '').toLowerCase() === 'decline') {
+      await client.query('ROLLBACK');
+      return error(res, 'Primary decline code is required when marking final approval status as Decline for HDFC Credit Card.', 400);
+    }
+
+    if (isLeadOnly) {
+      const { rows: [updatedLead] } = await client.query(`
+        UPDATE leads SET
+          vkyc_status = COALESCE(NULLIF($1, ''), vkyc_status),
+          vkyc_url = COALESCE(NULLIF($2, ''), vkyc_url),
+          status = COALESCE(NULLIF($3, ''), status::text),
+          product_id = COALESCE($4, product_id),
+          customer_name = COALESCE(NULLIF($5, ''), customer_name),
+          city = COALESCE(NULLIF($6, ''), city),
+          updated_at = NOW()
+        WHERE id = $7
+        RETURNING *
+      `, [vkyc_status || null, vkyc_url || null, status || null, product_id || null, full_name || null, city || null, app.id]);
+
+      if (app.mobile || app.customer_id) {
+        await client.query(`
+          UPDATE customers SET
+            full_name = COALESCE(NULLIF($1, ''), full_name),
+            mobile = COALESCE(NULLIF($2, ''), mobile),
+            email = COALESCE(NULLIF($3, ''), email),
+            dob = COALESCE(NULLIF($4, '')::date, dob),
+            pan_number = COALESCE(NULLIF($5, ''), pan_number),
+            monthly_income = COALESCE($6, monthly_income),
+            city = COALESCE(NULLIF($7, ''), city),
+            state = COALESCE(NULLIF($8, ''), state),
+            pincode = COALESCE(NULLIF($9, ''), pincode),
+            employment_type = COALESCE(NULLIF($10, ''), employment_type),
+            employer = COALESCE(NULLIF($11, ''), employer),
+            updated_at = NOW()
+          WHERE id = $12 OR mobile = $13
+        `, [
+          full_name || null,
+          mobile || null,
+          email || null,
+          parsedDob || null,
+          pan_number || null,
+          monthly_salary ? parseFloat(monthly_salary) : null,
+          city || null,
+          state || null,
+          pincode || null,
+          employment_type || null,
+          employerToSave,
+          app.customer_id,
+          app.mobile
+        ]);
+      }
+
+      await client.query('COMMIT');
+      return success(res, updatedLead, 'Lead details updated successfully');
+    }
+
+    // 1. Update applications table
+    let targetStatus = status;
+    if (targetStatus === 'bank_form_submitted' || targetStatus === 'under_review') {
+      targetStatus = 'operational_verified';
+    } else if (targetStatus === 'submitted') {
+      targetStatus = 'details_submitted';
+    }
+    const cleanStr = (val) => {
+      if (val === undefined || val === null) return null;
+      const s = String(val).trim();
+      if (!s || s.toLowerCase() === 'null' || s.toLowerCase() === 'undefined') return null;
+      return s;
+    };
+
+    const rawUserRemInput = user_remark !== undefined ? user_remark : (req.body.user_remark !== undefined ? req.body.user_remark : (req.body.user_notes || req.body.notes || notes || user_notes));
+    const rawBankRemInput = bank_remark !== undefined ? bank_remark : req.body.bank_remark;
+
+    const trimmedUser = rawUserRemInput !== undefined && rawUserRemInput !== null ? String(rawUserRemInput).trim() : null;
+    const trimmedBank = rawBankRemInput !== undefined && rawBankRemInput !== null ? String(rawBankRemInput).trim() : null;
+
+    let syncedRemarkToSave = null;
+    if (trimmedUser !== null && trimmedUser !== '' && trimmedUser.toUpperCase() !== 'NA' && trimmedUser.toUpperCase() !== 'N/A') {
+      syncedRemarkToSave = trimmedUser;
+    } else if (trimmedBank !== null && trimmedBank !== '' && trimmedBank.toUpperCase() !== 'NA' && trimmedBank.toUpperCase() !== 'N/A') {
+      syncedRemarkToSave = trimmedBank;
+    } else if (trimmedUser !== null || trimmedBank !== null) {
+      syncedRemarkToSave = 'NA';
+    }
+
+    const bankRemarkToSave = syncedRemarkToSave !== null ? syncedRemarkToSave : cleanStr(bank_remark || req.body.bank_remark);
+    const userRemarkToSave = syncedRemarkToSave !== null ? (syncedRemarkToSave !== 'NA' ? syncedRemarkToSave : '') : cleanStr(user_remark || req.body.user_remark || req.body.user_notes || req.body.notes || notes || user_notes);
+
+    const { rows: [updatedApp] } = await client.query(`
+      UPDATE applications SET
+        bank_application_number = COALESCE(NULLIF($1, ''), bank_application_number),
+        bank_ref_number = COALESCE(NULLIF($1, ''), bank_ref_number),
+        vkyc_status = COALESCE(NULLIF($2, ''), vkyc_status),
+        vkyc_url = COALESCE(NULLIF($3, ''), vkyc_url),
+        salary_slip_url = COALESCE(NULLIF($4, ''), salary_slip_url),
+        pan_card_url = COALESCE(NULLIF($5, ''), pan_card_url),
+        status = CASE WHEN $6::text IS NOT NULL AND $6::text != '' AND EXISTS (SELECT 1 FROM pg_enum JOIN pg_type ON pg_enum.enumtypid = pg_type.oid WHERE pg_type.typname = 'application_status' AND enumlabel = $6::text) THEN $6::text::application_status ELSE status END,
+        remarks = COALESCE(NULLIF($7, ''), remarks),
+        bank_id = COALESCE($8, bank_id),
+        product_id = COALESCE($9, product_id),
+        loan_amount = COALESCE($10, loan_amount),
+        metadata = COALESCE($11::jsonb, metadata),
+        soft_approval_status = COALESCE(NULLIF($12, ''), soft_approval_status),
+        vkyc_stage = COALESCE(NULLIF($13, ''), vkyc_stage),
+        iqa_stage = COALESCE(NULLIF($14, ''), iqa_stage),
+        dispatch_status = COALESCE(NULLIF($15, ''), dispatch_status),
+        bank_remark = COALESCE(NULLIF($16, ''), bank_remark),
+        final_status = COALESCE(NULLIF($17, ''), final_status),
+        decline_reason = COALESCE(NULLIF($18, ''), decline_reason),
+        eligible_reqd = COALESCE(NULLIF($19, ''), eligible_reqd),
+        approved_amount = COALESCE($20, approved_amount),
+        city = COALESCE(NULLIF($21, ''), city),
+        state = COALESCE(NULLIF($22, ''), state),
+        pincode = COALESCE(NULLIF($23, ''), pincode),
+        mother_name = COALESCE(NULLIF($24, ''), mother_name),
+        customer_name = COALESCE(NULLIF($25, ''), customer_name),
+        customer_mobile = COALESCE(NULLIF($26, ''), customer_mobile),
+        customer_email = COALESCE(NULLIF($27, ''), customer_email),
+        company_name = COALESCE(NULLIF($28, ''), company_name),
+        designation = COALESCE(NULLIF($29, ''), designation),
+        address1 = COALESCE(NULLIF($30, ''), address1),
+        address2 = COALESCE(NULLIF($31, ''), address2),
+        landmark = COALESCE(NULLIF($32, ''), landmark),
+        address = COALESCE(NULLIF($33, ''), address),
+        appcode_status = COALESCE(NULLIF($35, ''), appcode_status),
+        user_remark = COALESCE(NULLIF($36, ''), user_remark),
+        notes = COALESCE(NULLIF($36, ''), notes),
+        app_file_generated = COALESCE(NULLIF($37, ''), app_file_generated),
+        ipa_stage = COALESCE(NULLIF($38, ''), ipa_stage),
+        kyc_stage = COALESCE(NULLIF($39, ''), kyc_stage),
+        income_details = COALESCE(NULLIF($42, ''), income_details),
+        mail_status = COALESCE(NULLIF($43, ''), mail_status),
+        card_approval_stage = COALESCE(NULLIF($40, ''), card_approval_stage),
+        digital_card_issued = COALESCE(NULLIF($41, ''), digital_card_issued),
+        pan_check = COALESCE(NULLIF($44, ''), pan_check),
+        bank_current_lead_status = COALESCE(NULLIF($45, ''), bank_current_lead_status),
+        requery_date = COALESCE(NULLIF($46, '')::date, requery_date),
+        digital_journey_url = COALESCE(NULLIF($47, ''), digital_journey_url),
+        bank_smart_emi_offer = COALESCE(NULLIF($48, ''), bank_smart_emi_offer),
+        bank_smart_emi_tenure = COALESCE(NULLIF($49, ''), bank_smart_emi_tenure),
+        disbursed_smart_emi = COALESCE(NULLIF($50, ''), disbursed_smart_emi),
+        disbursed_smart_emi_tenure = COALESCE(NULLIF($51, ''), disbursed_smart_emi_tenure),
+        smart_emi_offer_status = COALESCE(NULLIF($52, ''), smart_emi_offer_status),
+        final_smart_emi_disburse = COALESCE(NULLIF($53, ''), final_smart_emi_disburse),
+        final_tenure = COALESCE(NULLIF($54, ''), final_tenure),
+        offer_decline_reason = COALESCE(NULLIF($55, ''), offer_decline_reason),
+        eligible_for_incentive = COALESCE(NULLIF($56, ''), eligible_for_incentive),
+        insta_jumbo_offer = COALESCE(NULLIF($57, ''), insta_jumbo_offer),
+        customer_loan_offer = COALESCE(NULLIF($58, ''), customer_loan_offer),
+        customer_loan_type = COALESCE(NULLIF($58, ''), customer_loan_type),
+        offer_tenure = COALESCE(NULLIF($59, ''), offer_tenure),
+        disbursed_amount = COALESCE(NULLIF($60, ''), disbursed_amount),
+        disbursement_amount = COALESCE(NULLIF($60, ''), disbursement_amount),
+        disbursed_tenure = COALESCE(NULLIF($61, ''), disbursed_tenure),
+        disbursement_tenure = COALESCE(NULLIF($61, ''), disbursement_tenure),
+        final_loan_disbursed = COALESCE(NULLIF($62, ''), final_loan_disbursed),
+        final_loan_tenure = COALESCE(NULLIF($63, ''), final_loan_tenure),
+        final_bank_stage = COALESCE(NULLIF($64, ''), final_bank_stage),
+        disbursement_completed = COALESCE(NULLIF($65, ''), disbursement_completed),
+        disbursement_date = COALESCE(NULLIF($66, '')::date, disbursement_date),
+        disbursal_date = COALESCE(NULLIF($66, '')::date, disbursal_date),
+        los_no = COALESCE(NULLIF($1, ''), los_no),
+        updated_at = NOW()
+      WHERE id = $34
+      RETURNING *
+    `, [
+      appNumToSave || req.body.bank_application_number || req.body.bank_ref_number || req.body.los_no || null,
+      cleanStr(vkyc_status || req.body.vkyc_status),
+      cleanStr(vkyc_url || req.body.vkyc_url),
+      salary_slip_url || null,
+      pan_card_url || null,
+      targetStatus,
+      cleanStr(remarks || req.body.bank_remark),
+      bank_id || null,
+      product_id || null,
+      loan_amount ? parseFloat(loan_amount) : null,
+      metadata ? JSON.stringify(metadata) : null,
+      cleanStr(soft_approval_status || req.body.soft_approval_status),
+      cleanStr(vkyc_stage || req.body.vkyc_stage),
+      cleanStr(iqa_stage || req.body.iqa_stage),
+      cleanStr(dispatch_status || req.body.dispatch_status),
+      bankRemarkToSave,
+      cleanStr(final_status || req.body.final_status),
+      cleanStr(decline_reason || req.body.decline_reason),
+      cleanStr(eligible_reqd || req.body.eligible_reqd),
+      approved_amount || (req.body.approved_amount ? parseFloat(req.body.approved_amount) : null),
+      cleanStr(city),
+      cleanStr(state),
+      cleanStr(pincode),
+      cleanStr(mother_name || req.body.mother_name),
+      cleanStr(full_name || customer_name),
+      cleanStr(mobile || customer_mobile),
+      cleanStr(email || customer_email),
+      cleanStr(company_name),
+      cleanStr(designation),
+      cleanStr(address1),
+      cleanStr(address2),
+      cleanStr(landmark),
+      cleanStr(address),
+      app.id,
+      cleanStr(appcode_status || req.body.appcode_status),
+      userRemarkToSave,
+      cleanStr(app_file_generated || appfile_generated || req.body.app_file_generated || req.body.appfile_generated),
+      cleanStr(ipa_stage || req.body.ipa_stage),
+      cleanStr(kyc_stage || req.body.kyc_stage),
+      cleanStr(card_approval_stage || req.body.card_approval_stage),
+      cleanStr(digital_card_issued || req.body.digital_card_issued),
+      cleanStr(income_details || req.body.income_details),
+      cleanStr(mail_status || req.body.mail_status),
+      cleanStr(pan_check || (isPanCheckerUser ? 'yes' : null)),
+      cleanStr(bank_current_lead_status || bank_lead_status || req.body.bank_current_lead_status || req.body.bank_lead_status),
+      cleanStr(requery_date || re_query_date || req.body.requery_date || req.body.re_query_date),
+      cleanStr(req.body.digital_journey_url || req.body.digital_link || req.body.redirect_url),
+      cleanStr(bank_smart_emi_offer),
+      cleanStr(bank_smart_emi_tenure),
+      cleanStr(disbursed_smart_emi),
+      cleanStr(disbursed_smart_emi_tenure),
+      cleanStr(smart_emi_offer_status),
+      cleanStr(final_smart_emi_disburse),
+      cleanStr(final_tenure),
+      cleanStr(offer_decline_reason),
+      cleanStr(eligible_for_incentive),
+      cleanStr(effectiveInstaJumboOffer !== undefined ? effectiveInstaJumboOffer : insta_jumbo_offer),
+      cleanStr(effectiveCustomerLoanType !== undefined ? effectiveCustomerLoanType : customer_loan_offer),
+      cleanStr(effectiveOfferTenure !== undefined ? effectiveOfferTenure : offer_tenure),
+      cleanStr(effectiveDisbursementAmount !== undefined ? effectiveDisbursementAmount : disbursed_amount),
+      cleanStr(effectiveDisbursementTenure !== undefined ? effectiveDisbursementTenure : disbursed_tenure),
+      cleanStr(final_loan_disbursed),
+      cleanStr(final_loan_tenure),
+      cleanStr(effectiveFinalBankStage !== undefined ? effectiveFinalBankStage : final_bank_stage),
+      cleanStr(effectiveDisbursementCompleted !== undefined ? effectiveDisbursementCompleted : disbursement_completed),
+      cleanStr(parsedDisbursementDate)
+    ]);
+
+    const currentOpCode = req.user?.employee_id || req.user?.user_code || req.user?.employee_code || req.user?.emp_code || req.user?.full_name || req.user?.email || req.user?.id;
+    const isPanCheckerUserLocal = ['PAN CHECKER', 'PAN_CHECKER'].includes(userDesignation) || ['PAN CHECKER', 'PAN_CHECKER'].includes(userRole);
+    const isRemarkOperatorUserLocal = ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userDesignation) || ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userRole);
+
+    let salesOpCodeToSave = isSalesExecUserLocal ? currentOpCode : null;
+    let panCheckerOpCodeToSave = isPanCheckerUserLocal ? currentOpCode : null;
+    let remarkOpCodeToSave = isRemarkOperatorUserLocal ? currentOpCode : null;
+    const canSaveBackendRemark = ['SUPER_ADMIN', 'ADMIN', 'OPERATIONAL_HEAD', 'OPERATIONS_HEAD', 'OPERATIONAL HEAD', 'OPERATIONS HEAD', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR'].includes(userRole) || ['SUPER_ADMIN', 'ADMIN', 'OPERATIONAL_HEAD', 'OPERATIONS_HEAD', 'OPERATIONAL HEAD', 'OPERATIONS HEAD', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR'].includes(userDesignation) || isSalesExecUserLocal;
+    let backendRemarkToSave = (req.body.backend_remark !== undefined && canSaveBackendRemark) ? req.body.backend_remark : null;
+
+    if (salesOpCodeToSave || panCheckerOpCodeToSave || remarkOpCodeToSave || backendRemarkToSave) {
+      try {
+        await client.query('SAVEPOINT op_code_sp');
+        await client.query(`
+          UPDATE applications SET
+            sales_operator_code = COALESCE($1, sales_operator_code),
+            pan_checker_code = COALESCE($2, pan_checker_code),
+            remark_operator_code = COALESCE($3, remark_operator_code),
+            backend_remark = COALESCE($4, backend_remark)
+          WHERE id = $5
+        `, [salesOpCodeToSave, panCheckerOpCodeToSave, remarkOpCodeToSave, backendRemarkToSave, app.id]);
+        await client.query('RELEASE SAVEPOINT op_code_sp');
+      } catch (opCodeErr) {
+        await client.query('ROLLBACK TO SAVEPOINT op_code_sp').catch(err => logger.warn('Silent catch warning:', err.message));
+        logger.warn('Failed to save operator codes:', opCodeErr.message);
+      }
+    }
+
+    if (effectiveDeclineCode !== undefined || derivedCuringDesignation !== undefined || effectiveSecondaryDeclineCode !== undefined) {
+      try {
+        await client.query('SAVEPOINT curing_sp');
+        const isNone = !effectiveDeclineCode || String(effectiveDeclineCode).trim().toUpperCase() === 'NONE';
+        const codeToSet = isNone ? 'None' : String(effectiveDeclineCode).trim();
+        const descToSet = isNone ? 'None' : (derivedDeclineDesc || null);
+        const curingToSet = isNone ? null : (derivedCuringDesignation || null);
+
+        const isSecNone = !effectiveSecondaryDeclineCode || String(effectiveSecondaryDeclineCode).trim().toUpperCase() === 'NONE';
+        const secCodeToSet = effectiveSecondaryDeclineCode !== undefined ? (isSecNone ? 'None' : String(effectiveSecondaryDeclineCode).trim()) : null;
+        const secDescToSet = effectiveSecondaryDeclineCode !== undefined ? (isSecNone ? 'None' : (derivedSecondaryDeclineDesc || null)) : null;
+        const secCuringToSet = effectiveSecondaryDeclineCode !== undefined ? (isSecNone ? null : (derivedSecondaryCuringDesignation || null)) : null;
+
+        try {
+          await client.query(`
+            UPDATE applications SET
+              decline_code = $1::varchar,
+              decline_description = $2::text,
+              curing_designation = $3::varchar,
+              primary_decline_code = $1::varchar,
+              primary_decline_description = $2::text,
+              primary_curing_designation = $3::varchar,
+              secondary_decline_code = CASE WHEN $4::text IS NOT NULL THEN $4::varchar ELSE secondary_decline_code END,
+              secondary_decline_description = CASE WHEN $4::text IS NOT NULL THEN $5::text ELSE secondary_decline_description END,
+              secondary_curing_designation = CASE WHEN $4::text IS NOT NULL THEN $6::varchar ELSE secondary_curing_designation END
+            WHERE id = $7
+          `, [codeToSet, descToSet, curingToSet, secCodeToSet, secDescToSet, secCuringToSet, app.id]);
+        } catch (updateErr) {
+          if (updateErr.code === '42703') {
+            await client.query('ROLLBACK TO SAVEPOINT curing_sp');
+            await client.query('SAVEPOINT curing_sp');
+            await client.query(`
+              UPDATE applications SET
+                decline_code = $1::varchar,
+                decline_description = $2::text,
+                curing_designation = $3::varchar
+              WHERE id = $4
+            `, [codeToSet, descToSet, curingToSet, app.id]);
+          } else {
+            throw updateErr;
+          }
+        }
+        await client.query('RELEASE SAVEPOINT curing_sp');
+      } catch (curingErr) {
+        await client.query('ROLLBACK TO SAVEPOINT curing_sp').catch(err => logger.warn('Silent catch warning:', err.message));
+        logger.warn(`Failed to update decline_code/curing_designation on applications: ${curingErr.message}`);
+      }
+    }
+
+    // 2. Update customer details if customer_id exists
+    if (app.customer_id) {
+      await client.query(`
+        UPDATE customers SET
+          full_name = COALESCE(NULLIF($1, ''), full_name),
+          mobile = COALESCE(NULLIF($2, ''), mobile),
+          email = COALESCE(NULLIF($3, ''), email),
+          dob = COALESCE(NULLIF($4, '')::date, dob),
+          pincode = COALESCE(NULLIF($5, ''), pincode),
+          city = COALESCE(NULLIF($6, ''), city),
+          state = COALESCE(NULLIF($7, ''), state),
+          pan_number = COALESCE(NULLIF($8, ''), pan_number),
+          monthly_income = COALESCE($9, monthly_income),
+          employment_type = COALESCE(NULLIF($10, ''), employment_type),
+          employer = COALESCE(NULLIF($11, ''), employer),
+          address1 = COALESCE(NULLIF($12, ''), address1),
+          address2 = COALESCE(NULLIF($13, ''), address2),
+          landmark = COALESCE(NULLIF($14, ''), landmark),
+          address = COALESCE(NULLIF($15, ''), address),
+          updated_at = NOW()
+        WHERE id = $16
+      `, [
+        full_name || customer_name || null,
+        mobile || customer_mobile || null,
+        email || customer_email || null,
+        parsedDob || null,
+        pincode || null,
+        city || null,
+        state || null,
+        pan_number || null,
+        monthly_salary ? parseFloat(monthly_salary) : null,
+        employment_type || null,
+        employerToSave,
+        address1 || null,
+        address2 || null,
+        landmark || null,
+        address || null,
+        app.customer_id
+      ]);
+    }
+
+    // Upsert physical_application_details record
+    try {
+      await client.query('SAVEPOINT phys_sp');
+      await client.query(`
+        INSERT INTO physical_application_details (
+          application_id,
+          aadhaar_linked_mobile,
+          pan_name,
+          dob,
+          pan_number,
+          personal_email,
+          company_name,
+          designation,
+          city,
+          state,
+          pincode,
+          mother_name,
+          bank_ref_number,
+          bank_application_number,
+          address1,
+          address2,
+          landmark,
+          flat_no,
+          sub_area,
+          appcode_status,
+          soft_approval_status,
+          vkyc_stage,
+          iqa_stage,
+          dispatch_status,
+          bank_remark,
+          final_status,
+          app_file_generated,
+          decline_reason,
+          eligible_reqd,
+          ipa_stage,
+          kyc_stage,
+          card_approval_stage,
+          vkyc_url,
+          user_remark,
+          income_details,
+          mail_status,
+          bank_smart_emi_offer,
+          bank_smart_emi_tenure,
+          disbursed_smart_emi,
+          disbursed_smart_emi_tenure,
+          smart_emi_offer_status,
+          final_smart_emi_disburse,
+          final_tenure,
+          offer_decline_reason,
+          eligible_for_incentive,
+          insta_jumbo_offer,
+          customer_loan_offer,
+          offer_tenure,
+          disbursed_amount,
+          disbursed_tenure,
+          final_loan_disbursed,
+          final_loan_tenure,
+          final_bank_stage,
+          disbursement_completed,
+          disbursement_date,
+          disbursal_date,
+          created_at,
+          updated_at
+        ) VALUES (
+          $16,
+          NULLIF($1, ''),
+          NULLIF($2, ''),
+          NULLIF($3, '')::date,
+          NULLIF($4, ''),
+          NULLIF($5, ''),
+          NULLIF($6, ''),
+          NULLIF($7, ''),
+          NULLIF($8, ''),
+          NULLIF($9, ''),
+          NULLIF($10, ''),
+          NULLIF($11, ''),
+          NULLIF($12, ''),
+          NULLIF($12, ''),
+          NULLIF($13, ''),
+          NULLIF($14, ''),
+          NULLIF($15, ''),
+          NULLIF($13, ''),
+          NULLIF($14, ''),
+          $17,
+          $18,
+          $19,
+          $20,
+          $21,
+          $22,
+          $23,
+          $24,
+          $25,
+          $26,
+          $27,
+          $28,
+          $29,
+          $30,
+          $31,
+          $32,
+          $33,
+          $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49,
+          $50, $51, NULLIF($52, '')::date, NULLIF($52, '')::date,
+          NOW(),
+          NOW()
+        ) ON CONFLICT (application_id) DO UPDATE SET
+          aadhaar_linked_mobile = COALESCE(EXCLUDED.aadhaar_linked_mobile, physical_application_details.aadhaar_linked_mobile),
+          pan_name = COALESCE(EXCLUDED.pan_name, physical_application_details.pan_name),
+          dob = COALESCE(EXCLUDED.dob, physical_application_details.dob),
+          pan_number = COALESCE(EXCLUDED.pan_number, physical_application_details.pan_number),
+          personal_email = COALESCE(EXCLUDED.personal_email, physical_application_details.personal_email),
+          company_name = COALESCE(EXCLUDED.company_name, physical_application_details.company_name),
+          designation = COALESCE(EXCLUDED.designation, physical_application_details.designation),
+          city = COALESCE(EXCLUDED.city, physical_application_details.city),
+          state = COALESCE(EXCLUDED.state, physical_application_details.state),
+          pincode = COALESCE(EXCLUDED.pincode, physical_application_details.pincode),
+          mother_name = COALESCE(EXCLUDED.mother_name, physical_application_details.mother_name),
+          bank_ref_number = COALESCE(EXCLUDED.bank_ref_number, physical_application_details.bank_ref_number),
+          bank_application_number = COALESCE(EXCLUDED.bank_application_number, physical_application_details.bank_application_number),
+          address1 = COALESCE(EXCLUDED.address1, physical_application_details.address1),
+          address2 = COALESCE(EXCLUDED.address2, physical_application_details.address2),
+          landmark = COALESCE(EXCLUDED.landmark, physical_application_details.landmark),
+          flat_no = COALESCE(EXCLUDED.flat_no, physical_application_details.flat_no),
+          sub_area = COALESCE(EXCLUDED.sub_area, physical_application_details.sub_area),
+          appcode_status = COALESCE(NULLIF(EXCLUDED.appcode_status, ''), physical_application_details.appcode_status),
+          soft_approval_status = COALESCE(NULLIF(EXCLUDED.soft_approval_status, ''), physical_application_details.soft_approval_status),
+          vkyc_stage = COALESCE(NULLIF(EXCLUDED.vkyc_stage, ''), physical_application_details.vkyc_stage),
+          iqa_stage = COALESCE(NULLIF(EXCLUDED.iqa_stage, ''), physical_application_details.iqa_stage),
+          dispatch_status = COALESCE(NULLIF(EXCLUDED.dispatch_status, ''), physical_application_details.dispatch_status),
+          bank_remark = COALESCE(NULLIF(EXCLUDED.bank_remark, ''), physical_application_details.bank_remark),
+          final_status = COALESCE(NULLIF(EXCLUDED.final_status, ''), physical_application_details.final_status),
+          app_file_generated = COALESCE(NULLIF(EXCLUDED.app_file_generated, ''), physical_application_details.app_file_generated),
+          decline_reason = COALESCE(NULLIF(EXCLUDED.decline_reason, ''), physical_application_details.decline_reason),
+          eligible_reqd = COALESCE(NULLIF(EXCLUDED.eligible_reqd, ''), physical_application_details.eligible_reqd),
+          ipa_stage = COALESCE(NULLIF(EXCLUDED.ipa_stage, ''), physical_application_details.ipa_stage),
+          kyc_stage = COALESCE(NULLIF(EXCLUDED.kyc_stage, ''), physical_application_details.kyc_stage),
+          income_details = COALESCE(NULLIF(EXCLUDED.income_details, ''), physical_application_details.income_details),
+          mail_status = COALESCE(NULLIF(EXCLUDED.mail_status, ''), physical_application_details.mail_status),
+          card_approval_stage = COALESCE(NULLIF(EXCLUDED.card_approval_stage, ''), physical_application_details.card_approval_stage),
+          vkyc_url = COALESCE(NULLIF(EXCLUDED.vkyc_url, ''), physical_application_details.vkyc_url),
+          user_remark = COALESCE(NULLIF(EXCLUDED.user_remark, ''), physical_application_details.user_remark),
+          pan_check = COALESCE(NULLIF(EXCLUDED.pan_check, ''), physical_application_details.pan_check),
+          requery_date = COALESCE(EXCLUDED.requery_date, physical_application_details.requery_date),
+          bank_smart_emi_offer = COALESCE(NULLIF(EXCLUDED.bank_smart_emi_offer, ''), physical_application_details.bank_smart_emi_offer),
+          bank_smart_emi_tenure = COALESCE(NULLIF(EXCLUDED.bank_smart_emi_tenure, ''), physical_application_details.bank_smart_emi_tenure),
+          disbursed_smart_emi = COALESCE(NULLIF(EXCLUDED.disbursed_smart_emi, ''), physical_application_details.disbursed_smart_emi),
+          disbursed_smart_emi_tenure = COALESCE(NULLIF(EXCLUDED.disbursed_smart_emi_tenure, ''), physical_application_details.disbursed_smart_emi_tenure),
+          smart_emi_offer_status = COALESCE(NULLIF(EXCLUDED.smart_emi_offer_status, ''), physical_application_details.smart_emi_offer_status),
+          final_smart_emi_disburse = COALESCE(NULLIF(EXCLUDED.final_smart_emi_disburse, ''), physical_application_details.final_smart_emi_disburse),
+          final_tenure = COALESCE(NULLIF(EXCLUDED.final_tenure, ''), physical_application_details.final_tenure),
+          offer_decline_reason = COALESCE(NULLIF(EXCLUDED.offer_decline_reason, ''), physical_application_details.offer_decline_reason),
+          eligible_for_incentive = COALESCE(NULLIF(EXCLUDED.eligible_for_incentive, ''), physical_application_details.eligible_for_incentive),
+          insta_jumbo_offer = COALESCE(NULLIF(EXCLUDED.insta_jumbo_offer, ''), physical_application_details.insta_jumbo_offer),
+          customer_loan_offer = COALESCE(NULLIF(EXCLUDED.customer_loan_offer, ''), physical_application_details.customer_loan_offer),
+          customer_loan_type = COALESCE(NULLIF(EXCLUDED.customer_loan_offer, ''), physical_application_details.customer_loan_type),
+          offer_tenure = COALESCE(NULLIF(EXCLUDED.offer_tenure, ''), physical_application_details.offer_tenure),
+          disbursed_amount = COALESCE(NULLIF(EXCLUDED.disbursed_amount, ''), physical_application_details.disbursed_amount),
+          disbursement_amount = COALESCE(NULLIF(EXCLUDED.disbursed_amount, ''), physical_application_details.disbursement_amount),
+          disbursed_tenure = COALESCE(NULLIF(EXCLUDED.disbursed_tenure, ''), physical_application_details.disbursed_tenure),
+          disbursement_tenure = COALESCE(NULLIF(EXCLUDED.disbursed_tenure, ''), physical_application_details.disbursement_tenure),
+          los_no = COALESCE(NULLIF(EXCLUDED.bank_ref_number, ''), physical_application_details.los_no),
+          final_loan_disbursed = COALESCE(NULLIF(EXCLUDED.final_loan_disbursed, ''), physical_application_details.final_loan_disbursed),
+          final_loan_tenure = COALESCE(NULLIF(EXCLUDED.final_loan_tenure, ''), physical_application_details.final_loan_tenure),
+          final_bank_stage = COALESCE(NULLIF(EXCLUDED.final_bank_stage, ''), physical_application_details.final_bank_stage),
+          disbursement_completed = COALESCE(NULLIF(EXCLUDED.disbursement_completed, ''), physical_application_details.disbursement_completed),
+          disbursement_date = COALESCE(EXCLUDED.disbursement_date, physical_application_details.disbursement_date),
+          disbursal_date = COALESCE(EXCLUDED.disbursal_date, physical_application_details.disbursal_date),
+          updated_at = NOW()
+      `, [
+        mobile || customer_mobile || null,
+        full_name || customer_name || null,
+        parsedDob || null,
+        pan_number || null,
+        email || customer_email || null,
+        company_name || null,
+        designation || null,
+        city || null,
+        state || null,
+        pincode || null,
+        mother_name || req.body.mother_name || null,
+        appNumToSave || req.body.bank_application_number || req.body.bank_ref_number || req.body.los_no || null,
+        address1 || null,
+        address2 || null,
+        landmark || null,
+        app.id,
+        cleanStr(appcode_status || req.body.appcode_status),
+        cleanStr(soft_approval_status || req.body.soft_approval_status),
+        cleanStr(vkyc_stage || req.body.vkyc_stage),
+        cleanStr(iqa_stage || req.body.iqa_stage),
+        cleanStr(dispatch_status || req.body.dispatch_status),
+        bankRemarkToSave,
+        cleanStr(final_status || req.body.final_status),
+        cleanStr(app_file_generated || appfile_generated || req.body.app_file_generated || req.body.appfile_generated),
+        cleanStr(decline_reason || req.body.decline_reason),
+        cleanStr(eligible_reqd || req.body.eligible_reqd),
+        cleanStr(ipa_stage || req.body.ipa_stage),
+        cleanStr(kyc_stage || req.body.kyc_stage),
+        cleanStr(card_approval_stage || req.body.card_approval_stage),
+        cleanStr(vkyc_url || req.body.vkyc_url),
+        userRemarkToSave,
+        cleanStr(income_details || req.body.income_details),
+        cleanStr(mail_status || req.body.mail_status),
+        cleanStr(bank_smart_emi_offer),
+        cleanStr(bank_smart_emi_tenure),
+        cleanStr(disbursed_smart_emi),
+        cleanStr(disbursed_smart_emi_tenure),
+        cleanStr(smart_emi_offer_status),
+        cleanStr(final_smart_emi_disburse),
+        cleanStr(final_tenure),
+        cleanStr(offer_decline_reason),
+        cleanStr(eligible_for_incentive),
+        cleanStr(effectiveInstaJumboOffer !== undefined ? effectiveInstaJumboOffer : insta_jumbo_offer),
+        cleanStr(effectiveCustomerLoanType !== undefined ? effectiveCustomerLoanType : customer_loan_offer),
+        cleanStr(effectiveOfferTenure !== undefined ? effectiveOfferTenure : offer_tenure),
+        cleanStr(effectiveDisbursementAmount !== undefined ? effectiveDisbursementAmount : disbursed_amount),
+        cleanStr(effectiveDisbursementTenure !== undefined ? effectiveDisbursementTenure : disbursed_tenure),
+        cleanStr(final_loan_disbursed),
+        cleanStr(final_loan_tenure),
+        cleanStr(effectiveFinalBankStage !== undefined ? effectiveFinalBankStage : final_bank_stage),
+        cleanStr(effectiveDisbursementCompleted !== undefined ? effectiveDisbursementCompleted : disbursement_completed),
+        cleanStr(parsedDisbursementDate)
+      ]);
+      await client.query('RELEASE SAVEPOINT phys_sp');
+    } catch (physErr) {
+      await client.query('ROLLBACK TO SAVEPOINT phys_sp').catch(err => logger.warn('Silent catch warning:', err.message));
+      console.error('Failed to upsert physical_application_details:', physErr.message || physErr);
+    }
+
+    if (effectiveDeclineCode !== undefined || derivedCuringDesignation !== undefined || effectiveSecondaryDeclineCode !== undefined) {
+      try {
+        await client.query('SAVEPOINT pad_curing_sp');
+        const isNone = !effectiveDeclineCode || String(effectiveDeclineCode).trim().toUpperCase() === 'NONE';
+        const codeToSet = isNone ? 'None' : String(effectiveDeclineCode).trim();
+        const descToSet = isNone ? 'None' : (derivedDeclineDesc || null);
+        const curingToSet = isNone ? null : (derivedCuringDesignation || null);
+
+        const isSecNone = !effectiveSecondaryDeclineCode || String(effectiveSecondaryDeclineCode).trim().toUpperCase() === 'NONE';
+        const secCodeToSet = effectiveSecondaryDeclineCode !== undefined ? (isSecNone ? 'None' : String(effectiveSecondaryDeclineCode).trim()) : null;
+        const secDescToSet = effectiveSecondaryDeclineCode !== undefined ? (isSecNone ? 'None' : (derivedSecondaryDeclineDesc || null)) : null;
+        const secCuringToSet = effectiveSecondaryDeclineCode !== undefined ? (isSecNone ? null : (derivedSecondaryCuringDesignation || null)) : null;
+
+        await client.query(`
+          UPDATE physical_application_details SET
+            decline_code = $1,
+            decline_description = $2,
+            curing_designation = $3,
+            primary_decline_code = $1,
+            primary_decline_description = $2,
+            primary_curing_designation = $3,
+            secondary_decline_code = CASE WHEN $4::text IS NOT NULL THEN $4 ELSE secondary_decline_code END,
+            secondary_decline_description = CASE WHEN $4::text IS NOT NULL THEN $5 ELSE secondary_decline_description END,
+            secondary_curing_designation = CASE WHEN $4::text IS NOT NULL THEN $6 ELSE secondary_curing_designation END
+          WHERE application_id = $7
+        `, [codeToSet, descToSet, curingToSet, secCodeToSet, secDescToSet, secCuringToSet, app.id]);
+        await client.query(`
+          UPDATE applications SET
+            decline_code = $1,
+            decline_description = $2,
+            curing_designation = $3,
+            primary_decline_code = $1,
+            primary_decline_description = $2,
+            primary_curing_designation = $3,
+            secondary_decline_code = CASE WHEN $4::text IS NOT NULL THEN $4 ELSE secondary_decline_code END,
+            secondary_decline_description = CASE WHEN $4::text IS NOT NULL THEN $5 ELSE secondary_decline_description END,
+            secondary_curing_designation = CASE WHEN $4::text IS NOT NULL THEN $6 ELSE secondary_curing_designation END
+          WHERE id = $7
+        `, [codeToSet, descToSet, curingToSet, secCodeToSet, secDescToSet, secCuringToSet, app.id]);
+        await client.query('RELEASE SAVEPOINT pad_curing_sp');
+      } catch (curingErr) {
+        await client.query('ROLLBACK TO SAVEPOINT pad_curing_sp').catch(err => logger.warn('Silent catch warning:', err.message));
+        logger.warn('Failed to update decline_code/curing_designation on physical_application_details:', curingErr.message);
+      }
+    }
+
+    // 3. Log to timeline
+    try {
+      await client.query('SAVEPOINT timeline_sp');
+      await client.query(`
+        INSERT INTO application_timeline (application_id, status, activity, event_type, title, description, actor_type, actor_id)
+        VALUES ($1, $2, 'Application Details Updated', 'application_updated', 'Application Edit & Updated', $3, $4, $5)
+      `, [
+        app.id,
+        status || app.status,
+        `Application updated. App No: ${appNumToSave || 'N/A'}, VKYC: ${vkyc_status || 'N/A'}, Status: ${status || app.status}`,
+        ['SUPER_ADMIN', 'ADMIN'].includes(req.user?.role) ? 'admin' : 'partner',
+        req.user ? req.user.id : null
+      ]);
+      await client.query('RELEASE SAVEPOINT timeline_sp');
+    } catch (timeErr) {
+      await client.query('ROLLBACK TO SAVEPOINT timeline_sp').catch(err => logger.warn('Silent catch warning:', err.message));
+      console.warn('Failed to insert application_timeline:', timeErr.message || timeErr);
+    }
+
+    const appFileGenVal = cleanStr(app_file_generated || appfile_generated || req.body.app_file_generated || req.body.appfile_generated);
+    const isAppFileYes = appFileGenVal && appFileGenVal.toLowerCase() === 'yes';
+    const isAppFileNo = appFileGenVal && appFileGenVal.toLowerCase() === 'no';
+    const finalTargetStatus = status || targetStatus || app.status;
+
+    if ((isAppFileYes || ['approved', 'super_admin_approved'].includes(String(finalTargetStatus).toLowerCase())) && app.commission_amount > 0 && app.partner_id) {
+      if (app.commission_status !== 'approved') {
+        try {
+          await client.query('SAVEPOINT comm_sp');
+          await creditCommission(
+            app.partner_id,
+            app.id,
+            app.commission_amount,
+            `Approved commission for application ${app.app_number || app.id}`,
+            req.user ? req.user.id : null,
+            client
+          );
+          await processTeamOverrideCommission(app.id, app.partner_id, app.commission_amount);
+          await client.query(`UPDATE applications SET commission_status = 'approved', approved_at = COALESCE(approved_at, NOW()) WHERE id = $1`, [app.id]);
+          await client.query('RELEASE SAVEPOINT comm_sp');
+        } catch (commErr) {
+          await client.query('ROLLBACK TO SAVEPOINT comm_sp').catch(err => logger.warn('Silent catch warning:', err.message));
+          logger.error('Failed to credit commission on status update:', commErr.message || commErr);
+        }
+      }
+    } else if (isAppFileNo || String(finalTargetStatus).toLowerCase() === 'rejected') {
+      try {
+        await client.query('SAVEPOINT comm_canc_sp');
+        await client.query(`UPDATE applications SET commission_status = 'cancelled' WHERE id = $1`, [app.id]);
+        await client.query('RELEASE SAVEPOINT comm_canc_sp');
+      } catch (_) {
+        await client.query('ROLLBACK TO SAVEPOINT comm_canc_sp').catch(err => logger.warn('Silent catch warning:', err.message));
+      }
+    }
+
+    try {
+      await client.query('SAVEPOINT inc_sp');
+      await syncEmployeeIncentiveLifecycle(client, updatedApp, appFileGenVal, finalTargetStatus);
+      await client.query('RELEASE SAVEPOINT inc_sp');
+    } catch (incErr) {
+      await client.query('ROLLBACK TO SAVEPOINT inc_sp').catch(err => logger.warn('Silent catch warning:', err.message));
+      logger.error('Failed to sync employee incentive lifecycle:', incErr.message || incErr);
+    }
+
+    await client.query('COMMIT');
+    await invalidateApplicationsCache({ action: 'update_application_details', appId: updatedApp?.id || app?.id });
+    return success(res, updatedApp, 'Application details updated successfully');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+const logApplicationAudit = async (req, applicationId, leadId, action, oldValue, newValue, remarks = '') => {
+  try {
+    const userId = req?.user?.id || null;
+    const role = req?.user?.role || 'SYSTEM';
+    const ipAddress = req?.ip || req?.headers?.['x-forwarded-for'] || null;
+
+    await query(`
+      INSERT INTO application_audit_logs (
+        user_id, role, action, entity, entity_id, lead_id, old_value, new_value, remarks, ip_address, created_at
+      ) VALUES ($1, $2, $3, 'application', $4, $5, $6::jsonb, $7::jsonb, $8, $9, NOW())
+    `, [
+      userId,
+      role,
+      action,
+      applicationId,
+      leadId || null,
+      oldValue ? JSON.stringify(oldValue) : null,
+      newValue ? JSON.stringify(newValue) : null,
+      remarks,
+      ipAddress
+    ]);
+  } catch (err) {
+    logger.error('Audit logging failed:', err.message);
+  }
+};
+
+// PATCH /applications/:id/process-type
+const updateProcessType = async (req, res, next) => {
+  const { id } = req.params;
+  const { process_type, reason } = req.body;
+
+  if (!process_type || !reason) {
+    return error(res, 'New process_type and a valid reason for change are required', 400);
+  }
+
+  if (!['SUPER_ADMIN', 'ADMIN'].includes(req.user?.role)) {
+    return res.status(403).json({
+      success: false,
+      message: 'Only authorized administrators can request a change of process type.'
+    });
+  }
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    let { rows: [app] } = await client.query(
+      `SELECT * FROM applications 
+       WHERE id::text = $1 OR app_number = $1 OR lead_id::text = $1 
+          OR tracking_token = $1 OR bank_application_number = $1 OR bank_ref_number = $1 
+       FOR UPDATE`,
+      [id]
+    );
+    if (!app) {
+      const { rows: [pdRec] } = await client.query(
+        `SELECT application_id FROM physical_application_details WHERE id::text = $1 OR bank_application_number = $1 OR bank_ref_number = $1 LIMIT 1`,
+        [id]
+      ).catch(() => ({ rows: [] }));
+      if (pdRec?.application_id) {
+        const { rows: [appFromPd] } = await client.query(
+          `SELECT * FROM applications WHERE id = $1 FOR UPDATE`,
+          [pdRec.application_id]
+        );
+        if (appFromPd) app = appFromPd;
+      }
+    }
+    if (!app) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Application or Lead record not found');
+    }
+
+    const oldProcessType = app.process_type;
+
+    // Operational Head bank check
+    if (req.user.role === 'ADMIN') {
+      const { rows: assignedBanks } = await client.query(
+        `SELECT aba.bank_id as id, b.short_code, b.name 
+         FROM admin_bank_assignments aba 
+         LEFT JOIN banks b ON b.id = aba.bank_id 
+         WHERE aba.admin_id = $1 
+         UNION 
+         SELECT id, short_code, name FROM banks WHERE operation_head_id = $1`,
+        [req.user.id]
+      );
+      if (assignedBanks.length > 0) {
+        const allowedIds = assignedBanks.map(b => b.id);
+        const hasLocEocAdmin = assignedBanks.some(b => 
+          (b.short_code || '').toUpperCase() === 'LOC_EOC' || 
+          /loc[\s/_]*eoc|loan\s+on\s+card/i.test(b.name || '')
+        );
+        let isLocEocApp = false;
+        if (hasLocEocAdmin) {
+          const { rows: [pRow] } = await client.query(`SELECT category, sub_category, name FROM products WHERE id = $1`, [app.product_id]).catch(() => ({ rows: [] }));
+          isLocEocApp = ['loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loc', 'eoc'].includes(String(pRow?.category || app.category || '').toLowerCase()) ||
+            ['loc', 'eoc'].includes(String(pRow?.sub_category || '').toLowerCase()) ||
+            /insta\s*loan|jumbo\s*loan|smart\s*emi|loan\s*on\s*card/i.test(String(pRow?.name || ''));
+        }
+
+        if (app.bank_id && !allowedIds.includes(app.bank_id) && !isLocEocApp) {
+          await client.query('ROLLBACK');
+          return res.status(403).json({ success: false, message: 'Forbidden: You are not authorized for this bank.' });
+        }
+      }
+    }
+
+    const { rows: [updatedApp] } = await client.query(`
+      UPDATE applications
+      SET process_type = $1, updated_at = NOW()
+      WHERE id = $2
+      RETURNING *
+    `, [process_type.trim(), id]);
+
+    if (app.lead_id) {
+      await client.query(`UPDATE leads SET process_type = $1, updated_at = NOW() WHERE id = $2`, [process_type.trim(), app.lead_id]);
+    }
+
+    await logTimeline(client, id, app.status, `Process Type Changed to ${process_type}`, `Reason: ${reason}. Previous: ${oldProcessType}`, req.user.id);
+    await client.query('COMMIT');
+
+    await logApplicationAudit(req, id, app.lead_id, 'PROCESS_TYPE_CHANGED', { process_type: oldProcessType }, { process_type: process_type.trim() }, reason);
+
+    return success(res, updatedApp, `Process type updated to ${process_type} successfully.`);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+// PATCH /applications/:id/vkyc
+const updateVkyc = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { vkyc_status, vkyc_url, vkyc_link, remarks } = req.body;
+
+    const targetUrl = vkyc_url || vkyc_link;
+
+    const { rows: [app] } = await query(`
+      UPDATE applications
+      SET vkyc_status = COALESCE(NULLIF($1, ''), vkyc_status),
+          vkyc_url = COALESCE(NULLIF($2, ''), vkyc_url),
+          updated_at = NOW()
+      WHERE id::text = $3 OR app_number = $3 OR tracking_token = $3 OR bank_application_number = $3 OR bank_ref_number = $3
+      RETURNING *
+    `, [vkyc_status ? vkyc_status.trim() : null, targetUrl ? targetUrl.trim() : null, id]);
+
+    if (!app) return notFound(res, 'Application or Lead record not found');
+
+    await logApplicationAudit(req, id, app.lead_id, 'VKYC_UPDATED', { vkyc_status: app.vkyc_status }, { vkyc_status, vkyc_url: targetUrl }, remarks);
+
+    return success(res, app, 'VKYC details updated successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Configurable Bank Requirements & Share Link Handlers
+const getBankRequirements = async (req, res, next) => {
+  try {
+    const { bank_id, product_id } = req.query;
+
+    let sql = `
+      SELECT br.*, b.name as bank_name, p.name as product_name
+      FROM bank_requirements br
+      LEFT JOIN banks b ON b.id = br.bank_id
+      LEFT JOIN products p ON p.id = br.product_id
+      WHERE 1=1
+    `;
+    const params = [];
+    if (bank_id) {
+      params.push(bank_id);
+      sql += ` AND br.bank_id = $${params.length}`;
+    }
+    if (product_id) {
+      params.push(product_id);
+      sql += ` AND br.product_id = $${params.length}`;
+    }
+
+    const { rows } = await query(sql, params);
+
+    if (rows.length === 0) {
+      const defaultReqs = [
+        {
+          bank: "SBI",
+          product: "Credit Card",
+          fields: [
+            { name: "bank_application_number", label: "Application Number", type: "text", required: true },
+            { name: "vkyc_url", label: "VKYC Link", type: "url", required: true },
+            { name: "salary_slip_url", label: "Salary Slip Document", type: "file", required: true },
+            { name: "pan_card_url", label: "PAN Card Document", type: "file", required: true }
+          ]
+        },
+        {
+          bank: "HDFC",
+          product: "Credit Card",
+          fields: [
+            { name: "bank_application_number", label: "Application Number", type: "text", required: true },
+            { name: "vkyc_url", label: "VKYC Link", type: "url", required: true }
+          ]
+        }
+      ];
+      return success(res, defaultReqs, 'Default bank requirements loaded');
+    }
+
+    return success(res, rows, 'Bank requirements retrieved successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+const saveBankRequirements = async (req, res, next) => {
+  try {
+    const { bank_id, product_id, fields } = req.body;
+    if (!bank_id || !Array.isArray(fields)) {
+      return error(res, 'Bank ID and array of fields are required', 400);
+    }
+
+    const { rows: [reqRow] } = await query(`
+      INSERT INTO bank_requirements (bank_id, product_id, fields, updated_at)
+      VALUES ($1, $2, $3::jsonb, NOW())
+      RETURNING *
+    `, [bank_id, product_id || null, JSON.stringify(fields)]);
+
+    return success(res, reqRow, 'Bank requirements configured successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Alias to Partner Share Controller apply token & link handlers
+const partnerShareCtrl = require('../partner/partner-share.controller.js');
+const getPublicApplyToken = (req, res, next) => partnerShareCtrl.getApplyTokenDetails(req, res, next);
+const submitPublicApplyToken = (req, res, next) => partnerShareCtrl.updateApplyTokenDetails(req, res, next);
+const generateShareLink = (req, res, next) => partnerShareCtrl.generateShareLink(req, res, next);
+
+const deleteApplication = async (req, res, next) => {
+  const { id } = req.params;
+  if (!id) return error(res, 'Application ID is required', 400);
+
+  const userRole = req.user?.role;
+  if (userRole !== 'SUPER_ADMIN' && userRole !== 'ADMIN') {
+    return error(res, 'Access denied: Only Super Admin is authorized to delete application records', 403);
+  }
+
+  const client = await getClient();
+  try {
+    let { rows: [app] } = await client.query(
+      `SELECT id, partner_id, customer_id, lead_id, app_number, status FROM applications WHERE id = $1 OR lead_id = $1 LIMIT 1`,
+      [id]
+    );
+
+    let isLeadOnly = false;
+    let targetAppId = null;
+    let targetLeadId = null;
+    let targetCustomerId = null;
+
+    if (app) {
+      targetAppId = app.id;
+      targetLeadId = app.lead_id || id;
+      targetCustomerId = app.customer_id;
+    } else {
+      const { rows: [leadRec] } = await client.query(
+        `SELECT id, partner_id, customer_id, id as lead_id, COALESCE(NULLIF(lead_number, ''), CONCAT('LEAD-', UPPER(SUBSTRING(id::text, 1, 8)))) as app_number, status FROM leads WHERE id = $1 OR application_id = $1 LIMIT 1`,
+        [id]
+      );
+      if (leadRec) {
+        app = leadRec;
+        isLeadOnly = true;
+        targetLeadId = leadRec.id || id;
+        targetCustomerId = leadRec.customer_id;
+      }
+    }
+
+    if (!app) {
+      return error(res, 'Application or Lead record not found', 404);
+    }
+
+    await client.query('BEGIN');
+
+    // Helper for safe sub-queries inside PostgreSQL transaction block
+    const safeSubDelete = async (sql, params) => {
+      try {
+        await client.query('SAVEPOINT del_sp');
+        await client.query(sql, params);
+        await client.query('RELEASE SAVEPOINT del_sp');
+      } catch (_) {
+        await client.query('ROLLBACK TO SAVEPOINT del_sp').catch(() => { });
+      }
+    };
+
+    const appIdsToDelete = [id, targetAppId].filter(Boolean);
+    const leadIdsToDelete = [id, targetLeadId].filter(Boolean);
+
+    // 1. Delete physical_application_details
+    for (const aId of appIdsToDelete) {
+      await safeSubDelete(`DELETE FROM physical_application_details WHERE application_id = $1`, [aId]);
+    }
+
+    // 2. Delete customer_access_tokens
+    for (const aId of appIdsToDelete) {
+      await safeSubDelete(`DELETE FROM customer_access_tokens WHERE application_id = $1 OR customer_id = $2`, [aId, targetCustomerId]);
+    }
+
+    // 3. Delete partner_share_links
+    await safeSubDelete(`DELETE FROM partner_share_links WHERE application_id = $1 OR application_id = $2 OR lead_id = $1 OR lead_id = $2`, [targetAppId, targetLeadId]);
+
+    // 4. Delete application_notes
+    for (const aId of appIdsToDelete) {
+      await safeSubDelete(`DELETE FROM application_notes WHERE application_id = $1`, [aId]);
+    }
+
+    // 5. Delete application_timeline / application_timelines
+    for (const aId of appIdsToDelete) {
+      await safeSubDelete(`DELETE FROM application_timeline WHERE application_id = $1`, [aId]);
+      await safeSubDelete(`DELETE FROM application_timelines WHERE application_id = $1`, [aId]);
+    }
+
+    // 6. Delete application_documents
+    for (const aId of appIdsToDelete) {
+      await safeSubDelete(`DELETE FROM application_documents WHERE application_id = $1`, [aId]);
+    }
+
+    // 7. Delete application_history
+    for (const aId of appIdsToDelete) {
+      await safeSubDelete(`DELETE FROM application_history WHERE application_id = $1`, [aId]);
+    }
+
+    // 8. Financial ledger (wallet_ledger) remains 100% immutable and untouched for auditability
+    await safeSubDelete(`DELETE FROM wallet_transactions WHERE application_id = $1 OR application_id = $2`, [targetAppId, targetLeadId]);
+    await safeSubDelete(`DELETE FROM commission_ledger WHERE application_id = $1 OR application_id = $2 OR lead_id = $1 OR lead_id = $2`, [targetAppId, targetLeadId]);
+
+    // 9. Cascade delete lead related records
+    for (const lId of leadIdsToDelete) {
+      await safeSubDelete(`DELETE FROM lead_documents WHERE lead_id = $1`, [lId]);
+      await safeSubDelete(`DELETE FROM lead_timeline WHERE lead_id = $1`, [lId]);
+      await safeSubDelete(`DELETE FROM lead_notes WHERE lead_id = $1`, [lId]);
+      await safeSubDelete(`DELETE FROM lead_status_history WHERE lead_id = $1`, [lId]);
+      await safeSubDelete(`DELETE FROM lead_checklist WHERE lead_id = $1`, [lId]);
+      await safeSubDelete(`DELETE FROM lead_sla WHERE lead_id = $1`, [lId]);
+      await safeSubDelete(`DELETE FROM bank_assignments WHERE lead_id = $1`, [lId]);
+      await safeSubDelete(`DELETE FROM lead_assignments WHERE lead_id = $1`, [lId]);
+    }
+
+    // 10. Explicitly delete lead records from leads table (specifically for punching processes and linked leads)
+    await safeSubDelete(
+      `DELETE FROM leads WHERE id = $1 OR id = $2 OR application_id = $1 OR application_id = $2 OR (app_number IS NOT NULL AND app_number = $3) OR (lead_number IS NOT NULL AND lead_number = $3)`,
+      [targetAppId, targetLeadId, app.app_number]
+    );
+
+    // 11. Explicitly delete main application records from applications table
+    await safeSubDelete(
+      `DELETE FROM applications WHERE id = $1 OR id = $2 OR lead_id = $1 OR lead_id = $2 OR (app_number IS NOT NULL AND app_number = $3)`,
+      [targetAppId, targetLeadId, app.app_number]
+    );
+
+    // 12. Delete Customer Details from database if no other apps/leads remain
+    if (targetCustomerId) {
+      const { rows: otherApps } = await client.query(
+        `SELECT id FROM applications WHERE customer_id = $1 AND id != $2 AND id != $3 LIMIT 1`,
+        [targetCustomerId, targetAppId || id, targetLeadId || id]
+      );
+      const { rows: otherLeads } = await client.query(
+        `SELECT id FROM leads WHERE customer_id = $1 AND id != $2 AND id != $3 LIMIT 1`,
+        [targetCustomerId, targetAppId || id, targetLeadId || id]
+      );
+
+      if (otherApps.length === 0 && otherLeads.length === 0) {
+        await safeSubDelete(`DELETE FROM customers WHERE id = $1`, [targetCustomerId]);
+      }
+    }
+
+    await logAction(req, isLeadOnly ? 'DELETE_LEAD' : 'DELETE_APPLICATION', id, { app_number: app.app_number, customer_id: targetCustomerId }, null, null, client);
+
+    await client.query('COMMIT');
+    await invalidateApplicationsCache({ action: 'delete_application', appId: id });
+    return success(res, {}, 'Application, lead, and customer details deleted successfully from database');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === '23503') {
+      return error(res, 'Cannot delete this application because it has financial wallet or ledger transactions linked to it.', 400);
+    }
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+// POST /applications/generate-physical-link
+const generatePhysicalLink = async (req, res, next) => {
+  try {
+    const { application_id, lead_id } = req.body;
+    const appId = application_id || req.body.id || req.params.id;
+    if (!appId) return error(res, 'Application ID is required', 400);
+
+    const { rows: [app] } = await query(
+      `SELECT a.id, a.customer_id, a.process_type, a.bank_id, b.name as bank_name
+       FROM applications a
+       LEFT JOIN banks b ON b.id = a.bank_id
+       WHERE a.id = $1`,
+      [appId]
+    );
+
+    if (!app) return notFound(res, 'Application not found');
+
+    const { rows: [existingToken] } = await query(
+      `SELECT token, expires_at FROM customer_access_tokens
+       WHERE application_id = $1 AND token_type = 'physical_process' AND expires_at > NOW()
+       ORDER BY created_at DESC LIMIT 1`,
+      [appId]
+    );
+
+    let tokenStr;
+    if (existingToken) {
+      tokenStr = existingToken.token;
+    } else {
+      tokenStr = crypto.randomBytes(24).toString('hex');
+      await query(
+        `INSERT INTO customer_access_tokens (application_id, customer_id, token, token_type, expires_at)
+         VALUES ($1, $2, $3, 'physical_process', NOW() + INTERVAL '72 hours')`,
+        [appId, app.customer_id || null, tokenStr]
+      );
+    }
+
+    const host = req.get('origin') || process.env.FRONTEND_URL || 'https://gharkapaisa.in';
+    const physicalUrl = `${host}/physical-application/${tokenStr}`;
+
+    return success(res, {
+      token: tokenStr,
+      url: physicalUrl,
+      share_url: physicalUrl,
+      process_type: app.process_type
+    }, 'Physical application link generated successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /applications/physical-application/:token
+const getPhysicalApplicationByToken = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+    if (!token) return error(res, 'Token is required', 400);
+
+    let { rows: [tokenRec] } = await query(
+      `SELECT cat.*, a.id as application_id, a.app_number, a.process_type, a.status, a.bank_id, a.product_id,
+              a.bank_ref_number, a.bank_application_number, a.vkyc_url, a.appcode_status, a.soft_approval_status,
+              a.vkyc_stage, a.iqa_stage, a.dispatch_status, a.bank_remark, a.final_status, a.decline_reason, a.eligible_reqd,
+              b.name as bank_name, b.short_code as bank_code,
+              p.name as product_name,
+              c.full_name as customer_name, c.mobile as customer_mobile, c.email as customer_email, c.pan_number as customer_pan, c.dob as customer_dob
+       FROM customer_access_tokens cat
+       JOIN applications a ON a.id = cat.application_id
+       LEFT JOIN banks b ON b.id = a.bank_id
+       LEFT JOIN products p ON p.id = a.product_id
+       LEFT JOIN customers c ON c.id = a.customer_id
+       WHERE cat.token = $1`,
+      [token]
+    );
+
+    if (!tokenRec) {
+      const { rows: [appRec] } = await query(
+        `SELECT a.id as application_id, a.app_number, a.process_type, a.status, a.bank_id, a.product_id,
+                a.bank_ref_number, a.bank_application_number, a.vkyc_url, a.appcode_status, a.soft_approval_status,
+                a.vkyc_stage, a.iqa_stage, a.dispatch_status, a.bank_remark, a.final_status, a.decline_reason, a.eligible_reqd,
+                b.name as bank_name, b.short_code as bank_code,
+                p.name as product_name,
+                c.full_name as customer_name, c.mobile as customer_mobile, c.email as customer_email, c.pan_number as customer_pan, c.dob as customer_dob
+         FROM applications a
+         LEFT JOIN banks b ON b.id = a.bank_id
+         LEFT JOIN products p ON p.id = a.product_id
+         LEFT JOIN customers c ON c.id = a.customer_id
+         WHERE a.tracking_token = $1 OR a.id::text = $1 OR a.app_number = $1`,
+        [token]
+      );
+      tokenRec = appRec;
+    }
+
+    if (!tokenRec) {
+      const { rows: [pslRec] } = await query(
+        `SELECT psl.application_id, a.app_number, a.process_type, a.status, a.bank_id, a.product_id,
+                a.bank_ref_number, a.bank_application_number, a.vkyc_url, a.appcode_status, a.soft_approval_status,
+                a.vkyc_stage, a.iqa_stage, a.dispatch_status, a.bank_remark, a.final_status, a.decline_reason, a.eligible_reqd,
+                b.name as bank_name, b.short_code as bank_code,
+                p.name as product_name,
+                c.full_name as customer_name, c.mobile as customer_mobile, c.email as customer_email, c.pan_number as customer_pan, c.dob as customer_dob
+         FROM partner_share_links psl
+         JOIN applications a ON a.id = psl.application_id
+         LEFT JOIN banks b ON b.id = a.bank_id
+         LEFT JOIN products p ON p.id = a.product_id
+         LEFT JOIN customers c ON c.id = a.customer_id
+         WHERE psl.tracking_token = $1`,
+        [token]
+      );
+      tokenRec = pslRec;
+    }
+
+    if (!tokenRec) {
+      return res.status(404).json({ success: false, message: 'Invalid or expired physical application link.' });
+    }
+
+    const { rows: [pad] } = await query(
+      `SELECT * FROM physical_application_details WHERE application_id = $1`,
+      [tokenRec.application_id]
+    );
+
+    const isSbi = (tokenRec.bank_id === 'e7c2c604-139d-4fcf-a87c-695633535a02') ||
+      (String(tokenRec.bank_name || tokenRec.bank_code || '').toLowerCase().includes('sbi'));
+
+    return success(res, {
+      application_id: tokenRec.application_id,
+      app_number: tokenRec.app_number,
+      process_type: tokenRec.process_type,
+      status: tokenRec.status,
+      bank_id: tokenRec.bank_id,
+      bank_name: tokenRec.bank_name,
+      bank_code: tokenRec.bank_code,
+      is_sbi: isSbi,
+      product_name: tokenRec.product_name,
+      bank_ref_number: tokenRec.bank_ref_number || tokenRec.bank_application_number || pad?.bank_ref_number || pad?.bank_application_number || '',
+      vkyc_url: tokenRec.vkyc_url || pad?.vkyc_url || '',
+      appcode_status: tokenRec.appcode_status || pad?.appcode_status || '',
+      soft_approval_status: tokenRec.soft_approval_status || pad?.soft_approval_status || '',
+      vkyc_stage: tokenRec.vkyc_stage || pad?.vkyc_stage || '',
+      iqa_stage: tokenRec.iqa_stage || pad?.iqa_stage || '',
+      dispatch_status: tokenRec.dispatch_status || pad?.dispatch_status || '',
+      bank_remark: tokenRec.bank_remark || pad?.bank_remark || '',
+      final_status: tokenRec.final_status || pad?.final_status || '',
+      decline_reason: tokenRec.decline_reason || pad?.decline_reason || '',
+      customer: {
+        full_name: tokenRec.customer_name,
+        mobile: tokenRec.customer_mobile,
+        email: tokenRec.customer_email,
+        pan_number: tokenRec.customer_pan,
+        dob: tokenRec.customer_dob
+      },
+      physical_details: pad || null
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /applications/physical-application/:token/submit
+const submitPhysicalApplicationByToken = async (req, res, next) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const { token } = req.params;
+    if (!token) return error(res, 'Token is required', 400);
+
+    let { rows: [tokenRec] } = await client.query(
+      `SELECT cat.*, a.id as application_id, a.app_number, a.submitted_by
+       FROM customer_access_tokens cat
+       JOIN applications a ON a.id = cat.application_id
+       WHERE cat.token = $1`,
+      [token]
+    );
+
+    if (!tokenRec) {
+      const { rows: [appRec] } = await client.query(
+        `SELECT a.id as application_id, a.app_number, a.submitted_by
+         FROM applications a
+         WHERE a.tracking_token = $1 OR a.id::text = $1 OR a.app_number = $1`,
+        [token]
+      );
+      tokenRec = appRec;
+    }
+
+    if (!tokenRec) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, message: 'Invalid or expired link.' });
+    }
+
+    const {
+      aadhaar_linked_mobile,
+      pan_name,
+      dob,
+      pan_number,
+      mother_name,
+      personal_email,
+      company_name,
+      designation,
+      flat_no,
+      sub_area,
+      landmark,
+      pincode,
+      company_address,
+      // Form 2 Status & Remark Fields
+      bank_ref_number,
+      vkyc_url,
+      appcode_status,
+      soft_approval_status,
+      vkyc_stage,
+      iqa_stage,
+      dispatch_status,
+      bank_remark,
+      final_status,
+      app_file_generated,
+      appfile_generated,
+      decline_reason,
+      eligible_reqd
+    } = req.body;
+
+    const parsedDob = parseDobToIso(dob);
+    const appId = tokenRec.application_id;
+    const appFileGenVal = app_file_generated || appfile_generated || null;
+
+    await client.query(
+      `INSERT INTO physical_application_details (
+        application_id, aadhaar_linked_mobile, pan_name, dob, pan_number,
+        mother_name, personal_email, company_name, designation, flat_no,
+        sub_area, landmark, pincode, company_address, bank_ref_number, bank_application_number, vkyc_url, app_file_generated, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15, $16, $17, NOW())
+      ON CONFLICT (application_id) DO UPDATE SET
+        aadhaar_linked_mobile = EXCLUDED.aadhaar_linked_mobile,
+        pan_name = EXCLUDED.pan_name,
+        dob = EXCLUDED.dob,
+        pan_number = EXCLUDED.pan_number,
+        mother_name = EXCLUDED.mother_name,
+        personal_email = EXCLUDED.personal_email,
+        company_name = EXCLUDED.company_name,
+        designation = EXCLUDED.designation,
+        flat_no = EXCLUDED.flat_no,
+        sub_area = EXCLUDED.sub_area,
+        landmark = EXCLUDED.landmark,
+        pincode = EXCLUDED.pincode,
+        company_address = EXCLUDED.company_address,
+        bank_ref_number = COALESCE(EXCLUDED.bank_ref_number, physical_application_details.bank_ref_number),
+        bank_application_number = COALESCE(EXCLUDED.bank_application_number, physical_application_details.bank_application_number),
+        vkyc_url = COALESCE(EXCLUDED.vkyc_url, physical_application_details.vkyc_url),
+        app_file_generated = COALESCE(EXCLUDED.app_file_generated, physical_application_details.app_file_generated),
+        updated_at = NOW()`,
+      [
+        appId, aadhaar_linked_mobile || null, pan_name || null, parsedDob || null, pan_number || null,
+        mother_name || null, personal_email || null, company_name || null, designation || null, flat_no || null,
+        sub_area || null, landmark || null, pincode || null, company_address || null, bank_ref_number || null, vkyc_url || null, appFileGenVal || null
+      ]
+    );
+
+    const isOpsOrAdminUser = req.user && ['ADMIN', 'SUPER_ADMIN', 'OPERATIONS', 'OPERATIONS_HEAD', 'ADMINISTRATIVE_OPERATOR', 'ADMIN_OPERATOR', 'OPERATOR'].includes((req.user.role || '').toUpperCase());
+
+    const isAppFileYes = appFileGenVal && String(appFileGenVal).trim().toLowerCase() === 'yes';
+
+    let mainStatus = null;
+    let finalStatusVal = final_status || null;
+
+    if (isAppFileYes) {
+      mainStatus = 'approved';
+      if (!finalStatusVal || finalStatusVal === 'None') finalStatusVal = 'Approve';
+    } else if (isOpsOrAdminUser && final_status) {
+      const lowerFs = final_status.toLowerCase();
+      if (lowerFs.includes('decline') || lowerFs.includes('rejected')) mainStatus = 'rejected';
+      else if (lowerFs.includes('approve')) mainStatus = 'approved';
+      else mainStatus = 'operational_verified';
+    } else {
+      mainStatus = null;
+    }
+
+    // Sync to applications table
+    await client.query(
+      `UPDATE applications 
+       SET status = COALESCE($1, status),
+           bank_ref_number = COALESCE(NULLIF($2, ''), bank_ref_number),
+           bank_application_number = COALESCE(NULLIF($2, ''), bank_application_number),
+           vkyc_url = COALESCE(NULLIF($3, ''), vkyc_url),
+           appcode_status = COALESCE(NULLIF($4, ''), appcode_status),
+           soft_approval_status = COALESCE(NULLIF($5, ''), soft_approval_status),
+           vkyc_stage = COALESCE(NULLIF($6, ''), vkyc_stage),
+           iqa_stage = COALESCE(NULLIF($7, ''), iqa_stage),
+           dispatch_status = COALESCE(NULLIF($8, ''), dispatch_status),
+           bank_remark = COALESCE(NULLIF($9, ''), bank_remark),
+           final_status = COALESCE(NULLIF($10, ''), final_status),
+           decline_reason = COALESCE(NULLIF($11, ''), decline_reason),
+           eligible_reqd = COALESCE(NULLIF($12, ''), eligible_reqd),
+           app_file_generated = COALESCE(NULLIF($14, ''), app_file_generated),
+           approved_at = CASE WHEN $1 = 'approved' AND approved_at IS NULL THEN NOW() ELSE approved_at END,
+           updated_at = NOW()
+       WHERE id = $13`,
+      [
+        mainStatus,
+        bank_ref_number || null,
+        vkyc_url || null,
+        appcode_status || null,
+        soft_approval_status || null,
+        vkyc_stage || null,
+        iqa_stage || null,
+        dispatch_status || null,
+        bank_remark || null,
+        finalStatusVal,
+        decline_reason || null,
+        eligible_reqd || null,
+        appId,
+        appFileGenVal
+      ]
+    );
+
+    // Sync Employee Incentive Lifecycle
+    const { rows: [updatedAppObj] } = await client.query(`SELECT * FROM applications WHERE id = $1`, [appId]);
+    if (updatedAppObj) {
+      await syncEmployeeIncentiveLifecycle(client, updatedAppObj, appFileGenVal, mainStatus);
+    }
+
+    if (tokenRec.customer_id) {
+      await client.query(
+        `UPDATE customers
+         SET mobile = COALESCE(NULLIF($1, ''), mobile),
+             full_name = COALESCE(NULLIF($2, ''), full_name),
+             dob = COALESCE($3::date, dob),
+             email = COALESCE(NULLIF($4, ''), email),
+             pan_number = COALESCE(NULLIF($5, ''), pan_number),
+             updated_at = NOW()
+         WHERE id = $6`,
+        [
+          aadhaar_linked_mobile || null,
+          pan_name || null,
+          parsedDob || null,
+          personal_email || null,
+          pan_number || null,
+          tokenRec.customer_id
+        ]
+      );
+    }
+
+    await logTimeline(
+      client,
+      appId,
+      'physical_form_submitted',
+      'Physical Form Submitted',
+      'Customer/Partner submitted Form 1 & Form 2 physical application & status details.',
+      tokenRec.submitted_by || null
+    );
+
+    await client.query('COMMIT');
+    return success(res, {}, 'Physical application details submitted successfully');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+// POST /applications/:id/release-commission — Super Admin releases commission & credits wallet
+const releaseCommission = async (req, res, next) => {
+  const client = await getClient();
+  try {
+    const { id } = req.params;
+
+    const { rows: [app] } = await client.query(
+      `SELECT a.id, a.app_number, a.partner_id, a.commission_amount, a.commission_status, a.status
+       FROM applications a
+       WHERE a.id = $1`,
+      [id]
+    );
+
+    if (!app) return notFound(res, 'Application not found');
+
+    if (app.commission_status === 'released') {
+      return error(res, 'Commission has already been released for this application', 400);
+    }
+
+    const commissionAmount = parseFloat(app.commission_amount || 0);
+    if (commissionAmount <= 0) {
+      return error(res, 'No commission amount set for this application. Please update commission first.', 400);
+    }
+
+    await client.query('BEGIN');
+
+    // 1. Update application status to commission_received & commission_status to released
+    await client.query(
+      `UPDATE applications SET status = 'commission_received', final_status = 'Commission Received', approved_at = COALESCE(approved_at, NOW()), commission_status = 'released', commission_released = TRUE, updated_at = NOW() WHERE id = $1`,
+      [id]
+    );
+
+    // 2. Call creditCommission to process partner & team split into partner_wallets & wallet_ledger (pass client to prevent deadlock)
+    const childTxn = await creditCommission(
+      app.partner_id,
+      id,
+      commissionAmount,
+      `Commission credited for application ${app.app_number}`,
+      req.user.id,
+      client
+    );
+
+    // 3. Call releaseHold to transition funds to Available Balance
+    await releaseHold(
+      app.partner_id,
+      commissionAmount,
+      {
+        txn_id: childTxn?.id || null,
+        application_id: id,
+        reference_type: 'commission_release',
+        reference_id: id,
+        description: `Commission released to available balance for application ${app.app_number}`,
+        processed_by: req.user.id
+      },
+      client
+    );
+
+    // 4. Log timeline
+    try {
+      await logTimeline(client, id, 'commission_released', 'Commission Released',
+        `₹${commissionAmount} commission released and credited to partner wallet by Super Admin.`,
+        req.user.id
+      );
+    } catch (_) { }
+
+    await client.query('COMMIT');
+
+    // Send SMS notification to partner
+    try {
+      const { rows: [partnerUser] } = await client.query(
+        `SELECT u.mobile, COALESCE(p.first_name, u.full_name, 'Partner') as first_name 
+         FROM partner_profiles p JOIN users u ON p.user_id = u.id WHERE p.id = $1`,
+        [app.partner_id]
+      );
+      if (partnerUser?.mobile) {
+        const { sendCommissionCreditedSms } = require('../../services/sms/sms.service');
+        sendCommissionCreditedSms(partnerUser.mobile, partnerUser.first_name, commissionAmount).catch(() => { });
+      }
+    } catch (_) { }
+
+    // Fetch updated balance from partner_wallets
+    const { rows: [w] } = await query(
+      `SELECT available_balance FROM partner_wallets WHERE partner_id = $1`,
+      [app.partner_id]
+    );
+
+    return success(res, {
+      application_id: id,
+      app_number: app.app_number,
+      commission_amount: commissionAmount,
+      commission_status: 'released',
+      partner_id: app.partner_id,
+      new_wallet_balance: parseFloat(w?.available_balance || 0)
+    }, 'Commission released and partner wallet credited successfully.');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+// POST /applications/:id/hold-commission — Super Admin holds commission
+const holdCommission = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { remarks } = req.body;
+
+    const { rows: [app] } = await query(
+      `SELECT id, app_number, commission_status FROM applications WHERE id::text = $1 OR app_number = $1 OR tracking_token = $1`,
+      [id]
+    );
+
+    if (!app) return notFound(res, 'Application not found');
+
+    if (app.commission_status === 'released') {
+      return error(res, 'Cannot hold commission that has already been released', 400);
+    }
+
+    await query(
+      `UPDATE applications SET status = 'commission_released', final_status = 'Commission Released', commission_status = 'on_hold', updated_at = NOW() WHERE id = $1`,
+      [app.id]
+    );
+
+    try {
+      await logTimeline(query, app.id, 'commission_released', 'Commission Released (On Hold)',
+        remarks || 'Commission placed on hold by Super Admin. Status updated to Commission Released.',
+        req.user ? req.user.id : null
+      );
+    } catch (_) { }
+
+    return success(res, {
+      application_id: app.id,
+      app_number: app.app_number,
+      status: 'commission_released',
+      commission_status: 'on_hold'
+    }, 'Commission has been put on hold and application status set to Commission Released.');
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /applications/:id/trace — Complete 360-Degree Traceability Data
+const get360ApplicationTrace = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const authCheck = await verifyPartnerApplicationOwnership(id, req.user);
+    if (!authCheck.authorized) {
+      if (authCheck.notFound) return notFound(res, authCheck.reason);
+      return forbidden(res, authCheck.reason);
+    }
+
+    const { rows: [appTrace] } = await query(`
+      SELECT
+        a.id AS application_id,
+        a.app_number,
+        a.process_type AS application_process_type,
+        a.status AS application_status,
+        a.created_at AS application_created_at,
+        a.updated_at AS application_updated_at,
+        a.bank_ref_number,
+        a.soft_approval_status,
+        a.vkyc_stage,
+        a.vkyc_url,
+        a.iqa_stage,
+        a.dispatch_status,
+        COALESCE(NULLIF(to_jsonb(a)->>'user_remark', ''), NULLIF(a.user_remark, ''), NULLIF(a.notes, ''), NULLIF(a.bank_remark, ''), NULLIF(a.remarks, ''), 'NA') AS bank_remark,
+        a.decline_reason,
+        a.commission_amount,
+        
+        c.id AS customer_id,
+        COALESCE(NULLIF(l.customer_name, ''), NULLIF(c.full_name, ''), 'Customer') AS customer_name,
+        COALESCE(NULLIF(l.customer_mobile, ''), NULLIF(l.mobile, ''), c.mobile) AS customer_mobile,
+        COALESCE(NULLIF(l.email, ''), NULLIF(c.email, '')) AS customer_email,
+        
+        l.id AS lead_id,
+        l.status AS lead_status,
+        l.process_type AS lead_process_type,
+        NULL::text AS share_token,
+        
+        p.id AS partner_id,
+        p.partner_code,
+        CONCAT(p.first_name, ' ', p.last_name) AS partner_name,
+        
+        prod.id AS product_id,
+        prod.name AS product_name,
+        prod.partner_url,
+        b.id AS bank_id,
+        b.name AS bank_name,
+        b.short_code AS bank_short_code
+      FROM applications a
+      LEFT JOIN customers c ON c.id = a.customer_id
+      LEFT JOIN leads l ON l.id = a.lead_id
+      LEFT JOIN partner_profiles p ON p.id = a.partner_id
+      LEFT JOIN products prod ON prod.id = a.product_id
+      LEFT JOIN banks b ON b.id = prod.bank_id
+      WHERE a.id::text = $1 OR a.app_number = $1 OR a.tracking_token = $1
+    `, [id]);
+
+    if (!appTrace) {
+      return res.status(404).json({ success: false, message: 'Application not found' });
+    }
+
+    const [timelineRes, docsRes, physRes, walletRes, smsRes] = await Promise.all([
+      query(`SELECT at.*, u.full_name as performed_by_name, u.role as performed_by_role FROM application_timeline at LEFT JOIN users u ON u.id = at.performed_by WHERE at.application_id = $1 ORDER BY COALESCE(at.performed_at, NOW()) DESC`, [id]).catch(() => ({ rows: [] })),
+      query(`SELECT * FROM application_documents WHERE application_id = $1 ORDER BY COALESCE(uploaded_at, NOW()) DESC`, [id]).catch(() => ({ rows: [] })),
+      query(`SELECT * FROM physical_application_details WHERE application_id = $1`, [id]).catch(() => ({ rows: [] })),
+      query(`SELECT * FROM wallet_ledger WHERE application_id = $1 ORDER BY created_at DESC`, [id]).catch(() => ({ rows: [] })),
+      Promise.resolve({ rows: [] })
+    ]);
+
+    if (appTrace) {
+      appTrace.update_count = timelineRes.rows.length;
+    }
+
+    return success(res, {
+      application: appTrace,
+      timeline: timelineRes.rows,
+      documents: docsRes.rows,
+      physical_details: physRes.rows[0] || null,
+      wallet_ledger: walletRes.rows,
+      sms_logs: smsRes.rows
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const updateRemarkOperatorApplication = async (req, res, next) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { bank_remark, user_remark, ipa_stage, vkyc_stage, vkyc_status, dispatch_status, app_file_generated, notes, decline_reason, decline_code, decline_description, bank_application_number, bank_ref_number, los_no } = req.body;
+    const userId = req.user.id;
+
+    let remarkDeclineCode = decline_code ? String(decline_code).trim() : null;
+    let remarkCuringDesig = null;
+    let remarkDeclineDesc = decline_description ? String(decline_description).trim() : null;
+    if (remarkDeclineCode) {
+      const codeInfo = getHdfcDeclineCodeInfo(remarkDeclineCode);
+      if (codeInfo) {
+        remarkDeclineCode = codeInfo.code;
+        remarkCuringDesig = codeInfo.designation;
+        remarkDeclineDesc = remarkDeclineDesc || codeInfo.description;
+      }
+    }
+
+    // Fetch application to verify bank assignment
+    const { rows: [app] } = await client.query(
+      `SELECT a.*, p.bank_id FROM applications a JOIN products p ON p.id = a.product_id WHERE a.id::text = $1 OR a.id = $1 FOR UPDATE`,
+      [id]
+    );
+
+    if (!app) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Application not found');
+    }
+
+    const userRole = (req.user?.role || '').toUpperCase();
+    const userDesignation = (req.user?.designation || '').toUpperCase();
+    const isQuerableOperator = ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userDesignation) || ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userRole);
+    if (userRole !== 'SUPER_ADMIN') {
+      let userAssignments = [];
+      try {
+        const res = await client.query(
+          `SELECT aba.bank_id, COALESCE(aba.category, 'credit_card') as category, b.short_code, b.name 
+           FROM admin_bank_assignments aba
+           LEFT JOIN banks b ON b.id = aba.bank_id
+           WHERE aba.admin_id = $1`,
+          [userId]
+        );
+        userAssignments = res.rows;
+      } catch (abaErr) {
+        const res = await client.query(
+          `SELECT aba.bank_id, 'credit_card' as category, b.short_code, b.name 
+           FROM admin_bank_assignments aba
+           LEFT JOIN banks b ON b.id = aba.bank_id
+           WHERE aba.admin_id = $1`,
+          [userId]
+        );
+        userAssignments = res.rows;
+      }
+      
+      const { rows: [pRow] } = await client.query(`SELECT category, sub_category, name, bank_id FROM products WHERE id = $1`, [app.product_id]).catch(() => ({ rows: [] }));
+      const isAppLocEoc = ['loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loc', 'eoc', 'loan_on_card', 'card_on_loan'].includes(String(pRow?.category || app.category || '').toLowerCase()) ||
+        ['loc', 'eoc', 'loc_eoc', 'loan_on_credit_card', 'smart_emi', 'loan_on_card', 'card_on_loan'].includes(String(pRow?.sub_category || '').toLowerCase()) ||
+        /insta\s*loan|jumbo\s*loan|instant\s*(&|and)?\s*jumbo\s*loan|instant\s*loan|smart\s*emi|smartemi|loan\s*on\s*card|loan\s*on\s*credit\s*card|emi\s*on\s*credit\s*card|emi\s*on\s*card|encash|dial\s*a\s*draft/i.test(String(pRow?.name || ''));
+      
+      const appCategory = isAppLocEoc ? 'loc_eoc' : 'credit_card';
+      const effectiveBankId = app.bank_id || pRow?.bank_id;
+
+      const isAuthorizedPair = userAssignments.some(assignment => {
+        const assignCat = normalizeAssignmentCategory(assignment.category);
+        const catMatch = assignCat === appCategory;
+        const bankMatch = assignment.bank_id === effectiveBankId || 
+          (assignment.short_code && (app.bank_code || '').toLowerCase().includes(assignment.short_code.toLowerCase())) ||
+          (assignment.name && (app.bank_name || '').toLowerCase().includes(assignment.name.toLowerCase())) ||
+          (assignment.short_code || '').toUpperCase() === 'LOC_EOC';
+        return catMatch && bankMatch;
+      });
+
+      if (!isAuthorizedPair) {
+        await client.query('ROLLBACK');
+        return forbidden(res, 'You are not assigned to handle applications for this category and bank combination.');
+      }
+
+      const isSalesExecUserLocal = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+      if (isSalesExecUserLocal && app.sales_claimed_by && app.sales_claimed_by !== userId && !['ADMIN', 'SUPER_ADMIN'].includes(userRole)) {
+        await client.query('ROLLBACK');
+        return forbidden(res, `This application has been claimed by another Administrative Sales Operator (${app.sales_claimed_by_name || 'Operator'}). You are not authorized to modify it.`);
+      }
+
+      if (isQuerableOperator) {
+        const statusStr = (app.status || '').toLowerCase();
+        const finalStatusStr = (app.final_status || '').toLowerCase();
+        const isRejected = statusStr.includes('reject') || statusStr.includes('decline') || finalStatusStr.includes('reject') || finalStatusStr.includes('decline');
+        if (!isRejected) {
+          await client.query('ROLLBACK');
+          return forbidden(res, 'Querable Operators can only access rejected applications.');
+        }
+      }
+
+      const isPhysicalCurable = ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userDesignation) || ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userRole);
+      const isDigitalCurable = ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userRole);
+      const isEmailCurable = ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userRole);
+
+      if (isPhysicalCurable || isDigitalCurable || isEmailCurable) {
+        const statusStr = (app.status || '').toLowerCase();
+        const finalStatusStr = (app.final_status || '').toLowerCase();
+        const appPrimaryDeclineCode = (app.primary_decline_code || app.decline_code || '').trim().toUpperCase();
+        const appPrimaryCuringDesig = (app.primary_curing_designation || app.curing_designation || '').trim().toUpperCase().replace(/ /g, '_');
+        const hasDeclineCode = Boolean(appPrimaryDeclineCode && appPrimaryDeclineCode !== 'NONE');
+        const isRejected = statusStr.includes('reject') || statusStr.includes('decline') || finalStatusStr.includes('reject') || finalStatusStr.includes('decline') || hasDeclineCode;
+        if (!isRejected) {
+          await client.query('ROLLBACK');
+          return forbidden(res, 'Curable Operators can only access declined or curable applications.');
+        }
+
+        const physicalCodes = HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.PHYSICAL_CURABLE).map(c => c.code.toUpperCase());
+        const digitalCodes = HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.DIGITAL_CURABLE).map(c => c.code.toUpperCase());
+        const emailCodes = HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.EMAIL_CURABLE).map(c => c.code.toUpperCase());
+
+        if (isPhysicalCurable) {
+          if (appPrimaryDeclineCode && appPrimaryDeclineCode !== 'NONE') {
+            if (!physicalCodes.includes(appPrimaryDeclineCode)) {
+              await client.query('ROLLBACK');
+              return forbidden(res, 'This application is not allocated to Physical Curable team.');
+            }
+          } else if (!appPrimaryCuringDesig.startsWith('PHYSICAL_CURABLE')) {
+            await client.query('ROLLBACK');
+            return forbidden(res, 'This application is not allocated to Physical Curable team.');
+          }
+        } else if (isDigitalCurable) {
+          if (appPrimaryDeclineCode && appPrimaryDeclineCode !== 'NONE') {
+            if (!digitalCodes.includes(appPrimaryDeclineCode)) {
+              await client.query('ROLLBACK');
+              return forbidden(res, 'This application is not allocated to Digital Curable team.');
+            }
+          } else if (!appPrimaryCuringDesig.startsWith('DIGITAL_CURABLE')) {
+            await client.query('ROLLBACK');
+            return forbidden(res, 'This application is not allocated to Digital Curable team.');
+          }
+        } else if (isEmailCurable) {
+          if (appPrimaryDeclineCode && appPrimaryDeclineCode !== 'NONE') {
+            if (!emailCodes.includes(appPrimaryDeclineCode)) {
+              await client.query('ROLLBACK');
+              return forbidden(res, 'This application is not allocated to Email Curable team.');
+            }
+          } else if (!appPrimaryCuringDesig.startsWith('EMAIL_CURABLE')) {
+            await client.query('ROLLBACK');
+            return forbidden(res, 'This application is not allocated to Email Curable team.');
+          }
+        }
+      }
+    }
+
+    const effectiveUserRemark = user_remark || notes || null;
+    const effectiveVkycStage = vkyc_stage || vkyc_status || null;
+    const currentOpCode = req.user?.employee_id || req.user?.user_code || req.user?.employee_code || req.user?.emp_code || req.user?.full_name || req.user?.email || req.user?.id;
+    const isSalesExecUserLocal = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+    const canSaveBackendRemark = ['SUPER_ADMIN', 'ADMIN', 'OPERATIONAL_HEAD', 'OPERATIONS_HEAD', 'OPERATIONAL HEAD', 'OPERATIONS HEAD', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR'].includes(userRole) || ['SUPER_ADMIN', 'ADMIN', 'OPERATIONAL_HEAD', 'OPERATIONS_HEAD', 'OPERATIONAL HEAD', 'OPERATIONS HEAD', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR'].includes(userDesignation) || isSalesExecUserLocal;
+    const backendRemarkToSave = (req.body.backend_remark !== undefined && canSaveBackendRemark) ? req.body.backend_remark : null;
+
+    const resolvedRemarkBankAppNo = (
+      (bank_application_number !== undefined && bank_application_number !== null && String(bank_application_number).trim() !== '') ? String(bank_application_number).trim() :
+      (bank_ref_number !== undefined && bank_ref_number !== null && String(bank_ref_number).trim() !== '') ? String(bank_ref_number).trim() :
+      (los_no !== undefined && los_no !== null && String(los_no).trim() !== '') ? String(los_no).trim() :
+      null
+    );
+
+    // 1. Update applications table
+    await client.query(`
+      UPDATE applications 
+      SET bank_remark = COALESCE($1, bank_remark),
+          user_remark = COALESCE($2, user_remark),
+          vkyc_stage = COALESCE($3, vkyc_stage),
+          vkyc_status = COALESCE($3, vkyc_status),
+          dispatch_status = COALESCE($4, dispatch_status),
+          app_file_generated = COALESCE($5, app_file_generated),
+          notes = COALESCE($2, notes),
+          decline_reason = COALESCE($6, decline_reason),
+          remark_operator_code = COALESCE($7, remark_operator_code),
+          backend_remark = COALESCE($8, backend_remark),
+          bank_application_number = COALESCE(NULLIF($11, ''), bank_application_number),
+          bank_ref_number = COALESCE(NULLIF($11, ''), bank_ref_number),
+          los_no = COALESCE(NULLIF($11, ''), los_no),
+          remark_status = 'COMPLETED',
+          remark_updated = TRUE,
+          remark_updated_by = $9,
+          remark_updated_at = NOW(),
+          updated_at = NOW()
+      WHERE id = $10
+    `, [bank_remark || null, effectiveUserRemark, effectiveVkycStage, dispatch_status || null, app_file_generated || null, decline_reason || null, currentOpCode, backendRemarkToSave, userId, app.id, resolvedRemarkBankAppNo]);
+
+    // 2. Upsert physical_application_details table
+    await client.query(`
+      INSERT INTO physical_application_details (
+        application_id, bank_remark, user_remark, ipa_stage, vkyc_stage, dispatch_status, app_file_generated, decline_reason, remark_operator_code, backend_remark, bank_application_number, bank_ref_number, los_no, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''), NULLIF($11, ''), NULLIF($11, ''), NOW(), NOW())
+      ON CONFLICT (application_id) DO UPDATE SET
+        bank_remark = COALESCE(EXCLUDED.bank_remark, physical_application_details.bank_remark),
+        user_remark = COALESCE(EXCLUDED.user_remark, physical_application_details.user_remark),
+        ipa_stage = COALESCE(NULLIF(EXCLUDED.ipa_stage, ''), physical_application_details.ipa_stage),
+        vkyc_stage = COALESCE(NULLIF(EXCLUDED.vkyc_stage, ''), physical_application_details.vkyc_stage),
+        dispatch_status = COALESCE(NULLIF(EXCLUDED.dispatch_status, ''), physical_application_details.dispatch_status),
+        app_file_generated = COALESCE(EXCLUDED.app_file_generated, physical_application_details.app_file_generated),
+        decline_reason = COALESCE(EXCLUDED.decline_reason, physical_application_details.decline_reason),
+        remark_operator_code = COALESCE(EXCLUDED.remark_operator_code, physical_application_details.remark_operator_code),
+        backend_remark = COALESCE(EXCLUDED.backend_remark, physical_application_details.backend_remark),
+        bank_application_number = COALESCE(EXCLUDED.bank_application_number, physical_application_details.bank_application_number),
+        bank_ref_number = COALESCE(EXCLUDED.bank_ref_number, physical_application_details.bank_ref_number),
+        los_no = COALESCE(NULLIF(EXCLUDED.bank_ref_number, ''), physical_application_details.los_no),
+        updated_at = NOW()
+    `, [app.id, bank_remark || null, effectiveUserRemark, ipa_stage || null, effectiveVkycStage, dispatch_status || null, app_file_generated || null, decline_reason || null, currentOpCode, backendRemarkToSave, resolvedRemarkBankAppNo]);
+
+    if (remarkDeclineCode !== null || remarkCuringDesig !== null) {
+      try {
+        await client.query('SAVEPOINT remark_curing_sp');
+        await client.query(`
+          UPDATE applications SET
+            decline_code = COALESCE(NULLIF($1, ''), decline_code),
+            decline_description = COALESCE(NULLIF($2, ''), decline_description),
+            curing_designation = COALESCE(NULLIF($3, ''), curing_designation)
+          WHERE id = $4
+        `, [remarkDeclineCode || null, remarkDeclineDesc || null, remarkCuringDesig || null, app.id]);
+        await client.query(`
+          UPDATE physical_application_details SET
+            decline_code = COALESCE(NULLIF($1, ''), decline_code),
+            decline_description = COALESCE(NULLIF($2, ''), decline_description),
+            curing_designation = COALESCE(NULLIF($3, ''), curing_designation)
+          WHERE application_id = $4
+        `, [remarkDeclineCode || null, remarkDeclineDesc || null, remarkCuringDesig || null, app.id]);
+        await client.query('RELEASE SAVEPOINT remark_curing_sp');
+      } catch (curingErr) {
+        await client.query('ROLLBACK TO SAVEPOINT remark_curing_sp').catch(err => logger.warn('Silent catch warning:', err.message));
+        logger.warn('Failed to update decline_code/curing_designation in updateRemarkOperatorApplication:', curingErr.message);
+      }
+    }
+
+    // 3. Update application_admin_assignments if exists
+    await client.query(`
+      UPDATE application_admin_assignments 
+      SET status = 'COMPLETED', completed_at = NOW(), updated_at = NOW()
+      WHERE application_id = $1 AND admin_user_id = $2
+    `, [app.id, userId]);
+
+    // 4. Log timeline
+    await logTimeline(client, app.id, 'remark_updated', 'Remark Operator Review', `Remark updated by Remark Operator. ${bank_remark ? 'Remark: ' + bank_remark : ''}`, userId);
+
+    // 5. Log action in audit_logs
+    await logAction(req, 'UPDATE_APPLICATION_REMARK', app.id, {
+      app_number: app.app_number,
+      bank_remark,
+      user_remark: effectiveUserRemark,
+      ipa_stage,
+      vkyc_stage: effectiveVkycStage
+    });
+
+    await client.query('COMMIT');
+    await invalidateApplicationsCache({ action: 'update_remark_operator', appId: app.id });
+    return success(res, { application_id: app.id, remark_status: 'COMPLETED' }, 'Remark updated successfully. Application marked as completed in queue.');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+const getRemarkOperatorDashboard = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { rows: bankRows } = await query(`SELECT bank_id FROM admin_bank_assignments WHERE admin_id = $1`, [userId]);
+    const assignedBankIds = bankRows.map(b => b.bank_id);
+
+    if (assignedBankIds.length === 0 && req.user.role !== 'SUPER_ADMIN') {
+      return success(res, { pending_count: 0, completed_today_count: 0, assigned_banks_count: 0 });
+    }
+
+    const bankCondition = req.user.role === 'SUPER_ADMIN' ? '1=1' : `p.bank_id IN (SELECT bank_id FROM admin_bank_assignments WHERE admin_id = $1)`;
+    const params = req.user.role === 'SUPER_ADMIN' ? [] : [userId];
+
+    const { rows: [pendingRes] } = await query(`
+      SELECT COUNT(*) as count 
+      FROM applications a
+      JOIN products p ON p.id = a.product_id
+      WHERE ${bankCondition}
+        AND COALESCE(NULLIF(to_jsonb(a)->>'remark_status', ''), 'PENDING') = 'PENDING'
+    `, params);
+
+    const { rows: [completedRes] } = await query(`
+      SELECT COUNT(*) as count 
+      FROM applications a
+      JOIN products p ON p.id = a.product_id
+      WHERE ${bankCondition}
+        AND COALESCE(to_jsonb(a)->>'remark_status', '') = 'COMPLETED'
+        AND (to_jsonb(a)->>'remark_updated_by' = $1::text OR $1 IS NULL)
+        AND DATE(NULLIF(to_jsonb(a)->>'remark_updated_at', '')::timestamptz) = CURRENT_DATE
+    `, [userId]);
+
+    return success(res, {
+      pending_count: parseInt(pendingRes?.count || 0),
+      completed_today_count: parseInt(completedRes?.count || 0),
+      assigned_banks_count: assignedBankIds.length
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+let operatorHistoryChecked = false;
+
+// GET /applications/:id/operator-history — Fetch full operator audit trail
+const getApplicationOperatorHistory = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const authCheck = await verifyPartnerApplicationOwnership(id, req.user);
+    if (!authCheck.authorized) {
+      if (authCheck.notFound) return notFound(res, authCheck.reason);
+      return forbidden(res, authCheck.reason);
+    }
+
+    await ensureOperatorHistoryTable();
+    const { rows } = await query(`
+      SELECT 
+        h.id,
+        h.application_id,
+        h.operator_id,
+        h.operator_name,
+        h.operator_role,
+        h.operator_designation,
+        h.operator_code,
+        h.action_type,
+        h.field_changes,
+        h.notes,
+        h.created_at
+      FROM application_operator_history h
+      WHERE h.application_id::text = $1::text
+      ORDER BY h.created_at DESC
+    `, [id]).catch(err => {
+      logger.warn('Error querying application_operator_history:', err.message);
+      return { rows: [] };
+    });
+
+    return success(res, rows, 'Operator history fetched successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+// POST /applications/:id/claim-request — Claim application by Administrative Sales Operator
+const claimApplicationRequest = async (req, res, next) => {
+  const { id } = req.params;
+  if (!id || id === 'undefined' || id === 'null' || !String(id).trim()) {
+    return error(res, 'A valid Application ID is required', 400);
+  }
+
+  const userId = req.user?.id;
+  if (!userId) {
+    return error(res, 'Authentication required', 401);
+  }
+
+  const userName = req.user.full_name || req.user.name || 'Sales Operator';
+  const userCode = req.user.user_code || req.user.employee_id || req.user.emp_code || '';
+  const userRole = (req.user.role || '').toUpperCase();
+  const userDesignation = (req.user.designation || '').toUpperCase();
+
+  // Verify operator permission:
+  // Administrative Sales Operator / Sales Executive, or Admin / Super Admin
+  const isSalesUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+  const isAdmin = ['ADMIN', 'SUPER_ADMIN'].includes(userRole);
+
+  if (!isSalesUser && !isAdmin) {
+    return error(res, 'Only Administrative Sales Operators or Administrators can claim an application request', 403);
+  }
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    // Row-lock application for concurrency protection
+    const cleanId = String(id).trim();
+    let { rows: [app] } = await client.query(`
+      SELECT a.*,
+        p.bank_id as product_bank_id,
+        b.id as resolved_bank_id,
+        b.short_code as bank_code,
+        b.name as bank_name,
+        COALESCE(to_jsonb(a)->>'sales_claimed_by', to_jsonb(pad)->>'sales_claimed_by', '') as existing_claimed_by,
+        COALESCE(to_jsonb(a)->>'sales_claimed_by_name', to_jsonb(pad)->>'sales_claimed_by_name', '') as existing_claimed_by_name,
+        COALESCE(to_jsonb(a)->>'sales_claimed_by_code', to_jsonb(pad)->>'sales_claimed_by_code', '') as existing_claimed_by_code,
+        COALESCE(to_jsonb(a)->>'sales_claimed_at', to_jsonb(pad)->>'sales_claimed_at', NULL) as existing_claimed_at
+      FROM applications a 
+      LEFT JOIN products p ON p.id = a.product_id
+      LEFT JOIN banks b ON b.id = COALESCE(a.bank_id, p.bank_id)
+      LEFT JOIN physical_application_details pad ON pad.application_id = a.id
+      WHERE LOWER(a.id::text) = LOWER($1) 
+         OR a.app_number ILIKE $1 
+         OR a.app_number ILIKE REPLACE($1, 'APP', '')
+         OR ('APP' || a.id::text) = $1
+         OR (a.bank_application_number IS NOT NULL AND a.bank_application_number ILIKE $1)
+         OR (a.bank_ref_number IS NOT NULL AND a.bank_ref_number ILIKE $1)
+         OR (a.lead_id IS NOT NULL AND a.lead_id::text = $1)
+         OR (a.tracking_token IS NOT NULL AND a.tracking_token = $1)
+      FOR UPDATE OF a
+    `, [cleanId]);
+
+    if (!app) {
+      // Fallback lookup via physical_application_details
+      const { rows: [pdRec] } = await client.query(`
+        SELECT application_id FROM physical_application_details 
+        WHERE id::text = $1 OR bank_application_number ILIKE $1 OR bank_ref_number ILIKE $1 
+        LIMIT 1
+      `, [cleanId]).catch(() => ({ rows: [] }));
+
+      if (pdRec?.application_id) {
+        const { rows: [appFromPd] } = await client.query(`
+          SELECT a.*,
+            p.bank_id as product_bank_id,
+            b.id as resolved_bank_id,
+            b.short_code as bank_code,
+            b.name as bank_name,
+            COALESCE(to_jsonb(a)->>'sales_claimed_by', to_jsonb(pad)->>'sales_claimed_by', '') as existing_claimed_by,
+            COALESCE(to_jsonb(a)->>'sales_claimed_by_name', to_jsonb(pad)->>'sales_claimed_by_name', '') as existing_claimed_by_name,
+            COALESCE(to_jsonb(a)->>'sales_claimed_by_code', to_jsonb(pad)->>'sales_claimed_by_code', '') as existing_claimed_by_code,
+            COALESCE(to_jsonb(a)->>'sales_claimed_at', to_jsonb(pad)->>'sales_claimed_at', NULL) as existing_claimed_at
+          FROM applications a 
+          LEFT JOIN products p ON p.id = a.product_id
+          LEFT JOIN banks b ON b.id = COALESCE(a.bank_id, p.bank_id)
+          LEFT JOIN physical_application_details pad ON pad.application_id = a.id
+          WHERE a.id = $1
+          FOR UPDATE OF a
+        `, [pdRec.application_id]);
+        app = appFromPd;
+      }
+    }
+
+    if (!app) {
+      await client.query('ROLLBACK');
+      return error(res, 'Application not found', 404);
+    }
+
+    // Eligibility check: cancelled or disbursed applications cannot be claimed
+    const appStatusLower = (app.status || '').toLowerCase();
+    if (['cancelled', 'cancel'].includes(appStatusLower)) {
+      await client.query('ROLLBACK');
+      return error(res, 'Cancelled applications cannot be claimed.', 400);
+    }
+    if (['disbursed'].includes(appStatusLower)) {
+      await client.query('ROLLBACK');
+      return error(res, 'Disbursed applications cannot be claimed.', 400);
+    }
+
+    // Bank assignment verification for non-admin executives
+    if (!isAdmin) {
+      const { rows: assignedBanks } = await client.query(`
+        SELECT aba.bank_id, b.short_code, b.name 
+        FROM admin_bank_assignments aba
+        LEFT JOIN banks b ON b.id = aba.bank_id
+        WHERE aba.admin_id = $1 AND (aba.is_active IS NULL OR aba.is_active = true)
+      `, [userId]);
+
+      const effectiveBankId = app.resolved_bank_id || app.bank_id || app.product_bank_id;
+      const bankCode = (app.bank_code || '').toLowerCase();
+      const bankName = (app.bank_name || '').toLowerCase();
+
+      const isSbi = (bankCode === 'sbi' || bankName.includes('sbi')) &&
+        !bankName.includes('tata') && !bankCode.includes('tata');
+      const isHdfc = (bankCode === 'hdfc' || bankName.includes('hdfc')) &&
+        !bankName.includes('tata') && !bankCode.includes('tata');
+
+      let hasBankAccess = false;
+      if (assignedBanks.length > 0) {
+        hasBankAccess = assignedBanks.some(b => {
+          const bCode = (b.short_code || '').toLowerCase();
+          const bName = (b.name || '').toLowerCase();
+          return (b.bank_id && b.bank_id === effectiveBankId) ||
+            (bCode && bankCode.includes(bCode)) ||
+            (bName && (bankName.includes(bName) || bName.includes(bankName)));
+        }) || isSbi;
+      } else {
+        hasBankAccess = isHdfc || isSbi;
+      }
+
+      // Check Tata exclusion unless explicitly assigned Tata
+      const isTata = bankName.includes('tata') || bankCode.includes('tata');
+      if (isTata) {
+        const hasTataAssignment = assignedBanks.some(b =>
+          (b.name || '').toLowerCase().includes('tata') || (b.short_code || '').toLowerCase().includes('tata')
+        );
+        if (!hasTataAssignment) {
+          hasBankAccess = false;
+        }
+      }
+
+      if (!hasBankAccess) {
+        await client.query('ROLLBACK');
+        return error(res, `You are not authorized to claim applications for ${app.bank_name || 'this bank partner'}.`, 403);
+      }
+    }
+
+    const currentClaimedBy = app.sales_claimed_by || app.existing_claimed_by || '';
+
+    // If claimed by another operator, reject with 409 Conflict
+    if (currentClaimedBy && currentClaimedBy !== userId && !isAdmin) {
+      await client.query('ROLLBACK');
+      const claimantName = app.sales_claimed_by_name || app.existing_claimed_by_name || 'another Administrative Sales Operator';
+      return res.status(409).json({
+        success: false,
+        message: `This application has already been claimed by ${claimantName}.`,
+        claimed_by: currentClaimedBy,
+        claimed_by_name: claimantName,
+        claimed_at: app.sales_claimed_at || app.existing_claimed_at
+      });
+    }
+
+    // If already claimed by this user, return idempotent success without duplicate timeline/history
+    if (currentClaimedBy === userId) {
+      await client.query('ROLLBACK');
+      return success(res, {
+        application_id: app.id,
+        sales_claimed_by: userId,
+        sales_claimed_by_name: app.sales_claimed_by_name || app.existing_claimed_by_name || userName,
+        sales_claimed_by_code: app.sales_claimed_by_code || app.existing_claimed_by_code || userCode,
+        sales_claimed_at: app.sales_claimed_at || app.existing_claimed_at
+      }, 'Application is already claimed by you.');
+    }
+
+    const claimedAt = new Date().toISOString();
+
+    // Atomic conditional update to prevent concurrent duplicate claims
+    const updateResult = await client.query(`
+      UPDATE applications 
+      SET 
+        sales_claimed_by = $1,
+        sales_claimed_by_name = $2,
+        sales_claimed_by_code = $3,
+        sales_claimed_at = $4,
+        updated_at = NOW()
+      WHERE id = $5 
+        AND (sales_claimed_by IS NULL OR sales_claimed_by = '' OR sales_claimed_by = $1)
+      RETURNING *
+    `, [userId, userName, userCode, claimedAt, app.id]);
+
+    if (updateResult.rowCount === 0 && !isAdmin) {
+      const { rows: [latestApp] } = await client.query(`SELECT sales_claimed_by, sales_claimed_by_name, sales_claimed_at FROM applications WHERE id = $1`, [app.id]);
+      await client.query('ROLLBACK');
+      const claimantName = latestApp?.sales_claimed_by_name || 'another Administrative Sales Operator';
+      return res.status(409).json({
+        success: false,
+        message: `This application has already been claimed by ${claimantName}.`,
+        claimed_by: latestApp?.sales_claimed_by,
+        claimed_by_name: claimantName,
+        claimed_at: latestApp?.sales_claimed_at
+      });
+    }
+
+    // Also update physical application details if exists
+    await client.query(`
+      UPDATE physical_application_details
+      SET 
+        sales_claimed_by = $1,
+        sales_claimed_by_name = $2,
+        sales_claimed_by_code = $3,
+        sales_claimed_at = $4,
+        updated_at = NOW()
+      WHERE application_id = $5
+    `, [userId, userName, userCode, claimedAt, app.id]).catch(err => logger.warn('Silent catch warning:', err.message));
+
+    // Insert timeline record
+    await client.query(`
+      INSERT INTO application_timeline (
+        application_id, 
+        event_type, 
+        title, 
+        description, 
+        performed_by, 
+        created_at
+      )
+      VALUES ($1, $2, $3, $4, $5, NOW())
+    `, [
+      app.id,
+      'SALES_OPERATOR_CLAIM',
+      'Claimed by Sales Operator',
+      `Application claimed by ${userName} (${userCode || userDesignation || 'Sales Operator'})`,
+      userId
+    ]).catch(err => logger.warn('Timeline insert non-fatal warn:', err.message));
+
+    // Also record in operator history
+    try {
+      await client.query(`
+        INSERT INTO application_operator_history (
+          application_id,
+          operator_id,
+          operator_name,
+          operator_role,
+          operator_designation,
+          operator_code,
+          action_type,
+          field_changes,
+          notes,
+          created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+      `, [
+        app.id,
+        userId,
+        userName,
+        userRole,
+        userDesignation,
+        userCode,
+        'CLAIM_REQUEST',
+        JSON.stringify({ sales_claimed_by: userId, sales_claimed_by_name: userName }),
+        `Claimed by ${userName}`,
+      ]).catch(err => logger.warn('Silent catch warning:', err.message));
+    } catch (e) {}
+
+    // Audit log
+    await logAction(req, 'CLAIM_APPLICATION_REQUEST', app.id, {
+      app_number: app.app_number,
+      sales_claimed_by: userId,
+      sales_claimed_by_name: userName,
+      sales_claimed_by_code: userCode
+    }).catch(err => logger.warn('Silent catch warning:', err.message));
+
+    await client.query('COMMIT');
+    await invalidateApplicationsCache({ action: 'claim_application_request', appId: app.id });
+
+    return success(res, {
+      application_id: app.id,
+      sales_claimed_by: userId,
+      sales_claimed_by_name: userName,
+      sales_claimed_by_code: userCode,
+      sales_claimed_at: claimedAt
+    }, 'Application successfully claimed.');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+/**
+const isUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
+/**
+ * GET /api/v1/applications/assignable-employees
+ * Search active employees by Name, Mobile Number, or Employee Code.
+ * Supports designation filter (e.g., ?designation=sales_executive)
+ */
+const getAssignableEmployees = async (req, res, next) => {
+  try {
+    const rawSearch = (req.query.search || req.query.q || '').trim();
+    const designationFilter = (req.query.designation || req.query.role || '').trim().toLowerCase();
+    const currentUserId = req.user?.id;
+
+    let baseSQL = `
+      SELECT
+        e.id,
+        COALESCE(NULLIF(e.employee_id, ''), NULLIF(u.employee_id, ''), 'EMP') as employee_id,
+        COALESCE(e.user_id, u.id) as user_id,
+        COALESCE(NULLIF(e.full_name, ''), NULLIF(u.full_name, ''), 'Staff') as full_name,
+        COALESCE(NULLIF(e.mobile_number, ''), NULLIF(u.mobile, ''), '') as mobile_number,
+        COALESCE(NULLIF(e.designation, ''), NULLIF(u.designation, ''), 'Employee') as designation,
+        COALESCE(NULLIF(e.department, ''), 'Operations') as department,
+        COALESCE(NULLIF(e.employee_status, ''), 'ACTIVE') as employee_status,
+        COALESCE(NULLIF(e.email_id, ''), u.email) as email
+      FROM (
+        SELECT id, user_id, employee_id, full_name, mobile_number, designation, department, employee_status, email_id
+        FROM employees
+        WHERE (employee_status IS NULL OR UPPER(employee_status::text) NOT IN ('TERMINATED', 'INACTIVE'))
+        UNION
+        SELECT id, id as user_id, employee_id, full_name, mobile as mobile_number, designation, 'Sales' as department, status as employee_status, email as email_id
+        FROM users
+        WHERE (status IS NULL OR UPPER(status::text) NOT IN ('TERMINATED', 'INACTIVE', 'BLOCKED'))
+          AND id NOT IN (SELECT user_id FROM employees WHERE user_id IS NOT NULL)
+      ) e
+      LEFT JOIN users u ON u.id = e.user_id
+      WHERE (e.employee_status IS NULL OR UPPER(e.employee_status::text) NOT IN ('TERMINATED', 'INACTIVE'))
+    `;
+    const params = [];
+
+    if (currentUserId && isUuid(currentUserId)) {
+      params.push(currentUserId);
+      baseSQL += ` AND (e.user_id IS NULL OR e.user_id != $${params.length})`;
+    }
+
+    if (designationFilter.includes('sales')) {
+      baseSQL += ` AND (
+        UPPER(COALESCE(e.designation, u.designation, '')) IN (
+          'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE',
+          'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR',
+          'SALES EXECUTIVE', 'SALES_EXECUTIVE'
+        )
+        OR UPPER(COALESCE(u.role, '')) IN (
+          'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE',
+          'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'
+        )
+        OR UPPER(COALESCE(e.designation, u.designation, '')) LIKE '%SALES EXECUTIVE%'
+        OR UPPER(COALESCE(e.designation, u.designation, '')) LIKE '%SALES OPERATOR%'
+      )`;
+    } else if (designationFilter) {
+      params.push(`%${designationFilter}%`);
+      const pIdx = params.length;
+      baseSQL += ` AND (
+        COALESCE(e.designation, '') ILIKE $${pIdx}
+        OR COALESCE(u.designation, '') ILIKE $${pIdx}
+        OR COALESCE(u.role, '') ILIKE $${pIdx}
+      )`;
+    }
+
+    if (rawSearch) {
+      params.push(`%${rawSearch}%`);
+      const pIdx = params.length;
+      baseSQL += ` AND (
+        e.full_name ILIKE $${pIdx}
+        OR e.mobile_number ILIKE $${pIdx}
+        OR e.employee_id ILIKE $${pIdx}
+        OR COALESCE(u.full_name, '') ILIKE $${pIdx}
+        OR COALESCE(u.mobile, '') ILIKE $${pIdx}
+        OR COALESCE(u.employee_id, '') ILIKE $${pIdx}
+      )`;
+    }
+
+    baseSQL += ` ORDER BY e.full_name ASC LIMIT 50`;
+
+    const { rows } = await query(baseSQL, params);
+    return success(res, rows, 'Assignable employees retrieved successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /api/v1/applications/:id/assign-sales-executive
+ * Assign an application from one Administrative Sales Executive to another.
+ * Updates sales_claimed_by and assigned_to fields, logs timeline & operator history.
+ */
+const assignApplicationToSalesExecutive = async (req, res, next) => {
+  const { id } = req.params;
+  const targetId = req.body.target_employee_id || req.body.target_user_id || req.body.target_id || req.body.employee_id;
+  const notes = (req.body.notes || req.body.remarks || '').trim();
+
+  if (!id || id === 'undefined' || id === 'null' || !String(id).trim()) {
+    return error(res, 'A valid Application ID is required', 400);
+  }
+  if (!targetId) {
+    return error(res, 'Target Administrative Sales Executive is required', 400);
+  }
+
+  const userId = req.user?.id;
+  if (!userId) {
+    return error(res, 'Authentication required', 401);
+  }
+
+  const userRole = (req.user.role || '').toUpperCase();
+  const userDesignation = (req.user.designation || '').toUpperCase();
+  const isSalesUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+  const isAdmin = ['ADMIN', 'SUPER_ADMIN'].includes(userRole);
+
+  if (!isSalesUser && !isAdmin) {
+    return error(res, 'Only Administrative Sales Executives or Administrators can assign applications.', 403);
+  }
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    // 1. Resolve application with concurrency lock
+    const cleanId = String(id).trim();
+    let { rows: [app] } = await client.query(`
+      SELECT a.*,
+        p.bank_id as product_bank_id,
+        b.id as resolved_bank_id,
+        b.short_code as bank_code,
+        b.name as bank_name,
+        COALESCE(to_jsonb(a)->>'sales_claimed_by', to_jsonb(pad)->>'sales_claimed_by', '') as existing_claimed_by,
+        COALESCE(to_jsonb(a)->>'sales_claimed_by_name', to_jsonb(pad)->>'sales_claimed_by_name', '') as existing_claimed_by_name,
+        COALESCE(to_jsonb(a)->>'sales_claimed_by_code', to_jsonb(pad)->>'sales_claimed_by_code', '') as existing_claimed_by_code,
+        COALESCE(to_jsonb(a)->>'sales_claimed_at', to_jsonb(pad)->>'sales_claimed_at', NULL) as existing_claimed_at
+      FROM applications a 
+      LEFT JOIN products p ON p.id = a.product_id
+      LEFT JOIN banks b ON b.id = COALESCE(a.bank_id, p.bank_id)
+      LEFT JOIN physical_application_details pad ON pad.application_id = a.id
+      WHERE LOWER(a.id::text) = LOWER($1) 
+         OR a.app_number ILIKE $1 
+         OR a.app_number ILIKE REPLACE($1, 'APP', '')
+         OR ('APP' || a.id::text) = $1
+         OR (a.bank_application_number IS NOT NULL AND a.bank_application_number ILIKE $1)
+         OR (a.bank_ref_number IS NOT NULL AND a.bank_ref_number ILIKE $1)
+         OR (a.lead_id IS NOT NULL AND a.lead_id::text = $1)
+         OR (a.tracking_token IS NOT NULL AND a.tracking_token = $1)
+      FOR UPDATE OF a
+    `, [cleanId]);
+
+    if (!app) {
+      const { rows: [pdRec] } = await client.query(`
+        SELECT application_id FROM physical_application_details 
+        WHERE id::text = $1 OR bank_application_number ILIKE $1 OR bank_ref_number ILIKE $1 
+        LIMIT 1
+      `, [cleanId]).catch(() => ({ rows: [] }));
+
+      if (pdRec?.application_id) {
+        const { rows: [appFromPd] } = await client.query(`
+          SELECT a.*,
+            p.bank_id as product_bank_id,
+            b.id as resolved_bank_id,
+            b.short_code as bank_code,
+            b.name as bank_name,
+            COALESCE(to_jsonb(a)->>'sales_claimed_by', to_jsonb(pad)->>'sales_claimed_by', '') as existing_claimed_by,
+            COALESCE(to_jsonb(a)->>'sales_claimed_by_name', to_jsonb(pad)->>'sales_claimed_by_name', '') as existing_claimed_by_name,
+            COALESCE(to_jsonb(a)->>'sales_claimed_by_code', to_jsonb(pad)->>'sales_claimed_by_code', '') as existing_claimed_by_code,
+            COALESCE(to_jsonb(a)->>'sales_claimed_at', to_jsonb(pad)->>'sales_claimed_at', NULL) as existing_claimed_at
+          FROM applications a 
+          LEFT JOIN products p ON p.id = a.product_id
+          LEFT JOIN banks b ON b.id = COALESCE(a.bank_id, p.bank_id)
+          LEFT JOIN physical_application_details pad ON pad.application_id = a.id
+          WHERE a.id = $1
+          FOR UPDATE OF a
+        `, [pdRec.application_id]);
+        app = appFromPd;
+      }
+    }
+
+    if (!app) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Application not found');
+    }
+
+    const appStatusLower = (app.status || '').toLowerCase();
+    if (['cancelled', 'cancel'].includes(appStatusLower)) {
+      await client.query('ROLLBACK');
+      return error(res, 'Cancelled applications cannot be assigned.', 400);
+    }
+    if (['disbursed'].includes(appStatusLower)) {
+      await client.query('ROLLBACK');
+      return error(res, 'Disbursed applications cannot be assigned.', 400);
+    }
+
+    const currentClaimedBy = app.sales_claimed_by || app.existing_claimed_by || '';
+
+    // If claimed by another operator, only that claimant or admin can assign
+    if (currentClaimedBy && currentClaimedBy !== userId && !isAdmin) {
+      await client.query('ROLLBACK');
+      const claimantName = app.sales_claimed_by_name || app.existing_claimed_by_name || 'another Administrative Sales Operator';
+      return res.status(409).json({
+        success: false,
+        message: `This application is currently claimed by ${claimantName}. Only the claiming operator or an Administrator can assign it.`,
+        claimed_by: currentClaimedBy,
+        claimed_by_name: claimantName
+      });
+    }
+
+    // 2. Resolve target employee
+    let targetEmp = null;
+    const cleanTargetId = String(targetId).trim();
+
+    const { rows: empRows } = await client.query(`
+      SELECT 
+        e.id, 
+        COALESCE(NULLIF(e.employee_id, ''), NULLIF(u.employee_id, ''), 'EMP') as employee_id,
+        COALESCE(e.user_id, u.id) as user_id,
+        COALESCE(NULLIF(e.full_name, ''), NULLIF(u.full_name, ''), 'Staff') as full_name,
+        COALESCE(NULLIF(e.mobile_number, ''), NULLIF(u.mobile, ''), '') as mobile_number,
+        COALESCE(NULLIF(e.designation, ''), NULLIF(u.designation, ''), 'Administrative Sales Executive') as designation,
+        COALESCE(NULLIF(e.department, ''), 'Sales') as department
+      FROM employees e
+      LEFT JOIN users u ON u.id = e.user_id
+      WHERE e.id::text = $1 OR e.employee_id = $1 OR (e.user_id IS NOT NULL AND e.user_id::text = $1)
+      LIMIT 1
+    `, [cleanTargetId]);
+
+    if (empRows.length > 0) {
+      targetEmp = empRows[0];
+    } else {
+      const { rows: uRows } = await client.query(`
+        SELECT 
+          u.id as user_id, 
+          COALESCE(NULLIF(u.employee_id, ''), 'EMP') as employee_id, 
+          COALESCE(NULLIF(u.full_name, ''), 'Staff') as full_name, 
+          COALESCE(NULLIF(u.mobile, ''), '') as mobile_number, 
+          COALESCE(NULLIF(u.designation, ''), 'Administrative Sales Executive') as designation
+        FROM users u
+        WHERE u.id::text = $1 OR u.employee_id = $1 LIMIT 1
+      `, [cleanTargetId]);
+      if (uRows.length > 0) {
+        targetEmp = {
+          id: null,
+          employee_id: uRows[0].employee_id,
+          user_id: uRows[0].user_id,
+          full_name: uRows[0].full_name,
+          mobile_number: uRows[0].mobile_number,
+          designation: uRows[0].designation,
+          department: 'Sales'
+        };
+      }
+    }
+
+    if (!targetEmp) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Target Administrative Sales Executive not found.');
+    }
+
+    if (targetEmp.user_id && targetEmp.user_id === userId) {
+      await client.query('ROLLBACK');
+      return error(res, 'Cannot assign the application to yourself.', 400);
+    }
+
+    // 3. Resolve assigner details
+    let assignerEmp = null;
+    if (userId) {
+      const { rows: aRows } = await client.query(
+        `SELECT id, employee_id, full_name FROM employees WHERE user_id = $1 LIMIT 1`,
+        [userId]
+      ).catch(() => ({ rows: [] }));
+      if (aRows.length > 0) assignerEmp = aRows[0];
+    }
+
+    const assignedByUserId = userId;
+    const assignedByEmpId = assignerEmp?.id || null;
+    const assignedByName = assignerEmp?.full_name || req.user.full_name || req.user.name || 'Sales Operator';
+    const assignedByCode = assignerEmp?.employee_id || req.user.user_code || req.user.employee_id || '';
+    const assignedAt = new Date().toISOString();
+
+    const targetUserId = targetEmp.user_id || null;
+    const targetUserName = targetEmp.full_name;
+    const targetUserCode = targetEmp.employee_id || '';
+    const targetEmpId = targetEmp.id || null;
+
+    // 4. Update applications table
+    await client.query(`
+      UPDATE applications SET
+        sales_claimed_by = $1,
+        sales_claimed_by_name = $2,
+        sales_claimed_by_code = $3,
+        sales_claimed_at = $4,
+        assigned_to_user_id = $1,
+        assigned_to_employee_id = $5,
+        assigned_to_name = $2,
+        assigned_to_code = $3,
+        assigned_by_user_id = $6,
+        assigned_by_employee_id = $7,
+        assigned_by_name = $8,
+        assigned_by_code = $9,
+        assigned_at = $4,
+        assignment_notes = $10,
+        updated_at = NOW()
+      WHERE id = $11
+    `, [
+      targetUserId,
+      targetUserName,
+      targetUserCode,
+      assignedAt,
+      targetEmpId,
+      assignedByUserId,
+      assignedByEmpId,
+      assignedByName,
+      assignedByCode,
+      notes || null,
+      app.id
+    ]);
+
+    // 5. Update physical_application_details if present
+    await client.query(`
+      UPDATE physical_application_details SET
+        sales_claimed_by = $1,
+        sales_claimed_by_name = $2,
+        sales_claimed_by_code = $3,
+        sales_claimed_at = $4,
+        assigned_to_user_id = $1,
+        assigned_to_employee_id = $5,
+        assigned_to_name = $2,
+        assigned_to_code = $3,
+        assigned_by_user_id = $6,
+        assigned_by_employee_id = $7,
+        assigned_by_name = $8,
+        assigned_by_code = $9,
+        assigned_at = $4,
+        assignment_notes = $10,
+        updated_at = NOW()
+      WHERE application_id = $11
+    `, [
+      targetUserId,
+      targetUserName,
+      targetUserCode,
+      assignedAt,
+      targetEmpId,
+      assignedByUserId,
+      assignedByEmpId,
+      assignedByName,
+      assignedByCode,
+      notes || null,
+      app.id
+    ]).catch(err => logger.warn('Silent catch warning:', err.message));
+
+    // 6. Record assignment in application_employee_assignments table
+    await client.query(`
+      INSERT INTO application_employee_assignments (
+        application_id,
+        assigned_to_employee_id,
+        assigned_to_user_id,
+        assigned_to_name,
+        assigned_to_code,
+        assigned_by_user_id,
+        assigned_by_employee_id,
+        assigned_by_name,
+        assigned_by_code,
+        assignment_notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `, [
+      app.id,
+      targetEmpId,
+      targetUserId,
+      targetUserName,
+      targetUserCode,
+      assignedByUserId,
+      assignedByEmpId,
+      assignedByName,
+      assignedByCode,
+      notes || null
+    ]).catch(err => logger.warn('Silent catch warning:', err.message));
+
+    // 7. Add entry in application_timeline
+    const timelineDesc = `Application assigned to ${targetUserName} (${targetUserCode}) by ${assignedByName}${notes ? ` - Remarks: ${notes}` : ''}`;
+    await client.query(`
+      INSERT INTO application_timeline (
+        application_id,
+        status,
+        event_type,
+        title,
+        description,
+        performed_by,
+        performed_by_name,
+        performed_by_role,
+        created_at
+      ) VALUES ($1, $2, 'SALES_OPERATOR_ASSIGNED', 'Assigned to Sales Executive', $3, $4, $5, $6, NOW())
+    `, [
+      app.id,
+      app.status || 'in_progress',
+      timelineDesc,
+      assignedByUserId,
+      assignedByName,
+      userRole || 'ADMINISTRATIVE SALES EXECUTIVE'
+    ]).catch(err => logger.warn('Timeline insert non-fatal warn:', err.message));
+
+    // 8. Add entry in application_operator_history
+    try {
+      await client.query(`
+        INSERT INTO application_operator_history (
+          application_id,
+          operator_id,
+          operator_name,
+          operator_role,
+          operator_designation,
+          operator_code,
+          action_type,
+          field_changes,
+          notes,
+          created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+      `, [
+        app.id,
+        assignedByUserId,
+        assignedByName,
+        userRole,
+        userDesignation,
+        assignedByCode,
+        'ASSIGN_SALES_EXECUTIVE',
+        JSON.stringify({
+          sales_claimed_by: targetUserId,
+          sales_claimed_by_name: targetUserName,
+          sales_claimed_by_code: targetUserCode,
+          assigned_by: assignedByName
+        }),
+        timelineDesc
+      ]).catch(err => logger.warn('Silent catch warning:', err.message));
+    } catch (e) {}
+
+    // 9. Audit log
+    await logAction(req, 'ASSIGN_APPLICATION_SALES_EXECUTIVE', app.id, {
+      app_number: app.app_number,
+      target_user_id: targetUserId,
+      target_user_name: targetUserName,
+      target_user_code: targetUserCode,
+      assigned_by_name: assignedByName,
+      assigned_by_code: assignedByCode,
+      notes: notes || null
+    }).catch(err => logger.warn('Silent catch warning:', err.message));
+
+    await client.query('COMMIT');
+    await invalidateApplicationsCache({ action: 'assign_sales_executive', appId: app.id });
+
+    // 10. Notify target user if targetUserId exists
+    if (targetUserId) {
+      notify(
+        targetUserId,
+        'APPLICATION_ASSIGNED',
+        `Application #${app.app_number || app.id} has been assigned to you by ${assignedByName}.`
+      ).catch(err => logger.warn('Silent catch warning:', err.message));
+    }
+
+    return success(res, {
+      application_id: app.id,
+      app_number: app.app_number,
+      sales_claimed_by: targetUserId,
+      sales_claimed_by_name: targetUserName,
+      sales_claimed_by_code: targetUserCode,
+      sales_claimed_at: assignedAt,
+      assigned_to_name: targetUserName,
+      assigned_to_code: targetUserCode,
+      assigned_to_user_id: targetUserId,
+      assigned_by_name: assignedByName,
+      assigned_by_code: assignedByCode,
+      assigned_at: assignedAt,
+      assignment_notes: notes || null
+    }, `Application successfully assigned to ${targetUserName} (${targetUserCode})`);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * POST /api/v1/applications/:id/assign-employee
+ * Assigns an application to another employee with audit logging and timeline tracking.
+ */
+const assignApplicationToEmployee = async (req, res, next) => {
+  const { id } = req.params;
+  const { target_employee_id, notes } = req.body;
+
+  if (!id) return error(res, 'Application ID is required', 400);
+  if (!target_employee_id) return error(res, 'Target employee ID or Employee Code is required', 400);
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    // 1. Resolve application
+    const { rows: [app] } = await client.query(
+      `SELECT id, app_number, status, submitted_by, employee_id, customer_name, customer_mobile
+       FROM applications
+       WHERE id::text = $1 OR app_number = $1 OR lead_id::text = $1 LIMIT 1 FOR UPDATE`,
+      [id]
+    );
+
+    if (!app) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Application not found');
+    }
+
+    // 2. Resolve target employee
+    let targetEmp = null;
+    const { rows: empRows } = await client.query(
+      `SELECT e.id, e.employee_id, e.user_id, e.full_name, e.mobile_number, e.designation, e.department
+       FROM employees e
+       WHERE e.id::text = $1 OR e.employee_id = $1 OR (e.user_id IS NOT NULL AND e.user_id::text = $1)
+       LIMIT 1`,
+      [String(target_employee_id).trim()]
+    );
+
+    if (empRows.length > 0) {
+      targetEmp = empRows[0];
+    } else {
+      // Check in users table
+      const { rows: uRows } = await client.query(
+        `SELECT u.id as user_id, u.employee_id, u.full_name, u.mobile as mobile_number, u.designation
+         FROM users u
+         WHERE u.id::text = $1 OR u.employee_id = $1 LIMIT 1`,
+        [String(target_employee_id).trim()]
+      );
+      if (uRows.length > 0) {
+        targetEmp = {
+          id: null,
+          employee_id: uRows[0].employee_id || 'EMP',
+          user_id: uRows[0].user_id,
+          full_name: uRows[0].full_name || 'Staff User',
+          mobile_number: uRows[0].mobile_number || '',
+          designation: uRows[0].designation || 'Staff'
+        };
+      }
+    }
+
+    if (!targetEmp) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Target employee not found');
+    }
+
+    // 3. Resolve assigning employee
+    let assignerEmp = null;
+    if (req.user?.id) {
+      const { rows: aEmpRows } = await client.query(
+        `SELECT id, employee_id, full_name FROM employees WHERE user_id = $1 LIMIT 1`,
+        [req.user.id]
+      );
+      if (aEmpRows.length > 0) {
+        assignerEmp = aEmpRows[0];
+      }
+    }
+
+    const assignedByUserId = req.user?.id || null;
+    const assignedByEmpId = assignerEmp?.id || null;
+    const assignedByName = assignerEmp?.full_name || req.user?.full_name || req.user?.name || 'Staff Member';
+    const assignedByCode = assignerEmp?.employee_id || req.user?.employee_id || '';
+    const assignmentNotes = (notes || '').trim() || null;
+    const assignedAt = new Date().toISOString();
+
+    // 4. Update applications table
+    await client.query(`
+      UPDATE applications SET
+        assigned_to_employee_id = $1,
+        assigned_to_user_id = $2,
+        assigned_to_name = $3,
+        assigned_to_code = $4,
+        assigned_by_user_id = $5,
+        assigned_by_employee_id = $6,
+        assigned_by_name = $7,
+        assigned_by_code = $8,
+        assigned_at = NOW(),
+        assignment_notes = $9,
+        updated_at = NOW()
+      WHERE id = $10
+    `, [
+      targetEmp.id,
+      targetEmp.user_id,
+      targetEmp.full_name,
+      targetEmp.employee_id,
+      assignedByUserId,
+      assignedByEmpId,
+      assignedByName,
+      assignedByCode,
+      assignmentNotes,
+      app.id
+    ]);
+
+    // 5. Update physical_application_details if present
+    await client.query(`
+      UPDATE physical_application_details SET
+        assigned_to_employee_id = $1,
+        assigned_to_user_id = $2,
+        assigned_to_name = $3,
+        assigned_to_code = $4,
+        assigned_by_user_id = $5,
+        assigned_by_employee_id = $6,
+        assigned_by_name = $7,
+        assigned_by_code = $8,
+        assigned_at = NOW(),
+        assignment_notes = $9,
+        updated_at = NOW()
+      WHERE application_id = $10
+    `, [
+      targetEmp.id,
+      targetEmp.user_id,
+      targetEmp.full_name,
+      targetEmp.employee_id,
+      assignedByUserId,
+      assignedByEmpId,
+      assignedByName,
+      assignedByCode,
+      assignmentNotes,
+      app.id
+    ]).catch(err => logger.warn('Silent catch warning:', err.message));
+
+    // 6. Record assignment in application_employee_assignments table
+    await client.query(`
+      INSERT INTO application_employee_assignments (
+        application_id,
+        assigned_to_employee_id,
+        assigned_to_user_id,
+        assigned_to_name,
+        assigned_to_code,
+        assigned_by_user_id,
+        assigned_by_employee_id,
+        assigned_by_name,
+        assigned_by_code,
+        assignment_notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `, [
+      app.id,
+      targetEmp.id,
+      targetEmp.user_id,
+      targetEmp.full_name,
+      targetEmp.employee_id,
+      assignedByUserId,
+      assignedByEmpId,
+      assignedByName,
+      assignedByCode,
+      assignmentNotes
+    ]).catch(err => logger.warn('Silent catch warning:', err.message));
+
+    // 7. Add entry in application_timeline
+    const timelineDesc = `Application assigned to ${targetEmp.full_name} (${targetEmp.employee_id}) by ${assignedByName}${assignmentNotes ? ` - Remarks: ${assignmentNotes}` : ''}`;
+    await client.query(`
+      INSERT INTO application_timeline (
+        application_id,
+        status,
+        event_type,
+        title,
+        description,
+        performed_by,
+        performed_by_name,
+        performed_by_role
+      ) VALUES ($1, $2, 'EMPLOYEE_ASSIGNED', 'Assigned to Employee', $3, $4, $5, $6)
+    `, [
+      app.id,
+      app.status || 'in_progress',
+      timelineDesc,
+      assignedByUserId,
+      assignedByName,
+      req.user?.role || 'EMPLOYEE'
+    ]).catch(err => logger.warn('Silent catch warning:', err.message));
+
+    // 8. Audit log
+    await logAction(req, 'ASSIGN_APPLICATION_TO_EMPLOYEE', app.id, {
+      app_number: app.app_number,
+      target_employee_id: targetEmp.id,
+      target_employee_name: targetEmp.full_name,
+      target_employee_code: targetEmp.employee_id,
+      assigned_by_name: assignedByName,
+      assigned_by_code: assignedByCode,
+      notes: assignmentNotes
+    }).catch(err => logger.warn('Silent catch warning:', err.message));
+
+    await client.query('COMMIT');
+    await invalidateApplicationsCache({ action: 'assign_employee', appId: app.id });
+
+    // 9. Send notification to target employee user if user_id exists
+    if (targetEmp.user_id) {
+      notify(
+        targetEmp.user_id,
+        'APPLICATION_ASSIGNED',
+        `Application #${app.app_number} has been assigned to you by ${assignedByName}.`
+      ).catch(err => logger.warn('Silent catch warning:', err.message));
+    }
+
+    return success(res, {
+      application_id: app.id,
+      app_number: app.app_number,
+      assigned_to_name: targetEmp.full_name,
+      assigned_to_code: targetEmp.employee_id,
+      assigned_to_user_id: targetEmp.user_id,
+      assigned_by_name: assignedByName,
+      assigned_by_code: assignedByCode,
+      assigned_at: assignedAt,
+      assignment_notes: assignmentNotes
+    }, `Application successfully assigned to ${targetEmp.full_name} (${targetEmp.employee_id})`);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+module.exports = {
+  submitApplication,
+  submitPublicApplication,
+  updateStatus,
+  listApplications,
+  getApplication,
+  uploadApplicationDoc,
+  getApplicationsDashboard,
+  getTimeline,
+  getDocuments,
+  addNote,
+  getAnalytics,
+  approveApplication,
+  rejectApplication,
+  reassignApplication,
+  manualCommission,
+  updateCommission,
+  sendUploadLink,
+  verifyDocument,
+  markVerificationComplete,
+  updateBankProcessingStatus,
+  submitPartnerApplication,
+  bulkUpdateStatus,
+  importApplications,
+  exportApplicationsCSV,
+  updateApplicationDetails,
+  logApplicationAudit,
+  updateProcessType,
+  updateVkyc,
+  getPublicApplyToken,
+  submitPublicApplyToken,
+  getBankRequirements,
+  saveBankRequirements,
+  generateShareLink,
+  generatePhysicalLink,
+  getPhysicalApplicationByToken,
+  submitPhysicalApplicationByToken,
+  deleteApplication,
+  releaseCommission,
+  holdCommission,
+  get360ApplicationTrace,
+  updateRemarkOperatorApplication,
+  getRemarkOperatorDashboard,
+  getApplicationOperatorHistory,
+  normalizeAssignmentCategory,
+  claimApplicationRequest,
+  getAssignableEmployees,
+  assignApplicationToEmployee,
+  assignApplicationToSalesExecutive
+};
+
+

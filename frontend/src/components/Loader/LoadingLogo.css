@@ -1,0 +1,89 @@
+/* 3D Horizontal Rotation Loader */
+
+.logo-loader-wrapper {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  perspective: 1000px;
+  transform-style: preserve-3d;
+}
+
+.logo-loader-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(4px);
+
+  perspective: 1000px;
+}
+
+/* Dark mode */
+.dark .logo-loader-fullscreen,
+.dark-theme .logo-loader-fullscreen {
+  background: rgba(0, 0, 0, 0.85);
+}
+
+.logo-loader-img {
+  object-fit: contain;
+
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+  transform-origin: center center;
+
+  animation: logoHorizontal3D 1.5s linear infinite;
+
+  will-change: transform;
+}
+
+/* 
+   0°   → Front visible
+   25°  → Starts turning
+   45°  → Halfway
+   70°  → Almost sideways
+   90°  → Front completely hidden
+   RESET → Immediately back to 0°
+*/
+@keyframes logoHorizontal3D {
+
+  /* FRONT */
+  0% {
+    transform: rotateY(0deg);
+  }
+
+  /* START ROTATION */
+  20% {
+    transform: rotateY(25deg);
+  }
+
+  /* HALF ROTATION */
+  40% {
+    transform: rotateY(45deg);
+  }
+
+  /* ALMOST SIDE */
+  60% {
+    transform: rotateY(70deg);
+  }
+
+  /* SIDE - FRONT HIDDEN */
+  80% {
+    transform: rotateY(90deg);
+  }
+
+  /* INSTANT RESET */
+  80.01% {
+    transform: rotateY(0deg);
+  }
+
+  /* FRONT AGAIN */
+  100% {
+    transform: rotateY(0deg);
+  }
+}

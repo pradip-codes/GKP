@@ -1,0 +1,3753 @@
+const express = require('express');
+const router = express.Router();
+const { query, getClient } = require('../../config/database');
+const jwtAuth = require('../../middleware/authentication/jwtAuth.middleware');
+const roleCheck = require('../../middleware/authorization/role.middleware');
+const logger = require('../../config/logger');
+const { getSignedDownloadUrl } = require('../../services/aws/s3.service');
+const { 
+  calculateEmployeeVerificationState, 
+  sendVerificationReminder 
+} = require('./verification.service');
+const {
+  DOCUMENT_TYPES,
+  normalizeDocumentType,
+  isVideoDocument,
+  isBankDocument,
+  isAadhaarDocument,
+  isPanDocument,
+  isFaceBiometricDocument
+} = require('../../constants/documentTypes');
+const { createNotification } = require('../notifications/service');
+
+// Helper to convert raw S3 URLs/Keys into presigned S3 download URLs
+const resolveS3Url = async (urlOrKey) => {
+  if (!urlOrKey || typeof urlOrKey !== 'string') return urlOrKey;
+  if (urlOrKey.includes('X-Amz-Signature') || urlOrKey.includes('X-Amz-Algorithm')) {
+    return urlOrKey;
+  }
+  let key = urlOrKey;
+  if (key.includes('.amazonaws.com/')) {
+    key = key.split('.amazonaws.com/')[1];
+  } else if (key.startsWith('http://') || key.startsWith('https://')) {
+    const parts = key.split('/');
+    key = parts.slice(3).join('/');
+  }
+  key = key.replace(/^\//, '');
+  if (!key) return urlOrKey;
+
+  try {
+    const signedUrl = await getSignedDownloadUrl(key, 86400); // 24 hours validity
+    return signedUrl;
+  } catch (err) {
+    logger.warn(`Failed to generate signed S3 URL for key "${key}": ${err.message}`);
+    return urlOrKey;
+  }
+};
+
+// Protect routes: Super Admin and Admin only
+router.use(jwtAuth);
+router.use(roleCheck('SUPER_ADMIN', 'ADMIN'));
+
+// In-memory verification state cache (60s TTL) to prevent N+1 query storms during search & pagination
+const verificationStateCache = new Map();
+const VERIFICATION_CACHE_TTL_MS = 60 * 1000;
+
+async function getCachedEmployeeVerificationState(empId) {
+  const cached = verificationStateCache.get(empId);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.state;
+  }
+  const state = await calculateEmployeeVerificationState(empId);
+  if (verificationStateCache.size > 500) {
+    const firstKey = verificationStateCache.keys().next().value;
+    verificationStateCache.delete(firstKey);
+  }
+  verificationStateCache.set(empId, { state, expiresAt: Date.now() + VERIFICATION_CACHE_TTL_MS });
+  return state;
+}
+
+function invalidateEmployeeVerificationCache(empId) {
+  if (empId) {
+    verificationStateCache.delete(empId);
+  } else {
+    verificationStateCache.clear();
+  }
+}
+
+let isEmployeeSchemaEnsured = false;
+let employeeSchemaPromise = null;
+
+async function ensureEmployeeSchema() {
+  if (isEmployeeSchemaEnsured) return;
+  if (employeeSchemaPromise) return employeeSchemaPromise;
+
+  employeeSchemaPromise = (async () => {
+    try {
+      // 1. Check if column admin_review_status already exists before attempting ALTER TABLE
+      const { rows: bioCols } = await query(`
+        SELECT column_name FROM information_schema.columns 
+        WHERE table_name = 'employee_biometric_templates' AND column_name = 'admin_review_status'
+      `).catch(() => ({ rows: [] }));
+
+      if (bioCols.length === 0) {
+        await query(`
+          ALTER TABLE employee_biometric_templates 
+            ADD COLUMN IF NOT EXISTS admin_review_status VARCHAR(20) DEFAULT 'PENDING',
+            ADD COLUMN IF NOT EXISTS admin_review_notes TEXT,
+            ADD COLUMN IF NOT EXISTS admin_reviewed_at TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS admin_reviewed_by UUID REFERENCES users(id)
+        `).catch(err => logger.warn('Biometric review columns ensure note:', err.message));
+      }
+
+      // 2. Check hierarchy columns
+      const { rows: hierCols } = await query(`
+        SELECT column_name FROM information_schema.columns 
+        WHERE table_name = 'employee_hierarchy' AND column_name = 'senior_manager_id'
+      `).catch(() => ({ rows: [] }));
+
+      if (hierCols.length === 0) {
+        await query(`
+          ALTER TABLE employee_hierarchy 
+            ADD COLUMN IF NOT EXISTS senior_manager_id UUID REFERENCES employees(id),
+            ADD COLUMN IF NOT EXISTS branch_head_id UUID REFERENCES employees(id)
+        `).catch(err => logger.warn('Hierarchy columns ensure note:', err.message));
+      }
+
+      // Ensure status and lifecycle columns on employees table
+      await query(`
+        ALTER TABLE employees 
+          ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
+          ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ DEFAULT NULL,
+          ADD COLUMN IF NOT EXISTS activated_at TIMESTAMPTZ DEFAULT NULL,
+          ADD COLUMN IF NOT EXISTS deactivated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+          ADD COLUMN IF NOT EXISTS deactivation_reason TEXT DEFAULT NULL
+      `).catch(err => logger.warn('Employees status columns ensure note:', err.message));
+
+      // 3. Ensure supporting tables exist
+      await query(`
+        CREATE TABLE IF NOT EXISTS employee_bank_assignments (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          bank_id UUID NOT NULL REFERENCES banks(id) ON DELETE CASCADE,
+          assigned_by UUID REFERENCES users(id),
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(employee_id, bank_id)
+        );
+        CREATE TABLE IF NOT EXISTS employee_verification_reminders (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          sent_by UUID REFERENCES users(id) ON DELETE SET NULL,
+          message TEXT,
+          missing_documents JSONB,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS employee_bonus_rules (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          bank_id UUID NOT NULL REFERENCES banks(id) ON DELETE CASCADE,
+          start_date DATE NOT NULL,
+          end_date DATE NOT NULL,
+          target_count INTEGER NOT NULL DEFAULT 0,
+          bonus_per_card DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+          status VARCHAR(20) DEFAULT 'ACTIVE',
+          created_by UUID REFERENCES users(id),
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS employee_bonus_transactions (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          bank_id UUID NOT NULL REFERENCES banks(id) ON DELETE CASCADE,
+          application_id UUID REFERENCES applications(id) ON DELETE SET NULL,
+          bonus_rule_id UUID REFERENCES employee_bonus_rules(id) ON DELETE CASCADE,
+          bonus_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+          status VARCHAR(20) DEFAULT 'EARNED',
+          earned_at TIMESTAMPTZ DEFAULT NOW(),
+          paid_at TIMESTAMPTZ,
+          UNIQUE(application_id, bonus_rule_id)
+        );
+        CREATE TABLE IF NOT EXISTS employee_sales_reports (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          report_date DATE NOT NULL DEFAULT CURRENT_DATE,
+          total_cards INTEGER NOT NULL DEFAULT 0,
+          remark TEXT,
+          photo_url TEXT,
+          photo_key TEXT,
+          status VARCHAR(20) DEFAULT 'Submitted',
+          submitted_at TIMESTAMPTZ DEFAULT NOW(),
+          reviewed_by UUID REFERENCES users(id),
+          reviewed_at TIMESTAMPTZ,
+          review_remark TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS employee_sales_report_banks (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          report_id UUID NOT NULL REFERENCES employee_sales_reports(id) ON DELETE CASCADE,
+          bank_id UUID NOT NULL REFERENCES banks(id) ON DELETE CASCADE,
+          cards_sold INTEGER NOT NULL DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS employee_incentive_rules (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          bank_id UUID NOT NULL REFERENCES banks(id) ON DELETE CASCADE,
+          product_id UUID REFERENCES products(id) ON DELETE CASCADE,
+          department_assigned BOOLEAN DEFAULT false,
+          target_cards INTEGER DEFAULT 0,
+          incentive_per_card DECIMAL(12,2) DEFAULT 0.00,
+          bonus_per_card DECIMAL(12,2) DEFAULT 0.00,
+          effective_from DATE NOT NULL,
+          effective_to DATE NOT NULL,
+          status VARCHAR(20) DEFAULT 'ACTIVE',
+          created_by UUID REFERENCES users(id),
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS employee_incentive_monthly_records (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          year INTEGER NOT NULL,
+          month INTEGER NOT NULL,
+          bank_id UUID NOT NULL REFERENCES banks(id) ON DELETE CASCADE,
+          product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+          department_assigned BOOLEAN DEFAULT false,
+          target_cards INTEGER DEFAULT 0,
+          approved_cards INTEGER DEFAULT 0,
+          target_achieved BOOLEAN DEFAULT false,
+          incentive_per_card DECIMAL(12,2) DEFAULT 0.00,
+          bonus_per_card DECIMAL(12,2) DEFAULT 0.00,
+          total_incentive DECIMAL(12,2) DEFAULT 0.00,
+          total_bonus DECIMAL(12,2) DEFAULT 0.00,
+          status VARCHAR(30) DEFAULT 'COMPLETED',
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          CONSTRAINT unique_emp_month_bank UNIQUE(employee_id, year, month, bank_id)
+        );
+      `).catch(err => logger.warn('Supporting tables ensure note:', err.message));
+
+      isEmployeeSchemaEnsured = true;
+    } catch (err) {
+      logger.warn('ensureEmployeeSchema error:', err.message);
+    } finally {
+      employeeSchemaPromise = null;
+    }
+  })();
+
+  return employeeSchemaPromise;
+}
+
+let lastEmployeeSyncTime = 0;
+let isEmployeeSyncInProgress = null;
+const EMPLOYEE_SYNC_INTERVAL_MS = 60000; // Throttle candidate sync to at most once per minute
+
+// Helper function to sync registered candidates and ensure initial demo employees exist
+async function syncAndSeedEmployees() {
+  const now = Date.now();
+  if (now - lastEmployeeSyncTime < EMPLOYEE_SYNC_INTERVAL_MS) {
+    return;
+  }
+
+  if (isEmployeeSyncInProgress) {
+    return isEmployeeSyncInProgress;
+  }
+
+  isEmployeeSyncInProgress = (async () => {
+    try {
+      lastEmployeeSyncTime = Date.now();
+      await ensureEmployeeSchema();
+
+    // 1. Sync candidates from employee_candidates into users table
+    await query(`
+      INSERT INTO users (full_name, mobile, email, role, status, employee_id, designation, department, password_hash)
+      SELECT 
+        c.full_name, TRIM(c.mobile_number), LOWER(TRIM(c.email_id)), 'EMPLOYEE', 'active', 
+        COALESCE(c.reference_code, c.employee_id, 'CAND' || FLOOR(10000 + RANDOM() * 90000)::text), COALESCE(c.offered_designation, c.target_role, 'TC'), 'Sales & Support',
+        '$2a$10$e8w.oF/9Z9sK.9J0U.Y0c.Z0/0.0.0.0.0.0.0.0.0.0'
+      FROM employee_candidates c
+      WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.mobile = TRIM(c.mobile_number) OR (u.email IS NOT NULL AND LOWER(u.email) = LOWER(TRIM(c.email_id))))
+      ON CONFLICT (mobile) DO UPDATE SET role = 'EMPLOYEE'
+    `).catch(e => logger.warn('User candidate sync note:', e.message));
+
+    // 2. Sync candidates into employees table
+    await query(`
+      INSERT INTO employees (
+        employee_id, user_id, candidate_id, full_name, mobile_number, email_id,
+        date_of_birth, current_address, designation, department, joining_date,
+        employment_type, offered_salary, recruitment_source, employee_status, activation_status
+      )
+      SELECT 
+        COALESCE(c.reference_code, c.employee_id, u.employee_id, 'CAND' || FLOOR(10000 + RANDOM() * 90000)::text), u.id, c.id, c.full_name, TRIM(c.mobile_number), LOWER(TRIM(c.email_id)),
+        c.date_of_birth, c.current_address, COALESCE(c.offered_designation, c.target_role, 'TC'), 'Sales & Support', CURRENT_DATE,
+        COALESCE(c.experience_type, 'Full-time'), COALESCE(c.offered_salary, c.expected_salary, 18000), COALESCE(c.how_did_you_hear, 'Career Portal'),
+        'ONBOARDING', 'PENDING'
+      FROM employee_candidates c
+      LEFT JOIN users u ON (u.mobile = TRIM(c.mobile_number) OR (u.email IS NOT NULL AND LOWER(u.email) = LOWER(TRIM(c.email_id))))
+      WHERE NOT EXISTS (SELECT 1 FROM employees e WHERE e.candidate_id = c.id OR e.mobile_number = TRIM(c.mobile_number))
+      ON CONFLICT (mobile_number) DO UPDATE SET user_id = EXCLUDED.user_id
+    `).catch(e => logger.warn('Employee candidate sync note:', e.message));
+
+    // Fix existing employees/users to use candidate reference_code strictly via candidate_id & user_id linkage
+    await query(`
+      UPDATE employees e
+      SET employee_id = c.reference_code
+      FROM employee_candidates c
+      WHERE e.candidate_id = c.id
+        AND c.reference_code IS NOT NULL AND c.reference_code != ''
+        AND (e.employee_id LIKE 'YOH-%' OR e.employee_id IS NULL OR e.employee_id = '');
+
+      UPDATE users u
+      SET employee_id = e.employee_id
+      FROM employees e
+      WHERE e.user_id = u.id
+        AND e.employee_id IS NOT NULL AND e.employee_id != ''
+        AND (u.employee_id IS NULL OR u.employee_id != e.employee_id);
+    `).catch(e => logger.warn('Refcode sync note:', e.message));
+
+    // Delete any partner_profiles for users with EMPLOYEE role
+    await query(`
+      DELETE FROM partner_profiles 
+      WHERE user_id IN (SELECT id FROM users WHERE role = 'EMPLOYEE')
+    `).catch(e => logger.warn('Partner profile employee cleanup note:', e.message));
+
+    // 3. Sync HR users into hr_profiles
+    await query(`
+      INSERT INTO hr_profiles (user_id, employee_id, full_name, email, mobile_number, designation, department, status)
+      SELECT 
+        u.id, 
+        COALESCE(u.employee_id, 'CAND' || FLOOR(10000 + RANDOM() * 90000)::text), 
+        u.full_name, 
+        LOWER(TRIM(u.email)), 
+        TRIM(u.mobile), 
+        COALESCE(u.designation, 'HR Manager'), 
+        COALESCE(u.department, 'Human Resources'), 
+        'active'
+      FROM users u
+      WHERE u.role = 'HR'
+        AND NOT EXISTS (SELECT 1 FROM hr_profiles hp WHERE hp.user_id = u.id OR hp.mobile_number = TRIM(u.mobile))
+      ON CONFLICT DO NOTHING;
+    `).catch(e => logger.warn('HR sync note:', e.message));
+
+    // Remove any HR records from employees table so they do not show on super-admin/employees
+    const hrEmpSubquery = `SELECT id FROM employees WHERE user_id IN (SELECT id FROM users WHERE role = 'HR') OR designation ILIKE '%HR%' OR designation ILIKE '%Human Resource%'`;
+    await query(`DELETE FROM employee_onboarding_checklist WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
+    await query(`DELETE FROM employee_hierarchy WHERE employee_id IN (${hrEmpSubquery}) OR team_leader_id IN (${hrEmpSubquery}) OR manager_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
+    await query(`DELETE FROM employee_joining_details WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
+    await query(`DELETE FROM employee_kyc WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
+    await query(`DELETE FROM employee_documents WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
+    await query(`DELETE FROM employee_terms_acceptance WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
+    await query(`DELETE FROM employee_product_links WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
+    await query(`DELETE FROM employee_incentive_transactions WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
+    await query(`DELETE FROM employees WHERE id IN (${hrEmpSubquery})`).catch(e => logger.warn('Delete HR employees note:', e.message));
+
+    // 4. Sync non-HR users with role EMPLOYEE into employees table (catches directly registered/created users)
+    await query(`
+      INSERT INTO employees (
+        employee_id, user_id, full_name, mobile_number, email_id,
+        designation, department, joining_date, employment_type, offered_salary,
+        employee_status, activation_status
+      )
+      SELECT 
+        COALESCE(u.employee_id, 'CAND' || FLOOR(10000 + RANDOM() * 90000)::text), u.id, u.full_name, TRIM(u.mobile), LOWER(TRIM(u.email)),
+        COALESCE(u.designation, 'TC'), COALESCE(u.department, 'Sales & Support'), CURRENT_DATE,
+        'Full-time', 18000,
+        'ONBOARDING', 'PENDING'
+      FROM users u
+      WHERE u.role = 'EMPLOYEE'
+        AND (u.designation IS NULL OR (u.designation NOT ILIKE '%HR%' AND u.designation NOT ILIKE '%Human Resource%'))
+        AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.user_id = u.id OR e.mobile_number = TRIM(u.mobile))
+      ON CONFLICT (mobile_number) DO UPDATE SET user_id = EXCLUDED.user_id
+    `).catch(e => logger.warn('User-to-employee sync note:', e.message));
+
+    // 4. Update users.employee_id from employees table if users.employee_id is null
+    await query(`
+      UPDATE users u
+      SET employee_id = e.employee_id
+      FROM employees e
+      WHERE e.user_id = u.id AND (u.employee_id IS NULL OR u.employee_id = '')
+    `).catch(e => logger.warn('User employee_id sync note:', e.message));
+
+    // 5. Create checklist records for synced employees
+    await query(`
+      INSERT INTO employee_onboarding_checklist (employee_id, interview_completed, employee_created, overall_progress, current_stage)
+      SELECT e.id, true, true, 20, 'JOINING_FORM_PENDING'
+      FROM employees e
+      WHERE NOT EXISTS (SELECT 1 FROM employee_onboarding_checklist ch WHERE ch.employee_id = e.id)
+      ON CONFLICT (employee_id) DO NOTHING
+    `).catch(e => logger.warn('Checklist sync note:', e.message));
+
+    // 4. Seed initial employees if total count is 0
+    const checkEmp = await query(`SELECT COUNT(*) FROM employees`);
+    if (parseInt(checkEmp.rows[0].count) === 0) {
+      const seedData = [
+        { emp_id: 'EMP10001', name: 'Rahul Sharma', mobile: '9876543210', email: 'rahul.sharma@gharkapaisa.in', desg: 'Manager', dept: 'Operations & Management', salary: 65000, status: 'ACTIVE', act: 'APPROVED' },
+        { emp_id: 'EMP10002', name: 'Priya Patel', mobile: '9876543211', email: 'priya.patel@gharkapaisa.in', desg: 'Team Leader', dept: 'Sales & Distribution', salary: 45000, status: 'ACTIVE', act: 'APPROVED' },
+        { emp_id: 'EMP10003', name: 'Amit Kumar', mobile: '9876543212', email: 'amit.kumar@gharkapaisa.in', desg: 'TC', dept: 'Telecalling Support', salary: 22000, status: 'ONBOARDING', act: 'PENDING' },
+        { emp_id: 'EMP10004', name: 'Sneha Verma', mobile: '9876543213', email: 'sneha.verma@gharkapaisa.in', desg: 'TC', dept: 'Customer Support', salary: 20000, status: 'ONBOARDING', act: 'PENDING' }
+      ];
+
+      for (const s of seedData) {
+        let uId = null;
+        const userRes = await query(
+          `INSERT INTO users (full_name, mobile, email, role, status, employee_id, designation, department, password_hash)
+           VALUES ($1, $2, $3, 'EMPLOYEE', 'active', $4, $5, $6, '$2a$10$e8w.oF/9Z9sK.9J0U.Y0c.Z0/0.0.0.0.0.0.0.0.0.0')
+           ON CONFLICT (mobile) DO UPDATE SET employee_id = EXCLUDED.employee_id RETURNING id`,
+          [s.name, s.mobile, s.email, s.emp_id, s.desg, s.dept]
+        ).catch(() => null);
+
+        uId = userRes?.rows?.[0]?.id;
+        if (!uId) {
+          const uFind = await query(`SELECT id FROM users WHERE mobile = $1 OR email = $2`, [s.mobile, s.email]);
+          uId = uFind.rows[0]?.id;
+        }
+
+        if (uId) {
+          let eId = null;
+          const empRes = await query(
+            `INSERT INTO employees (employee_id, user_id, full_name, mobile_number, email_id, designation, department, joining_date, employment_type, offered_salary, employee_status, activation_status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_DATE, 'Full-time', $8, $9, $10)
+             ON CONFLICT (mobile_number) DO UPDATE SET full_name = EXCLUDED.full_name RETURNING id`,
+            [s.emp_id, uId, s.name, s.mobile, s.email, s.desg, s.dept, s.salary, s.status, s.act]
+          ).catch(() => null);
+
+          eId = empRes?.rows?.[0]?.id;
+          if (!eId) {
+            const eFind = await query(`SELECT id FROM employees WHERE mobile_number = $1 OR email_id = $2`, [s.mobile, s.email]);
+            eId = eFind.rows[0]?.id;
+          }
+
+          if (eId) {
+            await query(
+              `INSERT INTO employee_onboarding_checklist (employee_id, interview_completed, employee_created, joining_form_completed, kyc_submitted, terms_completed, overall_progress, current_stage)
+               VALUES ($1, true, true, $2, $3, $4, $5, $6) ON CONFLICT (employee_id) DO NOTHING`,
+              [eId, s.act === 'APPROVED', s.act === 'APPROVED', s.act === 'APPROVED', s.act === 'APPROVED' ? 100 : 20, s.act === 'APPROVED' ? 'ACTIVE' : 'JOINING_FORM_PENDING']
+            );
+          }
+        }
+      }
+    }
+
+    // Standardize designations in DB based on active hierarchy
+    await query(`
+      UPDATE employees e
+      SET designation = CASE 
+        WHEN h.hierarchy_level = 'BRANCH_HEAD' THEN 'Branch Head'
+        WHEN h.hierarchy_level = 'SENIOR_MANAGER' THEN 'Senior Manager'
+        WHEN h.hierarchy_level = 'MANAGER' THEN 'Manager'
+        WHEN h.hierarchy_level = 'TEAM_LEADER' THEN 'Team Leader'
+        WHEN h.hierarchy_level = 'TC' THEN 'TC'
+        ELSE e.designation
+      END
+      FROM employee_hierarchy h
+      WHERE h.employee_id = e.id AND h.is_active = true
+        AND e.designation IS DISTINCT FROM (CASE 
+          WHEN h.hierarchy_level = 'BRANCH_HEAD' THEN 'Branch Head'
+          WHEN h.hierarchy_level = 'SENIOR_MANAGER' THEN 'Senior Manager'
+          WHEN h.hierarchy_level = 'MANAGER' THEN 'Manager'
+          WHEN h.hierarchy_level = 'TEAM_LEADER' THEN 'Team Leader'
+          WHEN h.hierarchy_level = 'TC' THEN 'TC'
+          ELSE e.designation
+        END)
+    `).catch(err => logger.warn('Designation standardization sync note:', err.message));
+    } catch (err) {
+      logger.warn('syncAndSeedEmployees error:', err.message);
+    } finally {
+      isEmployeeSyncInProgress = null;
+    }
+  })();
+
+  return isEmployeeSyncInProgress;
+}
+
+// GET /api/v1/employees — List all employees with optimized search, multi-field ranking, and performance caching
+router.get('/', async (req, res, next) => {
+  try {
+    const { status, activation_status, designation, search, page = 1, limit = 20, offset, lite } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.max(1, parseInt(limit) || 20);
+    const offsetNum = offset !== undefined ? Math.max(0, parseInt(offset)) : (pageNum - 1) * limitNum;
+    const isLite = lite === 'true' || limitNum > 100;
+
+    // Run candidate seeding periodically, skip during active search to ensure minimal latency
+    if (!search) {
+      await syncAndSeedEmployees();
+    }
+
+    let whereStr = `
+      FROM employees e
+      LEFT JOIN users u ON u.id = e.user_id
+      LEFT JOIN employee_onboarding_checklist c ON c.employee_id = e.id
+      LEFT JOIN employee_hierarchy h ON h.employee_id = e.id AND h.is_active = true
+      LEFT JOIN employees tl ON tl.id = h.team_leader_id
+      LEFT JOIN employees mgr ON mgr.id = h.manager_id
+      LEFT JOIN employees sm ON sm.id = h.senior_manager_id
+      LEFT JOIN employees bh ON bh.id = h.branch_head_id
+      WHERE (u.role IS NULL OR u.role = 'EMPLOYEE')
+        AND (e.designation NOT ILIKE '%HR%' AND e.designation NOT ILIKE '%Human Resource%')
+    `;
+    const params = [];
+
+    if (status) {
+      params.push(status);
+      whereStr += ` AND e.employee_status = $${params.length}`;
+    }
+
+    if (activation_status) {
+      params.push(activation_status);
+      whereStr += ` AND e.activation_status = $${params.length}`;
+    }
+
+    if (designation) {
+      if (designation === 'TC' || designation === 'Telecaller (TC)' || designation === 'Telecaller') {
+        whereStr += ` AND (e.designation = 'TC' OR e.designation ILIKE '%Telecaller%' OR h.hierarchy_level = 'TC')`;
+      } else if (designation === 'TL' || designation === 'Team Leader') {
+        whereStr += ` AND (e.designation ILIKE '%Team Leader%' OR e.designation = 'TL' OR h.hierarchy_level = 'TEAM_LEADER')`;
+      } else if (designation === 'Manager' || designation === 'MANAGER') {
+        whereStr += ` AND (e.designation = 'Manager' OR e.designation = 'MANAGER' OR h.hierarchy_level = 'MANAGER')`;
+      } else if (designation === 'Senior Manager' || designation === 'SENIOR_MANAGER' || designation === 'SENIOR MANAGER') {
+        whereStr += ` AND (e.designation ILIKE '%Senior Manager%' OR e.designation = 'SENIOR MANAGER' OR h.hierarchy_level = 'SENIOR_MANAGER')`;
+      } else if (designation === 'Branch Head' || designation === 'BRANCH_HEAD' || designation === 'BRANCH HEAD') {
+        whereStr += ` AND (e.designation ILIKE '%Branch Head%' OR e.designation = 'BRANCH HEAD' OR h.hierarchy_level = 'BRANCH_HEAD')`;
+      } else {
+        params.push(designation);
+        whereStr += ` AND e.designation = $${params.length}`;
+      }
+    }
+
+    const trimmedSearch = typeof search === 'string' ? search.trim() : '';
+    let relevanceOrderClause = 'ORDER BY e.created_at DESC';
+    let normalizedDigits = '';
+
+    if (trimmedSearch) {
+      const allDigits = trimmedSearch.replace(/[^0-9]/g, '');
+      normalizedDigits = allDigits;
+      if (allDigits.length === 12 && allDigits.startsWith('91')) {
+        normalizedDigits = allDigits.slice(2);
+      } else if (allDigits.length === 11 && allDigits.startsWith('0')) {
+        normalizedDigits = allDigits.slice(1);
+      }
+
+      const rawTokens = trimmedSearch.split(/\s+/).filter(t => t.length > 0);
+      const searchTokens = rawTokens.filter(t => {
+        if (rawTokens.length > 1) {
+          if (t === '+91' || t === '+91-' || t === '91' || t === '+') return false;
+        }
+        return true;
+      });
+
+      const tokenConditions = [];
+
+      for (const token of searchTokens) {
+        params.push(`%${token}%`);
+        const tokenParam = `$${params.length}`;
+        let tokenDigits = token.replace(/[^0-9]/g, '');
+        if (tokenDigits.length === 12 && tokenDigits.startsWith('91')) {
+          tokenDigits = tokenDigits.slice(2);
+        } else if (tokenDigits.length === 11 && tokenDigits.startsWith('0')) {
+          tokenDigits = tokenDigits.slice(1);
+        }
+
+        let mobileCond = `e.mobile_number ILIKE ${tokenParam}`;
+        if (tokenDigits.length >= 3) {
+          params.push(`%${tokenDigits}%`);
+          mobileCond += ` OR regexp_replace(e.mobile_number, '[^0-9]', '', 'g') LIKE $${params.length}`;
+        }
+
+        tokenConditions.push(`(
+          e.full_name ILIKE ${tokenParam}
+          OR e.employee_id ILIKE ${tokenParam}
+          OR ${mobileCond}
+          OR e.email_id ILIKE ${tokenParam}
+          OR e.designation ILIKE ${tokenParam}
+          OR e.department ILIKE ${tokenParam}
+          OR e.work_location ILIKE ${tokenParam}
+        )`);
+      }
+
+      let phoneMatchClause = '';
+      if (normalizedDigits.length >= 5) {
+        params.push(`%${normalizedDigits}%`);
+        phoneMatchClause = `regexp_replace(e.mobile_number, '[^0-9]', '', 'g') LIKE $${params.length}`;
+      }
+
+      if (tokenConditions.length > 0 && phoneMatchClause) {
+        whereStr += ` AND ((${tokenConditions.join(' AND ')}) OR (${phoneMatchClause}))`;
+      } else if (tokenConditions.length > 0) {
+        whereStr += ` AND (${tokenConditions.join(' AND ')})`;
+      } else if (phoneMatchClause) {
+        whereStr += ` AND (${phoneMatchClause})`;
+      }
+    }
+
+    // Execute filtered count query first with search filter parameters
+    const countRes = await query(`SELECT COUNT(DISTINCT e.id) as total ${whereStr}`, params);
+    const totalRecords = parseInt(countRes.rows[0]?.total || 0);
+
+    // Build query parameters for main data query
+    const queryParams = [...params];
+
+    if (trimmedSearch) {
+      // Relevance ranking: exact code/name matches first, then phone matches, then prefix matches, then mobile/email, then partials
+      queryParams.push(trimmedSearch);
+      const exactParam = `$${queryParams.length}`;
+      queryParams.push(`${trimmedSearch}%`);
+      const prefixParam = `$${queryParams.length}`;
+      let phoneParamRef = null;
+      if (normalizedDigits.length >= 5) {
+        queryParams.push(`%${normalizedDigits}%`);
+        phoneParamRef = `$${queryParams.length}`;
+      }
+
+      relevanceOrderClause = `
+        ORDER BY 
+          CASE 
+            WHEN LOWER(e.employee_id) = LOWER(${exactParam}) THEN 1
+            WHEN LOWER(e.full_name) = LOWER(${exactParam}) THEN 2
+            ${phoneParamRef ? `WHEN regexp_replace(e.mobile_number, '[^0-9]', '', 'g') LIKE ${phoneParamRef} THEN 3` : ''}
+            WHEN LOWER(e.employee_id) LIKE LOWER(${prefixParam}) THEN 4
+            WHEN LOWER(e.full_name) LIKE LOWER(${prefixParam}) THEN 5
+            WHEN e.mobile_number LIKE ${prefixParam} THEN 6
+            WHEN LOWER(e.email_id) LIKE LOWER(${prefixParam}) THEN 7
+            ELSE 8
+          END,
+          e.created_at DESC
+      `;
+    }
+
+    // Build main data query with pagination and optimized ordering
+    let selectFields = `
+      SELECT 
+        e.*,
+        c.overall_progress, c.current_stage, c.kyc_verified, c.terms_completed,
+        h.team_leader_id, h.manager_id, h.senior_manager_id, h.branch_head_id, h.hierarchy_level,
+        tl.full_name as team_leader_name,
+        mgr.full_name as manager_name,
+        sm.full_name as senior_manager_name,
+        bh.full_name as branch_head_name,
+        (SELECT COUNT(*) FROM employee_product_links pl WHERE pl.employee_id = e.id AND pl.status = 'ACTIVE') as active_links_count,
+        (SELECT COUNT(*) FROM applications app WHERE app.employee_id = e.id) as total_applications,
+        (SELECT COALESCE(SUM(amount), 0) FROM employee_incentive_transactions it WHERE it.employee_id = e.id AND it.status = 'COMPLETED') as total_incentives_earned
+    `;
+
+    queryParams.push(limitNum, offsetNum);
+    const fullQueryStr = `${selectFields} ${whereStr} ${relevanceOrderClause} LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}`;
+
+    const { rows } = await query(fullQueryStr, queryParams);
+
+    // Attach dynamic verification state for each employee
+    let enrichedRows;
+    if (isLite) {
+      enrichedRows = rows.map(emp => ({
+        ...emp,
+        biometric_enrolled: false,
+        face_enrolled: false,
+        has_biometric_reference: false,
+        face_biometric_status: 'UNKNOWN',
+        overall_verification_status: emp.activation_status === 'APPROVED' ? 'VERIFIED' : 'PENDING',
+        information_status: 'PENDING',
+        documents_summary: {},
+        missing_documents: [],
+        missing_items: [],
+        approved_docs_count: 0,
+        total_docs_count: 3
+      }));
+    } else {
+      enrichedRows = await Promise.all(rows.map(async (emp) => {
+        try {
+          const vState = await getCachedEmployeeVerificationState(emp.id);
+          const resolvedPhoto = vState.profile_photo_url || (emp.profile_photo_url ? await resolveS3Url(emp.profile_photo_url) : null);
+          const resolvedFaceUrl = vState.biometric_template?.image_url || null;
+          return {
+            ...emp,
+            profile_photo_url: resolvedPhoto,
+            face_reference_url: resolvedFaceUrl,
+            face_verification_url: resolvedFaceUrl,
+            biometric_enrolled: Boolean(vState.has_biometric_reference || resolvedFaceUrl),
+            face_enrolled: Boolean(vState.has_biometric_reference || resolvedFaceUrl),
+            has_biometric_reference: Boolean(vState.has_biometric_reference || resolvedFaceUrl),
+            face_biometric_status: vState.face_biometric_status,
+            overall_verification_status: vState.overall_status,
+            information_status: vState.information_status,
+            documents_summary: vState.documents_summary,
+            video_status: vState.video_status,
+            missing_documents: vState.missing_document_names,
+            missing_items: vState.missing_items,
+            approved_docs_count: vState.approved_docs_count,
+            total_docs_count: vState.total_docs_count
+          };
+        } catch (e) {
+          return emp;
+        }
+      }));
+    }
+
+    res.json({
+      success: true,
+      data: enrichedRows,
+      total: totalRecords,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(totalRecords / limitNum) || 1
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/employees/stats — Global employee metrics across 5 hierarchy levels
+router.get('/stats', async (req, res, next) => {
+  try {
+    await syncAndSeedEmployees();
+
+    const { rows } = await query(`
+      SELECT 
+        COUNT(*) as total_employees,
+        COUNT(*) FILTER (WHERE LOWER(COALESCE(e.employee_status::text, '')) = 'active' OR LOWER(COALESCE(e.activation_status::text, '')) IN ('approved', 'active')) as active_employees,
+        COUNT(*) FILTER (WHERE LOWER(COALESCE(e.employee_status::text, '')) = 'onboarding') as onboarding_employees,
+        COUNT(*) FILTER (WHERE LOWER(COALESCE(e.activation_status::text, '')) = 'pending') as pending_activation,
+        COUNT(*) FILTER (WHERE e.designation ILIKE '%Branch Head%' OR h.hierarchy_level = 'BRANCH_HEAD') as total_branch_heads,
+        COUNT(*) FILTER (WHERE e.designation ILIKE '%Senior Manager%' OR h.hierarchy_level = 'SENIOR_MANAGER') as total_senior_managers,
+        COUNT(*) FILTER (WHERE (e.designation ILIKE '%Manager%' AND e.designation NOT ILIKE '%Senior%') OR h.hierarchy_level = 'MANAGER') as total_managers,
+        COUNT(*) FILTER (WHERE e.designation ILIKE '%Team Leader%' OR e.designation = 'TL' OR h.hierarchy_level = 'TEAM_LEADER') as total_tls,
+        COUNT(*) FILTER (WHERE e.designation ILIKE '%TC%' OR e.designation ILIKE '%Telecaller%' OR h.hierarchy_level = 'TC') as total_tcs
+      FROM employees e
+      LEFT JOIN users u ON u.id = e.user_id
+      LEFT JOIN employee_hierarchy h ON h.employee_id = e.id AND h.is_active = true
+      WHERE (u.role IS NULL OR u.role = 'EMPLOYEE')
+        AND (e.designation NOT ILIKE '%HR%' AND e.designation NOT ILIKE '%Human Resource%')
+    `);
+    res.json({ success: true, data: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/employees/assigned-product-links — List assigned employee custom product links
+router.get('/assigned-product-links', async (req, res, next) => {
+  try {
+    const { search, employee_id, bank_id, product_id } = req.query;
+
+    let whereConditions = [];
+    let queryParams = [];
+
+    if (employee_id) {
+      queryParams.push(employee_id);
+      whereConditions.push(`pl.employee_id = $${queryParams.length}`);
+    }
+
+    if (bank_id) {
+      queryParams.push(bank_id);
+      whereConditions.push(`p.bank_id = $${queryParams.length}`);
+    }
+
+    if (product_id) {
+      queryParams.push(product_id);
+      whereConditions.push(`pl.product_id = $${queryParams.length}`);
+    }
+
+    if (search && search.trim()) {
+      queryParams.push(`%${search.trim()}%`);
+      const pIdx = queryParams.length;
+      whereConditions.push(`(e.full_name ILIKE $${pIdx} OR e.employee_id ILIKE $${pIdx} OR p.name ILIKE $${pIdx} OR b.name ILIKE $${pIdx})`);
+    }
+
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
+    const { rows } = await query(`
+      SELECT 
+        pl.*,
+        e.full_name as employee_name,
+        e.employee_id as emp_code,
+        e.mobile_number as employee_mobile,
+        e.email_id as employee_email,
+        p.name as product_name,
+        p.category as product_category,
+        p.image_url as product_image,
+        b.name as bank_name,
+        u.full_name as assigned_by_name
+      FROM employee_product_links pl
+      JOIN employees e ON e.id = pl.employee_id
+      JOIN products p ON p.id = pl.product_id
+      LEFT JOIN banks b ON b.id = p.bank_id
+      LEFT JOIN users u ON u.id = pl.assigned_by
+      ${whereClause}
+      ORDER BY pl.updated_at DESC, pl.created_at DESC
+    `, queryParams);
+
+    res.json({ success: true, count: rows.length, data: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/v1/employees/assigned-product-links/:id — Unassign employee link
+router.delete('/assigned-product-links/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await query(`DELETE FROM employee_product_links WHERE id = $1 RETURNING *`, [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Assigned link record not found' });
+    }
+    res.json({ success: true, message: 'Employee custom bank link unassigned successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/v1/employees/:id — Delete or deactivate an employee account (temporary or permanent)
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const mode = req.query.mode || req.body?.mode || 'permanent';
+
+    if (id === req.user.id) {
+      return res.status(400).json({ success: false, message: 'You are not permitted to delete your own account.' });
+    }
+
+    const { softDeleteUserAccount, deleteUserAccount } = require('../auth/user-deletion.service.js');
+    let result;
+    if (mode === 'temporary') {
+      result = await softDeleteUserAccount(id);
+    } else {
+      result = await deleteUserAccount(id);
+    }
+
+    const actionText = mode === 'temporary' ? 'temporarily deactivated (soft deleted)' : 'permanently deleted';
+    return res.json({ success: true, data: result, message: `Employee account ${actionText} successfully.` });
+  } catch (err) {
+    logger.error('Error deleting employee account:', err);
+    next(err);
+  }
+});
+
+// POST /api/v1/employees/bulk-product-links — Bulk assign product links to employees
+router.post('/bulk-product-links', async (req, res, next) => {
+  try {
+    const { employee_ids, product_id, incentive_amount, incentive_type = 'FIXED' } = req.body;
+
+    if (!Array.isArray(employee_ids) || employee_ids.length === 0 || !product_id || !incentive_amount) {
+      return res.status(400).json({ success: false, message: 'Employee IDs array, Product ID, and incentive amount are required' });
+    }
+
+    const assigned = [];
+    for (const empId of employee_ids) {
+      const empRes = await query(`SELECT employee_id FROM employees WHERE id = $1`, [empId]);
+      if (empRes.rows.length === 0) continue;
+      const empCode = empRes.rows[0].employee_id;
+      const referralUrl = `${process.env.FRONTEND_URL || 'https://gharkapaisa.in'}/apply/${product_id}?emp=${empCode}`;
+
+      const { rows } = await query(
+        `INSERT INTO employee_product_links (
+          employee_id, product_id, employee_referral_url, incentive_amount, incentive_type, status, assigned_by
+        ) VALUES ($1, $2, $3, $4, $5, 'ACTIVE', $6)
+        ON CONFLICT (employee_id, product_id) DO UPDATE 
+        SET employee_referral_url = EXCLUDED.employee_referral_url,
+            incentive_amount = EXCLUDED.incentive_amount,
+            incentive_type = EXCLUDED.incentive_type,
+            status = 'ACTIVE',
+            updated_at = NOW()
+        RETURNING *`,
+        [empId, product_id, referralUrl, parseFloat(incentive_amount), incentive_type, req.user.id]
+      );
+      if (rows[0]) assigned.push(rows[0]);
+    }
+
+    res.json({ success: true, message: `Product links assigned to ${assigned.length} employees`, data: assigned });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/employees/assign-custom-product-links — Super Admin Assign custom bank links to select employees & products
+router.post('/assign-custom-product-links', async (req, res, next) => {
+  try {
+    let { employee_ids, product_ids, bank_id, custom_bank_url, incentive_amount = 0, status = 'ACTIVE' } = req.body;
+
+    if (!custom_bank_url || !custom_bank_url.trim()) {
+      return res.status(400).json({ success: false, message: 'Custom bank link URL is required' });
+    }
+
+    // Resolve employee_ids if 'ALL' or array
+    let empList = [];
+    if (employee_ids === 'ALL' || (Array.isArray(employee_ids) && employee_ids.length === 0)) {
+      const allEmps = await query(`SELECT id, employee_id, full_name FROM employees WHERE employee_status != 'TERMINATED'`);
+      empList = allEmps.rows;
+    } else if (Array.isArray(employee_ids)) {
+      const emps = await query(`SELECT id, employee_id, full_name FROM employees WHERE id = ANY($1::uuid[]) OR user_id = ANY($1::uuid[])`, [employee_ids]);
+      empList = emps.rows;
+    }
+
+    if (empList.length === 0) {
+      return res.status(400).json({ success: false, message: 'At least one valid employee must be selected' });
+    }
+
+    // Resolve product_ids
+    let prodList = [];
+    if (Array.isArray(product_ids) && product_ids.length > 0) {
+      const prods = await query(`SELECT id, name, bank_id FROM products WHERE id = ANY($1::uuid[])`, [product_ids]);
+      prodList = prods.rows;
+    } else if (bank_id) {
+      const prods = await query(`SELECT id, name, bank_id FROM products WHERE bank_id = $1 AND is_active = true`, [bank_id]);
+      prodList = prods.rows;
+    }
+
+    if (prodList.length === 0) {
+      return res.status(400).json({ success: false, message: 'At least one valid product must be selected' });
+    }
+
+    const assignedResults = [];
+    const cleanUrl = custom_bank_url.trim();
+
+    for (const emp of empList) {
+      for (const prod of prodList) {
+        // Support optional dynamic placeholder {emp_code}
+        const finalUrl = cleanUrl.replace(/\{emp_code\}/g, emp.employee_id || emp.id);
+
+        const { rows } = await query(
+          `INSERT INTO employee_product_links (
+            employee_id, product_id, employee_referral_url, incentive_amount, incentive_type, status, assigned_by
+          ) VALUES ($1, $2, $3, $4, 'FIXED', $5, $6)
+          ON CONFLICT (employee_id, product_id) DO UPDATE 
+          SET employee_referral_url = EXCLUDED.employee_referral_url,
+              incentive_amount = COALESCE(EXCLUDED.incentive_amount, employee_product_links.incentive_amount),
+              status = EXCLUDED.status,
+              updated_at = NOW()
+          RETURNING *`,
+          [emp.id, prod.id, finalUrl, parseFloat(incentive_amount) || 0, status, req.user.id]
+        );
+
+        if (rows[0]) assignedResults.push(rows[0]);
+
+        await query(
+          `UPDATE employee_onboarding_checklist SET links_assigned = true, links_assigned_at = NOW() WHERE employee_id = $1`,
+          [emp.id]
+        ).catch(err => logger.warn('Silent catch warning:', err.message));
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Custom bank link assigned to ${empList.length} employee(s) across ${prodList.length} product(s). (${assignedResults.length} link records updated)`,
+      count: assignedResults.length,
+      data: assignedResults
+    });
+
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/employees/:id — Complete Employee 360 view
+router.get('/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Guard: Pass control to next route handlers if ID is not a valid UUID format
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    if (!isUuid) {
+      return next();
+    }
+    
+    // 1. Employee profile
+    const empRes = await query(`
+      SELECT 
+        e.*, 
+        c.resume_url,
+        c.date_of_birth as candidate_dob,
+        c.current_address as candidate_address,
+        c.highest_qualification as candidate_qualification,
+        c.total_experience_years as candidate_exp_years,
+        c.experience_type as candidate_exp_type
+      FROM employees e
+      LEFT JOIN employee_candidates c ON (e.candidate_id IS NOT NULL AND c.id = e.candidate_id) OR (e.candidate_id IS NULL AND c.reference_code = e.employee_id)
+      WHERE e.id = $1
+    `, [id]);
+
+    if (empRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Employee not found' });
+    }
+    const employee = empRes.rows[0];
+
+    // 2. Joining details
+    const joiningRes = await query(
+      `SELECT * FROM employee_joining_details WHERE employee_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [id]
+    );
+
+    const joiningData = joiningRes.rows[0] || {};
+
+    // Enrich employee with joining details and candidate details fallback
+    employee.date_of_birth = employee.date_of_birth || joiningData.date_of_birth || employee.candidate_dob || null;
+    employee.gender = employee.gender || joiningData.gender || null;
+    employee.current_address = employee.current_address || joiningData.current_address || employee.candidate_address || null;
+    employee.permanent_address = employee.permanent_address || joiningData.permanent_address || null;
+    employee.emergency_contact_name = employee.emergency_contact_name || joiningData.emergency_contact_name || null;
+    employee.emergency_contact_number = employee.emergency_contact_number || joiningData.emergency_contact_number || null;
+    employee.blood_group = employee.blood_group || joiningData.blood_group || null;
+    employee.father_name = employee.father_name || joiningData.father_name || null;
+    employee.bank_account_holder_name = employee.bank_account_holder_name || joiningData.bank_account_holder_name || employee.full_name || null;
+    employee.bank_name = employee.bank_name || joiningData.bank_name || null;
+    employee.branch_name = employee.branch_name || joiningData.branch_name || null;
+    employee.highest_qualification = employee.highest_qualification || joiningData.highest_qualification || employee.candidate_qualification || null;
+    employee.reporting_manager = employee.reporting_manager || joiningData.reporting_manager || null;
+    employee.total_experience_years = employee.total_experience_years || joiningData.total_experience_years || employee.candidate_exp_years || null;
+    employee.notice_period_days = employee.notice_period_days || joiningData.notice_period_days || null;
+
+    // 3. KYC details (check by employee_id or mobile_number)
+    const kycRes = await query(
+      `SELECT * FROM employee_kyc WHERE employee_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [id]
+    );
+
+    let kycData = kycRes.rows[0] || null;
+
+    if (!kycData) {
+      if (joiningData.pan_number || joiningData.aadhaar_number || joiningData.bank_account_number || employee.pan_number || employee.aadhaar_number) {
+        kycData = {
+          pan_number: joiningData.pan_number || employee.pan_number || null,
+          pan_document_url: null,
+          aadhaar_number: joiningData.aadhaar_number || employee.aadhaar_number || null,
+          aadhaar_document_url: null,
+          bank_account_number: joiningData.bank_account_number || employee.bank_account_number || null,
+          bank_account_holder_name: joiningData.bank_account_holder_name || employee.bank_account_holder_name || employee.full_name || null,
+          bank_name: joiningData.bank_name || employee.bank_name || null,
+          branch_name: joiningData.branch_name || null,
+          ifsc_code: joiningData.ifsc_code || employee.ifsc_code || null,
+          bank_document_url: null,
+          kyc_status: 'SUBMITTED'
+        };
+      }
+    } else {
+      kycData.pan_number = kycData.pan_number || joiningData.pan_number || employee.pan_number || null;
+      kycData.aadhaar_number = kycData.aadhaar_number || joiningData.aadhaar_number || employee.aadhaar_number || null;
+      kycData.bank_account_number = kycData.bank_account_number || joiningData.bank_account_number || employee.bank_account_number || null;
+      kycData.bank_account_holder_name = kycData.bank_account_holder_name || joiningData.bank_account_holder_name || employee.bank_account_holder_name || employee.full_name || null;
+      kycData.bank_name = kycData.bank_name || joiningData.bank_name || employee.bank_name || null;
+      kycData.branch_name = kycData.branch_name || joiningData.branch_name || null;
+      kycData.ifsc_code = kycData.ifsc_code || joiningData.ifsc_code || employee.ifsc_code || null;
+    }
+
+    // 4. Documents (check employee_documents, plus add candidate resume if present)
+    const docsRes = await query(
+      `SELECT * FROM employee_documents WHERE employee_id = $1 ORDER BY created_at DESC`,
+      [id]
+    );
+    let docsMap = new Map();
+    for (const d of docsRes.rows) {
+      const typeKey = String(d.document_type || '').toLowerCase().trim();
+      if (typeKey && !docsMap.has(typeKey)) {
+        docsMap.set(typeKey, d);
+      }
+    }
+    let docs = Array.from(docsMap.values());
+    if (employee.resume_url && !docs.some(d => String(d.document_type || '').toLowerCase().trim() === 'resume')) {
+      docs.unshift({
+        id: 'cand-resume',
+        document_type: 'resume',
+        document_url: employee.resume_url,
+        document_file_name: 'Candidate_Resume.pdf',
+        verification_status: 'VERIFIED'
+      });
+    }
+
+    // 5. Terms acceptance
+    const termsRes = await query(
+      `SELECT * FROM employee_terms_acceptance WHERE employee_id = $1 ORDER BY accepted_at DESC LIMIT 1`,
+      [id]
+    );
+
+    // 6. Onboarding checklist
+    const checklistRes = await query(`SELECT * FROM employee_onboarding_checklist WHERE employee_id = $1`, [id]);
+    // 7. Hierarchy with all 4 levels joined
+    const hierarchyRes = await query(`
+      SELECT h.*, 
+             tl.full_name as team_leader_name, 
+             mgr.full_name as manager_name,
+             sm.full_name as senior_manager_name,
+             bh.full_name as branch_head_name
+      FROM employee_hierarchy h
+      LEFT JOIN employees tl ON tl.id = h.team_leader_id
+      LEFT JOIN employees mgr ON mgr.id = h.manager_id
+      LEFT JOIN employees sm ON sm.id = h.senior_manager_id
+      LEFT JOIN employees bh ON bh.id = h.branch_head_id
+      WHERE h.employee_id = $1 AND h.is_active = true
+    `, [id]);
+
+    // 8. Product links assigned
+    const linksRes = await query(`
+      SELECT pl.*, p.name as product_name, p.category, p.logo, b.name as bank_name
+      FROM employee_product_links pl
+      JOIN products p ON p.id = pl.product_id
+      LEFT JOIN banks b ON b.id = p.bank_id
+      WHERE pl.employee_id = $1
+    `, [id]);
+
+    // 9. Incentives summary
+    const incRes = await query(`
+      SELECT 
+        COALESCE(SUM(amount) FILTER (WHERE status = 'COMPLETED'), 0) as total_earned,
+        COALESCE(SUM(amount) FILTER (WHERE status = 'PENDING'), 0) as pending_incentives,
+        COUNT(*) as total_transactions
+      FROM employee_incentive_transactions
+      WHERE employee_id = $1
+    `, [id]);
+
+    // Resolve S3 document URLs to signed URLs to allow public viewing in dashboard
+    const vState = await calculateEmployeeVerificationState(id).catch(() => null);
+    if (vState && vState.profile_photo_url) {
+      employee.profile_photo_url = vState.profile_photo_url;
+    } else if (employee.profile_photo_url) {
+      employee.profile_photo_url = await resolveS3Url(employee.profile_photo_url);
+    }
+
+    if (employee.resume_url) {
+      employee.resume_url = await resolveS3Url(employee.resume_url);
+    }
+
+    if (kycData) {
+      if (kycData.pan_document_url) kycData.pan_document_url = await resolveS3Url(kycData.pan_document_url);
+      if (kycData.aadhaar_document_url) kycData.aadhaar_document_url = await resolveS3Url(kycData.aadhaar_document_url);
+      if (kycData.bank_document_url) kycData.bank_document_url = await resolveS3Url(kycData.bank_document_url);
+    }
+
+    if (Array.isArray(docs)) {
+      for (let d of docs) {
+        if (d.document_url) {
+          d.document_url = await resolveS3Url(d.document_url);
+        }
+      }
+    }
+
+    let termsData = termsRes.rows[0] || null;
+    if (termsData && termsData.video_url) {
+      termsData.video_url = await resolveS3Url(termsData.video_url);
+    }
+
+    // 10. Biometric data
+    let bioRes;
+    try {
+      bioRes = await query(
+        `SELECT id, status, s3_key, s3_bucket, version,
+                COALESCE(to_jsonb(b)->>'admin_review_status', 'PENDING') as admin_review_status,
+                to_jsonb(b)->>'admin_review_notes' as admin_review_notes,
+                (to_jsonb(b)->>'admin_reviewed_at')::timestamptz as admin_reviewed_at,
+                created_at as enrolled_at 
+         FROM employee_biometric_templates b 
+         WHERE employee_id = $1 
+         ORDER BY (CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END), created_at DESC LIMIT 1`,
+        [id]
+      );
+    } catch (err) {
+      bioRes = await query(
+        `SELECT id, status, s3_key, s3_bucket, version, created_at as enrolled_at 
+         FROM employee_biometric_templates 
+         WHERE employee_id = $1 
+         ORDER BY (CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END), created_at DESC LIMIT 1`,
+        [id]
+      ).catch(() => ({ rows: [] }));
+    }
+
+    let bioImageUrl = null;
+    if (bioRes.rows.length > 0 && bioRes.rows[0].s3_key) {
+      bioImageUrl = await resolveS3Url(bioRes.rows[0].s3_key);
+    }
+
+    // Fallback: check employee_documents for any face verification image
+    if (!bioImageUrl && Array.isArray(docs)) {
+      const faceDoc = docs.find(d => {
+        const t = String(d.document_type || '').toLowerCase().trim();
+        return ['face', 'face_biometric', 'biometric', 'face_verification', 'face_reference', 'selfie'].includes(t) || t.includes('face');
+      });
+      if (faceDoc) {
+        const rawKey = faceDoc.document_url || faceDoc.document_key || faceDoc.file_url || faceDoc.s3_key;
+        if (rawKey) {
+          bioImageUrl = await resolveS3Url(rawKey);
+        }
+      }
+    }
+
+    const biometrics = {
+      is_enrolled: bioRes.rows.length > 0 || Boolean(bioImageUrl),
+      active_template: (bioRes.rows.length > 0 || bioImageUrl) ? {
+        id: bioRes.rows[0]?.id || 'doc-face',
+        version: bioRes.rows[0]?.version || 1,
+        status: bioRes.rows[0]?.status || 'ACTIVE',
+        admin_review_status: bioRes.rows[0]?.admin_review_status || 'PENDING',
+        admin_review_notes: bioRes.rows[0]?.admin_review_notes || null,
+        admin_reviewed_at: bioRes.rows[0]?.admin_reviewed_at || null,
+        enrolled_at: bioRes.rows[0]?.enrolled_at || new Date().toISOString(),
+        s3_key: bioRes.rows[0]?.s3_key || null,
+        image_url: bioImageUrl
+      } : null
+    };
+
+    // Attach biometric URLs directly to employee object for seamless frontend display
+    employee.face_reference_url = bioImageUrl || vState?.biometric_template?.image_url || null;
+    employee.face_verification_url = employee.face_reference_url;
+    employee.biometric_enrolled = Boolean(biometrics.is_enrolled);
+    employee.face_enrolled = Boolean(biometrics.is_enrolled);
+    employee.has_biometric_reference = Boolean(biometrics.is_enrolled);
+    employee.face_verification_status = biometrics.active_template?.admin_review_status === 'APPROVED' ? 'VERIFIED' : (biometrics.is_enrolled ? 'ENROLLED' : 'PENDING');
+
+    // 11. Compile dynamic recent audit & onboarding activities from verified timestamps
+    const recentActivities = [];
+
+    if (employee.activated_at) {
+      recentActivities.push({
+        id: 'act-activation',
+        type: 'ACTIVATION',
+        title: 'Employee account activated',
+        subtitle: 'Activated by Super Admin',
+        timestamp: employee.activated_at,
+        icon: '✓',
+        color: '#059669',
+        bg: '#D1FAE5'
+      });
+    }
+
+    if (bioRes.rows.length > 0) {
+      const bioItem = bioRes.rows[0];
+      const isBioApproved = bioItem.admin_review_status === 'APPROVED';
+      const isBioRejected = bioItem.admin_review_status === 'REJECTED' || bioItem.admin_review_status === 'FLAGGED';
+      recentActivities.push({
+        id: 'act-biometric',
+        type: 'BIOMETRIC',
+        title: isBioApproved ? 'Face biometric approved' : (isBioRejected ? 'Face biometric flagged/rejected' : 'Face biometric enrolled'),
+        subtitle: isBioApproved ? (bioItem.admin_review_notes ? `Approved: ${bioItem.admin_review_notes}` : 'Biometric locked for attendance') : 'Authoritative biometric captured',
+        timestamp: bioItem.admin_reviewed_at || bioItem.enrolled_at,
+        icon: '👤',
+        color: isBioApproved ? '#059669' : isBioRejected ? '#DC2626' : '#7C3AED',
+        bg: isBioApproved ? '#D1FAE5' : isBioRejected ? '#FEE2E2' : '#F3E8FF'
+      });
+    }
+
+    if (kycData) {
+      if (kycData.kyc_status === 'VERIFIED') {
+        recentActivities.push({
+          id: 'act-kyc-verified',
+          type: 'KYC_VERIFIED',
+          title: 'KYC documents verified & approved',
+          subtitle: 'All identity proofs verified by Admin',
+          timestamp: kycData.reviewed_at || kycData.updated_at || employee.updated_at,
+          icon: '✓',
+          color: '#059669',
+          bg: '#D1FAE5'
+        });
+      } else if (kycData.submitted_at || kycData.created_at) {
+        recentActivities.push({
+          id: 'act-kyc-submitted',
+          type: 'KYC_SUBMITTED',
+          title: 'KYC documents submitted',
+          subtitle: 'Identity documents submitted for review',
+          timestamp: kycData.submitted_at || kycData.created_at,
+          icon: '📄',
+          color: '#2563EB',
+          bg: '#EFF6FF'
+        });
+      }
+    }
+
+    if (termsData && termsData.accepted_at) {
+      recentActivities.push({
+        id: 'act-terms',
+        type: 'TERMS',
+        title: termsData.video_url ? 'Terms accepted & video uploaded' : 'Terms & policies accepted',
+        subtitle: 'Digital consent and verification recorded',
+        timestamp: termsData.accepted_at,
+        icon: '📝',
+        color: '#0284C7',
+        bg: '#E0F2FE'
+      });
+    }
+
+    if (joiningData && (joiningData.submitted_at || joiningData.created_at)) {
+      recentActivities.push({
+        id: 'act-joining',
+        type: 'JOINING_FORM',
+        title: 'Joining form submitted',
+        subtitle: `Status: ${joiningData.form_status || 'SUBMITTED'}`,
+        timestamp: joiningData.submitted_at || joiningData.created_at,
+        icon: '📋',
+        color: '#D97706',
+        bg: '#FEF3C7'
+      });
+    }
+
+    if (employee.created_at) {
+      recentActivities.push({
+        id: 'act-created',
+        type: 'CREATED',
+        title: 'Employee profile created',
+        subtitle: 'System onboarded record',
+        timestamp: employee.created_at,
+        icon: '⚡',
+        color: '#4F46E5',
+        bg: '#EEF2FF'
+      });
+    }
+
+    // Sort descending by timestamp
+    recentActivities.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    res.json({
+      success: true,
+      data: {
+        employee,
+        joining_details: joiningRes.rows[0] || null,
+        kyc: kycData,
+        documents: docs,
+        terms: termsData,
+        checklist: checklistRes.rows[0] || null,
+        hierarchy: hierarchyRes.rows[0] || null,
+        product_links: linksRes.rows,
+        incentives_summary: incRes.rows[0],
+        biometrics,
+        verification_state: vState,
+        recent_activities: recentActivities
+      }
+    });
+
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/employees/:id/send-reminder — Send verification reminder to employee
+router.post('/:id/send-reminder', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { message, custom_note, note } = req.body || {};
+    const reminderMsg = message || custom_note || note || null;
+    const result = await sendVerificationReminder(id, req.user?.id, reminderMsg);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/v1/employees/:id — Super Admin Update Employee Record Details
+router.put('/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const {
+      full_name,
+      mobile_number,
+      email_id,
+      email,
+      designation,
+      department,
+      manager_name,
+      reporting_manager,
+      work_location,
+      date_of_birth,
+      gender,
+      whatsapp_number,
+      offered_salary,
+      employment_type,
+      emergency_contact_name,
+      emergency_contact_number,
+      current_address,
+      permanent_address,
+      aadhaar_number,
+      pan_number,
+      bank_account,
+      bank_account_number,
+      bank_account_holder_name,
+      ifsc_code,
+      admin_remarks
+    } = req.body;
+
+    const emailVal = email_id || email;
+    const managerVal = manager_name || reporting_manager;
+    const bankAccVal = bank_account_number || bank_account;
+
+    const { rows } = await query(
+      `UPDATE employees 
+       SET full_name = COALESCE($1, full_name),
+           mobile_number = COALESCE($2, mobile_number),
+           email_id = COALESCE($3, email_id),
+           designation = COALESCE($4, designation),
+           department = COALESCE($5, department),
+           work_location = COALESCE($6, work_location),
+           whatsapp_number = COALESCE($7, whatsapp_number),
+           date_of_birth = COALESCE($8, date_of_birth),
+           gender = COALESCE($9, gender),
+           offered_salary = COALESCE($10, offered_salary),
+           employment_type = COALESCE($11, employment_type),
+           emergency_contact_name = COALESCE($12, emergency_contact_name),
+           emergency_contact_number = COALESCE($13, emergency_contact_number),
+           current_address = COALESCE($14, current_address),
+           permanent_address = COALESCE($15, permanent_address),
+           updated_at = NOW()
+       WHERE id = $16 RETURNING *`,
+      [
+        full_name, mobile_number, emailVal, designation, department,
+        work_location, whatsapp_number, date_of_birth, gender,
+        offered_salary ? parseFloat(offered_salary) : null, employment_type,
+        emergency_contact_name, emergency_contact_number,
+        current_address, permanent_address, id
+      ]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Employee not found' });
+    }
+
+    // Update users table email and phone if linked
+    if (rows[0].user_id) {
+      await query(
+        `UPDATE users 
+         SET email = COALESCE($1, email),
+             phone = COALESCE($2, phone),
+             full_name = COALESCE($3, full_name),
+             updated_at = NOW() 
+         WHERE id = $4`,
+        [emailVal, mobile_number, full_name, rows[0].user_id]
+      ).catch(err => logger.warn('Silent catch warning:', err.message));
+    }
+
+    // Update employee_joining_details table
+    await query(
+      `UPDATE employee_joining_details 
+       SET full_name = COALESCE($1, full_name),
+           mobile_number = COALESCE($2, mobile_number),
+           email_id = COALESCE($3, email_id),
+           designation = COALESCE($4, designation),
+           department = COALESCE($5, department),
+           reporting_manager = COALESCE($6, reporting_manager),
+           work_location = COALESCE($7, work_location),
+           date_of_birth = COALESCE($8, date_of_birth),
+           gender = COALESCE($9, gender),
+           whatsapp_number = COALESCE($10, whatsapp_number),
+           emergency_contact_name = COALESCE($11, emergency_contact_name),
+           emergency_contact_number = COALESCE($12, emergency_contact_number),
+           current_address = COALESCE($13, current_address),
+           permanent_address = COALESCE($14, permanent_address),
+           offered_salary = COALESCE($15, offered_salary),
+           employment_type = COALESCE($16, employment_type),
+           bank_account_holder_name = COALESCE($17, bank_account_holder_name),
+           bank_account_number = COALESCE($18, bank_account_number),
+           ifsc_code = COALESCE($19, ifsc_code),
+           pan_number = COALESCE($20, pan_number),
+           aadhaar_number = COALESCE($21, aadhaar_number),
+           updated_at = NOW()
+       WHERE employee_id = $22`,
+      [
+        full_name, mobile_number, emailVal, designation, department,
+        managerVal, work_location, date_of_birth, gender,
+        whatsapp_number, emergency_contact_name, emergency_contact_number,
+        current_address, permanent_address,
+        offered_salary ? parseFloat(offered_salary) : null, employment_type,
+        bank_account_holder_name, bankAccVal, ifsc_code, pan_number, aadhaar_number, id
+      ]
+    ).catch(err => logger.warn('Silent catch warning:', err.message));
+
+    // Update employee_kyc table if identity fields provided (UPSERT)
+    if (aadhaar_number || pan_number || bankAccVal || bank_account_holder_name || ifsc_code || admin_remarks) {
+      await query(
+        `INSERT INTO employee_kyc (
+           employee_id, aadhaar_number, pan_number, bank_account_number, bank_account_holder_name, ifsc_code, review_notes, kyc_status, updated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'SUBMITTED', NOW())
+         ON CONFLICT (employee_id) DO UPDATE SET
+           aadhaar_number = COALESCE(EXCLUDED.aadhaar_number, employee_kyc.aadhaar_number),
+           pan_number = COALESCE(EXCLUDED.pan_number, employee_kyc.pan_number),
+           bank_account_number = COALESCE(EXCLUDED.bank_account_number, employee_kyc.bank_account_number),
+           bank_account_holder_name = COALESCE(EXCLUDED.bank_account_holder_name, employee_kyc.bank_account_holder_name),
+           ifsc_code = COALESCE(EXCLUDED.ifsc_code, employee_kyc.ifsc_code),
+           review_notes = COALESCE(EXCLUDED.review_notes, employee_kyc.review_notes),
+           updated_at = NOW()`,
+        [id, aadhaar_number || null, pan_number || null, bankAccVal || null, bank_account_holder_name || null, ifsc_code || null, admin_remarks || null]
+      ).catch(err => logger.warn('Silent catch warning:', err.message));
+    }
+
+    res.json({ success: true, message: 'Employee details updated successfully', data: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/employees/:id/activate — Super Admin Activate / Deactivate Employee
+router.post('/:id/activate', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { activation_status, employee_status } = req.body;
+
+    const newActivation = activation_status || 'APPROVED';
+    const newStatus = employee_status || (newActivation === 'APPROVED' ? 'ACTIVE' : 'INACTIVE');
+    const isActivating = newActivation === 'APPROVED';
+    const isActiveBool = isActivating && (newStatus === 'ACTIVE' || !employee_status);
+
+    const { rows } = await query(
+      `UPDATE employees 
+       SET activation_status = $1, 
+           employee_status = $2, 
+           is_active = $3, 
+           activated_at = CASE WHEN $3 = true THEN NOW() ELSE activated_at END, 
+           activated_by = CASE WHEN $3 = true THEN $4 ELSE activated_by END, 
+           deactivated_at = CASE WHEN $3 = false THEN NOW() ELSE NULL END,
+           updated_at = NOW()
+       WHERE id = $5 RETURNING *`,
+      [newActivation, newStatus, isActiveBool, req.user.id, id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Employee not found' });
+    }
+
+    const targetEmp = rows[0];
+
+    // Update onboarding checklist
+    if (isActiveBool) {
+      await query(
+        `UPDATE employee_onboarding_checklist SET activated = true, activated_at = NOW(), overall_progress = 100, current_stage = 'ACTIVE' WHERE employee_id = $1`,
+        [id]
+      ).catch(() => {});
+    } else {
+      await query(
+        `UPDATE employee_onboarding_checklist SET activated = false, current_stage = 'SUSPENDED' WHERE employee_id = $1`,
+        [id]
+      ).catch(() => {});
+    }
+
+    // Comprehensive sync with users table across user_id, employee_id, email, and mobile
+    const userStatus = isActiveBool ? 'active' : 'suspended';
+    await query(
+      `UPDATE users 
+       SET is_active = $1, 
+           status = $2, 
+           activated_at = CASE WHEN $1 = true THEN NOW() ELSE activated_at END,
+           deactivated_at = CASE WHEN $1 = false THEN NOW() ELSE NULL END,
+           updated_at = NOW() 
+       WHERE (id = $3 AND $3 IS NOT NULL)
+          OR (employee_id = $4 AND $4 IS NOT NULL)
+          OR (email = $5 AND $5 IS NOT NULL)
+          OR (mobile = $6 AND $6 IS NOT NULL)`,
+      [
+        isActiveBool, 
+        userStatus, 
+        targetEmp.user_id || null, 
+        targetEmp.employee_id || null, 
+        targetEmp.email_id || null, 
+        targetEmp.mobile_number || null
+      ]
+    ).catch(() => {});
+
+    // Revoke refresh tokens when deactivating
+    if (!isActiveBool) {
+      const userIdsToRevoke = [targetEmp.user_id].filter(Boolean);
+      for (const uId of userIdsToRevoke) {
+        await query(
+          `UPDATE refresh_tokens SET revoked = true, revoked_at = NOW() WHERE user_id = $1 AND revoked = false`,
+          [uId]
+        ).catch(() => {});
+      }
+    }
+
+    invalidateEmployeeVerificationCache(id);
+
+    res.json({ success: true, message: `Employee activation updated to ${newActivation}`, data: targetEmp });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/employees/:id/kyc-verify — Super Admin & HR Approve or Reject Employee KYC (Document-Level & Overall)
+router.post('/:id/kyc-verify', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { 
+      kyc_status, 
+      review_notes,
+      pan_action, pan_reason,
+      aadhaar_action, aadhaar_reason,
+      bank_action, bank_reason,
+      video_action, video_reason,
+      photo_action, photo_reason,
+      address_proof_action, address_proof_reason,
+      education_certificate_action, education_certificate_reason,
+      offer_letter_action, offer_letter_reason,
+      resume_action, resume_reason,
+      experience_letter_action, experience_letter_reason,
+      aadhaar_number, pan_number, bank_account, bank_account_number, bank_account_holder_name, ifsc_code
+    } = req.body;
+
+    const bankAccVal = bank_account_number || bank_account;
+
+    // Update identity details if passed (from KYC identity fields card)
+    if (aadhaar_number || pan_number || bankAccVal || bank_account_holder_name || ifsc_code || review_notes) {
+      await query(
+        `INSERT INTO employee_kyc (
+           employee_id, aadhaar_number, pan_number, bank_account_number, bank_account_holder_name, ifsc_code, review_notes, kyc_status, updated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'SUBMITTED', NOW())
+         ON CONFLICT (employee_id) DO UPDATE SET
+           aadhaar_number = COALESCE(EXCLUDED.aadhaar_number, employee_kyc.aadhaar_number),
+           pan_number = COALESCE(EXCLUDED.pan_number, employee_kyc.pan_number),
+           bank_account_number = COALESCE(EXCLUDED.bank_account_number, employee_kyc.bank_account_number),
+           bank_account_holder_name = COALESCE(EXCLUDED.bank_account_holder_name, employee_kyc.bank_account_holder_name),
+           ifsc_code = COALESCE(EXCLUDED.ifsc_code, employee_kyc.ifsc_code),
+           review_notes = COALESCE(EXCLUDED.review_notes, employee_kyc.review_notes),
+           updated_at = NOW()`,
+        [id, aadhaar_number || null, pan_number || null, bankAccVal || null, bank_account_holder_name || null, ifsc_code || null, review_notes || null]
+      ).catch(() => {});
+
+      await query(
+        `UPDATE employee_joining_details
+         SET aadhaar_number = COALESCE($1, aadhaar_number),
+             pan_number = COALESCE($2, pan_number),
+             bank_account_number = COALESCE($3, bank_account_number),
+             bank_account_holder_name = COALESCE($4, bank_account_holder_name),
+             ifsc_code = COALESCE($5, ifsc_code),
+             updated_at = NOW()
+         WHERE employee_id = $6`,
+        [aadhaar_number || null, pan_number || null, bankAccVal || null, bank_account_holder_name || null, ifsc_code || null, id]
+      ).catch(() => {});
+    }
+
+    // Fetch existing KYC record
+    const existingRes = await query(`SELECT * FROM employee_kyc WHERE employee_id = $1`, [id]);
+    const existing = existingRes.rows[0] || {};
+
+    let pan_status = existing.pan_status || 'PENDING';
+    let pan_verified = existing.pan_verified || false;
+    let pan_rejection_reason = existing.pan_rejection_reason || null;
+
+    let aadhaar_status = existing.aadhaar_status || 'PENDING';
+    let aadhaar_verified = existing.aadhaar_verified || false;
+    let aadhaar_rejection_reason = existing.aadhaar_rejection_reason || null;
+
+    let bank_status = existing.bank_status || 'PENDING';
+    let bank_verified = existing.bank_verified || false;
+    let bank_rejection_reason = existing.bank_rejection_reason || null;
+
+    let video_status = existing.video_status || 'PENDING';
+    let video_verified = existing.video_verified || false;
+    let video_rejection_reason = existing.video_rejection_reason || null;
+
+    const isBulkApprove = kyc_status === 'VERIFIED' || kyc_status === 'APPROVED';
+    const isBulkReject = kyc_status === 'REJECTED';
+
+    if (isBulkApprove) {
+      pan_status = 'VERIFIED'; pan_verified = true; pan_rejection_reason = null;
+      aadhaar_status = 'VERIFIED'; aadhaar_verified = true; aadhaar_rejection_reason = null;
+      bank_status = 'VERIFIED'; bank_verified = true; bank_rejection_reason = null;
+      video_status = 'VERIFIED'; video_verified = true; video_rejection_reason = null;
+    } else if (isBulkReject) {
+      pan_status = 'REJECTED'; pan_verified = false; pan_rejection_reason = review_notes || pan_reason || 'Bulk KYC Rejected';
+      aadhaar_status = 'REJECTED'; aadhaar_verified = false; aadhaar_rejection_reason = review_notes || aadhaar_reason || 'Bulk KYC Rejected';
+      bank_status = 'REJECTED'; bank_verified = false; bank_rejection_reason = review_notes || bank_reason || 'Bulk KYC Rejected';
+      video_status = 'REJECTED'; video_verified = false; video_rejection_reason = review_notes || video_reason || 'Bulk KYC Rejected';
+    }
+
+    // Handle document level decisions if provided
+    if (pan_action) {
+      if (pan_action === 'VERIFIED' || pan_action === 'APPROVED') {
+        pan_status = 'VERIFIED';
+        pan_verified = true;
+        pan_rejection_reason = null;
+      } else if (pan_action === 'REJECTED') {
+        pan_status = 'REJECTED';
+        pan_verified = false;
+        pan_rejection_reason = pan_reason || review_notes || 'PAN document unclear or invalid';
+      }
+    }
+
+    if (aadhaar_action) {
+      if (aadhaar_action === 'VERIFIED' || aadhaar_action === 'APPROVED') {
+        aadhaar_status = 'VERIFIED';
+        aadhaar_verified = true;
+        aadhaar_rejection_reason = null;
+      } else if (aadhaar_action === 'REJECTED') {
+        aadhaar_status = 'REJECTED';
+        aadhaar_verified = false;
+        aadhaar_rejection_reason = aadhaar_reason || review_notes || 'Aadhaar document unclear or invalid';
+      }
+    }
+
+    if (bank_action) {
+      if (bank_action === 'VERIFIED' || bank_action === 'APPROVED') {
+        bank_status = 'VERIFIED';
+        bank_verified = true;
+        bank_rejection_reason = null;
+      } else if (bank_action === 'REJECTED') {
+        bank_status = 'REJECTED';
+        bank_verified = false;
+        bank_rejection_reason = bank_reason || review_notes || 'Bank proof document unclear or invalid';
+      }
+    }
+
+    if (video_action || isBulkApprove || isBulkReject) {
+      if (video_action === 'VERIFIED' || video_action === 'APPROVED' || isBulkApprove) {
+        video_status = 'VERIFIED';
+        video_verified = true;
+        video_rejection_reason = null;
+      } else if (video_action === 'REJECTED' || isBulkReject) {
+        video_status = 'REJECTED';
+        video_verified = false;
+        video_rejection_reason = video_reason || review_notes || 'Video verification unclear or invalid';
+      }
+
+      await query(`
+        INSERT INTO employee_terms_acceptance (
+          employee_id, terms_version, terms_content, accepted, accepted_at,
+          verification_status, verification_notes, verified_by, verified_at, updated_at
+        ) VALUES ($1, '1.0', 'GharKaPaisa Employee Terms & Conditions', true, NOW(), $2, $3, $4, NOW(), NOW())
+        ON CONFLICT (employee_id) DO UPDATE SET
+          verification_status = EXCLUDED.verification_status,
+          verification_notes = EXCLUDED.verification_notes,
+          verified_by = EXCLUDED.verified_by,
+          verified_at = NOW(),
+          updated_at = NOW()
+      `, [id, video_status, video_rejection_reason, req.user.id]).catch(e => logger.warn('Video terms update error:', e.message));
+
+      const vDocStatus = video_status === 'VERIFIED' ? 'APPROVED' : (video_status === 'REJECTED' ? 'REJECTED' : 'PENDING');
+      await query(`
+        UPDATE employee_documents 
+        SET verification_status = $1, rejection_reason = $2, verified_by = $3, verified_at = NOW(), updated_at = NOW()
+        WHERE employee_id = $4 AND (LOWER(document_type) = 'terms_video' OR LOWER(document_type) = 'video' OR LOWER(document_type) = 'video_verification')
+      `, [vDocStatus, video_rejection_reason, req.user.id, id]).catch(err => logger.warn('Silent catch warning:', err.message));
+    }
+
+    // Handle generic document actions (photo, address_proof, education_certificate, offer_letter, resume, experience_letter)
+    const extraDocActions = [
+      { action: photo_action, reason: photo_reason, types: ['photo', 'photograph', 'profile_photo'] },
+      { action: address_proof_action, reason: address_proof_reason, types: ['address_proof', 'address'] },
+      { action: education_certificate_action, reason: education_certificate_reason, types: ['education_certificate', 'qualification_certificate', 'education', 'highest_qualification'] },
+      { action: req.body.offer_letter_action, reason: req.body.offer_letter_reason, types: ['offer_letter', 'joining_form', 'signed_offer_letter'] },
+      { action: req.body.resume_action, reason: req.body.resume_reason, types: ['resume', 'cv'] },
+      { action: req.body.experience_letter_action, reason: req.body.experience_letter_reason, types: ['experience_letter', 'experience', 'relieving_letter'] }
+    ];
+
+    for (const item of extraDocActions) {
+      if (item.action) {
+        const docSt = (item.action === 'VERIFIED' || item.action === 'APPROVED') ? 'APPROVED' : (item.action === 'REJECTED' ? 'REJECTED' : 'PENDING');
+        const docRej = item.action === 'REJECTED' ? (item.reason || review_notes || 'Document rejected') : null;
+        for (const t of item.types) {
+          await query(`
+            UPDATE employee_documents
+            SET verification_status = $1, rejection_reason = $2, verified_by = $3, verified_at = NOW(), updated_at = NOW()
+            WHERE employee_id = $4 AND LOWER(document_type) = $5
+          `, [docSt, docRej, req.user.id, id, t]).catch(err => logger.warn('Silent catch warning:', err.message));
+        }
+      }
+    }
+
+    // Determine final overall KYC status
+    let finalKycStatus = 'UNDER_REVIEW';
+    if (isBulkApprove) {
+      finalKycStatus = 'VERIFIED';
+    } else if (isBulkReject) {
+      finalKycStatus = 'REJECTED';
+    } else if (pan_status === 'VERIFIED' && aadhaar_status === 'VERIFIED' && bank_status === 'VERIFIED' && video_status === 'VERIFIED') {
+      finalKycStatus = 'VERIFIED';
+    } else if (pan_status === 'REJECTED' || aadhaar_status === 'REJECTED' || bank_status === 'REJECTED' || video_status === 'REJECTED') {
+      finalKycStatus = 'REJECTED';
+    }
+
+    const isFullyVerified = finalKycStatus === 'VERIFIED';
+
+    // Update employee_kyc table
+    await query(
+      `INSERT INTO employee_kyc (
+        employee_id, pan_status, pan_verified, pan_rejection_reason,
+        aadhaar_status, aadhaar_verified, aadhaar_rejection_reason,
+        bank_status, bank_verified, bank_rejection_reason,
+        kyc_status, reviewed_by, reviewed_at, review_notes, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13, NOW())
+      ON CONFLICT (employee_id) DO UPDATE SET
+        pan_status = EXCLUDED.pan_status,
+        pan_verified = EXCLUDED.pan_verified,
+        pan_rejection_reason = EXCLUDED.pan_rejection_reason,
+        aadhaar_status = EXCLUDED.aadhaar_status,
+        aadhaar_verified = EXCLUDED.aadhaar_verified,
+        aadhaar_rejection_reason = EXCLUDED.aadhaar_rejection_reason,
+        bank_status = EXCLUDED.bank_status,
+        bank_verified = EXCLUDED.bank_verified,
+        bank_rejection_reason = EXCLUDED.bank_rejection_reason,
+        kyc_status = EXCLUDED.kyc_status,
+        reviewed_by = EXCLUDED.reviewed_by,
+        reviewed_at = NOW(),
+        review_notes = EXCLUDED.review_notes,
+        updated_at = NOW()`,
+      [
+        id,
+        pan_status, pan_verified, pan_rejection_reason,
+        aadhaar_status, aadhaar_verified, aadhaar_rejection_reason,
+        bank_status, bank_verified, bank_rejection_reason,
+        finalKycStatus, req.user.id, review_notes || null
+      ]
+    );
+
+    // Update employee_documents table for source-of-truth consistency
+    if (isBulkApprove) {
+      await query(`
+        UPDATE employee_documents 
+        SET verification_status = 'APPROVED', rejection_reason = NULL, verified_by = $2, verified_at = NOW()
+        WHERE employee_id = $1
+      `, [id, req.user.id]).catch(err => logger.warn('Silent catch warning:', err.message));
+    } else if (isBulkReject) {
+      await query(`
+        UPDATE employee_documents 
+        SET verification_status = 'REJECTED', rejection_reason = $2, verified_by = $3, verified_at = NOW()
+        WHERE employee_id = $1
+      `, [id, review_notes || 'Bulk KYC Rejected', req.user.id]).catch(err => logger.warn('Silent catch warning:', err.message));
+    } else {
+      await query(`
+        UPDATE employee_documents 
+        SET verification_status = CASE 
+              WHEN document_type = 'pan' THEN $2::varchar
+              WHEN document_type = 'aadhaar' THEN $3::varchar
+              WHEN document_type = 'bank_proof' THEN $4::varchar
+              ELSE verification_status 
+            END,
+            rejection_reason = CASE 
+              WHEN document_type = 'pan' THEN $5::text
+              WHEN document_type = 'aadhaar' THEN $6::text
+              WHEN document_type = 'bank_proof' THEN $7::text
+              ELSE rejection_reason 
+            END,
+            verified_by = $8,
+            verified_at = NOW()
+        WHERE employee_id = $1
+      `, [
+        id,
+        pan_status === 'VERIFIED' ? 'APPROVED' : (pan_status === 'REJECTED' ? 'REJECTED' : 'PENDING'),
+        aadhaar_status === 'VERIFIED' ? 'APPROVED' : (aadhaar_status === 'REJECTED' ? 'REJECTED' : 'PENDING'),
+        bank_status === 'VERIFIED' ? 'APPROVED' : (bank_status === 'REJECTED' ? 'REJECTED' : 'PENDING'),
+        pan_rejection_reason,
+        aadhaar_rejection_reason,
+        bank_rejection_reason,
+        req.user.id
+      ]).catch(err => logger.warn('Silent catch warning:', err.message));
+    }
+
+    // Update onboarding checklist
+    await query(
+      `UPDATE employee_onboarding_checklist 
+       SET kyc_verified = $1, kyc_verified_at = $2, 
+           activated = $3, activated_at = $4,
+           overall_progress = $5, 
+           current_stage = $6 
+       WHERE employee_id = $7`,
+      [
+        isFullyVerified, isFullyVerified ? new Date() : null,
+        isFullyVerified, isFullyVerified ? new Date() : null,
+        isFullyVerified ? 100 : 75,
+        isFullyVerified ? 'ACTIVE' : (finalKycStatus === 'REJECTED' ? 'KYC_REJECTED' : 'KYC_UNDER_REVIEW'),
+        id
+      ]
+    );
+
+    // Update employee activation status and user account status
+    if (isFullyVerified) {
+      await query(
+        `UPDATE employees SET activation_status = 'APPROVED', employee_status = 'ACTIVE', activated_at = NOW() WHERE id = $1`,
+        [id]
+      );
+      await query(
+        `UPDATE users SET status = 'active' WHERE id = (SELECT user_id FROM employees WHERE id = $1) AND id IS NOT NULL`,
+        [id]
+      );
+    } else if (finalKycStatus === 'REJECTED') {
+      await query(
+        `UPDATE employees SET activation_status = 'REJECTED', employee_status = 'ONBOARDING' WHERE id = $1`,
+        [id]
+      );
+      await query(
+        `UPDATE users SET status = 'inactive' WHERE id = (SELECT user_id FROM employees WHERE id = $1) AND id IS NOT NULL`,
+        [id]
+      );
+    }
+
+    invalidateEmployeeVerificationCache(id);
+
+    res.json({
+      success: true,
+      message: isFullyVerified ? 'Employee KYC verified and account activated' : `Employee KYC status updated to ${finalKycStatus}`,
+      kyc_status: finalKycStatus,
+      data: {
+        kyc_status: finalKycStatus,
+        pan_status,
+        aadhaar_status,
+        bank_status,
+        video_status
+      }
+    });
+
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/employees/create — Super Admin Create new employee directly with 5-level hierarchy
+router.post('/create', async (req, res, next) => {
+  try {
+    const {
+      full_name, mobile_number, email_id, designation, department = 'Sales & Distribution',
+      offered_salary = 25000, work_location = 'Head Office', hierarchy_level = 'TC',
+      branch_head_id, senior_manager_id, manager_id, team_leader_id
+    } = req.body;
+
+    if (!full_name || !mobile_number) {
+      return res.status(400).json({ success: false, message: 'Full Name and Mobile Number are required' });
+    }
+
+    const cleanMobile = String(mobile_number).trim();
+    const cleanEmail = email_id ? String(email_id).trim().toLowerCase() : `${cleanMobile}@gharkapaisa.in`;
+    const levelUpper = (hierarchy_level || 'TC').toUpperCase();
+    const prefix = designation || 'TC';
+
+    // 1. Check existing user/employee
+    const existing = await query(`SELECT id FROM employees WHERE mobile_number = $1 OR email_id = $2`, [cleanMobile, cleanEmail]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ success: false, message: 'Employee with this mobile number or email already exists' });
+    }
+
+    // 2. Generate Employee Code using candidate_reference_seq
+    const seqRes = await query(`SELECT nextval('candidate_reference_seq') as seq`).catch(() => ({ rows: [] }));
+    const empCode = seqRes.rows[0]?.seq ? `CAND${seqRes.rows[0].seq}` : `CAND${Math.floor(10000 + Math.random() * 90000)}`;
+
+    // 3. Create User record
+    const bcrypt = require('bcryptjs');
+    const defaultHash = await bcrypt.hash('Gkp@123456', 10);
+    const userRes = await query(
+      `INSERT INTO users (full_name, mobile, email, role, status, employee_id, designation, department, password_hash)
+       VALUES ($1, $2, $3, 'EMPLOYEE', 'active', $4, $5, $6, $7) RETURNING id`,
+      [full_name, cleanMobile, cleanEmail, empCode, designation || prefix, department, defaultHash]
+    );
+    const userId = userRes.rows[0].id;
+
+    // 4. Create Employee record
+    const mapDesg = { 'BRANCH_HEAD': 'Branch Head', 'SENIOR_MANAGER': 'Senior Manager', 'MANAGER': 'Manager', 'TEAM_LEADER': 'Team Leader', 'TL': 'Team Leader', 'TC': 'TC' };
+    const finalDesg = mapDesg[levelUpper] || designation || 'TC';
+
+    const empRes = await query(
+      `INSERT INTO employees (
+        employee_id, user_id, full_name, mobile_number, email_id, designation, department,
+        joining_date, work_location, employment_type, offered_salary, employee_status, activation_status, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_DATE, $8, 'Full-time', $9, 'ACTIVE', 'APPROVED', $10) RETURNING *`,
+      [empCode, userId, full_name, cleanMobile, cleanEmail, finalDesg, department, work_location, parseFloat(offered_salary) || 25000, req.user?.id || null]
+    );
+    const employee = empRes.rows[0];
+
+    // 5. Create Checklist record
+    await query(
+      `INSERT INTO employee_onboarding_checklist (employee_id, interview_completed, employee_created, joining_form_completed, kyc_submitted, kyc_verified, terms_completed, activated, overall_progress, current_stage)
+       VALUES ($1, true, true, true, true, true, true, true, 100, 'ACTIVE') ON CONFLICT (employee_id) DO NOTHING`,
+      [employee.id]
+    );
+
+    // 6. Assign Hierarchy
+    const cleanBhId = (branch_head_id && branch_head_id !== 'null' && String(branch_head_id).trim()) ? String(branch_head_id).trim() : null;
+    const cleanSmId = (senior_manager_id && senior_manager_id !== 'null' && String(senior_manager_id).trim()) ? String(senior_manager_id).trim() : null;
+    const cleanMgrId = (manager_id && manager_id !== 'null' && String(manager_id).trim()) ? String(manager_id).trim() : null;
+    const cleanTlId = (team_leader_id && team_leader_id !== 'null' && String(team_leader_id).trim()) ? String(team_leader_id).trim() : null;
+
+    await query(
+      `INSERT INTO employee_hierarchy (employee_id, branch_head_id, senior_manager_id, manager_id, team_leader_id, hierarchy_level, assigned_by, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true)`,
+      [employee.id, cleanBhId, cleanSmId, cleanMgrId, cleanTlId, levelUpper, req.user?.id || null]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: `Employee ${full_name} (${empCode}) created successfully!`,
+      data: employee
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/employees/:id/hierarchy — Assign Hierarchy Level & Reporting Structure (Branch Head, Senior Manager, Manager, TL)
+router.post('/:id/hierarchy', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    let { branch_head_id, senior_manager_id, manager_id, team_leader_id, hierarchy_level } = req.body;
+
+    if (!hierarchy_level) {
+      return res.status(400).json({ success: false, message: 'Hierarchy level is required (BRANCH_HEAD, SENIOR_MANAGER, MANAGER, TEAM_LEADER, TC)' });
+    }
+
+    const cleanBhId = (branch_head_id && branch_head_id !== 'null' && branch_head_id !== 'undefined' && String(branch_head_id).trim() !== '') ? String(branch_head_id).trim() : null;
+    const cleanSmId = (senior_manager_id && senior_manager_id !== 'null' && senior_manager_id !== 'undefined' && String(senior_manager_id).trim() !== '') ? String(senior_manager_id).trim() : null;
+    const cleanMgrId = (manager_id && manager_id !== 'null' && manager_id !== 'undefined' && String(manager_id).trim() !== '') ? String(manager_id).trim() : null;
+    const cleanTlId = (team_leader_id && team_leader_id !== 'null' && team_leader_id !== 'undefined' && String(team_leader_id).trim() !== '') ? String(team_leader_id).trim() : null;
+
+    const levelUpper = hierarchy_level.toUpperCase();
+
+    // Sync employee designation in employees table
+    const mapDesg = { 'BRANCH_HEAD': 'Branch Head', 'SENIOR_MANAGER': 'Senior Manager', 'MANAGER': 'Manager', 'TEAM_LEADER': 'Team Leader', 'TL': 'Team Leader', 'TC': 'TC' };
+    const desg = mapDesg[levelUpper] || hierarchy_level;
+    await query(`UPDATE employees SET designation = $1, updated_at = NOW() WHERE id = $2`, [desg, id]);
+
+    // Deactivate previous active hierarchy
+    await query(`UPDATE employee_hierarchy SET is_active = false WHERE employee_id = $1`, [id]);
+
+    const assignedBy = req.user?.id || req.user?.userId || null;
+
+    const { rows } = await query(
+      `INSERT INTO employee_hierarchy (employee_id, branch_head_id, senior_manager_id, manager_id, team_leader_id, hierarchy_level, assigned_by, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true) RETURNING *`,
+      [id, cleanBhId, cleanSmId, cleanMgrId, cleanTlId, levelUpper, assignedBy]
+    );
+
+    res.json({ success: true, message: 'Employee hierarchy assigned successfully', data: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/employees/bulk-hierarchy — Bulk assign hierarchy for multiple employees
+router.post('/bulk-hierarchy', async (req, res, next) => {
+  try {
+    const { assignments } = req.body; // Array of { employee_id, branch_head_id, senior_manager_id, manager_id, team_leader_id, hierarchy_level }
+    
+    if (!Array.isArray(assignments) || assignments.length === 0) {
+      return res.status(400).json({ success: false, message: 'Assignments array is required' });
+    }
+
+    const assignedBy = req.user?.id || req.user?.userId || null;
+    const results = [];
+    const errors = [];
+
+    // Sync designation mapping
+    const mapDesg = { 'BRANCH_HEAD': 'Branch Head', 'SENIOR_MANAGER': 'Senior Manager', 'MANAGER': 'Manager', 'TEAM_LEADER': 'Team Leader', 'TL': 'Team Leader', 'TC': 'TC' };
+
+    for (const assignment of assignments) {
+      try {
+        const { employee_id, branch_head_id, senior_manager_id, manager_id, team_leader_id, hierarchy_level } = assignment;
+        
+        if (!employee_id || !hierarchy_level) {
+          errors.push({ employee_id, error: 'Missing required fields' });
+          continue;
+        }
+
+        const cleanBhId = (branch_head_id && branch_head_id !== 'null' && branch_head_id !== 'undefined' && String(branch_head_id).trim() !== '') ? String(branch_head_id).trim() : null;
+        const cleanSmId = (senior_manager_id && senior_manager_id !== 'null' && senior_manager_id !== 'undefined' && String(senior_manager_id).trim() !== '') ? String(senior_manager_id).trim() : null;
+        const cleanMgrId = (manager_id && manager_id !== 'null' && manager_id !== 'undefined' && String(manager_id).trim() !== '') ? String(manager_id).trim() : null;
+        const cleanTlId = (team_leader_id && team_leader_id !== 'null' && team_leader_id !== 'undefined' && String(team_leader_id).trim() !== '') ? String(team_leader_id).trim() : null;
+
+        const levelUpper = hierarchy_level.toUpperCase();
+
+        // Sync employee designation
+        const desg = mapDesg[levelUpper] || hierarchy_level;
+        await query(`UPDATE employees SET designation = $1, updated_at = NOW() WHERE id = $2`, [desg, employee_id]);
+
+        // Deactivate previous active hierarchy
+        await query(`UPDATE employee_hierarchy SET is_active = false WHERE employee_id = $1`, [employee_id]);
+
+        // Insert new hierarchy
+        const { rows } = await query(
+          `INSERT INTO employee_hierarchy (employee_id, branch_head_id, senior_manager_id, manager_id, team_leader_id, hierarchy_level, assigned_by, is_active)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, true) RETURNING *`,
+          [employee_id, cleanBhId, cleanSmId, cleanMgrId, cleanTlId, levelUpper, assignedBy]
+        );
+
+        results.push({ employee_id, success: true, data: rows[0] });
+      } catch (err) {
+        errors.push({ employee_id: assignment.employee_id, error: err.message });
+      }
+    }
+
+    res.json({ 
+      success: true, 
+      message: `Processed ${assignments.length} assignments, ${results.length} successful, ${errors.length} failed`,
+      results,
+      errors
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/employees/:id/unassign-hierarchy — Unassign / Remove employee from team hierarchy
+router.post('/:id/unassign-hierarchy', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Deactivate active hierarchy for this employee
+    await query(`UPDATE employee_hierarchy SET is_active = false WHERE employee_id = $1`, [id]);
+
+    // Clear hierarchy assignment in active records where this employee was assigned as supervisor
+    await query(`UPDATE employee_hierarchy SET branch_head_id = NULL WHERE branch_head_id = $1 AND is_active = true`, [id]);
+    await query(`UPDATE employee_hierarchy SET senior_manager_id = NULL WHERE senior_manager_id = $1 AND is_active = true`, [id]);
+    await query(`UPDATE employee_hierarchy SET manager_id = NULL WHERE manager_id = $1 AND is_active = true`, [id]);
+    await query(`UPDATE employee_hierarchy SET team_leader_id = NULL WHERE team_leader_id = $1 AND is_active = true`, [id]);
+
+    res.json({ success: true, message: 'Employee unassigned from team hierarchy successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/employees/:id/product-links — Assign product link to an employee
+router.post('/:id/product-links', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { product_id, employee_referral_url, incentive_amount, incentive_type = 'FIXED', status = 'ACTIVE' } = req.body;
+
+    if (!product_id || !incentive_amount) {
+      return res.status(400).json({ success: false, message: 'Product ID and incentive amount are required' });
+    }
+
+    // Fetch employee and product details for URL construction fallback
+    const empRes = await query(`SELECT employee_id FROM employees WHERE id = $1`, [id]);
+    if (empRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Employee not found' });
+    }
+    const empCode = empRes.rows[0].employee_id;
+
+    const prodRes = await query(`SELECT id, name, public_url FROM products WHERE id = $1`, [product_id]);
+    if (prodRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+    const product = prodRes.rows[0];
+
+    const generatedUrl = employee_referral_url || `${process.env.FRONTEND_URL || 'https://gharkapaisa.in'}/apply/${product_id}?emp=${empCode}`;
+
+    const { rows } = await query(
+      `INSERT INTO employee_product_links (
+        employee_id, product_id, employee_referral_url, incentive_amount, incentive_type, status, assigned_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (employee_id, product_id) DO UPDATE 
+      SET employee_referral_url = EXCLUDED.employee_referral_url,
+          incentive_amount = EXCLUDED.incentive_amount,
+          incentive_type = EXCLUDED.incentive_type,
+          status = EXCLUDED.status,
+          updated_at = NOW()
+      RETURNING *`,
+      [id, product_id, generatedUrl, parseFloat(incentive_amount), incentive_type, status, req.user.id]
+    );
+
+    // Update onboarding checklist
+    await query(
+      `UPDATE employee_onboarding_checklist SET links_assigned = true, links_assigned_at = NOW() WHERE employee_id = $1`,
+      [id]
+    );
+
+    res.json({ success: true, message: 'Employee product link assigned successfully', data: rows[0] });
+
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /api/v1/employees/incentives/overview — Super Admin Employee Incentives Dashboard Data ──
+router.get('/incentives/overview', async (req, res, next) => {
+  try {
+    const {
+      startDate,
+      endDate,
+      employee_id,
+      role,
+      manager_id,
+      team_leader_id,
+      product_id,
+      bank_id,
+      status,
+      search,
+      trend_freq,
+      trendFreq,
+      page = 1,
+      limit = 20
+    } = req.query;
+
+    let whereConditions = [];
+    let params = [];
+
+    // Allow approved applications or standalone incentives (where application_id IS NULL)
+    whereConditions.push(`(a.id IS NULL OR LOWER(a.status::text) IN ('approved', 'super_admin_approved', 'disbursed', 'sanctioned', 'commission_released', 'commission_received', 'released', 'operational_verified', 'completed', 'paid'))`);
+
+    if (startDate) {
+      params.push(startDate);
+      whereConditions.push(`it.created_at >= $${params.length}`);
+    }
+    if (endDate) {
+      params.push(endDate + ' 23:59:59');
+      whereConditions.push(`it.created_at <= $${params.length}`);
+    }
+    if (employee_id) {
+      params.push(employee_id);
+      whereConditions.push(`it.employee_id = $${params.length}`);
+    }
+    if (role) {
+      params.push(role);
+      whereConditions.push(`(e.designation ILIKE $${params.length} OR h.hierarchy_level = UPPER($${params.length}))`);
+    }
+    if (manager_id) {
+      params.push(manager_id);
+      whereConditions.push(`h.manager_id = $${params.length}`);
+    }
+    if (team_leader_id) {
+      params.push(team_leader_id);
+      whereConditions.push(`h.team_leader_id = $${params.length}`);
+    }
+    if (product_id) {
+      params.push(product_id);
+      whereConditions.push(`it.product_id = $${params.length}`);
+    }
+    if (bank_id) {
+      params.push(bank_id);
+      whereConditions.push(`p.bank_id = $${params.length}`);
+    }
+    if (status) {
+      const upperStatus = status.toUpperCase().trim();
+      if (['RELEASE', 'RELEASED', 'PAID', 'COMPLETED'].includes(upperStatus)) {
+        whereConditions.push(`UPPER(it.status::text) IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED')`);
+      } else if (['HOLD', 'ON_HOLD', 'HELD'].includes(upperStatus)) {
+        whereConditions.push(`UPPER(it.status::text) IN ('HOLD', 'ON_HOLD', 'HELD', 'HELD_APPFILE_PENDING', 'HELD_TARGET_PENDING')`);
+      } else {
+        params.push(upperStatus);
+        whereConditions.push(`UPPER(it.status::text) = $${params.length}`);
+      }
+    }
+    if (search) {
+      params.push(`%${search}%`);
+      const sIdx = params.length;
+      whereConditions.push(`(
+        e.full_name ILIKE $${sIdx} OR 
+        e.employee_id ILIKE $${sIdx} OR 
+        a.app_number ILIKE $${sIdx} OR 
+        it.customer_name ILIKE $${sIdx}
+      )`);
+    }
+
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
+    // 1. KPI Cards Summary Query
+    const kpiQuery = `
+      SELECT 
+        COALESCE(SUM(it.amount), 0) as total_earned,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED') THEN it.amount ELSE 0 END), 0) as total_paid,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) = 'PENDING' THEN it.amount ELSE 0 END), 0) as pending_payouts,
+        0 as in_review,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) IN ('HOLD', 'ON_HOLD', 'HELD', 'HELD_APPFILE_PENDING', 'HELD_TARGET_PENDING') THEN it.amount ELSE 0 END), 0) as on_hold,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) = 'REJECTED' THEN it.amount ELSE 0 END), 0) as rejected,
+        COUNT(DISTINCT it.employee_id) as employees_earned,
+        COUNT(it.id) as total_transactions,
+        COUNT(DISTINCT CASE 
+          WHEN a.id IS NOT NULL AND LOWER(a.status::text) IN ('approved', 'super_admin_approved', 'sanctioned', 'disbursed', 'commission_released', 'commission_received', 'released') THEN a.id 
+        END) as approved_cards_count,
+        COUNT(CASE WHEN UPPER(it.status::text) IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED') THEN 1 END) as approved_transactions,
+        COUNT(CASE WHEN UPPER(it.status::text) = 'REJECTED' THEN 1 END) as rejected_transactions
+      FROM employee_incentive_transactions it
+      LEFT JOIN employees e ON e.id = it.employee_id
+      LEFT JOIN employee_hierarchy h ON h.employee_id = e.id AND h.is_active = true
+      LEFT JOIN products p ON p.id = it.product_id
+      LEFT JOIN applications a ON a.id = it.application_id
+      ${whereClause}
+    `;
+
+    const kpiRes = await query(kpiQuery, params);
+    const kpi = kpiRes.rows[0] || {};
+    const totalEarned = parseFloat(kpi.total_earned || 0);
+    const employeesEarned = parseInt(kpi.employees_earned || 0);
+    kpi.avg_incentive_per_employee = employeesEarned > 0 ? Math.round(totalEarned / employeesEarned) : 0;
+
+    // 2. Incentive Trend Overview (Grouped by Daily / Weekly / Monthly)
+    const freq = (trend_freq || trendFreq || 'daily').toLowerCase();
+    let dateGroupExpr = "TO_CHAR(it.created_at, 'YYYY-MM-DD')";
+    let displayDateExpr = "TO_CHAR(it.created_at, 'DD-MM')";
+    if (freq === 'weekly') {
+      dateGroupExpr = "TO_CHAR(DATE_TRUNC('week', it.created_at), 'YYYY-MM-DD')";
+      displayDateExpr = "'Wk ' || TO_CHAR(DATE_TRUNC('week', it.created_at), 'DD Mon')";
+    } else if (freq === 'monthly') {
+      dateGroupExpr = "TO_CHAR(it.created_at, 'YYYY-MM')";
+      displayDateExpr = "TO_CHAR(it.created_at, 'Mon YYYY')";
+    }
+
+    const trendQuery = `
+      SELECT 
+        ${dateGroupExpr} as date,
+        ${displayDateExpr} as display_date,
+        COUNT(it.id) as count,
+        COUNT(CASE WHEN UPPER(it.status::text) IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED') THEN 1 END) as released_count,
+        COALESCE(SUM(it.amount), 0) as earned,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED') THEN it.amount ELSE 0 END), 0) as paid,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) = 'PENDING' THEN it.amount ELSE 0 END), 0) as pending,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) IN ('HOLD', 'ON_HOLD', 'HELD') THEN it.amount ELSE 0 END), 0) as hold
+      FROM employee_incentive_transactions it
+      LEFT JOIN employees e ON e.id = it.employee_id
+      LEFT JOIN employee_hierarchy h ON h.employee_id = e.id AND h.is_active = true
+      LEFT JOIN products p ON p.id = it.product_id
+      LEFT JOIN applications a ON a.id = it.application_id
+      ${whereClause}
+      GROUP BY ${dateGroupExpr}, ${displayDateExpr}
+      ORDER BY date ASC
+      LIMIT 30
+    `;
+    const trendRes = await query(trendQuery, params);
+
+    // 3. Incentives by Role Breakdown
+    const roleQuery = `
+      SELECT 
+        COALESCE(e.designation, h.hierarchy_level, 'Telecaller') as role,
+        COALESCE(SUM(it.amount), 0) as earned,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED') THEN it.amount ELSE 0 END), 0) as paid,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) = 'PENDING' THEN it.amount ELSE 0 END), 0) as pending,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) IN ('HOLD', 'ON_HOLD', 'HELD') THEN it.amount ELSE 0 END), 0) as hold,
+        COUNT(DISTINCT CASE 
+          WHEN a.id IS NOT NULL AND LOWER(a.status::text) IN ('approved', 'super_admin_approved', 'sanctioned', 'disbursed', 'commission_released', 'commission_received', 'released') THEN a.id 
+        END) as approved_apps,
+        COUNT(DISTINCT it.employee_id) as count
+      FROM employee_incentive_transactions it
+      LEFT JOIN employees e ON e.id = it.employee_id
+      LEFT JOIN employee_hierarchy h ON h.employee_id = e.id AND h.is_active = true
+      LEFT JOIN products p ON p.id = it.product_id
+      LEFT JOIN applications a ON a.id = it.application_id
+      ${whereClause}
+      GROUP BY COALESCE(e.designation, h.hierarchy_level, 'Telecaller')
+      ORDER BY earned DESC
+    `;
+    const roleRes = await query(roleQuery, params);
+
+    // 4. Incentives by Status Breakdown
+    const statusQuery = `
+      SELECT 
+        UPPER(it.status::text) as status,
+        COALESCE(SUM(it.amount), 0) as amount,
+        COUNT(it.id) as count
+      FROM employee_incentive_transactions it
+      LEFT JOIN employees e ON e.id = it.employee_id
+      LEFT JOIN employee_hierarchy h ON h.employee_id = e.id AND h.is_active = true
+      LEFT JOIN products p ON p.id = it.product_id
+      LEFT JOIN applications a ON a.id = it.application_id
+      ${whereClause}
+      GROUP BY UPPER(it.status::text)
+      ORDER BY amount DESC
+    `;
+    const statusRes = await query(statusQuery, params);
+
+    // 5. Top Earning Employees Leaderboard
+    const topEmployeesQuery = `
+      SELECT 
+        e.id as employee_uuid,
+        e.employee_id as emp_code,
+        e.full_name,
+        COALESCE(e.designation, h.hierarchy_level, 'TC') as role,
+        COUNT(DISTINCT CASE 
+          WHEN a.id IS NOT NULL AND LOWER(a.status::text) IN ('approved', 'super_admin_approved', 'sanctioned', 'disbursed', 'commission_released', 'commission_received', 'released') THEN a.id 
+        END) as approved,
+        COUNT(DISTINCT CASE WHEN UPPER(it.status::text) IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED') THEN COALESCE(a.id, it.id) END) as released_count,
+        COUNT(DISTINCT a.id) as applications,
+        COALESCE(SUM(it.amount), 0) as earned,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED') THEN it.amount ELSE 0 END), 0) as paid,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) = 'PENDING' THEN it.amount ELSE 0 END), 0) as pending,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) IN ('HOLD', 'ON_HOLD', 'HELD') THEN it.amount ELSE 0 END), 0) as hold
+      FROM employee_incentive_transactions it
+      JOIN employees e ON e.id = it.employee_id
+      LEFT JOIN employee_hierarchy h ON h.employee_id = e.id AND h.is_active = true
+      LEFT JOIN products p ON p.id = it.product_id
+      LEFT JOIN applications a ON a.id = it.application_id
+      ${whereClause}
+      GROUP BY e.id, e.employee_id, e.full_name, e.designation, h.hierarchy_level
+      ORDER BY paid DESC, released_count DESC, earned DESC
+      LIMIT 10
+    `;
+    const topEmployeesRes = await query(topEmployeesQuery, params);
+
+    // 6. Incentives by Product
+    const productQuery = `
+      SELECT 
+        p.id as product_id,
+        p.name as product_name,
+        b.name as bank_name,
+        COALESCE(p.category::text, p.slug, 'credit_card') as category_slug,
+        COUNT(DISTINCT a.id) as applications,
+        COUNT(DISTINCT CASE 
+          WHEN a.id IS NOT NULL AND LOWER(a.status::text) IN ('approved', 'super_admin_approved', 'sanctioned', 'disbursed', 'commission_released', 'commission_received', 'released') THEN a.id 
+        END) as approved,
+        COALESCE(SUM(it.amount), 0) as earned,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED') THEN it.amount ELSE 0 END), 0) as paid,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) = 'PENDING' THEN it.amount ELSE 0 END), 0) as pending,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) IN ('HOLD', 'ON_HOLD', 'HELD') THEN it.amount ELSE 0 END), 0) as hold
+      FROM employee_incentive_transactions it
+      JOIN products p ON p.id = it.product_id
+      LEFT JOIN banks b ON b.id = p.bank_id
+      LEFT JOIN employees e ON e.id = it.employee_id
+      LEFT JOIN employee_hierarchy h ON h.employee_id = e.id AND h.is_active = true
+      LEFT JOIN applications a ON a.id = it.application_id
+      ${whereClause}
+      GROUP BY p.id, p.name, b.name, p.category, p.slug
+      ORDER BY earned DESC
+      LIMIT 15
+    `;
+    const productRes = await query(productQuery, params);
+
+    // 7. Recent Incentive Payouts (Only RELEASE status)
+    const payoutsWhereConditions = [...whereConditions, "UPPER(it.status::text) IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED')"];
+    const payoutsWhereClause = `WHERE ${payoutsWhereConditions.join(' AND ')}`;
+
+    const payoutsQuery = `
+      SELECT 
+        it.id as payout_id,
+        e.full_name as employee_name,
+        e.employee_id as emp_code,
+        it.amount,
+        COALESCE(it.paid_at, it.updated_at, it.created_at) as paid_date,
+        COALESCE(it.payment_reference, 'N/A') as payment_reference,
+        it.payment_method,
+        it.status
+      FROM employee_incentive_transactions it
+      JOIN employees e ON e.id = it.employee_id
+      LEFT JOIN employee_hierarchy h ON h.employee_id = e.id AND h.is_active = true
+      LEFT JOIN products p ON p.id = it.product_id
+      LEFT JOIN applications a ON a.id = it.application_id
+      ${payoutsWhereClause}
+      ORDER BY COALESCE(it.paid_at, it.updated_at) DESC
+      LIMIT 10
+    `;
+    const payoutsRes = await query(payoutsQuery, params);
+
+    // 8. Hierarchy Tree View (Managers -> TLs -> TCs) - Uses overview dashboard filters
+    const hierarchyQuery = `
+      SELECT 
+        m.id as manager_id,
+        m.full_name as manager_name,
+        m.employee_id as manager_code,
+        tl.id as tl_id,
+        tl.full_name as tl_name,
+        tl.employee_id as tl_code,
+        e.id as emp_id,
+        e.full_name as emp_name,
+        e.employee_id as emp_code,
+        e.designation,
+        COALESCE(SUM(it.amount), 0) as total_incentives,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED') THEN it.amount ELSE 0 END), 0) as paid_incentives,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) = 'PENDING' THEN it.amount ELSE 0 END), 0) as pending_incentives,
+        COALESCE(SUM(CASE WHEN UPPER(it.status::text) IN ('HOLD', 'ON_HOLD', 'HELD') THEN it.amount ELSE 0 END), 0) as hold_incentives,
+        COUNT(DISTINCT it.application_id) as total_apps
+      FROM employees e
+      JOIN employee_hierarchy h ON h.employee_id = e.id AND h.is_active = true
+      LEFT JOIN employees tl ON tl.id = h.team_leader_id
+      LEFT JOIN employees m ON m.id = h.manager_id
+      LEFT JOIN employee_incentive_transactions it ON it.employee_id = e.id
+      LEFT JOIN products p ON p.id = it.product_id
+      LEFT JOIN applications a ON a.id = it.application_id
+      ${whereClause}
+      GROUP BY m.id, m.full_name, m.employee_id, tl.id, tl.full_name, tl.employee_id, e.id, e.full_name, e.employee_id, e.designation
+      ORDER BY m.full_name ASC, tl.full_name ASC, e.full_name ASC
+    `;
+    const hierarchyRes = await query(hierarchyQuery, params);
+
+    // Group hierarchy into structured tree
+    const hierarchyTree = [];
+    const managerMap = {};
+    (hierarchyRes.rows || []).forEach(row => {
+      const mgrKey = row.manager_id || 'unassigned_mgr';
+      if (!managerMap[mgrKey]) {
+        managerMap[mgrKey] = {
+          id: row.manager_id,
+          name: row.manager_name || 'Direct / Unassigned Manager',
+          code: row.manager_code || 'N/A',
+          total_incentives: 0,
+          paid_incentives: 0,
+          pending_incentives: 0,
+          hold_incentives: 0,
+          total_apps: 0,
+          team_leaders: {}
+        };
+        hierarchyTree.push(managerMap[mgrKey]);
+      }
+
+      managerMap[mgrKey].total_incentives += parseFloat(row.total_incentives || 0);
+      managerMap[mgrKey].paid_incentives += parseFloat(row.paid_incentives || 0);
+      managerMap[mgrKey].pending_incentives += parseFloat(row.pending_incentives || 0);
+      managerMap[mgrKey].hold_incentives += parseFloat(row.hold_incentives || 0);
+      managerMap[mgrKey].total_apps += parseInt(row.total_apps || 0);
+
+      const tlKey = row.tl_id || 'unassigned_tl';
+      if (!managerMap[mgrKey].team_leaders[tlKey]) {
+        managerMap[mgrKey].team_leaders[tlKey] = {
+          id: row.tl_id,
+          name: row.tl_name || 'Direct / Unassigned TL',
+          code: row.tl_code || 'N/A',
+          total_incentives: 0,
+          paid_incentives: 0,
+          pending_incentives: 0,
+          hold_incentives: 0,
+          total_apps: 0,
+          telecallers: []
+        };
+      }
+
+      managerMap[mgrKey].team_leaders[tlKey].total_incentives += parseFloat(row.total_incentives || 0);
+      managerMap[mgrKey].team_leaders[tlKey].paid_incentives += parseFloat(row.paid_incentives || 0);
+      managerMap[mgrKey].team_leaders[tlKey].pending_incentives += parseFloat(row.pending_incentives || 0);
+      managerMap[mgrKey].team_leaders[tlKey].hold_incentives += parseFloat(row.hold_incentives || 0);
+      managerMap[mgrKey].team_leaders[tlKey].total_apps += parseInt(row.total_apps || 0);
+
+      managerMap[mgrKey].team_leaders[tlKey].telecallers.push({
+        id: row.emp_id,
+        name: row.emp_name,
+        code: row.emp_code,
+        designation: row.designation,
+        total_incentives: parseFloat(row.total_incentives || 0),
+        paid_incentives: parseFloat(row.paid_incentives || 0),
+        pending_incentives: parseFloat(row.pending_incentives || 0),
+        hold_incentives: parseFloat(row.hold_incentives || 0),
+        total_apps: parseInt(row.total_apps || 0)
+      });
+    });
+
+    // Convert team_leaders dictionary to array for frontend
+    hierarchyTree.forEach(m => {
+      m.team_leaders = Object.values(m.team_leaders);
+    });
+
+    // 9. Paginated Main Incentive Details Table Query
+    const pNum = Math.max(1, parseInt(page));
+    const pLimit = Math.max(1, parseInt(limit));
+    const offset = (pNum - 1) * pLimit;
+
+    const countQuery = `
+      SELECT COUNT(it.id) as total
+      FROM employee_incentive_transactions it
+      LEFT JOIN employees e ON e.id = it.employee_id
+      LEFT JOIN employee_hierarchy h ON h.employee_id = e.id AND h.is_active = true
+      LEFT JOIN products p ON p.id = it.product_id
+      LEFT JOIN applications a ON a.id = it.application_id
+      ${whereClause}
+    `;
+    const countRes = await query(countQuery, params);
+    const totalRecords = parseInt(countRes.rows[0]?.total || 0);
+
+    const mainTableParams = [...params, pLimit, offset];
+    const mainTableQuery = `
+      SELECT 
+        it.id as incentive_id,
+        it.employee_id,
+        e.full_name as employee_name,
+        e.employee_id as emp_code,
+        COALESCE(e.designation, h.hierarchy_level, 'Telecaller') as role,
+        p.id as product_id,
+        p.name as product_name,
+        COALESCE(p.category::text, p.slug, 'credit_card') as category_slug,
+        b.name as bank_name,
+        a.id as application_id,
+        a.app_number,
+        a.status as application_status,
+        a.created_at as approval_date,
+        COALESCE(a.customer_name, it.customer_name, 'Customer') as customer_name,
+        COALESCE(c.mobile, a.customer_mobile) as customer_mobile,
+        COALESCE(a.process_type, 'lead punching') as process_type,
+        it.transaction_type,
+        it.amount as incentive_earned,
+        CASE WHEN UPPER(it.status::text) IN ('RELEASE', 'RELEASED', 'PAID', 'COMPLETED') THEN it.amount ELSE 0 END as incentive_paid,
+        CASE WHEN UPPER(it.status::text) = 'PENDING' THEN it.amount ELSE 0 END as pending_amount,
+        CASE WHEN UPPER(it.status::text) IN ('HOLD', 'ON_HOLD', 'HELD') THEN it.amount ELSE 0 END as hold_amount,
+        it.status,
+        it.hold_until,
+        it.hold_reason,
+        it.payment_method,
+        it.payment_reference,
+        it.paid_at,
+        it.created_at,
+        it.updated_at,
+        mgr.full_name as manager_name,
+        tl.full_name as team_leader_name
+      FROM employee_incentive_transactions it
+      JOIN employees e ON e.id = it.employee_id
+      LEFT JOIN employee_hierarchy h ON h.employee_id = e.id AND h.is_active = true
+      LEFT JOIN employees mgr ON mgr.id = h.manager_id
+      LEFT JOIN employees tl ON tl.id = h.team_leader_id
+      LEFT JOIN products p ON p.id = it.product_id
+      LEFT JOIN banks b ON b.id = p.bank_id
+      LEFT JOIN applications a ON a.id = it.application_id
+      LEFT JOIN customers c ON c.id = a.customer_id
+      ${whereClause}
+      ORDER BY it.created_at DESC
+      LIMIT $${mainTableParams.length - 1} OFFSET $${mainTableParams.length}
+    `;
+    const tableRes = await query(mainTableQuery, mainTableParams);
+
+    res.json({
+      success: true,
+      kpi,
+      trend: trendRes.rows,
+      by_role: roleRes.rows,
+      by_status: statusRes.rows,
+      top_employees: topEmployeesRes.rows,
+      by_product: productRes.rows,
+      recent_payouts: payoutsRes.rows,
+      hierarchy: hierarchyTree,
+      table: {
+        data: tableRes.rows,
+        pagination: {
+          total: totalRecords,
+          page: pNum,
+          limit: pLimit,
+          totalPages: Math.ceil(totalRecords / pLimit)
+        }
+      }
+    });
+
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/employee-management/employees/:id/monthly-incentive-report — Super Admin view of Employee Monthly Incentive & Target Breakdown
+router.get('/employees/:id/monthly-incentive-report', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { year, month } = req.query;
+    const { getMonthlyIncentiveReportData } = require('../employee/employee.routes');
+    const report = await getMonthlyIncentiveReportData(id, year, month);
+    res.json({
+      success: true,
+      ...report
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/employee-management/incentive-history — Super Admin Historical Incentive & Performance Dashboard
+router.get('/incentive-history', async (req, res, next) => {
+  try {
+    const now = new Date();
+    const targetYear = parseInt(req.query.year || now.getFullYear());
+    const targetMonth = parseInt(req.query.month || (now.getMonth() + 1));
+    const { employee_id, bank_id, department_filter } = req.query;
+
+    const startDateStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
+    const lastDay = new Date(targetYear, targetMonth, 0).getDate();
+    const endDateStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+    let empWhere = "WHERE (UPPER(COALESCE(e.status::text, 'ACTIVE')) IN ('ACTIVE', 'ENABLED', 'TRUE') OR e.status IS NULL)";
+    const empParams = [];
+    if (employee_id && employee_id !== 'all') {
+      empParams.push(employee_id);
+      empWhere += ` AND e.id = $${empParams.length}`;
+    }
+
+    const empRes = await query(`
+      SELECT e.id, e.employee_id as emp_code, e.full_name, e.designation, e.department
+      FROM employees e
+      ${empWhere}
+      ORDER BY e.full_name ASC
+    `, empParams);
+
+    const employees = empRes.rows;
+
+    let bankWhere = "";
+    const bankParams = [];
+    if (bank_id && bank_id !== 'all') {
+      bankParams.push(bank_id);
+      bankWhere = `WHERE id = $1`;
+    }
+    const banksRes = await query(`SELECT id, name, logo_url FROM banks ${bankWhere} ORDER BY name ASC`, bankParams);
+
+    const { getMonthlyIncentiveReportData } = require('../employee/employee.routes');
+
+    const records = [];
+    let grandApprovedCards = 0;
+    let grandTotalIncentive = 0;
+    let grandTargetsAchieved = 0;
+    let grandDeptBanks = 0;
+    const activeEmployeesSet = new Set();
+
+    for (const emp of employees) {
+      try {
+        const empReport = await getMonthlyIncentiveReportData(emp.id, targetYear, targetMonth);
+        if (empReport && empReport.bank_breakdown) {
+          empReport.bank_breakdown.forEach(bm => {
+            if (bank_id && bank_id !== 'all' && bm.bank_id !== bank_id) return;
+            if (department_filter === 'assigned' && !bm.is_department) return;
+            if (department_filter === 'non_assigned' && bm.is_department) return;
+
+            if (bm.approved_cards_count > 0 || bm.earned_incentive > 0 || bm.is_department || bm.total_apps > 0) {
+              activeEmployeesSet.add(emp.id);
+              grandApprovedCards += bm.approved_cards_count;
+              grandTotalIncentive += bm.earned_incentive;
+              if (bm.is_department) {
+                grandDeptBanks += 1;
+                if (bm.target_achieved) grandTargetsAchieved += 1;
+              }
+
+              records.push({
+                employee_id: emp.id,
+                employee_name: emp.full_name,
+                emp_code: emp.emp_code,
+                designation: emp.designation,
+                bank_id: bm.bank_id,
+                bank_name: bm.bank_name,
+                bank_logo_url: bm.bank_logo_url,
+                department_assigned: bm.is_department,
+                target_cards: bm.target_count,
+                approved_cards: bm.approved_cards_count,
+                app_file_yes_cards: bm.app_file_yes_cards_count,
+                target_achieved: bm.target_achieved,
+                incentive_per_card: bm.bonus_per_card > 0 ? 0 : (bm.earned_incentive / (bm.app_file_yes_cards_count || 1)),
+                bonus_per_card: bm.bonus_per_card,
+                earned_incentive: bm.earned_incentive,
+                released_incentive: bm.released_incentive,
+                held_incentive: bm.held_incentive
+              });
+            }
+          });
+        }
+      } catch (err) {
+        logger.warn(`Failed to generate monthly report for emp ${emp.id}: ${err.message}`);
+      }
+    }
+
+    const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const monthlyComparison = [];
+
+    for (let i = 5; i >= 0; i--) {
+      const compDate = new Date(targetYear, targetMonth - 1 - i, 1);
+      const cYear = compDate.getFullYear();
+      const cMonth = compDate.getMonth() + 1;
+      const cStart = `${cYear}-${String(cMonth).padStart(2, '0')}-01`;
+      const cLast = new Date(cYear, cMonth, 0).getDate();
+      const cEnd = `${cYear}-${String(cMonth).padStart(2, '0')}-${String(cLast).padStart(2, '0')}`;
+
+      const aggRes = await query(`
+        SELECT 
+          COUNT(DISTINCT app.id) as approved_cards,
+          COALESCE(SUM(it.amount), 0) as total_incentive
+        FROM applications app
+        LEFT JOIN employee_incentive_transactions it ON it.application_id = app.id
+        WHERE UPPER(app.status::text) IN ('APPROVED', 'DISBURSED', 'SANCTIONED', 'SUPER_ADMIN_APPROVED', 'COMMISSION_RELEASED')
+          AND DATE(COALESCE(app.approved_at, app.updated_at, app.created_at)) >= $1::date
+          AND DATE(COALESCE(app.approved_at, app.updated_at, app.created_at)) <= $2::date
+      `, [cStart, cEnd]);
+
+      monthlyComparison.push({
+        year: cYear,
+        month: cMonth,
+        month_name: monthNames[cMonth - 1],
+        label: `${monthNames[cMonth - 1]} ${cYear}`,
+        approved_cards: parseInt(aggRes.rows[0]?.approved_cards || 0),
+        total_incentive: parseFloat(aggRes.rows[0]?.total_incentive || 0)
+      });
+    }
+
+    res.json({
+      success: true,
+      period: {
+        year: targetYear,
+        month: targetMonth,
+        month_name: monthNames[targetMonth - 1],
+        start_date: startDateStr,
+        end_date: endDateStr
+      },
+      summary: {
+        total_employees: activeEmployeesSet.size || employees.length,
+        total_approved_cards: grandApprovedCards,
+        total_incentive: grandTotalIncentive,
+        targets_achieved: grandTargetsAchieved,
+        department_banks: grandDeptBanks
+      },
+      records,
+      monthly_comparison: monthlyComparison
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── PUT /api/v1/employees/incentives/:id/status — Super Admin Update Payout/Incentive Status ──
+router.post('/incentives/:id/update-status', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { status, payment_reference, payment_method = 'BANK_TRANSFER', hold_reason } = req.body;
+
+    if (!status) {
+      return res.status(400).json({ success: false, message: 'Status is required' });
+    }
+
+    let uppercaseStatus = status.toUpperCase().trim();
+    if (['PAID', 'COMPLETED', 'RELEASED'].includes(uppercaseStatus)) uppercaseStatus = 'RELEASE';
+    if (['ON_HOLD', 'HELD', 'HELD_APPFILE_PENDING', 'HELD_TARGET_PENDING'].includes(uppercaseStatus)) uppercaseStatus = 'HOLD';
+
+    const ALLOWED_LIFECYCLE_STATUSES = new Set(['PENDING', 'HOLD', 'RELEASE']);
+    if (!ALLOWED_LIFECYCLE_STATUSES.has(uppercaseStatus)) {
+      return res.status(400).json({ success: false, message: 'Invalid status. Employee incentive status must be PENDING, HOLD, or RELEASE.' });
+    }
+
+    // Safety Gate: If transitioning to RELEASE, verify underlying application is approved
+    if (uppercaseStatus === 'RELEASE') {
+      const { rows: [existingTxn] } = await query(`SELECT application_id FROM employee_incentive_transactions WHERE id = $1`, [id]);
+      if (existingTxn && existingTxn.application_id) {
+        const { rows: [app] } = await query(`SELECT status FROM applications WHERE id = $1`, [existingTxn.application_id]);
+        const INCENTIVE_ELIGIBLE = new Set(['approved', 'super_admin_approved', 'sanctioned', 'disbursed', 'commission_released', 'commission_received', 'released']);
+        if (!app || !INCENTIVE_ELIGIBLE.has(String(app.status || '').toLowerCase().trim())) {
+          return res.status(400).json({ success: false, message: 'Cannot release incentive for an application that is not in an approved state.' });
+        }
+      }
+    }
+
+    const isPaid = uppercaseStatus === 'RELEASE';
+
+    const { rows } = await query(
+      `UPDATE employee_incentive_transactions
+       SET status = $1::varchar,
+           payment_reference = COALESCE($2, payment_reference),
+           payment_method = COALESCE($3, payment_method),
+           hold_reason = CASE WHEN $1::varchar = 'HOLD' THEN COALESCE($4, hold_reason, 'App File Pending') ELSE NULL END,
+           paid_at = CASE WHEN $5::boolean THEN NOW() ELSE paid_at END,
+           updated_at = NOW(),
+           processed_by = $6
+       WHERE id = $7
+       RETURNING *`,
+      [uppercaseStatus, payment_reference || null, payment_method, hold_reason || null, isPaid, req.user?.id || null, id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Incentive transaction not found' });
+    }
+
+    const updatedTxn = rows[0];
+    if (isPaid && updatedTxn.bonus_rule_id) {
+      await query(
+        `UPDATE employee_bonus_transactions SET status = 'PAID', paid_at = NOW() WHERE employee_id = $1 AND bonus_rule_id = $2`,
+        [updatedTxn.employee_id, updatedTxn.bonus_rule_id]
+      ).catch(err => logger.warn('Silent catch warning:', err.message));
+    }
+
+    res.json({
+      success: true,
+      message: `Incentive transaction updated to ${uppercaseStatus}`,
+      data: updatedTxn
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /api/v1/employees/incentives/bulk-update-status — Super Admin Bulk Update Incentive Status ──
+router.post('/incentives/bulk-update-status', async (req, res, next) => {
+  try {
+    const { incentive_ids, status, payment_reference, payment_method = 'BANK_TRANSFER', hold_reason } = req.body;
+
+    if (!Array.isArray(incentive_ids) || incentive_ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'incentive_ids array is required' });
+    }
+
+    if (!status) {
+      return res.status(400).json({ success: false, message: 'Status is required' });
+    }
+
+    let uppercaseStatus = status.toUpperCase().trim();
+    if (['PAID', 'COMPLETED', 'RELEASED'].includes(uppercaseStatus)) uppercaseStatus = 'RELEASE';
+    if (['ON_HOLD', 'HELD', 'HELD_APPFILE_PENDING', 'HELD_TARGET_PENDING'].includes(uppercaseStatus)) uppercaseStatus = 'HOLD';
+
+    const ALLOWED_LIFECYCLE_STATUSES = new Set(['PENDING', 'HOLD', 'RELEASE']);
+    if (!ALLOWED_LIFECYCLE_STATUSES.has(uppercaseStatus)) {
+      return res.status(400).json({ success: false, message: 'Invalid status. Employee incentive status must be PENDING, HOLD, or RELEASE.' });
+    }
+
+    // Safety Gate: Check underlying applications for RELEASE
+    if (uppercaseStatus === 'RELEASE') {
+      const { rows: txns } = await query(
+        `SELECT eit.id, eit.application_id, a.status as app_status
+         FROM employee_incentive_transactions eit
+         LEFT JOIN applications a ON a.id = eit.application_id
+         WHERE eit.id = ANY($1::uuid[])`,
+        [incentive_ids]
+      );
+      const INCENTIVE_ELIGIBLE = new Set(['approved', 'super_admin_approved', 'sanctioned', 'disbursed', 'commission_released', 'commission_received', 'released']);
+      for (const t of txns) {
+        if (t.application_id && (!t.app_status || !INCENTIVE_ELIGIBLE.has(String(t.app_status).toLowerCase().trim()))) {
+          return res.status(400).json({ success: false, message: `Cannot release incentive ${t.id}: linked application is not approved.` });
+        }
+      }
+    }
+
+    const isPaid = uppercaseStatus === 'RELEASE';
+
+    const { rows } = await query(
+      `UPDATE employee_incentive_transactions
+       SET status = $1::varchar,
+           payment_reference = COALESCE($2, payment_reference),
+           payment_method = COALESCE($3, payment_method),
+           hold_reason = CASE WHEN $1::varchar = 'HOLD' THEN COALESCE($4, hold_reason, 'App File Pending') ELSE NULL END,
+           paid_at = CASE WHEN $5::boolean THEN NOW() ELSE paid_at END,
+           updated_at = NOW(),
+           processed_by = $6
+       WHERE id = ANY($7::uuid[])
+       RETURNING *`,
+      [uppercaseStatus, payment_reference || null, payment_method, hold_reason || null, isPaid, req.user?.id || null, incentive_ids]
+    );
+
+    if (isPaid && rows.length > 0) {
+      for (const updatedTxn of rows) {
+        if (updatedTxn.bonus_rule_id) {
+          await query(
+            `UPDATE employee_bonus_transactions SET status = 'PAID', paid_at = NOW() WHERE employee_id = $1 AND bonus_rule_id = $2`,
+            [updatedTxn.employee_id, updatedTxn.bonus_rule_id]
+          ).catch(err => logger.warn('Silent catch warning:', err.message));
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Successfully updated ${rows.length} incentive transaction(s) to ${uppercaseStatus}`,
+      count: rows.length,
+      data: rows
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── 1. GET /api/v1/employees/:id/departments — List assigned departments/banks for Employee ──
+router.get('/:id/departments', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Verify employee
+    const empRes = await query(`SELECT id, employee_id, full_name FROM employees WHERE id = $1`, [id]);
+    if (empRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Employee not found' });
+    }
+    const employee = empRes.rows[0];
+
+    // Fetch all active banks and check assignment status
+    const { rows } = await query(`
+      SELECT 
+        b.id as bank_id,
+        b.name as bank_name,
+        b.logo_url as bank_logo,
+        CASE WHEN eba.id IS NOT NULL THEN true ELSE false END as is_assigned,
+        eba.created_at as assigned_at
+      FROM banks b
+      LEFT JOIN employee_bank_assignments eba ON eba.bank_id = b.id AND eba.employee_id = $1
+      WHERE b.is_active = true
+      ORDER BY b.name ASC
+    `, [id]);
+
+    res.json({
+      success: true,
+      employee,
+      assigned_banks: rows.filter(r => r.is_assigned),
+      all_banks: rows
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── 2. POST /api/v1/employees/:id/departments — Assign Departments/Banks to Employee ──
+router.post('/:id/departments', async (req, res, next) => {
+  const { id } = req.params;
+  const { bank_ids } = req.body;
+
+  if (!Array.isArray(bank_ids)) {
+    return res.status(400).json({ success: false, message: 'bank_ids must be an array of bank UUIDs' });
+  }
+
+  const client = await getClient();
+  try {
+    // Verify employee
+    const empRes = await client.query(`SELECT id, employee_id, full_name FROM employees WHERE id = $1`, [id]);
+    if (empRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Employee not found' });
+    }
+
+    await client.query('BEGIN');
+    await client.query(`DELETE FROM employee_bank_assignments WHERE employee_id = $1`, [id]);
+
+    const assigned = [];
+    for (const bId of bank_ids) {
+      const insRes = await client.query(
+        `INSERT INTO employee_bank_assignments (employee_id, bank_id, assigned_by)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (employee_id, bank_id) DO UPDATE SET updated_at = NOW()
+         RETURNING *`,
+        [id, bId, req.user.id]
+      );
+      if (insRes.rows[0]) assigned.push(insRes.rows[0]);
+    }
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      message: `Successfully assigned ${assigned.length} department(s)/bank(s) to ${empRes.rows[0].full_name}`,
+      count: assigned.length,
+      data: assigned
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(err => logger.warn('Silent catch warning:', err.message));
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
+let isIncentiveSchemaEnsured = false;
+async function ensureIncentiveSchema() {
+  if (isIncentiveSchemaEnsured) return;
+  try {
+    await query(`ALTER TABLE employee_incentive_transactions ADD COLUMN IF NOT EXISTS bank_id UUID REFERENCES banks(id) ON DELETE SET NULL;`).catch(err => logger.warn('Silent catch warning:', err.message));
+    await query(`ALTER TABLE employee_incentive_transactions ADD COLUMN IF NOT EXISTS bonus_rule_id UUID REFERENCES employee_bonus_rules(id) ON DELETE SET NULL;`).catch(err => logger.warn('Silent catch warning:', err.message));
+    await query(`ALTER TABLE employee_incentive_transactions ADD COLUMN IF NOT EXISTS direct_incentive_amount DECIMAL(10,2) DEFAULT 0.00;`).catch(err => logger.warn('Silent catch warning:', err.message));
+    await query(`ALTER TABLE employee_incentive_transactions ADD COLUMN IF NOT EXISTS bonus_amount DECIMAL(10,2) DEFAULT 0.00;`).catch(err => logger.warn('Silent catch warning:', err.message));
+    
+    // Deduplicate employee_bonus_transactions before creating unique index
+    await query(`
+      DELETE FROM employee_bonus_transactions T1
+      USING employee_bonus_transactions T2
+      WHERE T1.id < T2.id 
+        AND T1.employee_id = T2.employee_id 
+        AND T1.bonus_rule_id = T2.bonus_rule_id;
+    `).catch(err => logger.warn('Silent catch warning:', err.message));
+
+    // Deduplicate employee_incentive_transactions before creating unique index
+    await query(`
+      DELETE FROM employee_incentive_transactions T1
+      USING employee_incentive_transactions T2
+      WHERE T1.id < T2.id 
+        AND T1.employee_id = T2.employee_id 
+        AND T1.bonus_rule_id = T2.bonus_rule_id
+        AND T1.transaction_type = 'BONUS'
+        AND T2.transaction_type = 'BONUS'
+        AND T1.bonus_rule_id IS NOT NULL;
+    `).catch(err => logger.warn('Silent catch warning:', err.message));
+
+    // Deduplicate employee_incentive_transactions application_id before creating unique index
+    await query(`
+      DELETE FROM employee_incentive_transactions T1
+      USING employee_incentive_transactions T2
+      WHERE T1.id < T2.id 
+        AND T1.application_id = T2.application_id
+        AND T1.application_id IS NOT NULL;
+    `).catch(err => logger.warn('Silent catch warning:', err.message));
+
+    await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_emp_incentive_tx_bonus_rule ON employee_incentive_transactions(employee_id, bonus_rule_id) WHERE transaction_type = 'BONUS' AND bonus_rule_id IS NOT NULL;`).catch(err => logger.warn('Silent catch warning:', err.message));
+    await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_emp_incentive_tx_app_id ON employee_incentive_transactions(application_id) WHERE application_id IS NOT NULL;`).catch(err => logger.warn('Silent catch warning:', err.message));
+    await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_emp_bonus_tx_rule_emp ON employee_bonus_transactions(employee_id, bonus_rule_id);`).catch(err => logger.warn('Silent catch warning:', err.message));
+    isIncentiveSchemaEnsured = true;
+  } catch (err) {
+    logger.warn(`Schema check warning: ${err.message}`);
+  }
+}
+
+// ── 3. GET /api/v1/employees/bonus-rules — List & Filter Employee Bonus Rules ──
+router.get(['/bonus-rules', '/bonus-rules/all'], async (req, res, next) => {
+  try {
+    await ensureIncentiveSchema();
+    const { employee_id, bank_id, status } = req.query;
+
+    let whereConds = [];
+    let params = [];
+
+    if (employee_id) {
+      params.push(employee_id);
+      whereConds.push(`br.employee_id = $${params.length}`);
+    }
+
+    if (bank_id) {
+      params.push(bank_id);
+      whereConds.push(`br.bank_id = $${params.length}`);
+    }
+
+    if (status) {
+      params.push(status);
+      whereConds.push(`br.status = $${params.length}`);
+    }
+
+    const whereClause = whereConds.length > 0 ? `WHERE ${whereConds.join(' AND ')}` : '';
+
+    const { rows } = await query(`
+      SELECT 
+        br.*,
+        e.full_name as employee_name,
+        e.employee_id as emp_code,
+        e.designation as employee_designation,
+        b.name as bank_name,
+        b.logo_url as bank_logo,
+        u.full_name as created_by_name
+      FROM employee_bonus_rules br
+      JOIN employees e ON e.id = br.employee_id
+      JOIN banks b ON b.id = br.bank_id
+      LEFT JOIN users u ON u.id = br.created_by
+      ${whereClause}
+      ORDER BY br.created_at DESC
+    `, params);
+
+    // Calculate real-time approved cards & bonus progress for each rule
+    const enrichedRules = await Promise.all(rows.map(async (rule) => {
+      const appCountRes = await query(`
+        SELECT COUNT(*) as approved_count
+        FROM applications app
+        JOIN products p ON p.id = app.product_id
+        WHERE (app.employee_id = $1 OR app.submitted_by IN (SELECT user_id FROM employees WHERE id = $1))
+          AND p.bank_id = $2
+          AND LOWER(app.status::text) IN ('approved', 'super_admin_approved', 'sanctioned', 'disbursed', 'commission_released', 'commission_received', 'released')
+          AND DATE(COALESCE(app.approved_at, app.updated_at, app.created_at)) >= $3
+          AND DATE(COALESCE(app.approved_at, app.updated_at, app.created_at)) <= $4
+      `, [rule.employee_id, rule.bank_id, rule.start_date, rule.end_date]);
+
+      const approvedCount = parseInt(appCountRes.rows[0]?.approved_count || 0);
+      const targetCount = parseInt(rule.target_count || 0);
+      const bonusPerCard = parseFloat(rule.bonus_per_card || 0);
+      const targetAchieved = targetCount > 0 && approvedCount >= targetCount;
+      // MARGINAL BONUS CALCULATION - Only cards beyond target get bonus
+      const cardsBeyondTarget = Math.max(0, approvedCount - targetCount);
+      const earnedBonus = targetAchieved ? (cardsBeyondTarget * bonusPerCard) : 0;
+      const projectedBonus = earnedBonus;
+      return {
+        ...rule,
+        approved_count: approvedCount,
+        projected_bonus: projectedBonus,
+        earned_bonus: earnedBonus,
+        bonus_status: targetAchieved ? 'UNLOCKED' : 'LOCKED_TARGET_PENDING',
+        target_achieved: targetAchieved,
+        progress_percentage: progressPercentage,
+        remaining_count: Math.max(0, targetCount - approvedCount),
+        remaining_bonus: Math.max(0, (targetCount - approvedCount) * bonusPerCard)
+      };
+    }));
+
+    res.json({
+      success: true,
+      count: enrichedRules.length,
+      data: enrichedRules
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── 4. POST /api/v1/employees/bonus-rules — Create/Assign New Bonus Rule ──
+router.post('/bonus-rules', async (req, res, next) => {
+  try {
+    const { employee_id, bank_id, start_date, end_date, target_count, bonus_per_card } = req.body;
+
+    if (!employee_id || !bank_id || !start_date || !end_date || target_count === undefined || bonus_per_card === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee ID, Bank ID, Start Date, End Date, Target Count, and Bonus Per Card are required'
+      });
+    }
+
+    // Verify employee & bank assignment
+    const empRes = await query(`SELECT id, full_name, employee_id FROM employees WHERE id = $1`, [employee_id]);
+    if (empRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Employee not found' });
+    }
+
+    const bankRes = await query(`SELECT id, name FROM banks WHERE id = $1`, [bank_id]);
+    if (bankRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Bank not found' });
+    }
+
+    // Verify if bank is assigned to employee
+    const assignCheck = await query(
+      `SELECT id FROM employee_bank_assignments WHERE employee_id = $1 AND bank_id = $2`,
+      [employee_id, bank_id]
+    );
+
+    // Auto-assign bank if not assigned yet
+    if (assignCheck.rows.length === 0) {
+      await query(
+        `INSERT INTO employee_bank_assignments (employee_id, bank_id, assigned_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [employee_id, bank_id, req.user.id]
+      ).catch(err => logger.warn('Silent catch warning:', err.message));
+    }
+
+    const { rows } = await query(
+      `INSERT INTO employee_bonus_rules (
+        employee_id, bank_id, start_date, end_date, target_count, bonus_per_card, status, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7)
+      RETURNING *`,
+      [employee_id, bank_id, start_date, end_date, parseInt(target_count), parseFloat(bonus_per_card), req.user.id]
+    );
+
+    res.json({
+      success: true,
+      message: `Bonus rule created for ${empRes.rows[0].full_name} (${bankRes.rows[0].name})`,
+      data: rows[0]
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── 5. DELETE /api/v1/employees/bonus-rules/:id — Delete/Deactivate Bonus Rule ──
+router.delete('/bonus-rules/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await query(`DELETE FROM employee_bonus_rules WHERE id = $1 RETURNING *`, [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Bonus rule not found' });
+    }
+    res.json({ success: true, message: 'Bonus rule deleted successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /api/v1/employees/bonus-rules/apply — Trigger Automatic Bonus Rule Conversion to Incentives ──
+router.post('/bonus-rules/apply', async (req, res, next) => {
+  try {
+    const { rows: rules } = await query(`
+      SELECT br.*, e.full_name as employee_name, b.name as bank_name
+      FROM employee_bonus_rules br
+      JOIN employees e ON e.id = br.employee_id
+      JOIN banks b ON b.id = br.bank_id
+      WHERE br.status = 'ACTIVE'
+    `);
+
+    let generatedCount = 0;
+    for (const rule of rules) {
+      const appCountRes = await query(`
+        SELECT COUNT(*) as approved_count
+        FROM applications app
+        JOIN products p ON p.id = app.product_id
+        WHERE (app.employee_id = $1 OR app.submitted_by IN (SELECT user_id FROM employees WHERE id = $1))
+          AND p.bank_id = $2
+          AND LOWER(app.status::text) IN ('approved', 'super_admin_approved', 'sanctioned', 'disbursed', 'commission_released', 'commission_received', 'released')
+          AND DATE(COALESCE(app.approved_at, app.updated_at, app.created_at)) >= $3
+          AND DATE(COALESCE(app.approved_at, app.updated_at, app.created_at)) <= $4
+      `, [rule.employee_id, rule.bank_id, rule.start_date, rule.end_date]);
+
+      const approvedCount = parseInt(appCountRes.rows[0]?.approved_count || 0);
+      const targetCount = parseInt(rule.target_count || 0);
+      const bonusPerCard = parseFloat(rule.bonus_per_card || 0);
+
+      if (targetCount > 0 && approvedCount >= targetCount && bonusPerCard > 0) {
+        const cardsBeyondTarget = Math.max(0, approvedCount - targetCount);
+        const earnedBonus = cardsBeyondTarget * bonusPerCard;
+
+        if (earnedBonus > 0) {
+          const insRes = await query(`
+            INSERT INTO employee_incentive_transactions 
+              (employee_id, bank_id, bonus_rule_id, transaction_type, amount, bonus_amount, status, customer_name)
+            VALUES ($1, $2, $3, 'BONUS', $4, $4, 'PENDING', $5)
+            ON CONFLICT (employee_id, bonus_rule_id) WHERE transaction_type = 'BONUS' AND bonus_rule_id IS NOT NULL 
+            DO UPDATE SET amount = EXCLUDED.amount, bonus_amount = EXCLUDED.bonus_amount, customer_name = EXCLUDED.customer_name, updated_at = NOW()
+            WHERE employee_incentive_transactions.status = 'PENDING'
+            RETURNING id
+          `, [rule.employee_id, rule.bank_id, rule.id, earnedBonus, `Target Achieved: ${rule.bank_name} (${approvedCount}/${targetCount} cards, ${cardsBeyondTarget} bonus cards)`]).catch(() => null);
+
+          if (insRes?.rows?.length > 0) {
+            generatedCount++;
+          }
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Processed ${rules.length} active bonus rule(s), converted ${generatedCount} achieved rule(s) to pending incentive transactions.`,
+      rules_processed: rules.length,
+      incentives_generated: generatedCount
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── 6. GET /api/v1/employees/sales-reports/super-admin — Super Admin Sales Reports Control Center ──
+let isSalesReportBanksEnsured = false;
+router.get('/sales-reports/super-admin', async (req, res, next) => {
+  try {
+    // Ensure bank_name column exists in employee_sales_report_banks table (run at most once)
+    if (!isSalesReportBanksEnsured) {
+      await query(`ALTER TABLE employee_sales_report_banks ADD COLUMN IF NOT EXISTS bank_name VARCHAR(100)`).catch(err => logger.warn('Silent catch warning:', err.message));
+      isSalesReportBanksEnsured = true;
+    }
+
+    const { status, start_date, end_date, bank_id, employee_id, search } = req.query;
+
+    let whereConds = [];
+    let params = [];
+
+    if (status) {
+      params.push(status);
+      whereConds.push(`sr.status = $${params.length}`);
+    }
+
+    if (start_date) {
+      params.push(start_date);
+      whereConds.push(`sr.report_date >= $${params.length}::date`);
+    }
+
+    if (end_date) {
+      params.push(end_date);
+      whereConds.push(`sr.report_date <= $${params.length}::date`);
+    }
+
+    if (employee_id) {
+      params.push(employee_id);
+      whereConds.push(`sr.employee_id = $${params.length}`);
+    }
+
+    if (search) {
+      params.push(`%${search}%`);
+      whereConds.push(`(e.full_name ILIKE $${params.length} OR e.employee_id ILIKE $${params.length})`);
+    }
+
+    const whereClause = whereConds.length > 0 ? `WHERE ${whereConds.join(' AND ')}` : '';
+
+    const { rows: reports } = await query(`
+      SELECT 
+        sr.*,
+        e.full_name as employee_name,
+        e.employee_id as emp_code,
+        e.designation as employee_designation,
+        u.full_name as reviewed_by_name
+      FROM employee_sales_reports sr
+      JOIN employees e ON e.id = sr.employee_id
+      LEFT JOIN users u ON u.id = sr.reviewed_by
+      ${whereClause}
+      ORDER BY sr.report_date DESC, sr.created_at DESC
+    `, params);
+
+    // Populate bank items for each report
+    const enrichedReports = await Promise.all(reports.map(async (report) => {
+      const bankRes = await query(`
+        SELECT 
+          srb.bank_id, 
+          COALESCE(NULLIF(srb.bank_name, ''), b.name, 'Unknown Bank') as bank_name, 
+          srb.cards_sold
+        FROM employee_sales_report_banks srb
+        LEFT JOIN banks b ON b.id = srb.bank_id
+        WHERE srb.report_id = $1
+        ORDER BY srb.cards_sold DESC
+      `, [report.id]);
+
+      return {
+        ...report,
+        banks: bankRes.rows
+      };
+    }));
+
+    let finalReports = enrichedReports;
+    if (bank_id) {
+      finalReports = enrichedReports.filter(r => r.banks.some(b => b.bank_id === bank_id));
+    }
+
+    // Global KPIs
+    const totalReports = finalReports.length;
+    const totalCardsSold = finalReports.reduce((sum, r) => sum + parseInt(r.total_cards || 0), 0);
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todayCardsSold = finalReports
+      .filter(r => new Date(r.report_date).toISOString().split('T')[0] === todayStr)
+      .reduce((sum, r) => sum + parseInt(r.total_cards || 0), 0);
+
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    const thisMonthCardsSold = finalReports
+      .filter(r => {
+        const d = new Date(r.report_date);
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      })
+      .reduce((sum, r) => sum + parseInt(r.total_cards || 0), 0);
+
+    const pendingReviewsCount = finalReports.filter(r => r.status === 'Submitted' || r.status === 'Resubmitted').length;
+
+    // Bank-Wise Breakdown
+    const bankSummaryRes = await query(`
+      SELECT 
+        COALESCE(NULLIF(srb.bank_name, ''), b.name, 'Unknown Bank') as bank_name,
+        SUM(srb.cards_sold)::int as total_cards_sold
+      FROM employee_sales_report_banks srb
+      JOIN employee_sales_reports sr ON sr.id = srb.report_id
+      JOIN employees e ON e.id = sr.employee_id
+      LEFT JOIN banks b ON b.id = srb.bank_id
+      ${whereClause}
+      GROUP BY COALESCE(NULLIF(srb.bank_name, ''), b.name, 'Unknown Bank')
+      ORDER BY total_cards_sold DESC
+    `, params);
+
+    // Employee-Wise Breakdown
+    const empSummaryRes = await query(`
+      SELECT 
+        e.id as employee_id,
+        e.full_name as employee_name,
+        e.employee_id as emp_code,
+        e.designation as employee_designation,
+        COUNT(sr.id)::int as total_reports,
+        COALESCE(SUM(sr.total_cards), 0)::int as total_cards_sold
+      FROM employees e
+      JOIN employee_sales_reports sr ON sr.employee_id = e.id
+      ${whereClause}
+      GROUP BY e.id, e.full_name, e.employee_id, e.designation
+      ORDER BY total_cards_sold DESC
+    `, params);
+
+    res.json({
+      success: true,
+      stats: {
+        total_reports: totalReports,
+        total_cards_sold: totalCardsSold,
+        today_cards_sold: todayCardsSold,
+        this_month_cards_sold: thisMonthCardsSold,
+        pending_reviews_count: pendingReviewsCount
+      },
+      bank_summary: bankSummaryRes.rows,
+      employee_summary: empSummaryRes.rows,
+      data: finalReports
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Employee Verification & Reminder Endpoints ───────────────────────────────
+
+// GET /api/v1/employees/:id/verification — Get full employee verification state
+router.get('/:id/verification', async (req, res, next) => {
+  try {
+    const vState = await calculateEmployeeVerificationState(req.params.id);
+    
+    // Fetch reminder history
+    const remindersRes = await query(`
+      SELECT r.*, u.full_name as sent_by_name, u.email as sent_by_email
+      FROM employee_verification_reminders r
+      LEFT JOIN users u ON u.id = r.sent_by
+      WHERE r.employee_id = $1
+      ORDER BY r.created_at DESC
+    `, [req.params.id]);
+
+    res.json({
+      success: true,
+      data: {
+        ...vState,
+        reminders: remindersRes.rows
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// GET /api/v1/employees/:id/reminder-history — Get audit history of sent reminders
+router.get('/:id/reminder-history', async (req, res, next) => {
+  try {
+    const { rows } = await query(`
+      SELECT r.*, u.full_name as sent_by_name, u.email as sent_by_email
+      FROM employee_verification_reminders r
+      LEFT JOIN users u ON u.id = r.sent_by
+      WHERE r.employee_id = $1
+      ORDER BY r.created_at DESC
+    `, [req.params.id]);
+
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/employees/:id/verify-document — Approve or Reject a specific employee document
+router.post('/:id/verify-document', async (req, res, next) => {
+  try {
+    let {
+      document_type,
+      status,
+      rejection_reason,
+      video_action,
+      video_reason,
+      bank_action,
+      bank_reason,
+      bank_proof_action,
+      bank_proof_reason,
+      biometric_action,
+      biometric_reason,
+      face_action,
+      face_reason
+    } = req.body;
+    const empId = req.params.id;
+
+    // Support action-specific properties if document_type / status are not explicitly set
+    if (!document_type) {
+      if (video_action) {
+        document_type = 'video';
+        status = video_action;
+        rejection_reason = video_reason || rejection_reason;
+      } else if (bank_proof_action || bank_action) {
+        document_type = 'bank_proof';
+        status = bank_proof_action || bank_action;
+        rejection_reason = bank_proof_reason || bank_reason || rejection_reason;
+      } else if (biometric_action || face_action) {
+        document_type = 'face_biometric';
+        status = biometric_action || face_action;
+        rejection_reason = biometric_reason || face_reason || rejection_reason;
+      }
+    } else {
+      if (isVideoDocument(document_type) && video_action && !status) {
+        status = video_action;
+        rejection_reason = video_reason || rejection_reason;
+      } else if (isBankDocument(document_type) && (bank_proof_action || bank_action) && !status) {
+        status = bank_proof_action || bank_action;
+        rejection_reason = bank_proof_reason || bank_reason || rejection_reason;
+      } else if (isFaceBiometricDocument(document_type) && (biometric_action || face_action) && !status) {
+        status = biometric_action || face_action;
+        rejection_reason = biometric_reason || face_reason || rejection_reason;
+      }
+    }
+
+    if (!document_type || !status) {
+      return res.status(400).json({ success: false, message: 'document_type and status (or action) are required' });
+    }
+
+    const uppercaseStatus = String(status).toUpperCase();
+    if (!['APPROVED', 'REJECTED', 'VERIFIED', 'PENDING', 'FLAGGED'].includes(uppercaseStatus)) {
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+
+    const finalStatus = (uppercaseStatus === 'VERIFIED' || uppercaseStatus === 'APPROVED') ? 'APPROVED' : (uppercaseStatus === 'FLAGGED' ? 'REJECTED' : uppercaseStatus);
+    const normDocType = normalizeDocumentType(document_type);
+
+    // 1. Handle Face Biometric Verification / Review
+    if (isFaceBiometricDocument(normDocType)) {
+      if (finalStatus === 'APPROVED') {
+        await query(`
+          UPDATE employee_biometric_templates
+          SET admin_review_status = 'APPROVED', admin_reviewed_by = $1, admin_reviewed_at = NOW(), admin_review_notes = $2
+          WHERE employee_id = $3 AND status = 'ACTIVE'
+        `, [req.user.id, rejection_reason || 'Biometric template verified and approved by admin', empId]).catch(err => logger.warn('Silent catch warning:', err.message));
+      } else {
+        await query(`
+          UPDATE employee_biometric_templates
+          SET status = 'REVOKED', revoked_at = NOW(), revoked_by = $1, revocation_reason = $2,
+              admin_review_status = $3, admin_reviewed_by = $1, admin_reviewed_at = NOW(), admin_review_notes = $2
+          WHERE employee_id = $4 AND status = 'ACTIVE'
+        `, [req.user.id, rejection_reason || 'Face biometric snapshot rejected due to image quality', uppercaseStatus, empId]).catch(err => logger.warn('Silent catch warning:', err.message));
+      }
+
+      invalidateEmployeeVerificationCache(empId);
+      invalidateEmployeeVerificationCache(empId);
+    const updatedState = await calculateEmployeeVerificationState(empId);
+      return res.json({
+        success: true,
+        message: `Face biometric verification marked as ${finalStatus}`,
+        data: updatedState
+      });
+    }
+
+    // 2. Handle Document Verification
+    const isVideoDoc = isVideoDocument(normDocType);
+    const isBankDoc = isBankDocument(normDocType);
+    const isPanDoc = isPanDocument(normDocType);
+    const isAadhaarDoc = isAadhaarDocument(normDocType);
+
+    // Check if document exists in employee_documents
+    const existingDoc = isVideoDoc
+      ? await query(
+          `SELECT * FROM employee_documents WHERE employee_id = $1 AND LOWER(document_type) IN ('video', 'terms_video', 'video_verification') ORDER BY created_at DESC LIMIT 1`,
+          [empId]
+        )
+      : isBankDoc
+      ? await query(
+          `SELECT * FROM employee_documents WHERE employee_id = $1 AND LOWER(document_type) IN ('bank', 'bank_proof', 'bank_passbook', 'cheque', 'passbook') ORDER BY created_at DESC LIMIT 1`,
+          [empId]
+        )
+      : await query(
+          `SELECT * FROM employee_documents WHERE employee_id = $1 AND LOWER(document_type) = LOWER($2) ORDER BY created_at DESC LIMIT 1`,
+          [empId, normDocType]
+        );
+
+    if (existingDoc.rows.length > 0) {
+      if (isVideoDoc) {
+        await query(`
+          UPDATE employee_documents 
+          SET verification_status = $1, rejection_reason = $2, verified_by = $3, updated_at = NOW()
+          WHERE employee_id = $4 AND LOWER(document_type) IN ('video', 'terms_video', 'video_verification')
+        `, [finalStatus, finalStatus === 'REJECTED' ? (rejection_reason || 'Video recording rejected') : null, req.user.id, empId]);
+      } else if (isBankDoc) {
+        await query(`
+          UPDATE employee_documents 
+          SET verification_status = $1, rejection_reason = $2, verified_by = $3, updated_at = NOW()
+          WHERE employee_id = $4 AND LOWER(document_type) IN ('bank', 'bank_proof', 'bank_passbook', 'cheque', 'passbook')
+        `, [finalStatus, finalStatus === 'REJECTED' ? (rejection_reason || 'Bank proof rejected') : null, req.user.id, empId]);
+      } else {
+        await query(`
+          UPDATE employee_documents 
+          SET verification_status = $1, rejection_reason = $2, verified_by = $3, updated_at = NOW()
+          WHERE id = $4
+        `, [finalStatus, finalStatus === 'REJECTED' ? (rejection_reason || 'Document rejected') : null, req.user.id, existingDoc.rows[0].id]);
+      }
+    } else {
+      await query(`
+        INSERT INTO employee_documents (employee_id, document_type, verification_status, rejection_reason, verified_by, document_url, document_key)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `, [empId, normDocType, finalStatus, finalStatus === 'REJECTED' ? (rejection_reason || 'Document rejected') : null, req.user.id, 'upload document', `${normDocType}_key`]);
+    }
+
+    // Sync legacy columns in employee_kyc and terms acceptance if applicable
+    if (isPanDoc) {
+      await query(`
+        UPDATE employee_kyc 
+        SET pan_status = $1, pan_verified = $2, pan_rejection_reason = $3 
+        WHERE employee_id = $4
+      `, [finalStatus === 'APPROVED' ? 'VERIFIED' : finalStatus, finalStatus === 'APPROVED', finalStatus === 'REJECTED' ? rejection_reason : null, empId]).catch(err => logger.warn('Silent catch warning:', err.message));
+    } else if (isAadhaarDoc) {
+      await query(`
+        UPDATE employee_kyc 
+        SET aadhaar_status = $1, aadhaar_verified = $2, aadhaar_rejection_reason = $3 
+        WHERE employee_id = $4
+      `, [finalStatus === 'APPROVED' ? 'VERIFIED' : finalStatus, finalStatus === 'APPROVED', finalStatus === 'REJECTED' ? rejection_reason : null, empId]).catch(err => logger.warn('Silent catch warning:', err.message));
+    } else if (isBankDoc) {
+      await query(`
+        UPDATE employee_kyc 
+        SET bank_status = $1, bank_verified = $2, bank_rejection_reason = $3 
+        WHERE employee_id = $4
+      `, [finalStatus === 'APPROVED' ? 'VERIFIED' : finalStatus, finalStatus === 'APPROVED', finalStatus === 'REJECTED' ? rejection_reason : null, empId]).catch(err => logger.warn('Silent catch warning:', err.message));
+    } else if (isVideoDoc) {
+      const vStatus = finalStatus === 'APPROVED' ? 'VERIFIED' : (finalStatus === 'REJECTED' ? 'REJECTED' : 'UNDER_REVIEW');
+      await query(`
+        INSERT INTO employee_terms_acceptance (
+          employee_id, terms_version, terms_content, accepted, accepted_at,
+          verification_status, verification_notes, verified_by, verified_at, updated_at
+        ) VALUES ($1, '1.0', 'GharKaPaisa Employee Terms & Conditions', true, NOW(), $2, $3, $4, NOW(), NOW())
+        ON CONFLICT (employee_id) DO UPDATE SET
+          verification_status = EXCLUDED.verification_status,
+          verification_notes = EXCLUDED.verification_notes,
+          verified_by = EXCLUDED.verified_by,
+          verified_at = NOW(),
+          updated_at = NOW()
+      `, [empId, vStatus, rejection_reason || null, req.user.id]).catch(err => logger.warn('Silent catch warning:', err.message));
+
+      await query(`
+        UPDATE employee_kyc 
+        SET video_status = $1, video_verified = $2, video_rejection_reason = $3
+        WHERE employee_id = $4
+      `, [vStatus, finalStatus === 'APPROVED', finalStatus === 'REJECTED' ? rejection_reason : null, empId]).catch(err => logger.warn('Silent catch warning:', err.message));
+    }
+
+    // Recalculate complete state
+    invalidateEmployeeVerificationCache(empId);
+    invalidateEmployeeVerificationCache(empId);
+    const updatedState = await calculateEmployeeVerificationState(empId);
+
+    res.json({
+      success: true,
+      message: `Document ${normDocType} ${finalStatus.toLowerCase()} successfully`,
+      data: updatedState
+    });
+
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/employees/:id/verify-biometric — Admin approve, reject or flag face biometric enrollment
+router.post('/:id/verify-biometric', async (req, res, next) => {
+  try {
+    const empId = req.params.id;
+    const { action, notes } = req.body; // action: 'APPROVED' | 'REJECTED' | 'FLAGGED'
+
+    if (!action) {
+      return res.status(400).json({ success: false, message: 'action is required (APPROVED, REJECTED, FLAGGED)' });
+    }
+
+    const upperAction = String(action).toUpperCase();
+    if (!['APPROVED', 'REJECTED', 'FLAGGED'].includes(upperAction)) {
+      return res.status(400).json({ success: false, message: 'Invalid action. Must be APPROVED, REJECTED, or FLAGGED' });
+    }
+
+    if (upperAction === 'APPROVED') {
+      await query(`
+        UPDATE employee_biometric_templates
+        SET admin_review_status = 'APPROVED', admin_reviewed_by = $1, admin_reviewed_at = NOW(), admin_review_notes = $2
+        WHERE employee_id = $3 AND status = 'ACTIVE'
+      `, [req.user.id, notes || 'Face biometric enrollment approved by admin', empId]);
+    } else {
+      // REJECTED or FLAGGED: Revoke template so employee must re-enroll with good lighting / clear face
+      await query(`
+        UPDATE employee_biometric_templates
+        SET status = 'REVOKED', revoked_at = NOW(), revoked_by = $1, revocation_reason = $2,
+            admin_review_status = $3, admin_reviewed_by = $1, admin_reviewed_at = NOW(), admin_review_notes = $2
+        WHERE employee_id = $4 AND status = 'ACTIVE'
+      `, [req.user.id, notes || 'Face biometric enrollment rejected due to poor image quality', upperAction, empId]);
+
+      // Send in-app notification to employee
+      await createNotification({
+        userId: (await query(`SELECT user_id FROM employees WHERE id = $1`, [empId])).rows[0]?.user_id,
+        title: 'Face Biometric Check Requires Re-Capture',
+        message: `Your face biometric verification was flagged by admin: ${notes || 'Image unclear or poor lighting'}. Please re-capture your face snapshot in good lighting.`,
+        type: 'KYC_NOTIFICATION'
+      }).catch(err => logger.warn('Silent catch warning:', err.message));
+    }
+
+    invalidateEmployeeVerificationCache(empId);
+    const updatedState = await calculateEmployeeVerificationState(empId);
+
+    res.json({
+      success: true,
+      message: `Face biometric enrollment marked as ${upperAction}`,
+      data: updatedState
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/employees/:id/verify-section — Approve or Reject Information or Video Verification section
+router.post('/:id/verify-section', async (req, res, next) => {
+  try {
+    const { section, status, notes } = req.body; // section: 'information' | 'video'
+    const empId = req.params.id;
+
+    if (!section || !status) {
+      return res.status(400).json({ success: false, message: 'section and status are required' });
+    }
+
+    const uppercaseStatus = String(status).toUpperCase();
+
+    if (section === 'information') {
+      await query(`
+        UPDATE employee_joining_details
+        SET form_status = $1, reviewed_by = $2, reviewed_at = NOW(), rejection_reason = $3
+        WHERE employee_id = $4
+      `, [uppercaseStatus === 'APPROVED' || uppercaseStatus === 'VERIFIED' ? 'APPROVED' : 'REJECTED', req.user.id, notes || null, empId]);
+    } else if (section === 'video') {
+      const vStatus = uppercaseStatus === 'APPROVED' || uppercaseStatus === 'VERIFIED' ? 'VERIFIED' : 'REJECTED';
+      await query(`
+        INSERT INTO employee_terms_acceptance (
+          employee_id, terms_version, terms_content, accepted, accepted_at,
+          verification_status, verification_notes, verified_by, verified_at, updated_at
+        ) VALUES ($1, '1.0', 'GharKaPaisa Employee Terms & Conditions', true, NOW(), $2, $3, $4, NOW(), NOW())
+        ON CONFLICT (employee_id) DO UPDATE SET
+          verification_status = EXCLUDED.verification_status,
+          verification_notes = EXCLUDED.verification_notes,
+          verified_by = EXCLUDED.verified_by,
+          verified_at = NOW(),
+          updated_at = NOW()
+      `, [empId, vStatus, notes || null, req.user.id]).catch(err => logger.warn('Silent catch warning:', err.message));
+
+      const vDocStatus = vStatus === 'VERIFIED' ? 'APPROVED' : 'REJECTED';
+      await query(`
+        UPDATE employee_documents 
+        SET verification_status = $1, rejection_reason = $2, verified_by = $3, verified_at = NOW(), updated_at = NOW()
+        WHERE employee_id = $4 AND (LOWER(document_type) = 'terms_video' OR LOWER(document_type) = 'video' OR LOWER(document_type) = 'video_verification')
+      `, [vDocStatus, notes || null, req.user.id, empId]).catch(err => logger.warn('Silent catch warning:', err.message));
+    }
+
+    invalidateEmployeeVerificationCache(empId);
+    const updatedState = await calculateEmployeeVerificationState(empId);
+
+    res.json({
+      success: true,
+      message: `${section.toUpperCase()} verification updated successfully`,
+      data: updatedState
+    });
+
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+module.exports = router;
+
+

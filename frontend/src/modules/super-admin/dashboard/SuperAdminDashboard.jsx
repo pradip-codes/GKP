@@ -1,0 +1,3202 @@
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import api from '../../../services/api';
+import { useAuthStore } from '../../../app/store/authStore';
+import * as accountApi from '../../../services/accountStatus.api';
+import { useTheme, makeS } from '../../../contexts/ThemeContext';
+import { Icons } from '../../../components/Icon/PartnerIcons';
+import { FaEllipsisV } from 'react-icons/fa';
+import AdminDetailsDrawer from './AdminDetailsDrawer';
+import { 
+  Edit, 
+  Trash2, 
+  RefreshCw, 
+  Search, 
+  CreditCard, 
+  Building2, 
+  Check, 
+  X, 
+  AlertTriangle,
+  Clock,
+  UserCheck,
+  UserX,
+  History,
+  Calendar,
+  CalendarX,
+  ShieldAlert,
+  Info,
+  CheckCircle2,
+  XCircle,
+  HelpCircle,
+  ArrowRight,
+  Filter,
+  Banknote,
+  Briefcase
+} from 'lucide-react';
+
+const MiniChart = ({ color }) => (
+  <svg width="100%" height="16" viewBox="0 0 100 30" preserveAspectRatio="none" style={{ marginTop: 'auto', paddingTop: '2px' }}>
+    <path
+      d="M0,25 C10,15 20,25 30,10 C40,-5 50,20 60,15 C70,10 80,25 90,5 L100,10 L100,30 L0,30 Z"
+      fill={`${color}15`}
+    />
+    <path
+      d="M0,25 C10,15 20,25 30,10 C40,-5 50,20 60,15 C70,10 80,25 90,5 L100,10"
+      fill="none"
+      stroke={color}
+      strokeWidth="2"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
+const PL_SUBCATEGORY_CONFIGS = {
+  cibil_bank: {
+    id: 'cibil_bank',
+    loan_type: 'cibil',
+    provider_type: 'bank',
+    title: 'CIBIL Based → Bank',
+    shortTitle: 'CIBIL Bank',
+    tag: '1. CIBIL Based > 1. Bank',
+    desc: 'Pre-approved commercial bank loans based on CIBIL score (3 Banks)',
+    color: '#2563EB',
+    bg: '#EFF6FF',
+    border: '#BFDBFE',
+    items: [
+      { name: 'IndusInd Bank', short_code: 'INDUSIND', sub_product: 'Indusind bank VPL', match: b => (b.short_code || '').toUpperCase() === 'INDUSIND' || (b.name || '').toLowerCase().includes('indusind') },
+      { name: 'IDFC First Bank', short_code: 'IDFC', sub_product: 'IDFC bank', match: b => (b.short_code || '').toUpperCase() === 'IDFC' || (b.name || '').toLowerCase().includes('idfc') },
+      { name: 'HDFC Bank', short_code: 'HDFC', sub_product: 'HDFC PL 10 sec', match: b => (b.short_code || '').toUpperCase() === 'HDFC' || (b.name || '').toLowerCase().includes('hdfc') }
+    ]
+  },
+  cibil_finance: {
+    id: 'cibil_finance',
+    loan_type: 'cibil',
+    provider_type: 'finance',
+    title: 'CIBIL Based → Finance',
+    shortTitle: 'CIBIL Finance',
+    tag: '1. CIBIL Based > 2. Finance',
+    desc: 'NBFC & Digital lending partners based on CIBIL score (7 NBFCs)',
+    color: '#7C3AED',
+    bg: '#F5F3FF',
+    border: '#DDD6FE',
+    items: [
+      { name: 'Finable', short_code: 'FINABLE', sub_product: 'Finable Personal Loan', match: b => (b.short_code || '').toUpperCase() === 'FINABLE' || (b.name || '').toLowerCase().includes('finable') || (b.name || '').toLowerCase().includes('prefr') },
+      { name: 'Punawalla Finance', short_code: 'PUNAWALLA', sub_product: 'Punawalla Personal Loan', match: b => ['PUNAWALLA', 'POONAWALLA'].includes((b.short_code || '').toUpperCase()) || /punawalla|poonawalla/i.test(b.name || '') },
+      { name: 'Bajaj Finance', short_code: 'BAJAJ', sub_product: 'Bajaj Finance Personal Loan', match: b => ['BAJAJ', 'BAJAJ_FINANCE'].includes((b.short_code || '').toUpperCase()) || (b.name || '').toLowerCase().includes('bajaj') },
+      { name: 'KreditBee', short_code: 'KREDITBEE', sub_product: 'KreditBee Instant Loan', match: b => (b.short_code || '').toUpperCase() === 'KREDITBEE' || /kredit\s*bee/i.test(b.name || '') },
+      { name: 'Tata Capital', short_code: 'TATACAPITAL', sub_product: 'Tata Capital Personal Loan', match: b => ['TATACAPITAL', 'TATA_CAPITAL'].includes((b.short_code || '').toUpperCase()) || /tata\s*capital/i.test(b.name || '') },
+      { name: 'Unity', short_code: 'UNITY', sub_product: 'Unity Personal Loan', match: b => ['UNITY', 'UNITY_BANK'].includes((b.short_code || '').toUpperCase()) || (b.name || '').toLowerCase().includes('unity') },
+      { name: 'Ram Fincorp', short_code: 'RAMFINCORP', sub_product: 'Ram Fincorp Personal Loan', match: b => ['RAMFINCORP', 'RAM_FINCORP'].includes((b.short_code || '').toUpperCase()) || /ram\s*fin/i.test(b.name || '') }
+    ]
+  },
+  income_bank: {
+    id: 'income_bank',
+    loan_type: 'income',
+    provider_type: 'bank',
+    title: 'Income Based → Bank',
+    shortTitle: 'Income Bank',
+    tag: '2. Income Based > 1. Bank',
+    desc: 'Salary & ITR proof commercial bank loans (7 Banks)',
+    color: '#059669',
+    bg: '#ECFDF5',
+    border: '#A7F3D0',
+    items: [
+      { name: 'HDFC Bank', short_code: 'HDFC', sub_product: 'HDFC Personal Loan', match: b => (b.short_code || '').toUpperCase() === 'HDFC' || (b.name || '').toLowerCase().includes('hdfc') },
+      { name: 'IndusInd Bank', short_code: 'INDUSIND', sub_product: 'IndusInd Personal Loan', match: b => (b.short_code || '').toUpperCase() === 'INDUSIND' || (b.name || '').toLowerCase().includes('indusind') },
+      { name: 'YES Bank', short_code: 'YES', sub_product: 'YES Bank Personal Loan', match: b => (b.short_code || '').toUpperCase() === 'YES' || /yes\s*bank/i.test(b.name || '') },
+      { name: 'ICICI Bank', short_code: 'ICICI', sub_product: 'ICICI Bank Personal Loan', match: b => (b.short_code || '').toUpperCase() === 'ICICI' || (b.name || '').toLowerCase().includes('icici') },
+      { name: 'Kotak Mahindra Bank', short_code: 'KOTAK', sub_product: 'Kotak Personal Loan', match: b => (b.short_code || '').toUpperCase() === 'KOTAK' || (b.name || '').toLowerCase().includes('kotak') },
+      { name: 'Axis Bank', short_code: 'AXIS', sub_product: 'Axis Bank Personal Loan', match: b => (b.short_code || '').toUpperCase() === 'AXIS' || (b.name || '').toLowerCase().includes('axis') },
+      { name: 'IDFC First Bank', short_code: 'IDFC', sub_product: 'IDFC First Personal Loan', match: b => (b.short_code || '').toUpperCase() === 'IDFC' || (b.name || '').toLowerCase().includes('idfc') }
+    ]
+  },
+  income_finance: {
+    id: 'income_finance',
+    loan_type: 'income',
+    provider_type: 'finance',
+    title: 'Income Based → Finance',
+    shortTitle: 'Income Finance',
+    tag: '2. Income Based > 2. Finance',
+    desc: 'Salary & ITR proof NBFC / Digital loans (7 NBFCs)',
+    color: '#D97706',
+    bg: '#FFFBEB',
+    border: '#FDE68A',
+    items: [
+      { name: 'Finable', short_code: 'FINABLE', sub_product: 'Finable Income Loan', match: b => (b.short_code || '').toUpperCase() === 'FINABLE' || (b.name || '').toLowerCase().includes('finable') || (b.name || '').toLowerCase().includes('prefr') },
+      { name: 'Punawalla Finance', short_code: 'PUNAWALLA', sub_product: 'Punawalla Income Loan', match: b => ['PUNAWALLA', 'POONAWALLA'].includes((b.short_code || '').toUpperCase()) || /punawalla|poonawalla/i.test(b.name || '') },
+      { name: 'Bajaj Finance', short_code: 'BAJAJ', sub_product: 'Bajaj Finance Income Loan', match: b => ['BAJAJ', 'BAJAJ_FINANCE'].includes((b.short_code || '').toUpperCase()) || (b.name || '').toLowerCase().includes('bajaj') },
+      { name: 'KreditBee', short_code: 'KREDITBEE', sub_product: 'KreditBee Income Loan', match: b => (b.short_code || '').toUpperCase() === 'KREDITBEE' || /kredit\s*bee/i.test(b.name || '') },
+      { name: 'Tata Capital', short_code: 'TATACAPITAL', sub_product: 'Tata Capital Income Loan', match: b => ['TATACAPITAL', 'TATA_CAPITAL'].includes((b.short_code || '').toUpperCase()) || /tata\s*capital/i.test(b.name || '') },
+      { name: 'Unity', short_code: 'UNITY', sub_product: 'Unity Income Loan', match: b => ['UNITY', 'UNITY_BANK'].includes((b.short_code || '').toUpperCase()) || (b.name || '').toLowerCase().includes('unity') },
+      { name: 'Ram Fincorp', short_code: 'RAMFINCORP', sub_product: 'Ram Fincorp Income Loan', match: b => ['RAMFINCORP', 'RAM_FINCORP'].includes((b.short_code || '').toUpperCase()) || /ram\s*fin/i.test(b.name || '') }
+    ]
+  }
+};
+
+const CategoryWiseBankSelector = ({
+  allBanks = [],
+  categoryAssignments = [],
+  onChange = () => {}
+}) => {
+  const [activeTab, setActiveTab] = useState('credit_card');
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // Personal Loan Hierarchical Subcategory Selection
+  const [plLoanType, setPlLoanType] = useState('cibil'); // 'cibil' | 'income'
+  const [plProviderType, setPlProviderType] = useState('bank'); // 'bank' | 'finance'
+
+  // Top level categories: show ONLY category names
+  const categories = [
+    { 
+      id: 'credit_card', 
+      label: 'Credit Card', 
+      badge: 'CC',
+      color: '#2563EB', 
+      bg: '#EFF6FF',
+      hasSubcategories: false,
+      desc: 'Credit Card Partner Banks' 
+    },
+    { 
+      id: 'personal_loan', 
+      label: 'Personal Loan', 
+      badge: 'PL',
+      color: '#059669', 
+      bg: '#ECFDF5',
+      hasSubcategories: true,
+      desc: 'Personal Loan (CIBIL / Income × Bank / Finance)' 
+    },
+    { 
+      id: 'loc_eoc', 
+      label: 'LOC / EOC', 
+      badge: 'LOC',
+      color: '#7C3AED', 
+      bg: '#F5F3FF',
+      hasSubcategories: false,
+      desc: 'Loan on Credit Card & Smart EMI Partner Banks' 
+    },
+    { 
+      id: 'business_loan', 
+      label: 'Business Loan', 
+      badge: 'BL',
+      color: '#D97706', 
+      bg: '#FFFBEB',
+      hasSubcategories: false,
+      desc: 'Business Loan Partner Institutions' 
+    }
+  ];
+
+  const isFinanceNBFC = (b) => {
+    const name = String(b?.name || '').toLowerCase();
+    const code = String(b?.short_code || '').toUpperCase();
+    return (
+      code === 'FINABLE' || name.includes('finable') || name.includes('prefr') ||
+      code === 'PUNAWALLA' || code === 'POONAWALLA' || name.includes('punawalla') || name.includes('poonawalla') ||
+      code === 'BAJAJ' || code === 'BAJAJ_FINANCE' || name.includes('bajaj') ||
+      code === 'KREDITBEE' || name.includes('kreditbee') || name.includes('kredit bee') ||
+      code === 'TATACAPITAL' || code === 'TATA_CAPITAL' || name.includes('tata capital') ||
+      code === 'UNITY' || code === 'UNITY_BANK' || name.includes('unity') ||
+      code === 'RAMFINCORP' || code === 'RAM_FINCORP' || name.includes('ram fincorp') || name.includes('ramfin')
+    );
+  };
+
+  const isLocEocBank = (b) => {
+    const name = String(b?.name || '').toLowerCase();
+    const code = String(b?.short_code || '').toUpperCase();
+    return (
+      code === 'LOC_EOC' || b?.is_loc_eoc || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(name) ||
+      (Array.isArray(b?.categories) && (b.categories.includes('loc_eoc') || b.categories.includes('loan_on_credit_card') || b.categories.includes('smart_emi'))) ||
+      ['HDFC', 'ICICI', 'SBI', 'AXIS', 'KOTAK', 'INDUSIND', 'IDFC', 'RBL', 'AU'].includes(code) ||
+      name.includes('hdfc') || name.includes('icici') || name.includes('sbi') || name.includes('axis') || name.includes('kotak')
+    );
+  };
+
+  const isBusinessLoanBank = (b) => {
+    const name = String(b?.name || '').toLowerCase();
+    const code = String(b?.short_code || '').toUpperCase();
+    return (
+      (Array.isArray(b?.categories) && b.categories.includes('business_loan')) ||
+      code === 'BAJAJ' || code === 'BAJAJ_FINANCE' || name.includes('bajaj') ||
+      code === 'TATACAPITAL' || code === 'TATA_CAPITAL' || name.includes('tata capital') ||
+      code === 'POONAWALLA' || code === 'PUNAWALLA' || name.includes('poonawalla') || name.includes('punawalla') ||
+      code === 'HDFC' || name.includes('hdfc') ||
+      code === 'ICICI' || name.includes('icici') ||
+      code === 'KOTAK' || name.includes('kotak') ||
+      code === 'AXIS' || name.includes('axis') ||
+      code === 'INDUSIND' || name.includes('indusind')
+    );
+  };
+
+  const isCreditCardBank = (b) => {
+    const isVirtualLocBank = (b?.short_code || '').toUpperCase() === 'LOC_EOC' || b?.is_loc_eoc || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(b?.name || '');
+    if (isVirtualLocBank) return false;
+    if (Array.isArray(b?.categories) && b.categories.includes('credit_card')) return true;
+    if (isFinanceNBFC(b)) return false;
+    return true;
+  };
+
+  // Helper to build designated subcategory bank list
+  const getPersonalLoanSubcategoryBanks = (subKey) => {
+    const subConfig = PL_SUBCATEGORY_CONFIGS[subKey];
+    if (!subConfig) return [];
+    const banks = Array.isArray(allBanks) ? allBanks : [];
+
+    return subConfig.items.map(def => {
+      const matched = banks.find(def.match);
+      return {
+        id: matched?.id || `pl-item-${def.short_code}`,
+        name: matched?.name || def.name,
+        short_code: matched?.short_code || def.short_code,
+        logo_url: matched?.logo_url || null,
+        sub_product: def.sub_product,
+        provider_type: subConfig.provider_type,
+        loan_type: subConfig.loan_type,
+        is_fallback: !matched?.id
+      };
+    });
+  };
+
+  // Active subcategory key for Personal Loan
+  const activePlSubKey = `${plLoanType}_${plProviderType}`;
+  const activePlSubConfig = PL_SUBCATEGORY_CONFIGS[activePlSubKey] || PL_SUBCATEGORY_CONFIGS.cibil_bank;
+
+  // Compute displayed institutions
+  const getBanksForCategory = (catId) => {
+    const banks = Array.isArray(allBanks) ? allBanks : [];
+    switch (catId) {
+      case 'personal_loan':
+        // When clicking Personal Loan subcategory, show ONLY its designated banks
+        return getPersonalLoanSubcategoryBanks(activePlSubKey);
+      case 'loc_eoc':
+        return banks.filter(b => isLocEocBank(b));
+      case 'business_loan':
+        return banks.filter(b => isBusinessLoanBank(b));
+      case 'credit_card':
+      default:
+        // Default: show credit card category banks
+        return banks.filter(b => isCreditCardBank(b));
+    }
+  };
+
+  const isSelected = (cat, bankId) => {
+    return (Array.isArray(categoryAssignments) ? categoryAssignments : []).some(
+      item => (item.category || 'credit_card').toLowerCase() === cat && (item.bank_id === bankId || item.id === bankId)
+    );
+  };
+
+  const handleToggle = (cat, bankId) => {
+    let next;
+    if (isSelected(cat, bankId)) {
+      next = (Array.isArray(categoryAssignments) ? categoryAssignments : []).filter(
+        item => !((item.category || 'credit_card').toLowerCase() === cat && (item.bank_id === bankId || item.id === bankId))
+      );
+    } else {
+      next = [...(Array.isArray(categoryAssignments) ? categoryAssignments : []), { category: cat, bank_id: bankId }];
+    }
+    onChange(next);
+  };
+
+  const handleSelectAllInView = (cat, banksToSelect) => {
+    const otherItems = (Array.isArray(categoryAssignments) ? categoryAssignments : []).filter(item => {
+      // Keep all assignments from other categories
+      return (item.category || 'credit_card').toLowerCase() !== cat;
+    });
+    const currentCatItems = (Array.isArray(categoryAssignments) ? categoryAssignments : []).filter(item => {
+      return (item.category || 'credit_card').toLowerCase() === cat;
+    });
+
+    const existingIds = new Set(currentCatItems.map(i => i.bank_id || i.id));
+    const toAdd = banksToSelect
+      .filter(b => !existingIds.has(b.id))
+      .map(b => ({ category: cat, bank_id: b.id }));
+
+    onChange([...otherItems, ...currentCatItems, ...toAdd]);
+  };
+
+  const handleClearInView = (cat, banksToClear) => {
+    const idsToClear = new Set(banksToClear.map(b => b.id));
+    const next = (Array.isArray(categoryAssignments) ? categoryAssignments : []).filter(item => {
+      if ((item.category || 'credit_card').toLowerCase() !== cat) return true;
+      return !idsToClear.has(item.bank_id || item.id);
+    });
+    onChange(next);
+  };
+
+  const currentCategory = categories.find(c => c.id === activeTab) || categories[0];
+  const currentCategoryBanks = getBanksForCategory(activeTab);
+  const filteredBanks = currentCategoryBanks.filter(b => 
+    (b.name || '').toLowerCase().includes((searchQuery || '').toLowerCase()) || 
+    (b.short_code || '').toLowerCase().includes((searchQuery || '').toLowerCase()) ||
+    (b.sub_product || '').toLowerCase().includes((searchQuery || '').toLowerCase())
+  );
+
+  const getBankBadgeMeta = (catId, bank) => {
+    if (catId === 'personal_loan') {
+      if (bank.provider_type === 'finance' || isFinanceNBFC(bank)) {
+        return { label: '💼 Finance / NBFC', bg: '#F5F3FF', color: '#6D28D9', border: '#DDD6FE' };
+      }
+      return { label: '🏦 Bank Partner', bg: '#EFF6FF', color: '#1D4ED8', border: '#BFDBFE' };
+    }
+    if (catId === 'loc_eoc') {
+      const isVirtual = (bank.short_code || '').toUpperCase() === 'LOC_EOC' || bank.is_loc_eoc;
+      if (isVirtual) {
+        return { label: '🔄 Program Entity', bg: '#ECFDF5', color: '#047857', border: '#A7F3D0' };
+      }
+      return { label: '💳 LOC Bank', bg: '#F5F3FF', color: '#6D28D9', border: '#DDD6FE' };
+    }
+    if (catId === 'business_loan') {
+      return { label: '🏢 Business Loan', bg: '#FFFBEB', color: '#B45309', border: '#FDE68A' };
+    }
+    return { label: '💳 Card Issuer', bg: '#EFF6FF', color: '#1D4ED8', border: '#BFDBFE' };
+  };
+
+  // Helper count for a given PL subcategory
+  const getSubcategorySelectedCount = (subKey) => {
+    const subBanks = getPersonalLoanSubcategoryBanks(subKey);
+    return subBanks.filter(b => isSelected('personal_loan', b.id)).length;
+  };
+
+  return (
+    <div style={{ background: "#F8FAFC", border: "1.5px solid #E2E8F0", borderRadius: "14px", padding: "16px", marginTop: "8px" }}>
+      <div style={{ marginBottom: "12px" }}>
+        <label style={{ fontSize: "14px", fontWeight: 800, color: "#0F172A", display: "flex", alignItems: "center", gap: "6px" }}>
+          Assign Category & Bank Access *
+        </label>
+        <span style={{ fontSize: "12px", color: "#64748B" }}>
+          Select category below to view and assign partner institutions. Default shows Credit Card category banks.
+        </span>
+      </div>
+
+      {/* ── TOP CATEGORY BAR (Category Names ONLY) ── */}
+      <div style={{ display: "flex", gap: "8px", borderBottom: "1.5px solid #E2E8F0", paddingBottom: "10px", marginBottom: "14px", overflowX: "auto" }}>
+        {categories.map(cat => {
+          const count = (Array.isArray(categoryAssignments) ? categoryAssignments : []).filter(
+            item => (item.category || 'credit_card').toLowerCase() === cat.id
+          ).length;
+          const isActive = activeTab === cat.id;
+          return (
+            <button
+              key={cat.id}
+              type="button"
+              onClick={() => {
+                setActiveTab(cat.id);
+                setSearchQuery('');
+              }}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "8px",
+                fontSize: "13px",
+                fontWeight: 800,
+                cursor: "pointer",
+                border: "1.5px solid",
+                borderColor: isActive ? cat.color : "#CBD5E1",
+                background: isActive ? cat.bg : "#FFFFFF",
+                color: isActive ? cat.color : "#475569",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                whiteSpace: "nowrap",
+                transition: "all 0.15s ease",
+                boxShadow: isActive ? "0 1px 3px rgba(0,0,0,0.06)" : "none"
+              }}
+            >
+              <span>{cat.label}</span>
+              <span style={{
+                background: isActive ? cat.color : "#E2E8F0",
+                color: isActive ? "#FFFFFF" : "#475569",
+                fontSize: "11px",
+                fontWeight: 800,
+                padding: "1px 7px",
+                borderRadius: "10px"
+              }}>
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── SUBCATEGORY SELECTION FOR PERSONAL LOAN ── */}
+      {activeTab === 'personal_loan' && (
+        <div style={{
+          background: "#FFFFFF",
+          border: "1.5px solid #05966930",
+          borderRadius: "12px",
+          padding: "14px",
+          marginBottom: "14px",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.04)"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px", flexWrap: "wrap", gap: "6px" }}>
+            <span style={{ fontSize: "12px", fontWeight: 800, color: "#065F46", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+              Personal Loan Subcategories (Click subcategory to show its banks)
+            </span>
+            <span style={{ fontSize: "11px", color: "#64748B", fontWeight: 600 }}>
+              Active Subcategory: <strong style={{ color: activePlSubConfig.color }}>{activePlSubConfig.title}</strong>
+            </span>
+          </div>
+
+          {/* 4 Direct Subcategory Quick-Select Tabs */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "8px", marginBottom: "12px" }}>
+            {Object.entries(PL_SUBCATEGORY_CONFIGS).map(([key, config]) => {
+              const isCurrent = activePlSubKey === key;
+              const selectedCount = getSubcategorySelectedCount(key);
+              return (
+                <button
+                  type="button"
+                  key={key}
+                  onClick={() => {
+                    setPlLoanType(config.loan_type);
+                    setPlProviderType(config.provider_type);
+                    setSearchQuery('');
+                  }}
+                  style={{
+                    padding: "9px 12px",
+                    borderRadius: "10px",
+                    border: `1.5px solid ${isCurrent ? config.color : "#E2E8F0"}`,
+                    background: isCurrent ? config.bg : "#F8FAFC",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "3px",
+                    transition: "all 0.15s ease"
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: "12.5px", fontWeight: 800, color: isCurrent ? config.color : "#1E293B" }}>
+                      {config.title}
+                    </span>
+                    <span style={{
+                      fontSize: "10.5px",
+                      fontWeight: 800,
+                      padding: "1px 6px",
+                      borderRadius: "6px",
+                      background: isCurrent ? config.color : "#E2E8F0",
+                      color: isCurrent ? "#FFFFFF" : "#64748B"
+                    }}>
+                      {selectedCount} / {config.items.length}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: "11px", color: isCurrent ? "#334155" : "#64748B" }}>
+                    {config.desc}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Hierarchical Two-Step Question Selector */}
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap", paddingTop: "8px", borderTop: "1px dashed #E2E8F0" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span style={{ fontSize: "11.5px", fontWeight: 700, color: "#475569" }}>1. Which Type?</span>
+              <div style={{ display: "flex", gap: "4px" }}>
+                <button
+                  type="button"
+                  onClick={() => setPlLoanType('cibil')}
+                  style={{
+                    padding: "4px 10px",
+                    fontSize: "11.5px",
+                    fontWeight: plLoanType === 'cibil' ? 800 : 600,
+                    borderRadius: "6px",
+                    border: `1px solid ${plLoanType === 'cibil' ? '#2563EB' : '#CBD5E1'}`,
+                    background: plLoanType === 'cibil' ? '#EFF6FF' : '#FFFFFF',
+                    color: plLoanType === 'cibil' ? '#1D4ED8' : '#475569',
+                    cursor: "pointer"
+                  }}
+                >
+                  📊 1. CIBIL Based
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlLoanType('income')}
+                  style={{
+                    padding: "4px 10px",
+                    fontSize: "11.5px",
+                    fontWeight: plLoanType === 'income' ? 800 : 600,
+                    borderRadius: "6px",
+                    border: `1px solid ${plLoanType === 'income' ? '#059669' : '#CBD5E1'}`,
+                    background: plLoanType === 'income' ? '#ECFDF5' : '#FFFFFF',
+                    color: plLoanType === 'income' ? '#047857' : '#475569',
+                    cursor: "pointer"
+                  }}
+                >
+                  💵 2. Income Based
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span style={{ fontSize: "11.5px", fontWeight: 700, color: "#475569" }}>2. In Which?</span>
+              <div style={{ display: "flex", gap: "4px" }}>
+                <button
+                  type="button"
+                  onClick={() => setPlProviderType('bank')}
+                  style={{
+                    padding: "4px 10px",
+                    fontSize: "11.5px",
+                    fontWeight: plProviderType === 'bank' ? 800 : 600,
+                    borderRadius: "6px",
+                    border: `1px solid ${plProviderType === 'bank' ? '#2563EB' : '#CBD5E1'}`,
+                    background: plProviderType === 'bank' ? '#EFF6FF' : '#FFFFFF',
+                    color: plProviderType === 'bank' ? '#1D4ED8' : '#475569',
+                    cursor: "pointer"
+                  }}
+                >
+                  🏦 1. Bank
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlProviderType('finance')}
+                  style={{
+                    padding: "4px 10px",
+                    fontSize: "11.5px",
+                    fontWeight: plProviderType === 'finance' ? 800 : 600,
+                    borderRadius: "6px",
+                    border: `1px solid ${plProviderType === 'finance' ? '#7C3AED' : '#CBD5E1'}`,
+                    background: plProviderType === 'finance' ? '#F5F3FF' : '#FFFFFF',
+                    color: plProviderType === 'finance' ? '#6D28D9' : '#475569',
+                    cursor: "pointer"
+                  }}
+                >
+                  💼 2. Finance
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CONTROLS & ACTION BUTTONS ── */}
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "10px", flexWrap: "wrap" }}>
+          <div>
+            <span style={{ fontSize: "12px", color: "#64748B", fontWeight: 700 }}>
+              {activeTab === 'personal_loan' ? (
+                <>Showing: <span style={{ color: activePlSubConfig.color }}>{activePlSubConfig.title}</span> ({filteredBanks.length} items)</>
+              ) : (
+                <>{currentCategory.desc} ({filteredBanks.length} available)</>
+              )}
+            </span>
+          </div>
+
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={() => handleSelectAllInView(currentCategory.id, filteredBanks)}
+              style={{
+                padding: "5px 12px",
+                fontSize: "12px",
+                fontWeight: 700,
+                background: "#EFF6FF",
+                color: "#2563EB",
+                border: "1px solid #BFDBFE",
+                borderRadius: "6px",
+                cursor: "pointer"
+              }}
+            >
+              Select All ({filteredBanks.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => handleClearInView(currentCategory.id, filteredBanks)}
+              style={{
+                padding: "5px 12px",
+                fontSize: "12px",
+                fontWeight: 700,
+                background: "#F1F5F9",
+                color: "#64748B",
+                border: "1px solid #CBD5E1",
+                borderRadius: "6px",
+                cursor: "pointer"
+              }}
+            >
+              Clear Visible
+            </button>
+          </div>
+        </div>
+
+        {/* Search Bar */}
+        <div style={{ position: "relative", marginBottom: "12px" }}>
+          <input
+            type="text"
+            placeholder={activeTab === 'personal_loan' 
+              ? `Search within ${activePlSubConfig.title}...` 
+              : `Search institutions under ${currentCategory.label}...`}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ width: "100%", padding: "8px 12px 8px 34px", border: "1px solid #CBD5E1", borderRadius: "8px", fontSize: "13px", outline: "none", boxSizing: "border-box" }}
+          />
+          <span style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", pointerEvents: "none" }}>
+            <Search size={14} color="#9CA3AF" />
+          </span>
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              style={{ position: "absolute", right: "8px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9CA3AF" }}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        {/* Bank Grid */}
+        <div style={{ maxHeight: "280px", overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px", paddingRight: "4px" }}>
+          {filteredBanks.map(bank => {
+            const checked = isSelected(currentCategory.id, bank.id);
+            const badgeMeta = getBankBadgeMeta(currentCategory.id, bank);
+            return (
+              <div
+                key={bank.id}
+                onClick={() => handleToggle(currentCategory.id, bank.id)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "8px 12px",
+                  borderRadius: "8px",
+                  border: `1.5px solid ${checked ? currentCategory.color : "#CBD5E1"}`,
+                  background: checked ? currentCategory.bg : "#FFFFFF",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease"
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                  {bank.logo_url ? (
+                    <img src={bank.logo_url} alt={bank.name} style={{ width: "24px", height: "24px", objectFit: "contain", flexShrink: 0 }} />
+                  ) : (
+                    <div style={{ width: "24px", height: "24px", background: "#DBEAFE", borderRadius: "6px", fontSize: "10px", fontWeight: 800, color: "#1E40AF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      {bank.short_code?.substring(0, 2) || 'BK'}
+                    </div>
+                  )}
+                  <div style={{ minWidth: 0, overflow: "hidden" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: "13px", fontWeight: 700, color: "#1E293B", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                        {bank.name}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "4px", marginTop: "2px", flexWrap: "wrap" }}>
+                      {bank.sub_product ? (
+                        <span style={{ fontSize: "10.5px", color: "#047857", fontWeight: 700 }}>
+                          {bank.sub_product}
+                        </span>
+                      ) : bank.short_code ? (
+                        <span style={{ fontSize: "10px", color: "#64748B", fontWeight: 600 }}>{bank.short_code}</span>
+                      ) : null}
+                      <span style={{
+                        background: badgeMeta.bg,
+                        color: badgeMeta.color,
+                        border: `1px solid ${badgeMeta.border}`,
+                        borderRadius: "3px",
+                        padding: "0px 4px",
+                        fontSize: "9px",
+                        fontWeight: 700
+                      }}>
+                        {badgeMeta.label}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => {}}
+                  style={{ cursor: "pointer", accentColor: currentCategory.color, marginLeft: "8px", flexShrink: 0 }}
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {filteredBanks.length === 0 && (
+          <div style={{ textAlign: "center", padding: "20px", color: "#94A3B8", fontSize: "13px" }}>
+            No institutions found matching &quot;{searchQuery}&quot; under {activeTab === 'personal_loan' ? activePlSubConfig.title : currentCategory.label}.
+          </div>
+        )}
+      </div>
+
+      {(Array.isArray(categoryAssignments) ? categoryAssignments : []).length === 0 && (
+        <div style={{ fontSize: "12px", color: "#EF4444", marginTop: "10px", fontWeight: 500, display: "flex", alignItems: "center", gap: "4px" }}>
+          <AlertTriangle size={14} /> At least one institution must be selected under a product category.
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default function SuperAdminDashboard() {
+  const { C, isDark } = useTheme();
+  const S = makeS(C);
+  const navigate = useNavigate();
+  
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  
+  // Modal state
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  
+  // Current User
+  const currentUser = useAuthStore(state => state.user);
+
+  // Status Filter State
+  const [statusFilter, setStatusFilter] = useState('ALL');
+
+  // Account Lifecycle Action & Confirmation Modal State
+  const [statusModal, setStatusModal] = useState({
+    isOpen: false,
+    admin: null,
+    targetAction: 'ACTIVATE',
+    mode: 'IMMEDIATE',
+    scheduledAt: '',
+    reason: '',
+    submitting: false,
+    error: ''
+  });
+
+  // Account Status Audit History Modal State
+  const [auditModal, setAuditModal] = useState({
+    isOpen: false,
+    admin: null,
+    loading: false,
+    history: [],
+    error: ''
+  });
+
+  // Notification Toast State
+  const [actionToast, setActionToast] = useState(null);
+
+  useEffect(() => {
+    if (actionToast) {
+      const timer = setTimeout(() => setActionToast(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [actionToast]);
+
+  // Data State
+  const [admins, setAdmins] = useState([]);
+  const [selectedAdminDetails, setSelectedAdminDetails] = useState(null);
+  const [adminSearch, setAdminSearch] = useState('');
+  const [businessStats, setBusinessStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
+  
+  // Form State
+  const [form, setForm] = useState({
+    fullName: '',
+    email: '',
+    mobile: '',
+    role: 'ADMIN',
+    password: '',
+    confirmPassword: '',
+    designation: ''
+  });
+  
+  const [formLoading, setFormLoading] = useState(false);
+  const [formErr, setFormErr] = useState('');
+  const [formSuccess, setFormSuccess] = useState('');
+
+  // ── Category-Wise Bank Assignment State ──
+  const [createCategoryAssignments, setCreateCategoryAssignments] = useState([]);
+  const [editCategoryAssignments, setEditCategoryAssignments] = useState([]);
+  const [opHeadCategoryAssignments, setOpHeadCategoryAssignments] = useState([]);
+
+  // ── Edit Admin State ──
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingAdmin, setEditingAdmin] = useState(null);
+  const [editForm, setEditForm] = useState({
+    id: '',
+    fullName: '',
+    email: '',
+    mobile: '',
+    role: 'ADMIN',
+    designation: '',
+    status: 'active',
+    bank_ids: [],
+    password: ''
+  });
+  const [submittingEdit, setSubmittingEdit] = useState(false);
+  const [editBankSearchQuery, setEditBankSearchQuery] = useState('');
+
+  const handleOpenEditAdminModal = (admin) => {
+    const assigned = admin.assigned_banks || [];
+    const catAssignments = assigned.map(b => ({
+      category: (b.category || (b.is_loc_eoc ? 'loc_eoc' : 'credit_card')).toLowerCase(),
+      bank_id: b.id || b._id || b.bank_id
+    }));
+    setEditingAdmin(admin);
+    setEditCategoryAssignments(catAssignments);
+    const validRoles = ['ADMIN', 'SUPER_ADMIN', 'EMPLOYEE', 'PARTNER', 'HR'];
+    let currentRole = String(admin.role || '').toUpperCase().trim();
+    if (!validRoles.includes(currentRole)) {
+      currentRole = 'ADMIN';
+    }
+    setEditForm({
+      id: admin._id || admin.id,
+      fullName: admin.fullName || admin.full_name || '',
+      email: admin.email || '',
+      mobile: admin.mobile || '',
+      role: currentRole,
+      designation: admin.designation || 'Operational Head',
+      status: String(admin.status || 'active').toLowerCase(),
+      bank_ids: catAssignments.map(a => a.bank_id),
+      password: ''
+    });
+    setEditBankSearchQuery('');
+    if (allBanks.length === 0) {
+      api.get('/banks?limit=1000').then(res => {
+        const banksList = res.data && res.data.data ? (Array.isArray(res.data.data) ? res.data.data : res.data.data.rows || []) : [];
+        if (banksList.length > 0) setAllBanks(banksList);
+      }).catch(err => console.error(err));
+    }
+    setShowEditModal(true);
+  };
+
+  const handleEditAdminSubmit = async (e) => {
+    e.preventDefault();
+    if (!editForm.id) return;
+    setSubmittingEdit(true);
+    try {
+      const isOpHead = ['Operational Head', 'OPERATIONAL_HEAD', 'Backend', 'BACKEND', 'Administrative Operator', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'Administrative Sales Executive', 'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'PAN Checker', 'PAN CHECKER', 'PAN_CHECKER', 'Remark Operator', 'REMARK OPERATOR', 'REMARK_OPERATOR', 'QD Operator', 'QD OPERATOR', 'QD_OPERATOR', 'KYC Operator', 'KYC OPERATOR', 'KYC_OPERATOR', 'Final Status Operator', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'Querable Operator', 'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'Queryable Operator', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR', 'Physical Curable Operator', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'Digital Curable Operator', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'Email Curable Operator', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'Physical Curable', 'Digital Curable', 'Email Curable'].includes(editForm.designation);
+      if (isOpHead && editCategoryAssignments.length === 0) {
+        alert('Please select at least one category and bank pair for this user');
+        setSubmittingEdit(false);
+        return;
+      }
+      const payload = {
+        fullName: editForm.fullName,
+        email: editForm.email,
+        mobile: editForm.mobile,
+        role: editForm.role,
+        designation: editForm.designation,
+        status: String(editForm.status || 'active').toLowerCase(),
+        category_assignments: editCategoryAssignments,
+        bank_ids: editCategoryAssignments.map(a => a.bank_id)
+      };
+      if (editForm.password) {
+        payload.password = editForm.password;
+      }
+      const res = await api.put(`/superadmin/admins/${editForm.id}`, payload);
+      if (res.data?.success) {
+        alert('Admin record updated successfully!');
+        setShowEditModal(false);
+        fetchAdmins();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update admin record');
+    } finally {
+      setSubmittingEdit(false);
+    }
+  };
+
+  // ── Operation Head Bank Assignment State ──
+  const [selectedOpHead, setSelectedOpHead] = useState(null);
+  const [allBanks, setAllBanks] = useState([]);
+  const [bankModalOpen, setBankModalOpen] = useState(false);
+  const [assignedBankIds, setAssignedBankIds] = useState([]);
+  const [selectedCreateBankIds, setSelectedCreateBankIds] = useState([]);
+  const [bankSearchQuery, setBankSearchQuery] = useState('');
+  const [expandedAdminBanks, setExpandedAdminBanks] = useState({});
+
+  // Fetch Admins
+  const fetchAdmins = async () => {
+    setLoading(true);
+    setErrorMsg('');
+    try {
+      const res = await api.get('/superadmin/admins');
+      if (res.data && res.data.success) {
+        const adminUsers = (res.data.data || [])
+          .map(a => ({
+            ...a,
+            id: a.id || a._id,
+            _id: a._id || a.id,
+            fullName: a.fullName || a.full_name,
+            employeeId: a.employeeId || a.employee_id
+          }));
+        setAdmins(adminUsers);
+        setSelectedAdminDetails(prev => {
+          if (!prev) return null;
+          const found = adminUsers.find(a => (a._id || a.id) === (prev._id || prev.id));
+          return found || null;
+        });
+      } else {
+        setErrorMsg('Failed to load admins list');
+      }
+    } catch (err) {
+      console.error(err);
+      setErrorMsg(err.response?.data?.message || 'Error fetching administrative directory');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenBankModal = async (admin) => {
+    setSelectedOpHead(admin);
+    const assigned = admin.assigned_banks || [];
+    const catAssignments = assigned.map(b => ({
+      category: (b.category || (b.is_loc_eoc ? 'loc_eoc' : 'credit_card')).toLowerCase(),
+      bank_id: b.id || b._id || b.bank_id
+    }));
+    setOpHeadCategoryAssignments(catAssignments);
+    setBankSearchQuery('');
+    setBankModalOpen(true);
+
+    try {
+      const res = await api.get('/banks?limit=1000');
+      let banksList = res.data && res.data.data ? (Array.isArray(res.data.data) ? res.data.data : res.data.data.rows || []) : [];
+      setAllBanks(banksList);
+
+      const assignedRes = await api.get(`/superadmin/admins/${admin._id || admin.id}/banks`);
+      if (assignedRes.data && assignedRes.data.data) {
+        const fetched = assignedRes.data.data.map(b => ({
+          category: (b.category || (b.is_loc_eoc ? 'loc_eoc' : 'credit_card')).toLowerCase(),
+          bank_id: b.id || b.bank_id
+        }));
+        setOpHeadCategoryAssignments(fetched);
+      }
+    } catch (err) {
+      console.error('Failed to load bank assignment info:', err);
+    }
+  };
+
+  const isBankAssigned = (bank) => {
+    if (!bank) return false;
+    if (assignedBankIds.includes(bank.id)) return true;
+    const isLocEoc = (bank.short_code || '').toUpperCase() === 'LOC_EOC' || bank.is_loc_eoc || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(bank.name || '');
+    if (isLocEoc) {
+      return assignedBankIds.some(id => {
+        if (id === 'LOC_EOC' || id === bank.id) return true;
+        const b = allBanks.find(item => item.id === id);
+        return b && ((b.short_code || '').toUpperCase() === 'LOC_EOC' || b.is_loc_eoc || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(b.name || ''));
+      });
+    }
+    return false;
+  };
+
+  const handleToggleBankAssignment = async (bankId) => {
+    const targetBank = allBanks.find(b => b.id === bankId) || { id: bankId };
+    const isLocEoc = (targetBank.short_code || '').toUpperCase() === 'LOC_EOC' || targetBank.is_loc_eoc || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(targetBank.name || '');
+    const isCurrentlyAssigned = isBankAssigned(targetBank);
+
+    let updated;
+    if (isCurrentlyAssigned) {
+      if (isLocEoc) {
+        updated = (Array.isArray(assignedBankIds) ? assignedBankIds : []).filter(id => {
+          if (id === 'LOC_EOC' || id === bankId) return false;
+          const b = allBanks.find(item => item.id === id);
+          return !(b && ((b.short_code || '').toUpperCase() === 'LOC_EOC' || b.is_loc_eoc || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(b.name || '')));
+        });
+      } else {
+        updated = (Array.isArray(assignedBankIds) ? assignedBankIds : []).filter(id => id !== bankId);
+      }
+    } else {
+      updated = [...assignedBankIds, bankId];
+    }
+    setAssignedBankIds(updated);
+
+    try {
+      await api.put(`/superadmin/admins/${selectedOpHead.id}/banks`, {
+        bank_ids: updated
+      });
+      fetchAdmins();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update bank assignment');
+    }
+  };
+
+  const handleSelectAllBanks = async (selectAll) => {
+    const updated = selectAll ? allBanks.map(b => b.id) : [];
+    setAssignedBankIds(updated);
+    try {
+      await api.put(`/superadmin/admins/${selectedOpHead.id}/banks`, {
+        bank_ids: updated
+      });
+      fetchAdmins();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update bank assignments');
+    }
+  };
+
+  const fetchBusinessStats = async () => {
+    try {
+      const res = await api.get('/reports/overview');
+      if (res.data && res.data.success) {
+        setBusinessStats(res.data.data);
+      }
+    } catch (e) {
+      console.error('Failed to load business stats', e);
+    }
+  };
+
+  const fetchAllBanksList = async () => {
+    try {
+      const res = await api.get('/banks?limit=1000');
+      let banksList = res.data && res.data.data ? (Array.isArray(res.data.data) ? res.data.data : res.data.data.rows || []) : [];
+      const hasLocEoc = banksList.some(b => (b.short_code || '').toUpperCase() === 'LOC_EOC' || String(b.name || '').toLowerCase().includes('loc/eoc') || String(b.name || '').toLowerCase().includes('loan on card'));
+      if (!hasLocEoc) {
+        banksList = [
+          {
+            id: 'LOC_EOC',
+            name: 'LOC/EOC (Loan on Card & Smart EMI)',
+            short_code: 'LOC_EOC',
+            is_loc_eoc: true
+          },
+          ...banksList
+        ];
+      }
+      setAllBanks(banksList);
+      return banksList;
+    } catch (err) {
+      console.error('Failed to load banks:', err);
+      return [];
+    }
+  };
+
+  useEffect(() => {
+    fetchAdmins();
+    fetchBusinessStats();
+    fetchAllBanksList();
+  }, []);
+
+  // Handle Input change
+  const handleChange = (e) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  // Create Admin Submission
+  const handleCreateAdmin = async (e) => {
+    e.preventDefault();
+    setFormErr('');
+    setFormSuccess('');
+
+    // Validations
+    if (!form.fullName || !form.email || !form.mobile || !form.role || !form.password || !form.confirmPassword || !form.designation) {
+      return setFormErr('All fields marked with * are required');
+    }
+
+    if (form.password !== form.confirmPassword) {
+      return setFormErr('Passwords do not match');
+    }
+
+    if (form.password.length < 8) {
+      return setFormErr('Password must be at least 8 characters long');
+    }
+
+    const isOpHead = ['Operational Head', 'OPERATIONAL_HEAD', 'Backend', 'BACKEND', 'Administrative Operator', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'Administrative Sales Executive', 'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'PAN Checker', 'PAN CHECKER', 'PAN_CHECKER', 'Remark Operator', 'REMARK OPERATOR', 'REMARK_OPERATOR', 'QD Operator', 'QD OPERATOR', 'QD_OPERATOR', 'KYC Operator', 'KYC OPERATOR', 'KYC_OPERATOR', 'Final Status Operator', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'Querable Operator', 'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'Queryable Operator', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR', 'Physical Curable Operator', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'Digital Curable Operator', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'Email Curable Operator', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'Physical Curable', 'Digital Curable', 'Email Curable'].includes(form.designation);
+    if (isOpHead && createCategoryAssignments.length === 0) {
+      return setFormErr('At least one category and bank pair must be selected.');
+    }
+
+    setFormLoading(true);
+    try {
+      const payload = {
+        ...form,
+        category_assignments: createCategoryAssignments,
+        bank_ids: createCategoryAssignments.map(a => a.bank_id)
+      };
+      const res = await api.post('/superadmin/create-admin', payload);
+      if (res.data && res.data.success) {
+        setFormSuccess('Admin created successfully.');
+        setForm({
+          fullName: '',
+          email: '',
+          mobile: '',
+          role: 'ADMIN',
+          password: '',
+          confirmPassword: '',
+          designation: ''
+        });
+        setCreateCategoryAssignments([]);
+        fetchAdmins(); // Refresh
+        setTimeout(() => setShowCreateModal(false), 1500);
+      }
+    } catch (err) {
+      setFormErr(err.response?.data?.message || 'Failed to create administrative user');
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  // Toggle Admin block status
+  const handleToggleBlock = async (userId, currentStatus) => {
+    const shouldBlock = currentStatus === 'active';
+    const actionLabel = shouldBlock ? 'suspend' : 'activate';
+    
+    if (!window.confirm(`Are you sure you want to ${actionLabel} this administrator?`)) {
+      return;
+    }
+
+    try {
+      const res = await api.post('/superadmin/block-user', {
+        userId,
+        block: shouldBlock
+      });
+      if (res.data && res.data.success) {
+        fetchAdmins();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Action failed');
+    }
+  };
+
+  // Delete Admin account Modal State (Temporary vs Permanent)
+  const [adminDeleteModal, setAdminDeleteModal] = useState({
+    isOpen: false,
+    admin: null,
+    mode: 'temporary', // 'temporary' | 'permanent'
+    confirmText: '',
+    loading: false
+  });
+
+  const promptDeleteAdmin = (admin, mode = 'temporary') => {
+    setAdminDeleteModal({
+      isOpen: true,
+      admin,
+      mode,
+      confirmText: '',
+      loading: false
+    });
+  };
+
+  const executeDeleteAdmin = async () => {
+    if (!adminDeleteModal.admin) return;
+    const targetAdmin = adminDeleteModal.admin;
+    const isPermanent = adminDeleteModal.mode === 'permanent';
+
+    if (isPermanent && adminDeleteModal.confirmText.trim().toUpperCase() !== 'DELETE') {
+      alert('Please type DELETE in the confirmation box to permanently delete this administrator.');
+      return;
+    }
+
+    setAdminDeleteModal(prev => ({ ...prev, loading: true }));
+    try {
+      const targetId = targetAdmin._id || targetAdmin.id;
+      const res = await api.delete(`/superadmin/admins/${targetId}?mode=${adminDeleteModal.mode}`);
+      if (res.data && res.data.success) {
+        alert(
+          isPermanent
+            ? 'Administrator account permanently deleted from the system.'
+            : 'Administrator account deactivated (status: Suspended).'
+        );
+        if (isPermanent) {
+          setSelectedAdminDetails(prev => {
+            if (!prev) return null;
+            if ((prev._id || prev.id) === targetId) return null;
+            return prev;
+          });
+          setAdmins(prev => (Array.isArray(prev) ? prev : []).filter(a => 
+            (a._id || a.id) !== targetId &&
+            a.id !== targetId &&
+            a._id !== targetId &&
+            a.email !== targetAdmin.email &&
+            a.employeeId !== targetAdmin.employeeId &&
+            a.employee_id !== targetAdmin.employeeId &&
+            a.employee_id !== targetAdmin.employee_id
+          ));
+        }
+        setAdminDeleteModal({ isOpen: false, admin: null, mode: 'temporary', confirmText: '', loading: false });
+        fetchAdmins();
+      } else {
+        alert(res.data?.message || 'Delete failed');
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Delete operation failed');
+    } finally {
+      setAdminDeleteModal(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  const handleDeleteAdmin = (admin) => {
+    promptDeleteAdmin(admin, 'temporary');
+  };
+
+  // Stats calculations
+  const stats = {
+    total: businessStats?.admins?.total_admins ?? admins.length,
+    active: businessStats?.admins?.active_admins ?? (Array.isArray(admins) ? admins : []).filter(a => a.status === 'active' || a.isActive).length,
+    suspended: (Array.isArray(admins) ? admins : []).filter(a => a.status === 'suspended').length
+  };
+
+  const bStats = businessStats || {
+    Partners: { total: 0, active: 0, pending_kyc: 0 },
+    leads: { total_leads: 0, approved_leads: 0, rejected_leads: 0, pending_leads: 0 },
+    withdrawal: { pending_withdrawals: 0, total_commission_paid: 0 },
+    banks: { total_banks: 0 },
+    products: { total_products: 0 }
+  };
+
+  const cardData = [
+    { label: "Total Admins", val: stats.total, icon: <Icons.profile size={18} />, color: "#3B82F6", path: "/super-admin/dashboard" },
+    { label: "Active Admins", val: stats.active, icon: <Icons.check size={18} />, color: "#10B981", path: "/super-admin/dashboard" },
+    { label: "Pending KYC", val: bStats.Partners?.pending_kyc ?? bStats.partners?.pending_kyc ?? 0, icon: <Icons.clock size={18} />, color: "#F59E0B", path: "/super-admin/partners?kyc_status=pending" },
+    { label: "Pending Leads", val: bStats.applications?.pending_leads ?? bStats.leads?.pending_leads ?? 0, icon: <Icons.clock size={18} />, color: "#F97316", path: "/super-admin/crm?status=operational_verified" },
+    { label: "Total Leads", val: bStats.leads?.total_leads ?? bStats.applications?.total ?? 0, icon: <Icons.trending size={18} />, color: "#8B5CF6", path: "/super-admin/leads" },
+    { label: "Approved Leads", val: bStats.leads?.approved_leads ?? bStats.applications?.approved ?? 0, icon: <Icons.check size={18} />, color: "#10B981", path: "/super-admin/crm?status=super_admin_approved" },
+    { label: "Rejected Leads", val: bStats.leads?.rejected_leads ?? bStats.applications?.rejected ?? 0, icon: <Icons.x size={18} />, color: "#EF4444", path: "/super-admin/leads?status=rejected" },
+    { label: "Commission Paid", val: `₹${parseFloat(bStats.withdrawal?.total_commission_paid ?? bStats.applications?.total_commission ?? 0).toLocaleString("en-IN")}`, icon: <Icons.wallet size={18} />, color: "#10B981", path: "/super-admin/commissions" },
+    { label: "Pending Withdrawals", val: bStats.withdrawal?.pending_withdrawals ?? 0, icon: <Icons.clock size={18} />, color: "#F59E0B", path: "/super-admin/wallet?tab=withdrawals" },
+    { label: "Total Banks", val: bStats.banks?.total_banks ?? 0, icon: <Icons.wallet size={18} />, color: "#3B82F6", path: "/super-admin/banks" },
+    { label: "Total Products", val: bStats.products?.total_products ?? 0, icon: <Icons.creditCard size={18} />, color: "#8B5CF6", path: "/super-admin/products" }
+  ];
+
+  const formatDate = (dateString) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    return `Joined ${date.getDate()} ${date.toLocaleString('default', { month: 'short' })} ${date.getFullYear()}`;
+  };
+
+  const formatDateTimeIST = (dateString) => {
+    if (!dateString) return '-';
+    try {
+      const d = new Date(dateString);
+      return d.toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      }) + ' IST';
+    } catch (e) {
+      return String(dateString);
+    }
+  };
+
+  const getInitials = (name) => {
+    if (!name) return 'NA';
+    return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+  };
+
+  const getAccountLifecycleStatus = (admin) => {
+    if (admin.account_status) return admin.account_status;
+    if (admin.activation_scheduled_at || admin.deactivation_scheduled_at || admin.scheduled_status_action) {
+      return 'SCHEDULED';
+    }
+    if (admin.is_active === false || admin.status === 'suspended' || admin.status === 'inactive') {
+      return 'INACTIVE';
+    }
+    return 'ACTIVE';
+  };
+
+  const getShiftPresets = (admin) => {
+    const startStr = admin?.working_hours?.shiftStart || '09:30';
+    const endStr = admin?.working_hours?.shiftEnd || '20:00';
+    const [sH, sM] = (startStr || '09:30').split(':').map(Number);
+    const [eH, eM] = (endStr || '20:00').split(':').map(Number);
+
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+
+    // Next Shift Start: today if before start, otherwise tomorrow
+    const nextStart = new Date(now);
+    nextStart.setHours(sH, sM, 0, 0);
+    if (nextStart <= now) {
+      nextStart.setDate(nextStart.getDate() + 1);
+    }
+    const nextStartIso = `${nextStart.getFullYear()}-${pad(nextStart.getMonth() + 1)}-${pad(nextStart.getDate())}T${pad(sH)}:${pad(sM)}`;
+
+    // Shift End: today if before end, otherwise tomorrow
+    const nextEnd = new Date(now);
+    nextEnd.setHours(eH, eM, 0, 0);
+    if (nextEnd <= now) {
+      nextEnd.setDate(nextEnd.getDate() + 1);
+    }
+    const nextEndIso = `${nextEnd.getFullYear()}-${pad(nextEnd.getMonth() + 1)}-${pad(nextEnd.getDate())}T${pad(eH)}:${pad(eM)}`;
+
+    // In 1 hour
+    const inOneHour = new Date(now.getTime() + 60 * 60 * 1000);
+    const inOneHourIso = `${inOneHour.getFullYear()}-${pad(inOneHour.getMonth() + 1)}-${pad(inOneHour.getDate())}T${pad(inOneHour.getHours())}:${pad(inOneHour.getMinutes())}`;
+
+    return {
+      nextStartIso,
+      nextEndIso,
+      inOneHourIso,
+      startLabel: `Next Shift Start (${startStr} IST)`,
+      endLabel: `Shift End (${endStr} IST)`
+    };
+  };
+
+  const handleOpenStatusModal = (admin, targetAction, initialMode = 'IMMEDIATE') => {
+    const presets = getShiftPresets(admin);
+    const defaultScheduled = initialMode === 'SCHEDULED'
+      ? (targetAction === 'ACTIVATE' ? presets.nextStartIso : presets.nextEndIso)
+      : presets.inOneHourIso;
+
+    setStatusModal({
+      isOpen: true,
+      admin,
+      targetAction,
+      mode: initialMode,
+      scheduledAt: defaultScheduled,
+      reason: '',
+      submitting: false,
+      error: ''
+    });
+  };
+
+  const handleConfirmStatusChange = async () => {
+    const { admin, targetAction, mode, scheduledAt, reason } = statusModal;
+    if (!admin) return;
+
+    const targetId = admin._id || admin.id;
+    const currentUserId = currentUser?.id || currentUser?._id;
+
+    if (targetAction === 'DEACTIVATE' && (targetId === currentUserId || admin.email === currentUser?.email)) {
+      setStatusModal(prev => ({
+        ...prev,
+        error: 'Self-deactivation is prohibited. Super Admins cannot deactivate their own account.'
+      }));
+      return;
+    }
+
+    const activeSuperAdmins = (Array.isArray(admins) ? admins : []).filter(a =>
+      String(a.role || '').toUpperCase() === 'SUPER_ADMIN' &&
+      getAccountLifecycleStatus(a) === 'ACTIVE'
+    );
+    if (targetAction === 'DEACTIVATE' && String(admin.role || '').toUpperCase() === 'SUPER_ADMIN' && activeSuperAdmins.length <= 1 && (activeSuperAdmins[0]?._id === targetId || activeSuperAdmins[0]?.id === targetId)) {
+      setStatusModal(prev => ({
+        ...prev,
+        error: 'Safety Rule: Cannot deactivate the last remaining active Super Admin.'
+      }));
+      return;
+    }
+
+    if (mode === 'SCHEDULED' && !scheduledAt) {
+      setStatusModal(prev => ({
+        ...prev,
+        error: 'Please select a scheduled date and time.'
+      }));
+      return;
+    }
+
+    setStatusModal(prev => ({ ...prev, submitting: true, error: '' }));
+    try {
+      if (mode === 'SCHEDULED') {
+        const scheduledIso = new Date(scheduledAt).toISOString();
+        await accountApi.scheduleAccountStatus(targetId, {
+          action: targetAction,
+          scheduled_at: scheduledIso,
+          reason: reason.trim() || undefined
+        });
+        setActionToast({
+          type: 'success',
+          message: `Scheduled ${targetAction.toLowerCase()} for ${admin.fullName || admin.email} on ${formatDateTimeIST(scheduledIso)}.`
+        });
+      } else {
+        if (targetAction === 'ACTIVATE') {
+          console.log('Activating account:', targetId, admin);
+          const result = await accountApi.activateAccount(targetId, { reason: reason.trim() || undefined });
+          console.log('Activation result:', result);
+          setActionToast({
+            type: 'success',
+            message: `Account ${admin.fullName || admin.email} activated successfully.`
+          });
+        } else {
+          await accountApi.deactivateAccount(targetId, { reason: reason.trim() || undefined });
+          setActionToast({
+            type: 'success',
+            message: `Account ${admin.fullName || admin.email} deactivated successfully.`
+          });
+        }
+      }
+      setStatusModal({
+        isOpen: false,
+        admin: null,
+        targetAction: 'ACTIVATE',
+        mode: 'IMMEDIATE',
+        scheduledAt: '',
+        reason: '',
+        submitting: false,
+        error: ''
+      });
+      fetchAdmins();
+    } catch (err) {
+      console.error('Status change error:', err);
+      const msg = err.response?.data?.message || err.message || 'Operation failed';
+      setStatusModal(prev => ({ ...prev, submitting: false, error: msg }));
+    }
+  };
+
+  const handleCancelSchedule = async (admin) => {
+    const targetId = admin._id || admin.id;
+    const name = admin.fullName || admin.email || 'this account';
+    if (!window.confirm(`Cancel the scheduled status transition for ${name}?`)) {
+      return;
+    }
+    try {
+      await accountApi.cancelScheduledStatus(targetId);
+      setActionToast({
+        type: 'success',
+        message: `Scheduled transition for ${name} has been cancelled.`
+      });
+      fetchAdmins();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to cancel schedule');
+    }
+  };
+
+  const handleOpenAuditModal = async (admin) => {
+    const targetId = admin._id || admin.id;
+    setAuditModal({
+      isOpen: true,
+      admin,
+      loading: true,
+      history: [],
+      error: ''
+    });
+    try {
+      const res = await accountApi.fetchAccountAuditHistory(targetId);
+      if (res?.success) {
+        setAuditModal(prev => ({
+          ...prev,
+          loading: false,
+          history: res.data || []
+        }));
+      } else {
+        setAuditModal(prev => ({
+          ...prev,
+          loading: false,
+          error: 'Failed to retrieve audit history'
+        }));
+      }
+    } catch (err) {
+      setAuditModal(prev => ({
+        ...prev,
+        loading: false,
+        error: err.response?.data?.message || 'Failed to load audit history'
+      }));
+    }
+  };
+
+  // Filter directory admins based on role criteria
+  const directoryAdmins = (Array.isArray(admins) ? admins : []).filter(admin => {
+    const r = String(admin.role || '').toUpperCase();
+    const desig = String(admin.designation || '').toLowerCase();
+    
+    const isAdminRoleOrDesig = ['ADMIN', 'SUPER_ADMIN', 'KYC_OPERATOR', 'HR'].includes(r) ||
+      ['operational head', 'backend', 'administrative operator', 'administrative sales executive', 'pan checker', 'remark operator', 'qd operator', 'kyc operator', 'final status operator', 'querable operator', 'physical curable', 'digital curable', 'email curable', 'curable operator'].some(d => desig.includes(d));
+    
+    if (!isAdminRoleOrDesig && r === 'EMPLOYEE') return false;
+    return true;
+  });
+
+  // Calculate status counts for filter tabs
+  const statusCounts = {
+    total: directoryAdmins.length,
+    active: directoryAdmins.filter(a => getAccountLifecycleStatus(a) === 'ACTIVE').length,
+    inactive: directoryAdmins.filter(a => getAccountLifecycleStatus(a) === 'INACTIVE').length,
+    scheduled: directoryAdmins.filter(a => getAccountLifecycleStatus(a) === 'SCHEDULED').length
+  };
+
+  // Filter admins based on status tab and search query
+  const filteredAdmins = directoryAdmins.filter(admin => {
+    const statusKey = getAccountLifecycleStatus(admin);
+    if (statusFilter !== 'ALL' && statusKey !== statusFilter) {
+      return false;
+    }
+
+    if (!adminSearch.trim()) return true;
+    const q = adminSearch.toLowerCase().trim();
+    const name = String(admin.fullName || '').toLowerCase();
+    const email = String(admin.email || '').toLowerCase();
+    const mobile = String(admin.mobile || '').toLowerCase();
+    const empId = String(admin.employeeId || admin.employee_id || '').toLowerCase();
+    const desig = String(admin.designation || '').toLowerCase();
+    const r = String(admin.role || '').toLowerCase();
+    const reason = String(admin.deactivation_reason || admin.scheduled_reason || '').toLowerCase();
+    return name.includes(q) || email.includes(q) || mobile.includes(q) || empId.includes(q) || desig.includes(q) || r.includes(q) || statusKey.toLowerCase().includes(q) || reason.includes(q);
+  });
+
+  // Pagination logic
+  const totalPages = Math.ceil(filteredAdmins.length / itemsPerPage);
+  const paginatedAdmins = filteredAdmins.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      {/* Main Container */}
+      <div style={{ background: C.card, borderRadius: "16px", boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.05)", border: `1px solid ${C.border}`, overflow: "hidden" }}>
+          <div style={{ padding: "24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <div style={{ width: "40px", height: "40px", background: isDark ? "rgba(255, 255, 255, 0.05)" : "#EFF6FF", borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", color: isDark ? C.teal : "#3B82F6" }}>
+                <Icons.profile size={20} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: "18px", fontWeight: 800, color: C.text, margin: 0 }}>Administrator Directory</h3>
+                <p style={{ fontSize: "13px", color: C.textLight, margin: "2px 0 0 0" }}>View and manage all system administrators</p>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "12px" }}>
+              <button 
+                onClick={fetchAdmins}
+                style={{ background: isDark ? "rgba(255,255,255,0.05)" : "#F9FAFB", border: `1px solid ${C.border}`, color: C.text, borderRadius: "8px", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", fontWeight: 600, padding: "8px 16px", transition: "all 0.2s" }}
+                onMouseEnter={e => e.currentTarget.style.background = isDark ? "rgba(255,255,255,0.1)" : "#F3F4F6"}
+                onMouseLeave={e => e.currentTarget.style.background = isDark ? "rgba(255,255,255,0.05)" : "#F9FAFB"}
+              >
+                <RefreshCw size={14} /> Refresh
+              </button>
+              <button 
+                onClick={() => setShowCreateModal(true)}
+                style={{ background: C.teal, border: "none", color: "#FFFFFF", borderRadius: "8px", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", fontWeight: 600, padding: "8px 16px", transition: "all 0.2s", boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.05)" }}
+                onMouseEnter={e => e.currentTarget.style.background = C.tealDim}
+                onMouseLeave={e => e.currentTarget.style.background = C.teal}
+              >
+                + Create Admin
+              </button>
+            </div>
+          </div>
+
+          {/* Status Filter Tabs */}
+          <div style={{
+            padding: '12px 24px 0 24px',
+            background: isDark ? 'rgba(255,255,255,0.02)' : '#F9FAFB',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            borderBottom: `1px solid ${C.border}`,
+            overflowX: 'auto'
+          }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: C.textLight, textTransform: 'uppercase', letterSpacing: '0.5px', marginRight: '6px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <Filter size={13} /> Account Status:
+            </span>
+            {[
+              { id: 'ALL', label: 'All Accounts', count: statusCounts.total, color: '#6D3DF5' },
+              { id: 'ACTIVE', label: 'Active', count: statusCounts.active, color: '#059669' },
+              { id: 'INACTIVE', label: 'Inactive', count: statusCounts.inactive, color: '#64748B' },
+              { id: 'SCHEDULED', label: 'Scheduled', count: statusCounts.scheduled, color: '#8B5CF6' }
+            ].map(tab => {
+              const isSelected = statusFilter === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => { setStatusFilter(tab.id); setCurrentPage(1); }}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '8px 8px 0 0',
+                    fontSize: '13px',
+                    fontWeight: isSelected ? 700 : 500,
+                    cursor: 'pointer',
+                    border: 'none',
+                    borderBottom: isSelected ? `2.5px solid ${tab.color}` : '2.5px solid transparent',
+                    background: isSelected ? (isDark ? 'rgba(255,255,255,0.06)' : '#FFFFFF') : 'transparent',
+                    color: isSelected ? (isDark ? '#FFFFFF' : '#111827') : C.textLight,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    transition: 'all 0.15s'
+                  }}
+                >
+                  <span>{tab.label}</span>
+                  <span style={{
+                    background: isSelected ? `${tab.color}15` : (isDark ? 'rgba(255,255,255,0.08)' : '#E2E8F0'),
+                    color: isSelected ? tab.color : C.textLight,
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    padding: '2px 7px',
+                    borderRadius: '10px'
+                  }}>
+                    {tab.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Administrator Directory Search Bar */}
+          <div style={{ padding: '14px 24px', background: isDark ? 'rgba(255,255,255,0.02)' : '#F9FAFB', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ flex: 1, position: 'relative' }}>
+              <input
+                type="text"
+                value={adminSearch}
+                onChange={(e) => { setAdminSearch(e.target.value); setCurrentPage(1); }}
+                placeholder="Search administrators by name, email, mobile, admin ID, designation..."
+                style={{
+                  width: '100%',
+                  height: '38px',
+                  paddingLeft: '36px',
+                  paddingRight: adminSearch ? '36px' : '12px',
+                  borderRadius: '8px',
+                  border: `1px solid ${C.border}`,
+                  background: C.card,
+                  color: C.text,
+                  fontSize: '13px',
+                  outline: 'none',
+                  boxSizing: 'border-box'
+                }}
+              />
+              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', display: 'flex', alignItems: 'center', pointerEvents: 'none' }}>
+                <Search size={15} color={C.textLight} />
+              </span>
+              {adminSearch && (
+                <button
+                  type="button"
+                  onClick={() => { setAdminSearch(''); setCurrentPage(1); }}
+                  style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: C.textLight, cursor: 'pointer', fontSize: '14px' }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            {adminSearch && (
+              <div style={{ fontSize: '12px', fontWeight: 700, color: C.teal, whiteSpace: 'nowrap' }}>
+                Found {filteredAdmins.length} result{filteredAdmins.length !== 1 ? 's' : ''}
+              </div>
+            )}
+          </div>
+
+          {loading ? (
+            <div style={{ textAlign: "center", padding: "64px", color: C.textLight }}>
+              <div className="animate-spin" style={{ width: "32px", height: "32px", border: `3px solid ${C.teal}`, borderTopColor: "transparent", borderRadius: "50%", margin: "0 auto 16px" }}></div>
+              Loading directory list...
+            </div>
+          ) : errorMsg ? (
+            <div style={{ padding: "24px", textAlign: "center", color: C.red, background: isDark ? "rgba(239, 68, 68, 0.1)" : "#FEF2F2", margin: "24px", borderRadius: "12px", border: `1px solid ${C.red}30` }}>
+              <Icons.x size={24} style={{ margin: "0 auto 8px" }} />
+              <p style={{ fontWeight: 600, margin: 0 }}>{errorMsg}</p>
+            </div>
+          ) : filteredAdmins.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "64px", color: C.textLight }}>
+              <p style={{ fontSize: "16px", margin: 0, color: C.text }}>
+                {adminSearch ? 'No administrators match your search query.' : 'No administrators provisioned yet.'}
+              </p>
+              {adminSearch ? (
+                <button
+                  onClick={() => setAdminSearch('')}
+                  style={{ background: C.teal, border: "none", color: "#FFFFFF", borderRadius: "8px", cursor: "pointer", fontSize: "13px", fontWeight: 600, padding: "8px 16px", marginTop: "12px" }}
+                >
+                  Clear Search
+                </button>
+              ) : (
+                <button 
+                  onClick={() => setShowCreateModal(true)}
+                  style={{ background: C.teal, border: "none", color: "#FFFFFF", borderRadius: "8px", cursor: "pointer", fontSize: "14px", fontWeight: 600, padding: "10px 20px", marginTop: "16px" }}
+                >
+                  Create First Admin
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+                <thead>
+                  <tr style={{ background: "#F9FAFB", borderBottom: `1px solid #F3F4F6`, color: "#6B7280", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                    <th style={{ padding: "16px 24px" }}>Administrator</th>
+                    <th style={{ padding: "16px 24px" }}>Role & Emp ID</th>
+                    <th style={{ padding: "16px 24px" }}>Contact Info</th>
+                    <th style={{ padding: "16px 24px" }}>Assigned Banks</th>
+                    <th style={{ padding: "16px 24px" }}>Designation</th>
+                    <th style={{ padding: "16px 24px" }}>Account Status</th>
+                    <th style={{ padding: "16px 24px", textAlign: "center" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody style={{ fontSize: "14px", color: "#374151" }}>
+                  {paginatedAdmins.map((admin) => {
+                    const initials = getInitials(admin.fullName);
+                    const isPS = initials === 'PS';
+                    const avatarColor = isPS ? "#DBEAFE" : "#D1FAE5";
+                    const avatarText = isPS ? "#1D4ED8" : "#047857";
+
+                    return (
+                    <tr key={admin._id} style={{ borderBottom: `1px solid #F3F4F6`, transition: "background 0.2s" }} onMouseEnter={e => e.currentTarget.style.background = "#F9FAFB"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <td style={{ padding: "16px 24px", display: "flex", alignItems: "center", gap: "12px" }}>
+                        <div style={{ width: "40px", height: "40px", borderRadius: "50%", background: avatarColor, color: avatarText, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px", fontWeight: 700 }}>
+                          {initials}
+                        </div>
+                        <div>
+                          <div 
+                            onClick={() => setSelectedAdminDetails(admin)}
+                            style={{ fontWeight: 700, color: "#111827", fontSize: "14px", cursor: "pointer", transition: "color 0.15s" }}
+                            onMouseEnter={e => e.currentTarget.style.color = C.teal}
+                            onMouseLeave={e => e.currentTarget.style.color = "#111827"}
+                            title="Click to view administrator profile"
+                          >
+                            {admin.fullName || 'No Name Provided'}
+                          </div>
+                          <div style={{ fontSize: "12px", color: "#6B7280", display: "flex", alignItems: "center", gap: "4px", marginTop: "2px" }}>
+                            <Icons.calendar size={12} /> {formatDate(admin.createdAt)}
+                          </div>
+                        </div>
+                      </td>
+                      <td style={{ padding: "16px 24px" }}>
+                        <span style={{ fontSize: "11px", fontWeight: 800, color: "#2563EB", background: "#DBEAFE", padding: "2px 8px", borderRadius: "4px", textTransform: "uppercase", display: "inline-block", marginBottom: "4px" }}>
+                          {String(admin.role || 'ADMIN').replace(/_/g, ' ')}
+                        </span>
+                        <div style={{ fontFamily: "monospace", fontSize: "13px", color: "#4B5563", fontWeight: 600 }}>
+                          {admin.employeeId}
+                        </div>
+                      </td>
+                      <td style={{ padding: "16px 24px" }}>
+                        <div style={{ fontWeight: 500, color: "#111827", display: "flex", alignItems: "center", gap: "6px" }}>
+                          <Icons.mail size={14} color="#6B7280" /> {admin.email}
+                        </div>
+                        <div style={{ fontSize: "13px", color: "#4B5563", display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
+                          <Icons.phone size={14} color="#6B7280" /> {admin.mobile}
+                        </div>
+                      </td>
+
+                      <td style={{ padding: "16px 24px" }}>
+                        <button
+                          onClick={() => handleOpenBankModal(admin)}
+                          style={{
+                            background: admin.assigned_banks?.length ? "#ECFDF5" : "#F3F4F6",
+                            color: admin.assigned_banks?.length ? "#059669" : "#6B7280",
+                            border: `1px solid ${admin.assigned_banks?.length ? "#6EE7B7" : "#D1D5DB"}`,
+                            borderRadius: "6px",
+                            padding: "4px 10px",
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px"
+                          }}
+                        >
+                          <Building2 size={13} /> {admin.assigned_banks?.length ? `${admin.assigned_banks.length} Banks` : 'Assign Banks'}
+                        </button>
+                        {admin.assigned_banks?.length > 0 && (() => {
+                          const bankList = admin.assigned_banks;
+                          const adminKey = admin._id || admin.id;
+                          const isExpanded = !!expandedAdminBanks[adminKey];
+
+                          const renderBankBadge = (b, i) => {
+                            const cat = String(b.category || (b.is_loc_eoc ? 'loc_eoc' : 'credit_card')).toLowerCase();
+                            let catLabel = 'CC';
+                            let badgeBg = '#EFF6FF';
+                            let badgeColor = '#1D4ED8';
+                            let borderCol = '#BFDBFE';
+
+                            if (cat === 'personal_loan' || cat === 'loan') {
+                              catLabel = 'PL';
+                              badgeBg = '#ECFDF5';
+                              badgeColor = '#047857';
+                              borderCol = '#A7F3D0';
+                            } else if (cat === 'loc_eoc' || b.is_loc_eoc) {
+                              catLabel = 'LOC';
+                              badgeBg = '#F5F3FF';
+                              badgeColor = '#6D28D9';
+                              borderCol = '#DDD6FE';
+                            } else if (cat === 'business_loan') {
+                              catLabel = 'BL';
+                              badgeBg = '#FFFBEB';
+                              badgeColor = '#B45309';
+                              borderCol = '#FDE68A';
+                            }
+
+                            return (
+                              <span key={i} style={{ background: badgeBg, color: badgeColor, border: `1px solid ${borderCol}`, borderRadius: "4px", padding: "1px 5px", fontSize: "10px", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                                {b.short_code || b.name} <span style={{ opacity: 0.85, fontSize: "9px", fontWeight: 700 }}>({catLabel})</span>
+                              </span>
+                            );
+                          };
+
+                          return (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "6px", maxWidth: "240px" }}>
+                              {(isExpanded ? bankList : bankList.slice(0, 3)).map((b, idx) => renderBankBadge(b, idx))}
+                              {bankList.length > 3 && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedAdminBanks(prev => ({ ...prev, [adminKey]: !isExpanded }));
+                                  }}
+                                  style={{
+                                    background: "#F3F4F6",
+                                    border: "1px solid #D1D5DB",
+                                    color: "#2563EB",
+                                    cursor: "pointer",
+                                    fontWeight: 700,
+                                    fontSize: "10px",
+                                    borderRadius: "4px",
+                                    padding: "1px 6px"
+                                  }}
+                                >
+                                  {isExpanded ? 'Less' : `+${bankList.length - 3} more`}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td style={{ padding: "16px 24px", color: "#374151", fontWeight: 500 }}>
+                        {admin.designation}
+                      </td>
+                      <td style={{ padding: "16px 24px" }}>
+                        {(() => {
+                          const statusKey = getAccountLifecycleStatus(admin);
+                          const isSched = statusKey === 'SCHEDULED';
+                          const isAct = statusKey === 'ACTIVE';
+                          const isPendingAct = admin.scheduled_status_action === 'ACTIVATE' || admin.activation_scheduled_at;
+                          const scheduledTime = isPendingAct ? admin.activation_scheduled_at : (admin.deactivation_scheduled_at || admin.scheduled_at);
+
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              {/* Primary Status Badge */}
+                              <div>
+                                {isAct && (
+                                  <span style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "6px",
+                                    padding: "4px 10px",
+                                    borderRadius: "16px",
+                                    fontSize: "12px",
+                                    fontWeight: 700,
+                                    color: "#059669",
+                                    background: "#ECFDF5",
+                                    border: "1px solid #A7F3D0"
+                                  }}>
+                                    <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#10B981" }}></span>
+                                    Active
+                                  </span>
+                                )}
+
+                                {!isAct && !isSched && (
+                                  <span style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "6px",
+                                    padding: "4px 10px",
+                                    borderRadius: "16px",
+                                    fontSize: "12px",
+                                    fontWeight: 700,
+                                    color: "#64748B",
+                                    background: "#F1F5F9",
+                                    border: "1px solid #CBD5E1"
+                                  }}>
+                                    <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#94A3B8" }}></span>
+                                    Inactive
+                                  </span>
+                                )}
+
+                                {isSched && (
+                                  <span style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "6px",
+                                    padding: "4px 10px",
+                                    borderRadius: "16px",
+                                    fontSize: "12px",
+                                    fontWeight: 700,
+                                    color: "#6D3DF5",
+                                    background: "#F5F3FF",
+                                    border: "1px solid #DDD6FE"
+                                  }}>
+                                    <Clock size={13} color="#6D3DF5" />
+                                    <span>Scheduled ({isPendingAct ? 'Activate' : 'Deactivate'})</span>
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Scheduled details if applicable */}
+                              {isSched && scheduledTime && (
+                                <div style={{ fontSize: "11px", color: "#6D3DF5", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px" }}>
+                                  <Calendar size={11} /> {formatDateTimeIST(scheduledTime)}
+                                </div>
+                              )}
+
+                              {/* Deactivation Reason if inactive */}
+                              {!isAct && !isSched && admin.deactivation_reason && (
+                                <div style={{ fontSize: "11px", color: "#64748B", fontStyle: "italic", maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={admin.deactivation_reason}>
+                                  Reason: {admin.deactivation_reason}
+                                </div>
+                              )}
+
+                              {/* Working Hours & Shift tag */}
+                              {admin.working_hours && (
+                                <div style={{ display: "flex", alignItems: "center", gap: "5px", flexWrap: "wrap", marginTop: "2px" }}>
+                                  <span style={{
+                                    fontSize: "10px",
+                                    fontWeight: 600,
+                                    color: "#475569",
+                                    background: "#F8FAFC",
+                                    border: "1px solid #E2E8F0",
+                                    padding: "2px 6px",
+                                    borderRadius: "4px",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "4px"
+                                  }}>
+                                    <Clock size={10} color="#64748B" />
+                                    {admin.working_hours.schedule || '09:30 AM - 08:00 PM IST'}
+                                  </span>
+
+                                  <span style={{
+                                    fontSize: "10px",
+                                    fontWeight: 700,
+                                    padding: "1px 6px",
+                                    borderRadius: "4px",
+                                    background: admin.working_hours.isShiftActive ? "#ECFDF5" : "#FEF3C7",
+                                    color: admin.working_hours.isShiftActive ? "#047857" : "#B45309",
+                                    border: `1px solid ${admin.working_hours.isShiftActive ? '#A7F3D0' : '#FDE68A'}`
+                                  }}>
+                                    {admin.working_hours.currentStatusTag || (admin.working_hours.isShiftActive ? 'Shift Active' : 'Shift Closed')}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td style={{ padding: "16px 24px", textAlign: "center" }}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedAdminDetails(admin)}
+                          style={{
+                            background: (selectedAdminDetails?._id === admin._id || selectedAdminDetails?.id === admin.id) ? `${C.teal}18` : 'transparent',
+                            border: `1px solid ${(selectedAdminDetails?._id === admin._id || selectedAdminDetails?.id === admin.id) ? C.teal : '#E5E7EB'}`,
+                            cursor: 'pointer',
+                            color: (selectedAdminDetails?._id === admin._id || selectedAdminDetails?.id === admin.id) ? C.teal : '#4B5563',
+                            fontSize: '15px',
+                            width: '34px',
+                            height: '34px',
+                            borderRadius: '8px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            transition: 'all 0.15s ease',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = '#F3F4F6';
+                            e.currentTarget.style.borderColor = '#D1D5DB';
+                            e.currentTarget.style.color = '#111827';
+                          }}
+                          onMouseLeave={(e) => {
+                            const isSel = (selectedAdminDetails?._id === admin._id || selectedAdminDetails?.id === admin.id);
+                            e.currentTarget.style.background = isSel ? `${C.teal}18` : 'transparent';
+                            e.currentTarget.style.borderColor = isSel ? C.teal : '#E5E7EB';
+                            e.currentTarget.style.color = isSel ? C.teal : '#4B5563';
+                          }}
+                          title="View Admin Details & Actions"
+                        >
+                          <FaEllipsisV />
+                        </button>
+                      </td>
+                    </tr>
+                  )})}
+                </tbody>
+              </table>
+            </div>
+            
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div style={{ padding: "16px 24px", borderTop: "1px solid #F3F4F6", display: "flex", alignItems: "center", justifyContent: "space-between", color: "#6B7280", fontSize: "14px" }}>
+                <div>
+                  Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filteredAdmins.length)} of {filteredAdmins.length} entries
+                </div>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button 
+                    disabled={currentPage === 1}
+                    onClick={() => setCurrentPage(p => p - 1)}
+                    style={{ padding: "6px 12px", background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: "6px", cursor: currentPage === 1 ? "not-allowed" : "pointer", opacity: currentPage === 1 ? 0.5 : 1 }}
+                  >
+                    &lt;
+                  </button>
+                  {[...Array(totalPages)].map((_, i) => (
+                    <button 
+                      key={i}
+                      onClick={() => setCurrentPage(i + 1)}
+                      style={{ 
+                        padding: "6px 12px", 
+                        background: currentPage === i + 1 ? "#2563EB" : "#FFFFFF", 
+                        color: currentPage === i + 1 ? "#FFFFFF" : "#374151",
+                        border: "1px solid",
+                        borderColor: currentPage === i + 1 ? "#2563EB" : "#E5E7EB",
+                        borderRadius: "6px", 
+                        cursor: "pointer" 
+                      }}
+                    >
+                      {i + 1}
+                    </button>
+                  ))}
+                  <button 
+                    disabled={currentPage === totalPages}
+                    onClick={() => setCurrentPage(p => p + 1)}
+                    style={{ padding: "6px 12px", background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: "6px", cursor: currentPage === totalPages ? "not-allowed" : "pointer", opacity: currentPage === totalPages ? 0.5 : 1 }}
+                  >
+                    &gt;
+                  </button>
+                </div>
+              </div>
+            )}
+            </>
+          )}
+        </div>
+
+      {/* Admin Details Right Drawer / Modal */}
+      {selectedAdminDetails && (
+        <AdminDetailsDrawer
+          admin={selectedAdminDetails}
+          onClose={() => setSelectedAdminDetails(null)}
+          onEdit={(adm) => handleOpenEditAdminModal(adm)}
+          onAssignBanks={(adm) => handleOpenBankModal(adm)}
+          onToggleStatus={(adm, targetAction, mode) => handleOpenStatusModal(adm, targetAction, mode)}
+          onCancelSchedule={(adm) => handleCancelSchedule(adm)}
+          onViewAudit={(adm) => handleOpenAuditModal(adm)}
+          onDelete={(adm, mode) => promptDeleteAdmin(adm, mode)}
+          currentUser={currentUser}
+          activeSuperAdminsCount={directoryAdmins.filter(a => String(a.role || '').toUpperCase() === 'SUPER_ADMIN' && getAccountLifecycleStatus(a) === 'ACTIVE').length}
+          isMobile={isMobile}
+          formatDate={formatDate}
+          formatDateTimeIST={formatDateTimeIST}
+          getAccountLifecycleStatus={getAccountLifecycleStatus}
+          getInitials={getInitials}
+          C={C}
+          isDark={isDark}
+        />
+      )}
+
+      {/* Create Admin Modal */}
+      {showCreateModal && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(17, 24, 39, 0.7)", zIndex: 9999,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "20px", backdropFilter: "blur(4px)"
+        }}>
+          <div style={{ background: "#FFFFFF", borderRadius: "16px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)", padding: "24px", maxWidth: "600px", width: "100%", maxHeight: "90vh", overflowY: "auto", position: "relative" }}>
+            <div style={{ borderBottom: `1px solid #F3F4F6`, paddingBottom: "16px", marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h3 style={{ fontSize: "18px", fontWeight: 800, color: "#111827", margin: 0 }}>Provision Administrator</h3>
+                <p style={{ fontSize: "13px", color: "#6B7280", margin: "4px 0 0 0" }}>Create a new admin or employee account.</p>
+              </div>
+              <button onClick={() => setShowCreateModal(false)} style={{ background: "#F3F4F6", border: "none", color: "#4B5563", cursor: "pointer", width: "32px", height: "32px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.2s" }} onMouseEnter={e => e.currentTarget.style.background = "#E5E7EB"} onMouseLeave={e => e.currentTarget.style.background = "#F3F4F6"}>
+                <Icons.x size={18} />
+              </button>
+            </div>
+          
+          <form onSubmit={handleCreateAdmin} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            {formErr && (
+              <div style={{ padding: "12px", background: "#FEF2F2", border: `1px solid #FCA5A5`, borderRadius: "10px", color: "#EF4444", fontSize: "14px", fontWeight: 500, display: "flex", alignItems: "center", gap: "8px" }}>
+                <Icons.x size={18} /> {formErr}
+              </div>
+            )}
+            
+            {formSuccess && (
+              <div style={{ padding: "12px", background: "#ECFDF5", border: `1px solid #6EE7B7`, borderRadius: "10px", color: "#059669", fontSize: "14px", fontWeight: 500, display: "flex", alignItems: "center", gap: "8px" }}>
+                <Icons.check size={18} /> {formSuccess}
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "16px" }}>
+              {/* Full Name */}
+              <div>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Full Name *</label>
+                <input
+                  name="fullName"
+                  value={form.fullName}
+                  onChange={handleChange}
+                  placeholder="e.g. Pratap Sanap"
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", color: "#111827", outline: "none", transition: "border-color 0.2s", boxSizing: "border-box" }}
+                  onFocus={e => e.currentTarget.style.borderColor = "#3B82F6"}
+                  onBlur={e => e.currentTarget.style.borderColor = "#D1D5DB"}
+                  required
+                />
+              </div>
+
+              {/* Email */}
+              <div>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Email Address *</label>
+                <input
+                  name="email"
+                  type="email"
+                  value={form.email}
+                  onChange={handleChange}
+                  placeholder="e.g. manager@gharkapaisa.in"
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", color: "#111827", outline: "none", transition: "border-color 0.2s", boxSizing: "border-box" }}
+                  onFocus={e => e.currentTarget.style.borderColor = "#3B82F6"}
+                  onBlur={e => e.currentTarget.style.borderColor = "#D1D5DB"}
+                  required
+                />
+              </div>
+
+              {/* Mobile */}
+              <div>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Mobile Number *</label>
+                <input
+                  name="mobile"
+                  value={form.mobile}
+                  onChange={handleChange}
+                  placeholder="10-digit number"
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", color: "#111827", outline: "none", transition: "border-color 0.2s", boxSizing: "border-box" }}
+                  onFocus={e => e.currentTarget.style.borderColor = "#3B82F6"}
+                  onBlur={e => e.currentTarget.style.borderColor = "#D1D5DB"}
+                  required
+                />
+              </div>
+
+              {/* Role */}
+              <div>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Role *</label>
+                <select
+                  name="role"
+                  value={form.role}
+                  onChange={handleChange}
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", color: "#111827", outline: "none", transition: "border-color 0.2s", boxSizing: "border-box", background: "#FFFFFF" }}
+                  onFocus={e => e.currentTarget.style.borderColor = "#3B82F6"}
+                  onBlur={e => e.currentTarget.style.borderColor = "#D1D5DB"}
+                  required
+                >
+                  <option value="ADMIN">Admin</option>
+                  <option value="SUPER_ADMIN">Super Admin</option>
+                  <option value="EMPLOYEE">Employee</option>
+                  <option value="PARTNER">Partner</option>
+                  <option value="HR">HR</option>
+                </select>
+              </div>
+
+              {/* Password */}
+              <div>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Password *</label>
+                <input
+                  name="password"
+                  type="password"
+                  value={form.password}
+                  onChange={handleChange}
+                  placeholder="Min 8 characters"
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", color: "#111827", outline: "none", transition: "border-color 0.2s", boxSizing: "border-box" }}
+                  onFocus={e => e.currentTarget.style.borderColor = "#3B82F6"}
+                  onBlur={e => e.currentTarget.style.borderColor = "#D1D5DB"}
+                  required
+                />
+              </div>
+
+              {/* Confirm Password */}
+              <div>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Confirm Password *</label>
+                <input
+                  name="confirmPassword"
+                  type="password"
+                  value={form.confirmPassword}
+                  onChange={handleChange}
+                  placeholder="Repeat password"
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", color: "#111827", outline: "none", transition: "border-color 0.2s", boxSizing: "border-box" }}
+                  onFocus={e => e.currentTarget.style.borderColor = "#3B82F6"}
+                  onBlur={e => e.currentTarget.style.borderColor = "#D1D5DB"}
+                  required
+                />
+              </div>
+
+
+
+              {/* Designation */}
+              <div>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Designation *</label>
+                <select
+                  name="designation"
+                  value={form.designation}
+                  onChange={(e) => {
+                    handleChange(e);
+                    if (['Operational Head', 'Backend', 'Administrative Operator', 'Administrative Sales Executive', 'PAN Checker', 'Remark Operator', 'REMARK_OPERATOR', 'QD Operator', 'QD OPERATOR', 'QD_OPERATOR', 'KYC Operator', 'KYC OPERATOR', 'KYC_OPERATOR', 'Final Status Operator', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'Querable Operator', 'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'Queryable Operator', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR', 'Physical Curable Operator', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'Digital Curable Operator', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'Email Curable Operator', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'Physical Curable', 'Digital Curable', 'Email Curable'].includes(e.target.value) && allBanks.length === 0) {
+                      api.get('/banks?limit=1000').then(res => {
+                        const banksList = res.data && res.data.data ? (Array.isArray(res.data.data) ? res.data.data : res.data.data.rows || []) : [];
+                        if (banksList.length > 0) setAllBanks(banksList);
+                      }).catch(err => console.error(err));
+                    }
+                  }}
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", color: "#111827", outline: "none", transition: "border-color 0.2s", boxSizing: "border-box", background: "#FFFFFF" }}
+                  onFocus={e => e.currentTarget.style.borderColor = "#3B82F6"}
+                  onBlur={e => e.currentTarget.style.borderColor = "#D1D5DB"}
+                  required
+                >
+                  <option value="">Select Designation...</option>
+                  <option value="Operational Head">Operational Head</option>
+                  <option value="Administrative Operator">Administrative Operator</option>
+                  <option value="Administrative Sales Executive">Administrative Sales Executive</option>
+                  <option value="PAN Checker">PAN Checker</option>
+                  <option value="Remark Operator">Remark Operator</option>
+                  <option value="QD Operator">QD Operator</option>
+                  <option value="KYC Operator">KYC Operator</option>
+                  <option value="Final Status Operator">Final Status Operator</option>
+                  <option value="Querable Operator">Querable Operator</option>
+                  <option value="Physical Curable Operator">Physical Curable Operator</option>
+                  <option value="Digital Curable Operator">Digital Curable Operator</option>
+                  <option value="Email Curable Operator">Email Curable Operator</option>
+                  <option value="Backend">Backend</option>
+                  <option value="Super Admin">Super Admin</option>
+                  <option value="Senior Manager">Senior Manager</option>
+                  <option value="Manager">Manager</option>
+                  <option value="Team Leader">Team Leader</option>
+                  <option value="Telecaller">Telecaller</option>
+                </select>
+              </div>
+
+              {/* Category-Wise Bank Assignment Section */}
+              {(['Operational Head', 'OPERATIONAL_HEAD', 'Backend', 'BACKEND', 'Administrative Operator', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'Administrative Sales Executive', 'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'PAN Checker', 'PAN CHECKER', 'PAN_CHECKER', 'Remark Operator', 'REMARK OPERATOR', 'REMARK_OPERATOR', 'QD Operator', 'QD OPERATOR', 'QD_OPERATOR', 'KYC Operator', 'KYC OPERATOR', 'KYC_OPERATOR', 'Final Status Operator', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'Querable Operator', 'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'Queryable Operator', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR', 'Physical Curable Operator', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'Digital Curable Operator', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'Email Curable Operator', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'Physical Curable', 'Digital Curable', 'Email Curable'].includes(form.designation)) && (
+                <div style={{ gridColumn: "span 2" }}>
+                  <CategoryWiseBankSelector
+                    allBanks={allBanks}
+                    categoryAssignments={createCategoryAssignments}
+                    onChange={setCreateCategoryAssignments}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "16px", borderTop: `1px solid #F3F4F6`, paddingTop: "20px" }}>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                style={{ background: "#FFFFFF", border: "1px solid #D1D5DB", color: "#374151", padding: "10px 20px", borderRadius: "8px", fontSize: "14px", fontWeight: 600, cursor: "pointer", transition: "all 0.2s" }}
+                onMouseEnter={e => e.currentTarget.style.background = "#F9FAFB"}
+                onMouseLeave={e => e.currentTarget.style.background = "#FFFFFF"}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={formLoading}
+                style={{ background: "#2563EB", border: "none", color: "#FFFFFF", padding: "10px 20px", borderRadius: "8px", fontSize: "14px", fontWeight: 600, cursor: formLoading ? "not-allowed" : "pointer", opacity: formLoading ? 0.7 : 1, transition: "background 0.2s", boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.05)" }}
+                onMouseEnter={e => { if(!formLoading) e.currentTarget.style.background = "#1D4ED8"; }}
+                onMouseLeave={e => { if(!formLoading) e.currentTarget.style.background = "#2563EB"; }}
+              >
+                {formLoading ? 'Creating User...' : 'Provision Admin'}
+              </button>
+            </div>
+          </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Admin Modal */}
+      {showEditModal && editingAdmin && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(17, 24, 39, 0.7)", zIndex: 9999,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "20px", backdropFilter: "blur(4px)"
+        }}>
+          <div style={{
+            background: "#FFFFFF", borderRadius: "16px", padding: "24px",
+            maxWidth: "650px", width: "100%", maxHeight: "90vh", overflowY: "auto",
+            boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1)"
+          }}>
+            <div style={{ borderBottom: `1px solid #F3F4F6`, paddingBottom: "14px", marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div style={{ width: "36px", height: "36px", borderRadius: "8px", background: "#EFF6FF", color: "#2563EB", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Edit size={18} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: "18px", fontWeight: 800, color: "#111827", margin: 0 }}>Edit Administrator Details</h3>
+                  <p style={{ fontSize: "13px", color: "#6B7280", margin: "2px 0 0 0" }}>Update admin role, designation, status and bank assignments</p>
+                </div>
+              </div>
+              <button onClick={() => setShowEditModal(false)} style={{ background: "#F3F4F6", border: "none", color: "#4B5563", cursor: "pointer", width: "32px", height: "32px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditAdminSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "16px" }}>
+                
+                {/* Full Name */}
+                <div>
+                  <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Full Name *</label>
+                  <input
+                    type="text"
+                    value={editForm.fullName}
+                    onChange={e => setEditForm({ ...editForm, fullName: e.target.value })}
+                    style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", outline: "none", boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
+
+                {/* Email */}
+                <div>
+                  <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Email Address *</label>
+                  <input
+                    type="email"
+                    value={editForm.email}
+                    onChange={e => setEditForm({ ...editForm, email: e.target.value })}
+                    style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", outline: "none", boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
+
+                {/* Mobile */}
+                <div>
+                  <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Mobile Number *</label>
+                  <input
+                    type="text"
+                    value={editForm.mobile}
+                    onChange={e => setEditForm({ ...editForm, mobile: e.target.value })}
+                    style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", outline: "none", boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
+
+                {/* Role */}
+                <div>
+                  <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Role *</label>
+                  <select
+                    value={editForm.role}
+                    onChange={e => setEditForm({ ...editForm, role: e.target.value })}
+                    style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", outline: "none", boxSizing: "border-box", background: "#FFFFFF" }}
+                    required
+                  >
+                    <option value="ADMIN">Admin</option>
+                    <option value="SUPER_ADMIN">Super Admin</option>
+                    <option value="EMPLOYEE">Employee</option>
+                    <option value="PARTNER">Partner</option>
+                    <option value="HR">HR</option>
+                  </select>
+                </div>
+
+                {/* Designation */}
+                <div>
+                  <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Designation *</label>
+                  <select
+                    value={editForm.designation}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setEditForm({ ...editForm, designation: val });
+                      if (['Operational Head', 'OPERATIONAL_HEAD', 'Backend', 'BACKEND', 'Administrative Operator', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'Administrative Sales Executive', 'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'PAN Checker', 'PAN CHECKER', 'PAN_CHECKER', 'Remark Operator', 'REMARK OPERATOR', 'REMARK_OPERATOR', 'QD Operator', 'QD OPERATOR', 'QD_OPERATOR', 'KYC Operator', 'KYC OPERATOR', 'KYC_OPERATOR', 'Final Status Operator', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'Querable Operator', 'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'Queryable Operator', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR', 'Physical Curable Operator', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'Digital Curable Operator', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'Email Curable Operator', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'Physical Curable', 'Digital Curable', 'Email Curable'].includes(val) && allBanks.length === 0) {
+                        api.get('/banks?limit=1000').then(res => {
+                          const banksList = res.data && res.data.data ? (Array.isArray(res.data.data) ? res.data.data : res.data.data.rows || []) : [];
+                          if (banksList.length > 0) setAllBanks(banksList);
+                        }).catch(err => console.error(err));
+                      }
+                    }}
+                    style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", outline: "none", boxSizing: "border-box" }}
+                    required
+                  >
+                    <option value="">Select Designation...</option>
+                    <option value="Operational Head">Operational Head</option>
+                    <option value="Administrative Operator">Administrative Operator</option>
+                    <option value="Administrative Sales Executive">Administrative Sales Executive</option>
+                    <option value="PAN Checker">PAN Checker</option>
+                    <option value="Remark Operator">Remark Operator</option>
+                    <option value="QD Operator">QD Operator</option>
+                    <option value="KYC Operator">KYC Operator</option>
+                    <option value="Final Status Operator">Final Status Operator</option>
+                    <option value="Querable Operator">Querable Operator</option>
+                    <option value="Physical Curable Operator">Physical Curable Operator</option>
+                    <option value="Digital Curable Operator">Digital Curable Operator</option>
+                    <option value="Email Curable Operator">Email Curable Operator</option>
+                    <option value="Backend">Backend</option>
+                    <option value="Super Admin">Super Admin</option>
+                    <option value="Senior Manager">Senior Manager</option>
+                    <option value="Manager">Manager</option>
+                    <option value="Team Leader">Team Leader</option>
+                    <option value="Telecaller">Telecaller</option>
+                    {editForm.designation && !['Operational Head', 'Administrative Operator', 'Administrative Sales Executive', 'PAN Checker', 'Remark Operator', 'QD Operator', 'KYC Operator', 'Final Status Operator', 'Querable Operator', 'Queryable Operator', 'Physical Curable Operator', 'Digital Curable Operator', 'Email Curable Operator', 'Physical Curable', 'Digital Curable', 'Email Curable', 'Backend', 'Super Admin', 'Senior Manager', 'Manager', 'Team Leader', 'Telecaller', ''].includes(editForm.designation) && (
+                      <option value={editForm.designation}>{editForm.designation}</option>
+                    )}
+                  </select>
+                </div>
+
+                {/* Status */}
+                <div>
+                  <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Account Status *</label>
+                  <select
+                    value={editForm.status}
+                    onChange={e => setEditForm({ ...editForm, status: e.target.value })}
+                    style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", outline: "none", boxSizing: "border-box" }}
+                    required
+                  >
+                    <option value="active">Active</option>
+                    <option value="suspended">Suspended</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                </div>
+
+                {/* Password (Optional reset) */}
+                <div style={{ gridColumn: "span 2" }}>
+                  <label style={{ display: "block", fontSize: "13px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>New Password (Optional)</label>
+                  <input
+                    type="password"
+                    placeholder="Leave blank to keep unchanged"
+                    value={editForm.password}
+                    onChange={e => setEditForm({ ...editForm, password: e.target.value })}
+                    style={{ width: "100%", padding: "10px 12px", border: "1px solid #D1D5DB", borderRadius: "8px", fontSize: "14px", outline: "none", boxSizing: "border-box" }}
+                  />
+                </div>
+
+                {/* Bank Assignments (Category-Wise Access Control) */}
+                {(['Operational Head', 'OPERATIONAL_HEAD', 'Backend', 'BACKEND', 'Administrative Operator', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'Administrative Sales Executive', 'ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'PAN Checker', 'PAN CHECKER', 'PAN_CHECKER', 'Remark Operator', 'REMARK OPERATOR', 'REMARK_OPERATOR', 'QD Operator', 'QD OPERATOR', 'QD_OPERATOR', 'KYC Operator', 'KYC OPERATOR', 'KYC_OPERATOR', 'Final Status Operator', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'Querable Operator', 'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'Queryable Operator', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR', 'Physical Curable Operator', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'Digital Curable Operator', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'Email Curable Operator', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'Physical Curable', 'Digital Curable', 'Email Curable'].includes(editForm.designation)) && (
+                  <div style={{ gridColumn: "span 2" }}>
+                    <CategoryWiseBankSelector
+                      allBanks={allBanks}
+                      categoryAssignments={editCategoryAssignments}
+                      onChange={setEditCategoryAssignments}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "16px", borderTop: `1px solid #F3F4F6`, paddingTop: "20px" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  style={{ background: "#FFFFFF", border: "1px solid #D1D5DB", color: "#374151", padding: "10px 20px", borderRadius: "8px", fontSize: "14px", fontWeight: 600, cursor: "pointer" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingEdit}
+                  style={{ background: "#2563EB", border: "none", color: "#FFFFFF", padding: "10px 20px", borderRadius: "8px", fontSize: "14px", fontWeight: 600, cursor: submittingEdit ? "not-allowed" : "pointer", opacity: submittingEdit ? 0.7 : 1 }}
+                >
+                  {submittingEdit ? 'Saving Changes...' : 'Save Admin Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+
+      {/* Assign Banks Modal */}
+      {bankModalOpen && selectedOpHead && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(17, 24, 39, 0.7)", zIndex: 9999,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "20px", backdropFilter: "blur(4px)"
+        }}>
+          <div style={{ background: "#FFFFFF", borderRadius: "16px", padding: "24px", maxWidth: "600px", width: "100%", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)" }}>
+            <div style={{ borderBottom: `1px solid #F3F4F6`, paddingBottom: "14px", marginBottom: "16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h3 style={{ fontSize: "18px", fontWeight: 800, color: "#111827", margin: 0 }}>Assign Category & Bank Access</h3>
+                <p style={{ fontSize: "13px", color: "#6B7280", margin: "2px 0 0 0" }}>
+                  Operator: <strong style={{ color: "#2563EB" }}>{selectedOpHead.fullName || selectedOpHead.full_name}</strong> ({selectedOpHead.department || selectedOpHead.designation || 'Admin'})
+                </p>
+              </div>
+              <button onClick={() => setBankModalOpen(false)} style={{ background: "#F3F4F6", border: "none", color: "#4B5563", cursor: "pointer", width: "32px", height: "32px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <CategoryWiseBankSelector
+              allBanks={allBanks}
+              categoryAssignments={opHeadCategoryAssignments}
+              onChange={setOpHeadCategoryAssignments}
+            />
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "20px", paddingTop: "14px", borderTop: "1px solid #F3F4F6" }}>
+              <button
+                type="button"
+                onClick={() => setBankModalOpen(false)}
+                style={{ background: "#FFFFFF", border: "1px solid #D1D5DB", color: "#374151", padding: "10px 18px", borderRadius: "8px", fontSize: "14px", fontWeight: 600, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!selectedOpHead) return;
+                  try {
+                    await api.put(`/superadmin/admins/${selectedOpHead._id || selectedOpHead.id}/banks`, {
+                      category_assignments: opHeadCategoryAssignments,
+                      bank_ids: opHeadCategoryAssignments.map(a => a.bank_id)
+                    });
+                    setBankModalOpen(false);
+                    fetchAdmins();
+                  } catch (err) {
+                    alert(err.response?.data?.message || 'Failed to update bank assignments');
+                  }
+                }}
+                style={{ background: "#2563EB", border: "none", color: "#FFFFFF", padding: "10px 24px", borderRadius: "8px", fontSize: "14px", fontWeight: 600, cursor: "pointer" }}
+              >
+                Save Category Access
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification Banner */}
+      {actionToast && (
+        <div style={{
+          position: "fixed",
+          bottom: "24px",
+          right: "24px",
+          zIndex: 10000,
+          background: actionToast.type === 'success' ? '#065F46' : '#991B1B',
+          color: '#FFFFFF',
+          padding: '12px 20px',
+          borderRadius: '10px',
+          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.2)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          fontSize: '14px',
+          fontWeight: 600
+        }}>
+          {actionToast.type === 'success' ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+          <span>{actionToast.message}</span>
+          <button
+            onClick={() => setActionToast(null)}
+            style={{ background: 'transparent', border: 'none', color: '#FFFFFF', cursor: 'pointer', padding: 0, marginLeft: '8px' }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {/* Account Activation / Deactivation Confirmation & Scheduling Modal */}
+      {statusModal.isOpen && statusModal.admin && (() => {
+        const admin = statusModal.admin;
+        const targetId = admin._id || admin.id;
+        const currentUserId = currentUser?.id || currentUser?._id;
+        const isSelf = targetId === currentUserId || admin.email === currentUser?.email;
+        const activeSuperAdmins = directoryAdmins.filter(a =>
+          String(a.role || '').toUpperCase() === 'SUPER_ADMIN' &&
+          getAccountLifecycleStatus(a) === 'ACTIVE'
+        );
+        const isLastSuperAdmin = statusModal.targetAction === 'DEACTIVATE' &&
+          String(admin.role || '').toUpperCase() === 'SUPER_ADMIN' &&
+          activeSuperAdmins.length <= 1 &&
+          (activeSuperAdmins[0]?._id === targetId || activeSuperAdmins[0]?.id === targetId);
+        const isActionBlocked = (statusModal.targetAction === 'DEACTIVATE' && isSelf) || isLastSuperAdmin;
+        const presets = getShiftPresets(admin);
+        const currentStatus = getAccountLifecycleStatus(admin);
+        const isAct = statusModal.targetAction === 'ACTIVATE';
+
+        return (
+          <div style={{
+            position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+            background: "rgba(15, 23, 42, 0.7)", zIndex: 9999,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: "20px", backdropFilter: "blur(4px)"
+          }}>
+            <div style={{
+              background: "#FFFFFF",
+              borderRadius: "16px",
+              padding: "24px",
+              maxWidth: "580px",
+              width: "100%",
+              maxHeight: "90vh",
+              overflowY: "auto",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)"
+            }}>
+              {/* Modal Header */}
+              <div style={{ borderBottom: "1px solid #F1F5F9", paddingBottom: "16px", marginBottom: "18px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <div style={{
+                    width: "38px",
+                    height: "38px",
+                    borderRadius: "10px",
+                    background: isAct ? "#ECFDF5" : "#FEF2F2",
+                    color: isAct ? "#059669" : "#DC2626",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center"
+                  }}>
+                    {isAct ? <UserCheck size={20} /> : <UserX size={20} />}
+                  </div>
+                  <div>
+                    <h3 style={{ fontSize: "18px", fontWeight: 800, color: "#0F172A", margin: 0 }}>
+                      {statusModal.mode === 'SCHEDULED' ? `Schedule ${isAct ? 'Activation' : 'Deactivation'}` : `${isAct ? 'Activate' : 'Deactivate'} Account`}
+                    </h3>
+                    <p style={{ fontSize: "13px", color: "#64748B", margin: "2px 0 0 0" }}>
+                      Confirm account status transition & working hours alignment
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setStatusModal(prev => ({ ...prev, isOpen: false, admin: null }))}
+                  style={{ background: "#F1F5F9", border: "none", color: "#64748B", cursor: "pointer", width: "32px", height: "32px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Safety Rule Warning Banner */}
+              {isSelf && statusModal.targetAction === 'DEACTIVATE' && (
+                <div style={{ background: "#FEF2F2", border: "1px solid #FCA5A5", borderRadius: "10px", padding: "12px 14px", marginBottom: "16px", display: "flex", alignItems: "flex-start", gap: "10px" }}>
+                  <ShieldAlert size={18} color="#DC2626" style={{ flexShrink: 0, marginTop: "2px" }} />
+                  <div>
+                    <div style={{ fontSize: "13px", fontWeight: 700, color: "#991B1B" }}>Self-Deactivation Prohibited</div>
+                    <div style={{ fontSize: "12px", color: "#B91C1C", marginTop: "2px" }}>
+                      Security policy prevents Super Admins from deactivating their own account to prevent lockouts.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {isLastSuperAdmin && (
+                <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: "10px", padding: "12px 14px", marginBottom: "16px", display: "flex", alignItems: "flex-start", gap: "10px" }}>
+                  <AlertTriangle size={18} color="#D97706" style={{ flexShrink: 0, marginTop: "2px" }} />
+                  <div>
+                    <div style={{ fontSize: "13px", fontWeight: 700, color: "#92400E" }}>Last Active Super Admin Protected</div>
+                    <div style={{ fontSize: "12px", color: "#B45309", marginTop: "2px" }}>
+                      This user is the only active Super Admin. System requires at least one active Super Admin to retain system governance.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Account Details Card */}
+              <div style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: "12px", padding: "14px 16px", marginBottom: "16px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "12px" }}>
+                  <div>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#64748B", textTransform: "uppercase" }}>Account Name</span>
+                    <div style={{ fontSize: "14px", fontWeight: 700, color: "#0F172A", marginTop: "2px" }}>
+                      {admin.fullName || admin.email}
+                    </div>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#64748B", textTransform: "uppercase" }}>Role & Designation</span>
+                    <div style={{ fontSize: "13px", fontWeight: 600, color: "#334155", marginTop: "2px" }}>
+                      {admin.role} • {admin.designation || 'Admin'}
+                    </div>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#64748B", textTransform: "uppercase" }}>Account ID</span>
+                    <div style={{ fontFamily: "monospace", fontSize: "12px", color: "#475569", marginTop: "2px" }}>
+                      {targetId}
+                    </div>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#64748B", textTransform: "uppercase" }}>Current Status</span>
+                    <div style={{ marginTop: "2px" }}>
+                      <span style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "5px",
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        padding: "2px 8px",
+                        borderRadius: "12px",
+                        background: currentStatus === 'ACTIVE' ? '#ECFDF5' : (currentStatus === 'SCHEDULED' ? '#F5F3FF' : '#F1F5F9'),
+                        color: currentStatus === 'ACTIVE' ? '#059669' : (currentStatus === 'SCHEDULED' ? '#6D3DF5' : '#64748B'),
+                        border: `1px solid ${currentStatus === 'ACTIVE' ? '#A7F3D0' : (currentStatus === 'SCHEDULED' ? '#DDD6FE' : '#CBD5E1')}`
+                      }}>
+                        {currentStatus}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Working Hours & Timezone Context */}
+              <div style={{ background: "#EEF2FF", border: "1px solid #C7D2FE", borderRadius: "12px", padding: "14px 16px", marginBottom: "18px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                  <Clock size={15} color="#4F46E5" />
+                  <span style={{ fontSize: "13px", fontWeight: 700, color: "#312E81" }}>Working Hours & Shift Policy</span>
+                </div>
+                <div style={{ fontSize: "12px", color: "#3730A3", display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px" }}>
+                  <div>
+                    <span style={{ opacity: 0.8 }}>Shift Schedule:</span> <strong>{admin.working_hours?.schedule || '09:30 AM - 08:00 PM IST (Mon-Sat)'}</strong>
+                  </div>
+                  <div>
+                    <span style={{ opacity: 0.8 }}>Timezone:</span> <strong>{admin.working_hours?.timezone || 'Asia/Kolkata'}</strong>
+                  </div>
+                  <div>
+                    <span style={{ opacity: 0.8 }}>Shift Status:</span> <strong>{admin.working_hours?.currentStatusTag || 'Unrestricted'}</strong>
+                  </div>
+                  <div>
+                    <span style={{ opacity: 0.8 }}>Access Enforcement:</span> <strong>{admin.role === 'SUPER_ADMIN' ? '24/7 Super Admin' : 'Working-Hours Bound'}</strong>
+                  </div>
+                </div>
+                <div style={{ fontSize: "11px", color: "#4338CA", marginTop: "8px", borderTop: "1px dashed #C7D2FE", paddingTop: "6px" }}>
+                  <Info size={12} style={{ display: "inline", verticalAlign: "middle", marginRight: "4px" }} />
+                  Account status determines enabled/disabled lifecycle. Deactivating terminates active sessions and blocks future logins.
+                </div>
+              </div>
+
+              {/* Mode Selection Tabs (Immediate vs Scheduled) */}
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "block", marginBottom: "6px" }}>
+                  Execution Timing *
+                </label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                  <button
+                    type="button"
+                    onClick={() => setStatusModal(prev => ({ ...prev, mode: 'IMMEDIATE', error: '' }))}
+                    style={{
+                      padding: "10px",
+                      borderRadius: "8px",
+                      border: "1.5px solid",
+                      borderColor: statusModal.mode === 'IMMEDIATE' ? '#6D3DF5' : '#E2E8F0',
+                      background: statusModal.mode === 'IMMEDIATE' ? '#F5F3FF' : '#FFFFFF',
+                      color: statusModal.mode === 'IMMEDIATE' ? '#6D3DF5' : '#475569',
+                      fontSize: "13px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "6px"
+                    }}
+                  >
+                    <CheckCircle2 size={15} /> Immediate Execution
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStatusModal(prev => ({ ...prev, mode: 'SCHEDULED', error: '' }))}
+                    style={{
+                      padding: "10px",
+                      borderRadius: "8px",
+                      border: "1.5px solid",
+                      borderColor: statusModal.mode === 'SCHEDULED' ? '#6D3DF5' : '#E2E8F0',
+                      background: statusModal.mode === 'SCHEDULED' ? '#F5F3FF' : '#FFFFFF',
+                      color: statusModal.mode === 'SCHEDULED' ? '#6D3DF5' : '#475569',
+                      fontSize: "13px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "6px"
+                    }}
+                  >
+                    <Clock size={15} /> Schedule for Later
+                  </button>
+                </div>
+              </div>
+
+              {/* Scheduled Time Pickers and Shift Boundary Presets */}
+              {statusModal.mode === 'SCHEDULED' && (
+                <div style={{ background: "#FAFAFA", border: "1px solid #E2E8F0", borderRadius: "10px", padding: "14px", marginBottom: "16px" }}>
+                  <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "block", marginBottom: "6px" }}>
+                    Scheduled Time (Asia/Kolkata IST) *
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={statusModal.scheduledAt}
+                    onChange={(e) => setStatusModal(prev => ({ ...prev, scheduledAt: e.target.value }))}
+                    style={{
+                      width: "100%",
+                      padding: "9px 12px",
+                      borderRadius: "8px",
+                      border: "1px solid #CBD5E1",
+                      fontSize: "13px",
+                      outline: "none",
+                      boxSizing: "border-box",
+                      marginBottom: "10px"
+                    }}
+                  />
+
+                  {/* Shift Boundary Presets */}
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#64748B" }}>Presets:</span>
+                    <button
+                      type="button"
+                      onClick={() => setStatusModal(prev => ({ ...prev, scheduledAt: presets.nextStartIso }))}
+                      style={{ padding: "4px 8px", fontSize: "11px", fontWeight: 600, background: "#FFFFFF", border: "1px solid #CBD5E1", borderRadius: "6px", cursor: "pointer", color: "#334155" }}
+                    >
+                      {presets.startLabel}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatusModal(prev => ({ ...prev, scheduledAt: presets.nextEndIso }))}
+                      style={{ padding: "4px 8px", fontSize: "11px", fontWeight: 600, background: "#FFFFFF", border: "1px solid #CBD5E1", borderRadius: "6px", cursor: "pointer", color: "#334155" }}
+                    >
+                      {presets.endLabel}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatusModal(prev => ({ ...prev, scheduledAt: presets.inOneHourIso }))}
+                      style={{ padding: "4px 8px", fontSize: "11px", fontWeight: 600, background: "#FFFFFF", border: "1px solid #CBD5E1", borderRadius: "6px", cursor: "pointer", color: "#334155" }}
+                    >
+                      In 1 Hour
+                    </button>
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#64748B", marginTop: "8px" }}>
+                    Scheduler background daemon evaluates pending tasks every 60 seconds.
+                  </div>
+                </div>
+              )}
+
+              {/* Reason Field */}
+              <div style={{ marginBottom: "18px" }}>
+                <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "block", marginBottom: "6px" }}>
+                  Reason / Notes ({isAct ? 'Optional' : 'Recommended'})
+                </label>
+                <textarea
+                  rows={2}
+                  value={statusModal.reason}
+                  onChange={(e) => setStatusModal(prev => ({ ...prev, reason: e.target.value }))}
+                  placeholder={isAct ? "Reason for account reactivation (e.g. Return from leave, policy review passed)..." : "Reason for deactivation (e.g. Offboarding, shift completion, security precaution)..."}
+                  style={{
+                    width: "100%",
+                    padding: "9px 12px",
+                    borderRadius: "8px",
+                    border: "1px solid #CBD5E1",
+                    fontSize: "13px",
+                    outline: "none",
+                    boxSizing: "border-box",
+                    resize: "vertical"
+                  }}
+                />
+              </div>
+
+              {/* Error Alert */}
+              {statusModal.error && (
+                <div style={{ background: "#FEF2F2", border: "1px solid #FCA5A5", borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: "#B91C1C", display: "flex", alignItems: "center", gap: "6px" }}>
+                  <AlertTriangle size={15} />
+                  <span>{statusModal.error}</span>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", borderTop: "1px solid #F1F5F9", paddingTop: "16px" }}>
+                <button
+                  type="button"
+                  onClick={() => setStatusModal(prev => ({ ...prev, isOpen: false, admin: null }))}
+                  style={{
+                    background: "#FFFFFF",
+                    border: "1px solid #CBD5E1",
+                    color: "#334155",
+                    padding: "9px 18px",
+                    borderRadius: "8px",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    cursor: "pointer"
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isActionBlocked || statusModal.submitting}
+                  onClick={handleConfirmStatusChange}
+                  style={{
+                    background: isActionBlocked ? "#94A3B8" : (isAct ? "#059669" : "#DC2626"),
+                    border: "none",
+                    color: "#FFFFFF",
+                    padding: "9px 22px",
+                    borderRadius: "8px",
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    cursor: (isActionBlocked || statusModal.submitting) ? "not-allowed" : "pointer",
+                    opacity: (isActionBlocked || statusModal.submitting) ? 0.7 : 1,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px"
+                  }}
+                >
+                  {statusModal.submitting ? (
+                    <>
+                      <div className="animate-spin" style={{ width: "14px", height: "14px", border: "2px solid #FFFFFF", borderTopColor: "transparent", borderRadius: "50%" }}></div>
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      {isAct ? <UserCheck size={16} /> : <UserX size={16} />}
+                      {statusModal.mode === 'SCHEDULED' ? `Schedule ${isAct ? 'Activation' : 'Deactivation'}` : `Confirm ${isAct ? 'Activation' : 'Deactivation'}`}
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Account Status Change Audit History Modal */}
+      {auditModal.isOpen && auditModal.admin && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(15, 23, 42, 0.7)", zIndex: 9999,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "20px", backdropFilter: "blur(4px)"
+        }}>
+          <div style={{
+            background: "#FFFFFF",
+            borderRadius: "16px",
+            padding: "24px",
+            maxWidth: "680px",
+            width: "100%",
+            maxHeight: "85vh",
+            overflowY: "auto",
+            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)"
+          }}>
+            {/* Header */}
+            <div style={{ borderBottom: "1px solid #F1F5F9", paddingBottom: "14px", marginBottom: "16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div style={{ width: "36px", height: "36px", borderRadius: "10px", background: "#F5F3FF", color: "#6D3DF5", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <History size={18} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: "17px", fontWeight: 800, color: "#0F172A", margin: 0 }}>Status Change Audit History</h3>
+                  <p style={{ fontSize: "12px", color: "#64748B", margin: "2px 0 0 0" }}>
+                    Account: <strong style={{ color: "#334155" }}>{auditModal.admin.fullName || auditModal.admin.email}</strong> • Role: {auditModal.admin.role}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setAuditModal(prev => ({ ...prev, isOpen: false, admin: null }))}
+                style={{ background: "#F1F5F9", border: "none", color: "#64748B", cursor: "pointer", width: "30px", height: "30px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Content */}
+            {auditModal.loading ? (
+              <div style={{ textAlign: "center", padding: "48px 0", color: "#64748B" }}>
+                <div className="animate-spin" style={{ width: "28px", height: "28px", border: "3px solid #6D3DF5", borderTopColor: "transparent", borderRadius: "50%", margin: "0 auto 12px" }}></div>
+                Loading audit trail...
+              </div>
+            ) : auditModal.error ? (
+              <div style={{ padding: "16px", textAlign: "center", color: "#DC2626", background: "#FEF2F2", borderRadius: "10px", border: "1px solid #FCA5A5" }}>
+                <p style={{ fontWeight: 600, margin: 0 }}>{auditModal.error}</p>
+              </div>
+            ) : auditModal.history.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "48px 0", color: "#64748B" }}>
+                <p style={{ fontSize: "14px", color: "#334155", margin: 0 }}>No status changes recorded for this account yet.</p>
+                <span style={{ fontSize: "12px", color: "#94A3B8" }}>All activation and deactivation events are logged in immutable append-only audit trail.</span>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                {auditModal.history.map((item, idx) => {
+                  const act = String(item.action || '').toUpperCase();
+                  const isAct = act === 'ACTIVATE';
+                  const isDeact = act === 'DEACTIVATE';
+
+                  return (
+                    <div key={item.id || idx} style={{
+                      border: "1px solid #E2E8F0",
+                      borderRadius: "10px",
+                      padding: "12px 16px",
+                      background: "#FAFAFA",
+                      transition: "background 0.15s"
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px", flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <span style={{
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            padding: "2px 8px",
+                            borderRadius: "12px",
+                            background: isAct ? '#ECFDF5' : (isDeact ? '#FEF2F2' : '#F5F3FF'),
+                            color: isAct ? '#059669' : (isDeact ? '#DC2626' : '#6D3DF5'),
+                            border: `1px solid ${isAct ? '#A7F3D0' : (isDeact ? '#FCA5A5' : '#DDD6FE')}`
+                          }}>
+                            {item.action || 'STATUS_UPDATE'}
+                          </span>
+                          <span style={{ fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                            {item.previous_status || 'UNKNOWN'} <ArrowRight size={12} style={{ display: "inline", verticalAlign: "middle" }} /> {item.new_status || 'UNKNOWN'}
+                          </span>
+                        </div>
+                        <span style={{ fontSize: "12px", color: "#64748B", fontWeight: 500 }}>
+                          {formatDateTimeIST(item.timestamp || item.created_at)}
+                        </span>
+                      </div>
+
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px", fontSize: "12px", color: "#475569" }}>
+                        <div>
+                          <span>Administrator: </span>
+                          <strong style={{ color: "#0F172A" }}>{item.admin_name || item.changed_by_name || item.changed_by || 'Super Admin'}</strong>
+                          {item.is_scheduled && (
+                            <span style={{ marginLeft: "8px", fontSize: "10px", background: "#F5F3FF", color: "#6D3DF5", padding: "1px 6px", borderRadius: "4px", border: "1px solid #DDD6FE" }}>
+                              Scheduled Execution
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {item.reason && (
+                        <div style={{ marginTop: "6px", fontSize: "12px", color: "#64748B", background: "#FFFFFF", padding: "6px 10px", borderRadius: "6px", border: "1px solid #E2E8F0" }}>
+                          <span style={{ fontWeight: 600, color: "#475569" }}>Reason:</span> {item.reason}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "20px", borderTop: "1px solid #F1F5F9", paddingTop: "14px" }}>
+              <button
+                type="button"
+                onClick={() => setAuditModal(prev => ({ ...prev, isOpen: false, admin: null }))}
+                style={{
+                  background: "#2563EB",
+                  border: "none",
+                  color: "#FFFFFF",
+                  padding: "8px 20px",
+                  borderRadius: "8px",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: "pointer"
+                }}
+              >
+                Close Audit History
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Administrator Account Modal (Temporary & Permanent) */}
+      {adminDeleteModal.isOpen && adminDeleteModal.admin && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 10000,
+          backgroundColor: "rgba(15, 23, 42, 0.65)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "16px", backdropFilter: "blur(4px)"
+        }}>
+          <div style={{
+            backgroundColor: "#FFFFFF", borderRadius: "16px",
+            maxWidth: "520px", width: "100%",
+            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+            overflow: "hidden", border: "1px solid #E2E8F0",
+            fontFamily: "'Inter', sans-serif"
+          }}>
+            {/* Header */}
+            <div style={{
+              padding: "20px 24px",
+              borderBottom: "1px solid #F1F5F9",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              backgroundColor: adminDeleteModal.mode === "permanent" ? "#FEF2F2" : "#FFFBEB"
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <div style={{
+                  width: "40px", height: "40px", borderRadius: "10px",
+                  backgroundColor: adminDeleteModal.mode === "permanent" ? "#FEE2E2" : "#FEF3C7",
+                  color: adminDeleteModal.mode === "permanent" ? "#DC2626" : "#D97706",
+                  display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
+                }}>
+                  <Trash2 size={20} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "17px", fontWeight: 800, color: "#0F172A" }}>
+                    {adminDeleteModal.mode === "permanent" ? "Permanently Delete Administrator" : "Temporary Delete (Deactivate)"}
+                  </h3>
+                  <div style={{ fontSize: "12px", color: "#64748B", marginTop: "2px" }}>
+                    {adminDeleteModal.admin.name || adminDeleteModal.admin.full_name} ({adminDeleteModal.admin.email})
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setAdminDeleteModal({ isOpen: false, admin: null, mode: "temporary", confirmText: "", loading: false })}
+                style={{ background: "none", border: "none", color: "#94A3B8", cursor: "pointer", padding: "4px" }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: "24px" }}>
+              {/* Mode Selector Tabs */}
+              <div style={{
+                display: "flex", gap: "8px", padding: "4px",
+                backgroundColor: "#F1F5F9", borderRadius: "10px", marginBottom: "20px"
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setAdminDeleteModal(prev => ({ ...prev, mode: "temporary" }))}
+                  style={{
+                    flex: 1, padding: "9px 12px", borderRadius: "8px", border: "none",
+                    fontSize: "13px", fontWeight: 700, cursor: "pointer",
+                    backgroundColor: adminDeleteModal.mode === "temporary" ? "#FFFFFF" : "transparent",
+                    color: adminDeleteModal.mode === "temporary" ? "#D97706" : "#64748B",
+                    boxShadow: adminDeleteModal.mode === "temporary" ? "0 2px 6px rgba(0,0,0,0.06)" : "none"
+                  }}
+                >
+                  🟡 Temporary Delete
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdminDeleteModal(prev => ({ ...prev, mode: "permanent" }))}
+                  style={{
+                    flex: 1, padding: "9px 12px", borderRadius: "8px", border: "none",
+                    fontSize: "13px", fontWeight: 700, cursor: "pointer",
+                    backgroundColor: adminDeleteModal.mode === "permanent" ? "#FFFFFF" : "transparent",
+                    color: adminDeleteModal.mode === "permanent" ? "#DC2626" : "#64748B",
+                    boxShadow: adminDeleteModal.mode === "permanent" ? "0 2px 6px rgba(0,0,0,0.06)" : "none"
+                  }}
+                >
+                  🔴 Permanent Delete
+                </button>
+              </div>
+
+              {/* Admin Info Card */}
+              <div style={{
+                padding: "12px 16px", backgroundColor: "#F8FAFC", borderRadius: "10px",
+                border: "1px solid #E2E8F0", marginBottom: "16px", fontSize: "13px", lineHeight: 1.6
+              }}>
+                <div><strong>Admin Name:</strong> {adminDeleteModal.admin.name || adminDeleteModal.admin.full_name}</div>
+                <div><strong>Email:</strong> {adminDeleteModal.admin.email}</div>
+                <div><strong>Role / Scope:</strong> {adminDeleteModal.admin.role || "ADMIN"} {adminDeleteModal.admin.assigned_scope ? `(${adminDeleteModal.admin.assigned_scope})` : ""}</div>
+              </div>
+
+              {adminDeleteModal.mode === "temporary" ? (
+                <div style={{
+                  padding: "12px 16px", backgroundColor: "#FFFBEB", borderRadius: "10px",
+                  border: "1px solid #FDE68A", color: "#92400E", fontSize: "13px", lineHeight: 1.5, marginBottom: "20px"
+                }}>
+                  <strong>Temporary Deletion (Soft Delete):</strong>
+                  <p style={{ margin: "6px 0 0" }}>
+                    The administrator account will be marked as suspended and active login sessions will be immediately invalidated. All audit logs, actions performed, and assigned data will remain preserved in the system. The account can be restored at any time.
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <div style={{
+                    padding: "12px 16px", backgroundColor: "#FEF2F2", borderRadius: "10px",
+                    border: "1px solid #FECACA", color: "#991B1B", fontSize: "13px", lineHeight: 1.5, marginBottom: "16px"
+                  }}>
+                    <strong>CAUTION: Permanent Deletion (Hard Delete / Purge):</strong>
+                    <p style={{ margin: "6px 0 0" }}>
+                      This administrator user, authentication credentials, permissions, and non-immutable records will be permanently removed from the database. <strong>THIS CANNOT BE UNDONE.</strong>
+                    </p>
+                  </div>
+
+                  <div style={{ marginBottom: "20px" }}>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
+                      Type <span style={{ color: "#DC2626", fontWeight: 900 }}>DELETE</span> to confirm permanent deletion:
+                    </label>
+                    <input
+                      type="text"
+                      value={adminDeleteModal.confirmText}
+                      onChange={e => setAdminDeleteModal(prev => ({ ...prev, confirmText: e.target.value }))}
+                      placeholder="DELETE"
+                      style={{
+                        width: "100%", padding: "10px 14px", borderRadius: "8px",
+                        border: "1.5px solid #CBD5E1", fontSize: "14px", fontWeight: 700,
+                        outline: "none", boxSizing: "border-box"
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  onClick={() => setAdminDeleteModal({ isOpen: false, admin: null, mode: "temporary", confirmText: "", loading: false })}
+                  disabled={adminDeleteModal.loading}
+                  style={{
+                    padding: "10px 18px", borderRadius: "8px", border: "1px solid #CBD5E1",
+                    backgroundColor: "#FFFFFF", color: "#475569", fontSize: "13px",
+                    fontWeight: 700, cursor: adminDeleteModal.loading ? "not-allowed" : "pointer"
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={executeDeleteAdmin}
+                  disabled={adminDeleteModal.loading || (adminDeleteModal.mode === "permanent" && adminDeleteModal.confirmText.trim().toUpperCase() !== "DELETE")}
+                  style={{
+                    padding: "10px 20px", borderRadius: "8px", border: "none",
+                    backgroundColor: adminDeleteModal.mode === "permanent" ? "#DC2626" : "#D97706",
+                    color: "#FFFFFF", fontSize: "13px", fontWeight: 800,
+                    cursor: (adminDeleteModal.loading || (adminDeleteModal.mode === "permanent" && adminDeleteModal.confirmText.trim().toUpperCase() !== "DELETE")) ? "not-allowed" : "pointer",
+                    opacity: (adminDeleteModal.mode === "permanent" && adminDeleteModal.confirmText.trim().toUpperCase() !== "DELETE") ? 0.6 : 1,
+                    boxShadow: adminDeleteModal.mode === "permanent" ? "0 4px 12px rgba(220, 38, 38, 0.3)" : "0 4px 12px rgba(217, 119, 6, 0.3)"
+                  }}
+                >
+                  {adminDeleteModal.loading ? "Processing..." : (adminDeleteModal.mode === "permanent" ? "Permanently Delete" : "Confirm Temporary Delete")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,5186 @@
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
+const { query } = require('../../config/database');
+const logger = require('../../config/logger');
+
+// Helper to add an enum value idempotently
+async function addEnumValue(typeName, valName) {
+  try {
+    const { rows } = await query(`
+      SELECT 1 FROM pg_type t
+      JOIN pg_enum e ON t.oid = e.enumtypid
+      WHERE t.typname = $1 AND e.enumlabel = $2
+    `, [typeName, valName]);
+    if (rows.length === 0) {
+      await query(`ALTER TYPE ${typeName} ADD VALUE '${valName}'`);
+      logger.info(`Added enum value '${valName}' to type '${typeName}'`);
+    }
+  } catch (err) {
+    logger.error(`Failed to add enum value '${valName}' to type '${typeName}':`, err);
+  }
+}
+
+// Helper to rename an enum value idempotently
+async function renameEnumValue(typeName, oldVal, newVal) {
+  try {
+    const { rows: oldRows } = await query(`
+      SELECT 1 FROM pg_type t
+      JOIN pg_enum e ON t.oid = e.enumtypid
+      WHERE t.typname = $1 AND e.enumlabel = $2
+    `, [typeName, oldVal]);
+    
+    const { rows: newRows } = await query(`
+      SELECT 1 FROM pg_type t
+      JOIN pg_enum e ON t.oid = e.enumtypid
+      WHERE t.typname = $1 AND e.enumlabel = $2
+    `, [typeName, newVal]);
+
+    if (oldRows.length > 0 && newRows.length === 0) {
+      await query(`ALTER TYPE ${typeName} RENAME VALUE '${oldVal}' TO '${newVal}'`);
+      logger.info(`Renamed enum value '${oldVal}' to '${newVal}' in type '${typeName}'`);
+    }
+  } catch (err) {
+    logger.error(`Failed to rename enum value from '${oldVal}' to '${newVal}' in type '${typeName}':`, err);
+  }
+}
+
+const migrate = async () => {
+  logger.info('Running migrations...');
+
+  // ── Extensions ────────────────────────────────────────────────
+  await query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
+  await query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto"`);
+
+  // ── ENUM types ────────────────────────────────────────────────
+  await query(`
+    DO $$ BEGIN
+      CREATE TYPE user_role AS ENUM ('SUPER_ADMIN','ADMIN','EMPLOYEE','PARTNER');
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$
+  `);
+  await renameEnumValue('user_role', 'super_admin', 'SUPER_ADMIN');
+  await renameEnumValue('user_role', 'admin', 'ADMIN');
+  await renameEnumValue('user_role', 'employee', 'EMPLOYEE');
+  await renameEnumValue('user_role', 'Partner', 'PARTNER');
+  await addEnumValue('user_role', 'TEAM_MEMBER');
+  try { await query(`ALTER TABLE users ALTER COLUMN role SET DEFAULT 'PARTNER'`); } catch (err) {}
+  await query(`
+    DO $$ BEGIN
+      CREATE TYPE user_status AS ENUM ('pending','active','suspended','rejected');
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$
+  `);
+  await addEnumValue('user_status', 'inactive');
+  await addEnumValue('user_status', 'pending_verification');
+  await addEnumValue('user_status', 'blocked');
+  await query(`
+    DO $$ BEGIN
+      CREATE TYPE kyc_status AS ENUM ('pending','under_review','approved','rejected');
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$
+  `);
+  await addEnumValue('kyc_status', 'draft');
+  await query(`
+    DO $$ BEGIN
+      CREATE TYPE application_status AS ENUM ('draft','submitted','under_review','approved','rejected','disbursed');
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$
+  `);
+  await addEnumValue('application_status', 'confirmed');
+  await addEnumValue('application_status', 'pending');
+  await addEnumValue('application_status', 'initiated');
+  await addEnumValue('application_status', 'lead_created');
+  await addEnumValue('application_status', 'in_process');
+  await addEnumValue('application_status', 'application_started');
+  await addEnumValue('application_status', 'application_submitted');
+  await addEnumValue('application_status', 'application_number_received');
+  await addEnumValue('application_status', 'vkyc_pending');
+  await addEnumValue('application_status', 'vkyc_completed');
+  await addEnumValue('application_status', 'details_submitted');
+  await addEnumValue('application_status', 'operational_verified');
+  await addEnumValue('application_status', 'correction_required');
+  await addEnumValue('application_status', 'super_admin_approved');
+  await addEnumValue('application_status', 'commission_processing');
+  await addEnumValue('application_status', 'commission_released');
+  await addEnumValue('application_status', 'commission_received');
+  await addEnumValue('application_status', 'bank_form_submitted');
+  await addEnumValue('application_status', 'sanctioned');
+  await addEnumValue('application_status', 'cancelled');
+  await query(`
+    DO $$ BEGIN
+      CREATE TYPE product_category AS ENUM ('credit_card','personal_loan','home_loan','business_loan',
+        'instant_loan','used_car_loan','education_loan','lac','health_insurance',
+        'life_insurance','general_insurance','fd_card','co_branded_card','investment','card_on_loan');
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$
+  `);
+  await addEnumValue('product_category', 'card_on_loan');
+  await addEnumValue('product_category', 'insurance');
+  await addEnumValue('product_category', 'smart_emi');
+  await addEnumValue('product_category', 'loan_on_credit_card');
+  await addEnumValue('product_category', 'loc_eoc');
+  await query(`
+    DO $$ BEGIN
+      CREATE TYPE wallet_txn_type AS ENUM ('credit','debit');
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$
+  `);
+  await query(`
+    DO $$ BEGIN
+      CREATE TYPE wallet_txn_status AS ENUM ('pending','approved','rejected','processed','cancelled','failed','completed','processing','refunded','declined');
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$
+  `);
+  await addEnumValue('wallet_txn_status', 'cancelled');
+  await addEnumValue('wallet_txn_status', 'failed');
+  await addEnumValue('wallet_txn_status', 'completed');
+  await addEnumValue('wallet_txn_status', 'processing');
+  await addEnumValue('wallet_txn_status', 'refunded');
+  await addEnumValue('wallet_txn_status', 'declined');
+  await addEnumValue('wallet_txn_status', 'held');
+  await addEnumValue('wallet_txn_status', 'on_hold');
+
+  await query(`
+    DO $$ BEGIN
+      CREATE TYPE ledger_transaction_type AS ENUM (
+        'PERSONAL_COMMISSION', 
+        'TEAM_COMMISSION', 
+        'REFERRAL_BONUS', 
+        'CAMPAIGN_BONUS', 
+        'SETTLEMENT', 
+        'WITHDRAWAL', 
+        'ADJUSTMENT', 
+        'REVERSAL', 
+        'REFUND',
+        'TDS_DEDUCTION',
+        'COMMISSION_RELEASE',
+        'OVERRIDE_COMMISSION'
+      );
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$
+  `);
+  await addEnumValue('ledger_transaction_type', 'TDS_DEDUCTION');
+  await addEnumValue('ledger_transaction_type', 'COMMISSION_RELEASE');
+  await addEnumValue('ledger_transaction_type', 'OVERRIDE_COMMISSION');
+
+  await query(`
+    DO $$ BEGIN
+      ALTER TABLE wallet_ledger ALTER COLUMN transaction_type TYPE VARCHAR(100) USING transaction_type::text;
+    EXCEPTION WHEN OTHERS THEN NULL; END $$
+  `);
+
+  await query(`
+    DO $$ BEGIN
+      CREATE TYPE withdrawal_status AS ENUM ('pending','approved','processed','rejected','cancelled','failed');
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$
+  `);
+  await addEnumValue('withdrawal_status', 'cancelled');
+  await addEnumValue('withdrawal_status', 'failed');
+
+  // Create sequence for Partner code generation
+  await query(`CREATE SEQUENCE IF NOT EXISTS partner_code_seq START 1000`);
+  await query(`CREATE SEQUENCE IF NOT EXISTS app_number_seq START 10000`);
+
+  // ── Users (all roles) ─────────────────────────────────────────────────────
+  // firebase_uid is the primary identity — email/mobile may be null for
+  // phone-only or email-only Firebase accounts.
+  await query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      firebase_uid  VARCHAR(255) UNIQUE,
+      email         VARCHAR(255) UNIQUE,
+      mobile        VARCHAR(15)  UNIQUE,
+      role          user_role NOT NULL DEFAULT 'PARTNER',
+      status        user_status NOT NULL DEFAULT 'pending',
+      password_hash VARCHAR(255),
+      full_name     VARCHAR(255),
+      employee_id   VARCHAR(50) UNIQUE,
+      department    VARCHAR(100),
+      designation   VARCHAR(100),
+      is_active     BOOLEAN DEFAULT TRUE,
+      created_by    UUID REFERENCES users(id),
+      created_at    TIMESTAMPTZ DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ DEFAULT NOW(),
+      last_login    TIMESTAMPTZ
+    )
+  `);
+
+  // ── Firebase Auth migration ──────────────────────────────────────────────
+  // Drop legacy OTP table (no longer needed — Firebase handles OTP)
+  await query(`DROP TABLE IF EXISTS otps CASCADE`);
+
+  // Add firebase_uid for Firebase Auth integration (idempotent)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS firebase_uid VARCHAR(255) UNIQUE`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid) WHERE firebase_uid IS NOT NULL`);
+
+  // Add new schema columns dynamically if table exists (idempotent)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255)`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_id VARCHAR(50) UNIQUE`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100)`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS designation VARCHAR(100)`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token TEXT`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_expires_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER DEFAULT 0`);
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS has_loc_eoc BOOLEAN DEFAULT FALSE`);
+
+  // Table to track emails pre-verified via registration OTP
+  await query(`
+    CREATE TABLE IF NOT EXISTS pre_verified_emails (
+      email VARCHAR(255) PRIMARY KEY,
+      verified_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // Drop password_hash — Firebase handles all credentials (idempotent)
+  // await query(`ALTER TABLE users DROP COLUMN IF EXISTS password_hash`);
+
+  // ── Partner Profiles ────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS partner_profiles (
+      id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      user_id           UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      partner_code        VARCHAR(20) UNIQUE NOT NULL,
+      first_name        VARCHAR(100) NOT NULL,
+      last_name         VARCHAR(100) NOT NULL,
+      profile_photo_url VARCHAR(500),
+      current_address   TEXT,
+      business_location TEXT,
+      company_name      VARCHAR(255),
+      company_type      VARCHAR(100),
+      gst_number        VARCHAR(20),
+      pincode           VARCHAR(10),
+      kyc_status        kyc_status DEFAULT 'draft',
+      approved_by       UUID REFERENCES users(id),
+      approved_at       TIMESTAMPTZ,
+      rejection_reason  TEXT,
+      aadhar_url        VARCHAR(500),
+      pan_url           VARCHAR(500),
+      gst_cert_url      VARCHAR(500),
+      cancel_cheque_url VARCHAR(500),
+      created_at        TIMESTAMPTZ DEFAULT NOW(),
+      updated_at        TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS pincode VARCHAR(10)`);
+  await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS parent_partner_id UUID REFERENCES partner_profiles(id)`);
+  await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS partner_id UUID REFERENCES partner_profiles(id)`);
+  await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS partner_type VARCHAR(50) DEFAULT 'PARTNER'`);
+  await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active'`);
+  await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS commission_rate DECIMAL(5,2) DEFAULT 90.00`);
+  try { await query(`ALTER TABLE partner_profiles ALTER COLUMN kyc_status SET DEFAULT 'draft'`); } catch (e) {}
+
+  // Update existing partner profiles with pending status that lack complete document uploads to 'draft'
+  await query(`
+    UPDATE partner_profiles SET kyc_status = 'draft'
+    WHERE kyc_status = 'pending'
+      AND id NOT IN (
+        SELECT p.id FROM partner_profiles p
+        JOIN kyc_documents d1 ON d1.partner_id = p.id AND d1.doc_type = 'pan'
+        JOIN kyc_documents d2 ON d2.partner_id = p.id AND d2.doc_type = 'cancelled_cheque'
+        JOIN partner_videos v ON v.partner_id = p.id
+      )
+  `);
+
+
+  // ── Partner Bank Details ────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS partner_bank_details (
+      id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      partner_id            UUID UNIQUE NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+      bank_name           VARCHAR(100) NOT NULL,
+      account_number      VARCHAR(255) NOT NULL,
+      ifsc_code           VARCHAR(15) NOT NULL,
+      account_holder_name VARCHAR(255) NOT NULL,
+      is_verified         BOOLEAN DEFAULT FALSE,
+      verified_at         TIMESTAMPTZ,
+      created_at          TIMESTAMPTZ DEFAULT NOW(),
+      updated_at          TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await query(`ALTER TABLE partner_bank_details ALTER COLUMN account_number TYPE VARCHAR(255)`);
+
+  // ── Database Schema Alignment (Migrate agent tables/columns to partner) ──
+  await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='agent_profiles') THEN
+        EXECUTE 'INSERT INTO partner_profiles (id, user_id, partner_code, first_name, last_name, profile_photo_url, current_address, business_location, company_name, company_type, gst_number, kyc_status, approved_by, approved_at, rejection_reason, created_at, updated_at)
+        SELECT id, user_id, agent_code, first_name, last_name, profile_photo_url, current_address, business_location, company_name, company_type, gst_number, kyc_status, approved_by, approved_at, rejection_reason, created_at, updated_at
+        FROM agent_profiles
+        ON CONFLICT (id) DO NOTHING';
+        
+        EXECUTE 'DROP TABLE agent_profiles CASCADE';
+      END IF;
+    END $$;
+  `);
+
+  await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='agent_bank_details') THEN
+        EXECUTE 'INSERT INTO partner_bank_details (id, partner_id, bank_name, account_number, ifsc_code, account_holder_name, is_verified, verified_at, created_at, updated_at)
+        SELECT id, agent_id, bank_name, account_number, ifsc_code, account_holder_name, is_verified, verified_at, created_at, updated_at
+        FROM agent_bank_details
+        ON CONFLICT (id) DO NOTHING';
+        
+        EXECUTE 'DROP TABLE agent_bank_details CASCADE';
+      END IF;
+    END $$;
+  `);
+
+  await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='applications' AND column_name='agent_id') THEN
+        EXECUTE 'ALTER TABLE applications RENAME COLUMN agent_id TO partner_id';
+      END IF;
+    END $$;
+  `);
+
+  await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='withdrawal_requests' AND column_name='agent_id') THEN
+        EXECUTE 'ALTER TABLE withdrawal_requests RENAME COLUMN agent_id TO partner_id';
+      END IF;
+    END $$;
+  `);
+
+  await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='wallets' AND column_name='agent_id') THEN
+        EXECUTE 'ALTER TABLE wallets RENAME COLUMN agent_id TO partner_id';
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='partner_wallets' AND column_name='agent_id') THEN
+        EXECUTE 'ALTER TABLE partner_wallets RENAME COLUMN agent_id TO partner_id';
+      END IF;
+    END $$;
+  `);
+
+  await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='commission_structures' AND column_name='agent_id') THEN
+        EXECUTE 'ALTER TABLE commission_structures RENAME COLUMN agent_id TO partner_id';
+      END IF;
+    END $$;
+  `);
+
+  await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='kyc_documents' AND column_name='agent_id') THEN
+        EXECUTE 'ALTER TABLE kyc_documents RENAME COLUMN agent_id TO partner_id';
+      END IF;
+    END $$;
+  `);
+
+  // ── Applications and Leads VKYC & Verification columns ─────────
+  await query(`
+    ALTER TABLE applications 
+    ADD COLUMN IF NOT EXISTS vkyc_status VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS vkyc_url TEXT,
+    ADD COLUMN IF NOT EXISTS salary_slip_url TEXT,
+    ADD COLUMN IF NOT EXISTS pan_card_url TEXT,
+    ADD COLUMN IF NOT EXISTS appcode_status VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS soft_approval_status VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS vkyc_stage VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS iqa_stage VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS ipa_stage VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS kyc_stage VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS card_approval_stage VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS digital_card_issued VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS dispatch_status VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS bank_remark TEXT,
+    ADD COLUMN IF NOT EXISTS user_remark TEXT,
+    ADD COLUMN IF NOT EXISTS notes TEXT,
+    ADD COLUMN IF NOT EXISTS final_status VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS app_file_generated VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS decline_reason TEXT,
+    ADD COLUMN IF NOT EXISTS eligible_reqd VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS bank_application_number VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS pan_number VARCHAR(20),
+    ADD COLUMN IF NOT EXISTS city VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS state VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS pincode VARCHAR(10),
+    ADD COLUMN IF NOT EXISTS approved_amount DECIMAL(15,2);
+
+    ALTER TABLE applications 
+    ADD COLUMN IF NOT EXISTS backend_remark TEXT,
+    ADD COLUMN IF NOT EXISTS sales_operator_code VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS pan_checker_code VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS remark_operator_code VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS requery_date TIMESTAMPTZ;
+
+    ALTER TABLE physical_application_details 
+    ADD COLUMN IF NOT EXISTS backend_remark TEXT,
+    ADD COLUMN IF NOT EXISTS sales_operator_code VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS pan_checker_code VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS remark_operator_code VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS requery_date TIMESTAMPTZ;
+
+    ALTER TABLE support_tickets 
+    ADD COLUMN IF NOT EXISTS customer_name VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS mobile VARCHAR(20),
+    ADD COLUMN IF NOT EXISTS contact_email VARCHAR(255);
+
+    ALTER TABLE leads 
+    ADD COLUMN IF NOT EXISTS vkyc_status VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS vkyc_url TEXT,
+    ADD COLUMN IF NOT EXISTS user_remark TEXT,
+    ADD COLUMN IF NOT EXISTS notes TEXT;
+  `);
+
+  // ── KYC Documents ────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS kyc_documents (
+      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      partner_id      UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+      doc_type      VARCHAR(50) NOT NULL,  -- aadhaar, pan, gst_cert, cancelled_cheque
+      doc_number    VARCHAR(50),
+      file_url      VARCHAR(500) NOT NULL,
+      s3_key        VARCHAR(500) NOT NULL,
+      verified      BOOLEAN DEFAULT FALSE,
+      verified_by   UUID REFERENCES users(id),
+      verified_at   TIMESTAMPTZ,
+      uploaded_at   TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(partner_id, doc_type)
+    )
+  `);
+
+  // ── Banks ─────────────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS banks (
+      id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      name       VARCHAR(100) UNIQUE NOT NULL,
+      short_code VARCHAR(100) UNIQUE NOT NULL,
+      logo_url   VARCHAR(500),
+      is_active  BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await query(`
+    ALTER TABLE banks ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'Active'
+  `);
+
+  // ── Products ──────────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS products (
+      id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      bank_id          UUID NOT NULL REFERENCES banks(id),
+      name             VARCHAR(255) NOT NULL,
+      category         product_category NOT NULL,
+      description      TEXT,
+      features         JSONB DEFAULT '[]',
+      eligibility      JSONB DEFAULT '{}',
+      commission_type  VARCHAR(20) DEFAULT 'fixed',  -- fixed | percentage
+      commission_value DECIMAL(12,2) NOT NULL DEFAULT 0,
+      min_age          INT,
+      max_age          INT,
+      min_income       DECIMAL(15,2),
+      is_active        BOOLEAN DEFAULT TRUE,
+      display_order    INT DEFAULT 0,
+      created_at       TIMESTAMPTZ DEFAULT NOW(),
+      updated_at       TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url VARCHAR(500)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS banner_url VARCHAR(500)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'Active'`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS priority INT DEFAULT 0`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS annual_fee VARCHAR(255)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS time_period VARCHAR(255)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS card_network VARCHAR(50)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS card_variant VARCHAR(50)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS best_for VARCHAR(100)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS welcome_benefits TEXT`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS is_lifetime_free BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS badge VARCHAR(50)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS is_recommended BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS is_trending BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS rewards TEXT`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS cashback TEXT`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS approval_rate INT DEFAULT 85`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS sub_category VARCHAR(100)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS featured BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS trending BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS commission_enabled BOOLEAN DEFAULT TRUE`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS visibility JSONB DEFAULT '{}'`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS short_description TEXT`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS logo VARCHAR(500)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS banner VARCHAR(500)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS image VARCHAR(500)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS commission_amount DECIMAL(12,2) DEFAULT 0`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS override_percentage DECIMAL(5,2) DEFAULT 0`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS public_visible BOOLEAN DEFAULT TRUE`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS partner_visible BOOLEAN DEFAULT TRUE`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS eligibility_criteria TEXT`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS documents_required TEXT`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS benefits TEXT`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS fees_charges TEXT`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS apply_button_text VARCHAR(100) DEFAULT 'Apply Now'`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS seo_title VARCHAR(255)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS seo_description TEXT`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS seo_keywords TEXT`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS slug VARCHAR(255)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS public_url VARCHAR(500)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS partner_url VARCHAR(500)`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS created_by UUID`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_by UUID`);
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS commission_release_days INT DEFAULT 7`);
+
+  // ── Commission Structure (overrides per Partner/product) ────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS commission_structures (
+      id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      product_id       UUID NOT NULL REFERENCES products(id),
+      partner_id         UUID REFERENCES partner_profiles(id),  -- NULL = global default
+      commission_type  VARCHAR(20) DEFAULT 'fixed',
+      commission_value DECIMAL(12,2) NOT NULL,
+      effective_from   DATE NOT NULL DEFAULT CURRENT_DATE,
+      effective_to     DATE,
+      created_by       UUID NOT NULL REFERENCES users(id),
+      created_at       TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // ── Customers ────────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS customers (
+      id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      full_name    VARCHAR(255) NOT NULL,
+      mobile       VARCHAR(15) NOT NULL,
+      email        VARCHAR(255),
+      dob          DATE,
+      pan_number   VARCHAR(12),
+      aadhaar_last4 VARCHAR(4),
+      city         VARCHAR(100),
+      state        VARCHAR(100),
+      pincode      VARCHAR(10),
+      monthly_income DECIMAL(15,2),
+      employer     VARCHAR(255),
+      employment_type VARCHAR(50),  -- salaried | self_employed | business
+      created_by   UUID NOT NULL REFERENCES users(id),
+      created_at   TIMESTAMPTZ DEFAULT NOW(),
+      updated_at   TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS aadhaar_number VARCHAR(20)`);
+  await query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS occupation VARCHAR(100)`);
+  await query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS city VARCHAR(100)`);
+  await query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS state VARCHAR(100)`);
+  await query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS pincode VARCHAR(10)`);
+  await query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS monthly_income DECIMAL(15,2)`);
+
+  // ── Applications ─────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS applications (
+      id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      app_number         VARCHAR(20) UNIQUE NOT NULL,
+      customer_id        UUID NOT NULL REFERENCES customers(id),
+      product_id         UUID NOT NULL REFERENCES products(id),
+      partner_id           UUID NOT NULL REFERENCES partner_profiles(id),
+      submitted_by       UUID NOT NULL REFERENCES users(id),
+      status             application_status DEFAULT 'submitted',
+      bank_ref_number    VARCHAR(100),
+      loan_amount        DECIMAL(15,2),
+      approved_amount    DECIMAL(15,2),
+      credit_limit       DECIMAL(15,2),
+      interest_rate      DECIMAL(5,2),
+      tenure_months      INT,
+      disbursal_date     DATE,
+      rejection_reason   TEXT,
+      notes              TEXT,
+      remarks            TEXT,
+      documents          JSONB DEFAULT '[]',
+      status_history     JSONB DEFAULT '[]',
+      commission_amount  DECIMAL(12,2),
+      commission_status  commission_status DEFAULT 'pending',
+      created_at         TIMESTAMPTZ DEFAULT NOW(),
+      updated_at         TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // Migrate existing commission_status column to VARCHAR(50) to prevent enum type mismatch
+  await query(`
+    DO $$ BEGIN
+      ALTER TABLE applications ALTER COLUMN commission_status TYPE VARCHAR(50) USING commission_status::text;
+    EXCEPTION WHEN OTHERS THEN NULL; END $$
+  `);
+
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS source VARCHAR(100) DEFAULT 'partner_portal'`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS process_type VARCHAR(100) DEFAULT 'lead_punching'`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS process_by VARCHAR(50) DEFAULT 'partner'`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS form_status VARCHAR(100) DEFAULT 'pending'`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS lead_id UUID REFERENCES leads(id) ON DELETE SET NULL`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS team_member_id UUID REFERENCES partner_profiles(id) ON DELETE SET NULL`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS bank_id UUID REFERENCES banks(id) ON DELETE SET NULL`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS vkyc_status VARCHAR(50) DEFAULT 'pending'`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS application_number VARCHAR(50)`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS remark_status VARCHAR(20) DEFAULT 'PENDING'`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS remark_updated BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS remark_updated_by UUID REFERENCES users(id)`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS remark_updated_at TIMESTAMPTZ`);
+
+  // KYC Operator columns (moved from runtime DDL to migration)
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS kyc_status VARCHAR(50) DEFAULT 'PENDING'`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS kyc_remarks TEXT`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS vkyc_link TEXT`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS kyc_stage VARCHAR(100) DEFAULT 'Vkyc pending'`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS vkyc_stage VARCHAR(100) DEFAULT 'Vkyc pending'`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS bio_stage VARCHAR(100) DEFAULT 'Bio pending'`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS digilocker_stage VARCHAR(100) DEFAULT 'Digilocker 1 Rupee Credit/Debit Pending'`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS ipa_stage VARCHAR(100)`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS soft_approval_status VARCHAR(100)`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS last_operator_id UUID`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS last_operator_name VARCHAR(255)`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS last_operator_code VARCHAR(100)`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS last_operator_role VARCHAR(100)`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS last_operator_designation VARCHAR(100)`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS last_operated_at TIMESTAMPTZ`);
+
+  // Physical details KYC columns
+  await query(`ALTER TABLE physical_application_details ADD COLUMN IF NOT EXISTS kyc_stage VARCHAR(100)`);
+  await query(`ALTER TABLE physical_application_details ADD COLUMN IF NOT EXISTS vkyc_stage VARCHAR(100)`);
+  await query(`ALTER TABLE physical_application_details ADD COLUMN IF NOT EXISTS bio_stage VARCHAR(100)`);
+  await query(`ALTER TABLE physical_application_details ADD COLUMN IF NOT EXISTS digilocker_stage VARCHAR(100)`);
+  await query(`ALTER TABLE physical_application_details ADD COLUMN IF NOT EXISTS vkyc_url TEXT`);
+  await query(`ALTER TABLE physical_application_details ADD COLUMN IF NOT EXISTS kyc_remarks TEXT`);
+
+  // ── Admin Bank Assignments ─────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS admin_bank_assignments (
+      id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      admin_id   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      bank_id    UUID NOT NULL REFERENCES banks(id) ON DELETE CASCADE,
+      category   VARCHAR(50) NOT NULL DEFAULT 'credit_card',
+      created_by UUID REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      is_active  BOOLEAN DEFAULT TRUE,
+      UNIQUE(admin_id, bank_id, category)
+    )
+  `);
+
+  await query(`ALTER TABLE admin_bank_assignments ADD COLUMN IF NOT EXISTS category VARCHAR(50) NOT NULL DEFAULT 'credit_card'`);
+  await query(`ALTER TABLE admin_bank_assignments ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`);
+
+  await query(`
+    DO $$
+    BEGIN
+      DELETE FROM admin_bank_assignments a
+      USING admin_bank_assignments b
+      WHERE a.id > b.id
+        AND a.admin_id = b.admin_id
+        AND a.bank_id = b.bank_id;
+
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'admin_bank_assignments_admin_id_bank_id_key') THEN
+        ALTER TABLE admin_bank_assignments ADD CONSTRAINT admin_bank_assignments_admin_id_bank_id_key UNIQUE (admin_id, bank_id);
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'admin_bank_assignments_admin_bank_category_key') THEN
+        ALTER TABLE admin_bank_assignments ADD CONSTRAINT admin_bank_assignments_admin_bank_category_key UNIQUE (admin_id, bank_id, category);
+      END IF;
+    END $$;
+  `);
+
+  // Migration for existing LOC_EOC assignments
+  await query(`
+    UPDATE admin_bank_assignments aba
+    SET category = 'loc_eoc'
+    FROM banks b
+    WHERE aba.bank_id = b.id 
+      AND (UPPER(COALESCE(b.short_code, '')) = 'LOC_EOC' OR b.name ~* 'loc|loan on card|smart emi')
+      AND aba.category = 'credit_card'
+  `);
+
+
+  // ── Application Admin Assignments ──────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS application_admin_assignments (
+      id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+      admin_user_id  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      assigned_by    UUID REFERENCES users(id),
+      assigned_at    TIMESTAMPTZ DEFAULT NOW(),
+      completed_at   TIMESTAMPTZ,
+      status         VARCHAR(20) DEFAULT 'PENDING',
+      created_at     TIMESTAMPTZ DEFAULT NOW(),
+      updated_at     TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(application_id, admin_user_id)
+    )
+  `);
+
+  // Sync application_number with app_number if empty
+  await query(`UPDATE applications SET application_number = app_number WHERE application_number IS NULL AND app_number IS NOT NULL`);
+
+  // ── Correct process metadata (source and process_by mapping based on process_type) ──
+  await query(`
+    UPDATE applications SET 
+      process_type = 'lead_punching',
+      process_by = 'partner', 
+      source = 'partner_portal' 
+    WHERE process_type = 'lead_punching' OR process_type IS NULL OR process_type = 'partner_punch';
+
+    UPDATE applications SET 
+      process_type = 'linked_share',
+      process_by = 'partner', 
+      source = 'share_link' 
+    WHERE process_type = 'linked_share' OR process_type = 'link_sharing';
+
+    UPDATE applications SET 
+      process_type = 'direct_bank',
+      process_by = 'customer', 
+      source = 'bank_redirect' 
+    WHERE process_type = 'direct_bank' OR process_type = 'customer_sell';
+
+    UPDATE applications SET 
+      process_type = 'physical_process',
+      process_by = 'partner', 
+      source = 'physical' 
+    WHERE process_type = 'physical_process';
+  `);
+
+  // ── Normalize legacy statuses into status, form_status, and final_status ──
+  await query(`
+    UPDATE applications SET 
+      status = 'pending', 
+      form_status = 'pending'
+    WHERE status::text = 'initiated';
+
+    UPDATE applications SET 
+      status = 'pending', 
+      form_status = 'in_progress',
+      source = 'share_link'
+    WHERE status::text = 'link_sent';
+
+    UPDATE applications SET 
+      status = 'details_submitted', 
+      form_status = 'completed'
+    WHERE status::text = 'bank_form_submitted';
+
+    UPDATE applications SET 
+      status = 'details_submitted', 
+      form_status = COALESCE(form_status, 'completed')
+    WHERE status::text = 'submitted';
+
+    UPDATE applications SET 
+      status = 'operational_verified', 
+      final_status = COALESCE(final_status, 'in_process')
+    WHERE status::text = 'under_review';
+
+    -- Global normalization to enforce canonical 8 statuses
+    UPDATE applications SET status = 'pending' WHERE status::text IN ('initiated', 'lead_created', 'created', 'new', 'draft', 'confirmed', 'link_pending', 'link_sent');
+    UPDATE applications SET status = 'details_submitted' WHERE status::text IN ('submitted', 'bank_application_pending', 'application_started', 'bank_form_submitted');
+    UPDATE applications SET status = 'operational_verified' WHERE status::text IN ('under_review', 'under review', 'in_process', 'in_progress', 'vkyc_pending', 'vkyc_completed', 'verification', 'bank_verification');
+    UPDATE applications SET status = 'approved' WHERE status::text IN ('operational_approved', 'super_admin_approved', 'app_file_generated', 'sanctioned', 'disbursed');
+    UPDATE applications SET status = 'commission_received' WHERE status::text IN ('released', 'credited', 'paid', 'received', 'commission_released');
+    UPDATE applications SET status = 'rejected' WHERE status::text IN ('decline', 'declined', 'technical_error');
+  `);
+
+  await query(`CREATE INDEX IF NOT EXISTS idx_applications_Partner ON applications(partner_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_applications_team_member ON applications(team_member_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_applications_bank ON applications(bank_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_applications_lead ON applications(lead_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_applications_created ON applications(created_at DESC)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_applications_customer ON applications(customer_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_applications_product ON applications(product_id)`);
+
+  // ── Wallet ────────────────────────────────────────────────────
+  await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='wallets' AND column_name='pending_amount') THEN
+        EXECUTE 'ALTER TABLE wallets RENAME COLUMN pending_amount TO hold_balance';
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='partner_wallets' AND column_name='pending_amount') THEN
+        EXECUTE 'ALTER TABLE partner_wallets RENAME COLUMN pending_amount TO hold_balance';
+      END IF;
+    END $$;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS partner_wallets (
+      id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      partner_id          UUID UNIQUE NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+      total_earned      DECIMAL(15,2) DEFAULT 0,
+      total_withdrawn   DECIMAL(15,2) DEFAULT 0,
+      hold_balance      DECIMAL(15,2) DEFAULT 0,
+      available_balance DECIMAL(15,2) DEFAULT 0,
+      last_updated      TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // ── Wallet Transactions ───────────────────────────────────────
+  await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='wallet_transactions' AND column_name='txn_type') THEN
+        EXECUTE 'ALTER TABLE wallet_transactions RENAME COLUMN txn_type TO type';
+      END IF;
+    END $$;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS wallet_transactions (
+      id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      wallet_id      UUID NOT NULL REFERENCES partner_wallets(id),
+      partner_id     UUID REFERENCES partner_profiles(id),
+      application_id UUID REFERENCES applications(id),
+      type           VARCHAR(20) NOT NULL,
+      amount         DECIMAL(12,2) NOT NULL,
+      balance_before DECIMAL(15,2),
+      balance_after  DECIMAL(15,2),
+      status         VARCHAR(20) DEFAULT 'pending',
+      description    VARCHAR(500),
+      reference_type VARCHAR(100),
+      reference_id   VARCHAR(255),
+      bank_name      VARCHAR(100),
+      product_type   VARCHAR(100),
+      processed_by   UUID REFERENCES users(id),
+      processed_at   TIMESTAMPTZ,
+      created_at     TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`ALTER TABLE wallet_ledger ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_wallet_txn_wallet ON wallet_transactions(wallet_id)`);
+  await query(`ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS partner_id UUID REFERENCES partner_profiles(id)`);
+  await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='wallet_transactions' AND column_name='txn_type') THEN
+        EXECUTE 'ALTER TABLE wallet_transactions RENAME COLUMN txn_type TO type';
+      END IF;
+    END $$;
+  `);
+  await query(`ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS type VARCHAR(20)`);
+  await query(`ALTER TABLE wallet_transactions ALTER COLUMN type TYPE VARCHAR(20)`);
+  await query(`ALTER TABLE wallet_transactions ALTER COLUMN status TYPE VARCHAR(20)`);
+  await query(`ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS reference_type VARCHAR(100)`);
+  await query(`ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS reference_id VARCHAR(255)`);
+  await query(`ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS bank_name VARCHAR(100)`);
+  await query(`ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS product_type VARCHAR(100)`);
+  await query(`ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS release_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS balance_before DECIMAL(15,2)`);
+  await query(`ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS balance_after DECIMAL(15,2)`);
+
+  // ── Withdrawal Requests ───────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS withdrawal_requests (
+      id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      wallet_id       UUID NOT NULL REFERENCES partner_wallets(id),
+      partner_id        UUID NOT NULL REFERENCES partner_profiles(id),
+      amount          DECIMAL(12,2) NOT NULL,
+      status          VARCHAR(20) DEFAULT 'pending',
+      bank_name       VARCHAR(100),
+      account_number  VARCHAR(50),
+      ifsc_code       VARCHAR(15),
+      utr_number      VARCHAR(50),
+      processed_by    UUID REFERENCES users(id),
+      processed_at    TIMESTAMPTZ,
+      rejection_reason TEXT,
+      admin_note      TEXT,
+      created_at      TIMESTAMPTZ DEFAULT NOW(),
+      updated_at      TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`ALTER TABLE withdrawal_requests ALTER COLUMN status TYPE VARCHAR(20)`);
+  await query(`ALTER TABLE withdrawal_requests ADD COLUMN IF NOT EXISTS admin_note TEXT`);
+
+  // ── Notifications ─────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title      VARCHAR(255) NOT NULL,
+      message    TEXT NOT NULL,
+      type       VARCHAR(50) DEFAULT 'info',  -- info|success|warning|alert
+      is_read    BOOLEAN DEFAULT FALSE,
+      link       VARCHAR(500),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read)`);
+  await query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ NULL`);
+  await query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
+
+  // ── Refresh Tokens ────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS refresh_tokens (
+      id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash VARCHAR(255) NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      revoked    BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS device_id VARCHAR(255)`);
+  await query(`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS device_name VARCHAR(255)`);
+  await query(`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS browser VARCHAR(255)`);
+  await query(`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS ip_address VARCHAR(45)`);
+  await query(`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS city VARCHAR(100)`);
+  await query(`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS country VARCHAR(100)`);
+  await query(`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ DEFAULT NOW()`);
+
+  // ── Leads ─────────────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS leads (
+      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      partner_id    UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+      product_id    UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      customer_name VARCHAR(255) NOT NULL,
+      mobile        VARCHAR(15) NOT NULL,
+      city          VARCHAR(100),
+      status        VARCHAR(50) DEFAULT 'pending',
+      created_at    TIMESTAMPTZ DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_number VARCHAR(50)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS customer_id UUID REFERENCES customers(id)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS parent_partner_id UUID REFERENCES partner_profiles(id)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS customer_email VARCHAR(255)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS customer_mobile VARCHAR(15)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS source VARCHAR(100)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS pipeline_stage VARCHAR(50)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS priority VARCHAR(50)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS tracking_token VARCHAR(100)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS process_type VARCHAR(50) DEFAULT 'lead_punching'`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS otp_code VARCHAR(10)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS otp_verified BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS otp_verified_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS city VARCHAR(100)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS pan_number VARCHAR(15)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS aadhaar_number VARCHAR(20)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS state VARCHAR(100)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS pincode VARCHAR(10)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS email VARCHAR(255)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS monthly_income DECIMAL(15,2)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS company_name VARCHAR(255)`);
+  await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS application_id UUID REFERENCES applications(id) ON DELETE SET NULL`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_leads_partner ON leads(partner_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_leads_tracking_token ON leads(tracking_token)`);
+
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS lead_id UUID REFERENCES leads(id) ON DELETE SET NULL`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS parent_partner_id UUID REFERENCES partner_profiles(id)`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS process_type VARCHAR(50) DEFAULT 'lead_punching'`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS tracking_token VARCHAR(100)`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS bank_url VARCHAR(500)`);
+  await query(`ALTER TABLE applications ADD COLUMN IF NOT EXISTS commission_released BOOLEAN DEFAULT FALSE`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_applications_process_type ON applications(process_type)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_applications_source ON applications(source)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_applications_final_status ON applications(final_status)`);
+
+  // ── Lead Followups ─────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS lead_followups (
+      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      lead_id       UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+      scheduled_by  UUID NOT NULL REFERENCES users(id),
+      follow_up_at  TIMESTAMPTZ NOT NULL,
+      note          TEXT,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_lead_followups_lead ON lead_followups(lead_id)`);
+
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_mobile ON customers(mobile)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_customers_pan ON customers(pan_number)`);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_products_bank_name ON products(bank_id, name)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_wallet_txn_status ON wallet_transactions(status) WHERE status = 'pending'`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_wallet_txn_release ON wallet_transactions(release_at) WHERE status = 'pending'`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_withdrawal_partner ON withdrawal_requests(partner_id, status)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id, revoked)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_partner_code ON partner_profiles(partner_code)`);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_ledger_unique_commission ON wallet_ledger(application_id, transaction_type, partner_id) WHERE application_id IS NOT NULL`);
+
+  // ── Audit Logs ────────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      user_id       UUID REFERENCES users(id) ON DELETE SET NULL,
+      action        VARCHAR(100) NOT NULL,
+      target_id     UUID,
+      details       JSONB,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS role VARCHAR(50)`);
+  await query(`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(45)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC)`);
+
+  // ── Login History ──────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS login_history (
+      id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      user_id        UUID REFERENCES users(id) ON DELETE CASCADE,
+      device         VARCHAR(255),
+      browser        VARCHAR(255),
+      ip_address     VARCHAR(45),
+      city           VARCHAR(100),
+      country        VARCHAR(100),
+      login_time     TIMESTAMPTZ DEFAULT NOW(),
+      logout_time    TIMESTAMPTZ,
+      status         VARCHAR(20) NOT NULL,
+      failure_reason VARCHAR(255),
+      created_at     TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_login_history_user ON login_history(user_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_login_history_status ON login_history(status)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_login_history_time ON login_history(login_time DESC)`);
+
+  // ── Security Alerts ─────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS security_alerts (
+      id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      user_id    UUID REFERENCES users(id) ON DELETE CASCADE,
+      type       VARCHAR(50) NOT NULL,
+      message    TEXT NOT NULL,
+      metadata   JSONB,
+      read_at    TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_security_alerts_user ON security_alerts(user_id)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_security_alerts_created_at ON security_alerts(created_at DESC)`);
+
+  // ── Password History ────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS password_history (
+      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      user_id       UUID REFERENCES users(id) ON DELETE CASCADE,
+      password_hash VARCHAR(255) NOT NULL,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_password_history_user ON password_history(user_id)`);
+
+
+  // ── Wallet Audit Logs ─────────────────────────────────────────
+  await query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='wallet_audit_logs' AND column_name='old_pending_amount') THEN
+        EXECUTE 'ALTER TABLE wallet_audit_logs RENAME COLUMN old_pending_amount TO old_hold_balance';
+      END IF;
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='wallet_audit_logs' AND column_name='new_pending_amount') THEN
+        EXECUTE 'ALTER TABLE wallet_audit_logs RENAME COLUMN new_pending_amount TO new_hold_balance';
+      END IF;
+    END $$;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS wallet_audit_logs (
+      id                     UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      wallet_id              UUID NOT NULL REFERENCES partner_wallets(id) ON DELETE CASCADE,
+      action                 VARCHAR(50) NOT NULL,
+      old_available_balance  DECIMAL(15,2),
+      new_available_balance  DECIMAL(15,2),
+      old_hold_balance       DECIMAL(15,2),
+      new_hold_balance       DECIMAL(15,2),
+      created_at             TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_wallet_audit_logs_created_at ON wallet_audit_logs(created_at DESC)`);
+
+  // Fix FK constraint if it references old 'wallets' table instead of 'partner_wallets'
+  await query(`
+    DO $$
+    DECLARE
+      ref_table TEXT;
+    BEGIN
+      SELECT ccu.table_name INTO ref_table
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+      WHERE tc.table_name = 'wallet_audit_logs' AND tc.constraint_type = 'FOREIGN KEY'
+        AND tc.constraint_name = 'wallet_audit_logs_wallet_id_fkey';
+
+      IF ref_table IS NOT NULL AND ref_table <> 'partner_wallets' THEN
+        ALTER TABLE wallet_audit_logs DROP CONSTRAINT wallet_audit_logs_wallet_id_fkey;
+        -- Remove orphaned audit rows whose wallet_id doesn't exist in partner_wallets
+        DELETE FROM wallet_audit_logs WHERE wallet_id NOT IN (SELECT id FROM partner_wallets);
+        ALTER TABLE wallet_audit_logs ADD CONSTRAINT wallet_audit_logs_wallet_id_fkey
+          FOREIGN KEY (wallet_id) REFERENCES partner_wallets(id) ON DELETE CASCADE;
+        RAISE NOTICE 'Fixed wallet_audit_logs FK to point to partner_wallets (orphaned rows cleaned)';
+      END IF;
+    END $$;
+  `);
+
+  // ── Wallet Trigger Function ───────────────────────────────────
+  await query(`
+    CREATE OR REPLACE FUNCTION log_wallet_changes()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      IF TG_OP = 'INSERT' THEN
+        INSERT INTO wallet_audit_logs (wallet_id, action, old_available_balance, new_available_balance, old_hold_balance, new_hold_balance)
+        VALUES (NEW.id, 'INSERT', NULL, NEW.available_balance, NULL, NEW.hold_balance);
+      ELSIF TG_OP = 'UPDATE' THEN
+        IF OLD.available_balance <> NEW.available_balance OR OLD.hold_balance <> NEW.hold_balance THEN
+          INSERT INTO wallet_audit_logs (wallet_id, action, old_available_balance, new_available_balance, old_hold_balance, new_hold_balance)
+          VALUES (NEW.id, 'UPDATE', OLD.available_balance, NEW.available_balance, OLD.hold_balance, NEW.hold_balance);
+        END IF;
+      ELSIF TG_OP = 'DELETE' THEN
+        INSERT INTO wallet_audit_logs (wallet_id, action, old_available_balance, new_available_balance, old_hold_balance, new_hold_balance)
+        VALUES (OLD.id, 'DELETE', OLD.available_balance, NULL, OLD.hold_balance, NULL);
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  `);
+
+  await query(`DROP TRIGGER IF EXISTS audit_wallet_trigger ON partner_wallets`);
+  await query(`
+    CREATE TRIGGER audit_wallet_trigger
+    AFTER INSERT OR UPDATE OR DELETE ON partner_wallets
+    FOR EACH ROW EXECUTE FUNCTION log_wallet_changes()
+  `);
+
+  // ── updated_at trigger function ───────────────────────────────
+  await query(`
+    CREATE OR REPLACE FUNCTION update_updated_at()
+    RETURNS TRIGGER AS $$
+    BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
+    $$ LANGUAGE plpgsql
+  `);
+  const triggerTables = ['users', 'partner_profiles', 'partner_bank_details', 'products', 'customers', 'applications', 'withdrawal_requests', 'leads'];
+  for (const t of triggerTables) {
+    await query(`DROP TRIGGER IF EXISTS set_updated_at ON ${t}`);
+    await query(`
+      CREATE TRIGGER set_updated_at BEFORE UPDATE ON ${t}
+      FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+    `);
+  }
+
+  // Seed super admins only when SUPER_ADMIN_SEED_PASSWORD is explicitly configured
+  const seedPassword = process.env.SUPER_ADMIN_SEED_PASSWORD;
+  const resetPassword = process.env.SUPER_ADMIN_RESET_PASSWORD === 'true';
+
+  const parseSuperAdminSeeds = () => {
+    const raw = process.env.SUPER_ADMIN_SEEDS;
+    if (!raw) {
+      return [
+        { email: 'sharadyohesa@gmail.com', mobile: '8087179438', name: 'Sharad Yohesa' },
+        { email: 'pratapsanap14@gmail.com', mobile: '9370470692', name: 'Pratap Sanap' },
+      ];
+    }
+    return raw.split(',').map((entry) => {
+      const [email, mobile, name] = entry.trim().split(':');
+      return { email: email?.trim(), mobile: mobile?.trim(), name: name?.trim() };
+    }).filter((admin) => admin.email && admin.mobile && admin.name);
+  };
+
+  if (!seedPassword) {
+    logger.warn('SUPER_ADMIN_SEED_PASSWORD not set — skipping super admin seed (existing accounts unchanged).');
+  } else {
+    const bcrypt = require('bcryptjs');
+    const hashedPassword = await bcrypt.hash(seedPassword, 10);
+    const superAdmins = parseSuperAdminSeeds();
+
+    for (const admin of superAdmins) {
+      const { rows: [existing] } = await query(`SELECT id FROM users WHERE email = $1`, [admin.email]);
+      if (!existing) {
+        await query(`
+          INSERT INTO users (email, mobile, role, status, full_name, password_hash, is_active, email_verified)
+          VALUES ($1, $2, 'SUPER_ADMIN', 'active', $3, $4, true, true)
+        `, [admin.email, admin.mobile, admin.name, hashedPassword]);
+        logger.info(`Super admin seeded: ${admin.email}`);
+      } else if (resetPassword) {
+        await query(`
+          UPDATE users
+          SET role = 'SUPER_ADMIN', status = 'active', is_active = true, full_name = $1,
+              mobile = $2, password_hash = $3, email_verified = true
+          WHERE email = $4
+        `, [admin.name, admin.mobile, hashedPassword, admin.email]);
+        logger.info(`Super admin password reset: ${admin.email}`);
+      } else {
+        await query(`
+          UPDATE users
+          SET role = 'SUPER_ADMIN', status = 'active', is_active = true, full_name = $1,
+              mobile = $2, email_verified = true
+          WHERE email = $3
+        `, [admin.name, admin.mobile, admin.email]);
+        logger.info(`Super admin verified (password unchanged): ${admin.email}`);
+      }
+    }
+  }
+
+
+  // ── Banners Table ─────────────────────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS banners (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      title VARCHAR(255) NOT NULL,
+      subtitle VARCHAR(500),
+      btn_text VARCHAR(100),
+      image_url VARCHAR(500) NOT NULL,
+      display_order INT DEFAULT 0,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await query(`
+    ALTER TABLE banners
+    ADD COLUMN IF NOT EXISTS target_page VARCHAR(255) DEFAULT 'all',
+    ADD COLUMN IF NOT EXISTS link_type VARCHAR(50) DEFAULT 'custom',
+    ADD COLUMN IF NOT EXISTS click_url VARCHAR(500) DEFAULT '/credit-cards',
+    ADD COLUMN IF NOT EXISTS click_url_home VARCHAR(500),
+    ADD COLUMN IF NOT EXISTS click_url_partner VARCHAR(500),
+    ADD COLUMN IF NOT EXISTS click_url_employee VARCHAR(500),
+    ADD COLUMN IF NOT EXISTS click_url_referral VARCHAR(500),
+    ADD COLUMN IF NOT EXISTS original_filename VARCHAR(255);
+  `);
+
+  // Drop update trigger on banners if exists and recreate
+  await query(`DROP TRIGGER IF EXISTS set_updated_at ON banners`);
+  await query(`
+    CREATE TRIGGER set_updated_at BEFORE UPDATE ON banners
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+  `);
+
+  // Seed initial banners if table is empty
+  const { rows: [{ count: bannerCount }] } = await query(`SELECT COUNT(*) FROM banners`);
+  if (parseInt(bannerCount) === 0) {
+    const initialBanners = [
+      ['Special Offer', 'Exclusive credit card and loan deals', 'View Offers', 'offerbanner.png', 1],
+      ['Lifetime Free Credit Cards', 'Zero Joining Fee • Zero Annual Fee', 'Explore Now', 'lifetimefree card.png', 2],
+      ['Personal Loans', 'Low Interest Rates • Quick Disbursal', 'Apply Now', 'loan.png', 3],
+      ['Business Loans', 'Flexible repayment options for growing businesses', 'Check Eligibility', 'loan.png', 4],
+      ['Insurance Plans', 'Comprehensive health, life and general insurance cover', 'Get Quotes', 'insurance.png', 5],
+      ['EMI Cards', 'Convert purchases to no-cost EMIs instantly', 'Get EMI Card', 'smart emi.png', 6],
+      ['New EMI Schemes', 'Convert your spends into easy EMIs', 'Explore EMI', 'emi.jpeg', 7],
+      ['HDFC Pixel Credit Cards', 'Customizable rewards on dining, shopping & entertainment', 'Explore Pixel Cards', 'hdfc pixel card.png', 8]
+    ];
+    for (const b of initialBanners) {
+      await query(`
+        INSERT INTO banners (title, subtitle, btn_text, image_url, display_order)
+        VALUES ($1, $2, $3, $4, $5)
+      `, b);
+    }
+    logger.info('Initial banners seeded successfully');
+  }
+
+  // ── System Settings Table ──────────────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS system_settings (
+      key VARCHAR(100) PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
+  await query(`ALTER TABLE system_settings ALTER COLUMN value TYPE TEXT`);
+
+  // Seed default system setting if not exists
+  await query(`
+    INSERT INTO system_settings (key, value)
+    VALUES
+      ('admin_privacy_mode', 'off'),
+      ('hdfc_tata_neu_adobe_support_link', 'https://applyonline.hdfc.bank.in/cards/credit-cards.html?CHANNELSOURCE=TDCC&DEDUPE=N&DSACode=XYOH&LGcode=YOH5&LCcode=YOH5&LC2=A222&SMcode=S54558'),
+      ('tata_cobrand_hdfc_adobe_support_link', 'https://applyonline.hdfc.bank.in/cards/credit-cards.html?CHANNELSOURCE=TDCC&DEDUPE=N&DSACode=XYOH&LGcode=YOH5&LCcode=YOH5&LC2=A222&SMcode=S54558')
+    ON CONFLICT (key) DO NOTHING
+  `);
+
+  // ── Homepage CMS Sections Table ──────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS homepage_sections (
+      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      key           VARCHAR(100) UNIQUE NOT NULL,
+      title         VARCHAR(255) NOT NULL,
+      subtitle      VARCHAR(500),
+      is_active     BOOLEAN DEFAULT TRUE,
+      display_order INT DEFAULT 0,
+      items         JSONB DEFAULT '[]',
+      created_at    TIMESTAMPTZ DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // ── OTP Verifications Table ──────────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS otp_verifications (
+      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      identity      VARCHAR(255) UNIQUE NOT NULL,
+      otp_hash      VARCHAR(255) NOT NULL,
+      expires_at    TIMESTAMPTZ NOT NULL,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS msg91_verified_tokens (
+      id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      token_hash  VARCHAR(64) UNIQUE NOT NULL,
+      user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      used_at     TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // Seed initial homepage sections if empty
+  const { rows: [{ count: sectionCount }] } = await query(`SELECT COUNT(*) FROM homepage_sections`);
+  if (parseInt(sectionCount) === 0) {
+    const initialSections = [
+      [
+        'money_transfer',
+        'Money Transfer & Payments',
+        'Send money instantly or pay utility bills',
+        true,
+        1,
+        JSON.stringify([
+          { "id": "tomobile", "label": "To Mobile", "icon": "FaMobileAlt", "desc": "Send money instantly", "color": "#27ae60" },
+          { "id": "recharge", "label": "Recharge", "icon": "FaMobileAlt", "desc": "Mobile, DTH, FASTag", "color": "#2980b9" },
+          { "id": "electricity", "label": "Electricity", "icon": "FaBolt", "desc": "Pay electricity bills", "color": "#f39c12" },
+          { "id": "loanrepay", "label": "Loan Repay", "icon": "FaMoneyBillWave", "desc": "EMI & Loan Payments", "color": "#8e44ad" },
+          { "id": "fastag", "label": "FASTag", "icon": "FaTags", "desc": "Recharge FASTag tag", "color": "#3498db" }
+        ])
+      ],
+      [
+        'attractive_cards',
+        'Attractive Cards & Loans',
+        'Handpicked financial solutions for your profile',
+        true,
+        2,
+        JSON.stringify([
+          { "id": "ltf-cards", "label": "Lifetime Free Cards", "icon": "FaRegCreditCard", "desc": "No annual fee forever" },
+          { "id": "cibil-loans", "label": "CIBIL Score Based Loans", "icon": "FaUniversity", "desc": "Get loan based on score" },
+          { "id": "hdfc-cc-loan", "label": "Loan on Credit Card", "icon": "FaLaptopHouse", "desc": "Pre-approved credit card loans" },
+          { "id": "smart-emi", "label": "Smart EMI Cards", "icon": "FaMoneyCheckAlt", "desc": "Convert purchase to EMI" },
+          { "id": "secured-cards", "label": "FD Backed Cards", "icon": "FaRegCreditCard", "desc": "Guaranteed approval cards" },
+          { "id": "upi-cards", "label": "UPI Credit Cards", "icon": "FaBolt", "desc": "Link credit card to UPI" }
+        ])
+      ],
+      [
+        'loans',
+        'Loans',
+        'Instant approvals with minimum documentation',
+        true,
+        3,
+        JSON.stringify([
+          { "id": "personal-loan", "label": "Personal Loan", "icon": "FaUser", "desc": "Instant personal loans" },
+          { "id": "home-loan", "label": "Home Loan", "icon": "FaHome", "desc": "Home purchase and renovation" },
+          { "id": "business-loan", "label": "Business Loan", "icon": "FaBriefcase", "desc": "Expand your business" },
+          { "id": "instant-loan", "label": "Instant Loan", "icon": "FaBolt", "desc": "Quick emergency funds" }
+        ])
+      ],
+      [
+        'insurance',
+        'Insurance',
+        'Secure your future with complete health & life plans',
+        true,
+        4,
+        JSON.stringify([
+          { "id": "health-insurance", "label": "Health Insurance", "icon": "FaHeartbeat", "desc": "Medical coverages" },
+          { "id": "life-insurance", "label": "Life Insurance", "icon": "FaShieldAlt", "desc": "Term life coverage" },
+          { "id": "general-insurance", "label": "General Insurance", "icon": "FaUmbrella", "desc": "Vehicle & assets" }
+        ])
+      ],
+      [
+        'travel',
+        'Travel & Transit',
+        'Book flights, trains, hotels, and buses instantly',
+        true,
+        5,
+        JSON.stringify([
+          { "id": "flight", "label": "Flight Booking", "icon": "FaPlane", "desc": "Domestic & international flights" },
+          { "id": "train", "label": "Train Booking", "icon": "FaTrain", "desc": "IRCTC train tickets" },
+          { "id": "bus", "label": "Bus Booking", "icon": "FaBus", "desc": "Intercity bus travels" },
+          { "id": "hotels", "label": "Hotel Booking", "icon": "FaHotel", "desc": "Best hotels & resorts" }
+        ])
+      ]
+    ];
+    for (const s of initialSections) {
+      await query(`
+        INSERT INTO homepage_sections (key, title, subtitle, is_active, display_order, items)
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `, s);
+    }
+    logger.info('Initial homepage CMS sections seeded successfully');
+  }
+
+  // ── Services Catalog ────────────────────────────────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS services_catalog (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      icon VARCHAR(255),
+      route VARCHAR(255) NOT NULL,
+      status VARCHAR(20) DEFAULT 'active',
+      display_order INTEGER DEFAULT 1,
+      clicks INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  const { rows: catalogCheck } = await query(`SELECT COUNT(*) FROM services_catalog`);
+  if (parseInt(catalogCheck[0].count) === 0) {
+    const initialServices = [
+      ['Recharge', '📱', '/recharge', 'active', 1],
+      ['Electricity', '⚡', '/electricity', 'active', 2],
+      ['Loan Repay', '💰', '/loan-repay', 'active', 3],
+      ['FASTag', '🚗', '/fastag', 'active', 4],
+      ['Bus', '🚍', '/travel-transit/bus-booking', 'active', 5],
+      ['Flight', '✈️', '/travel-transit/flight-booking', 'active', 6],
+      ['Train', '🎛️', '/travel-transit/train-booking', 'active', 7],
+      ['Hotel', '🏨', '/travel-transit/hotel-booking', 'active', 8]
+    ];
+    for (const s of initialServices) {
+      await query(`
+        INSERT INTO services_catalog (name, icon, route, status, display_order)
+        VALUES ($1, $2, $3, $4, $5)
+      `, s);
+    }
+    logger.info('Initial services catalog seeded successfully');
+  }
+
+  // ── Service Requests (Money Transfer & Payments) ─────────────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS service_requests (
+      id SERIAL PRIMARY KEY,
+      service_type VARCHAR(50) NOT NULL,
+      mobile VARCHAR(20),
+      operator VARCHAR(50),
+      consumer_number VARCHAR(100),
+      provider VARCHAR(100),
+      loan_number VARCHAR(100),
+      vehicle_number VARCHAR(100),
+      amount NUMERIC(10,2) NOT NULL,
+      status VARCHAR(20) DEFAULT 'pending',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // ── Direct Card Applications (Visitor credit card leads) ─────────────────────
+  await query(`
+    CREATE TABLE IF NOT EXISTS direct_card_applications (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      customer_name VARCHAR(255) NOT NULL,
+      mobile VARCHAR(15) NOT NULL,
+      bank_name VARCHAR(100) NOT NULL,
+      card_name VARCHAR(100) NOT NULL,
+      category VARCHAR(50) DEFAULT 'credit_card',
+      status VARCHAR(50) DEFAULT 'verified',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await query(`
+    ALTER TABLE direct_card_applications
+      ADD COLUMN IF NOT EXISTS category VARCHAR(50) DEFAULT 'credit_card';
+  `);
+
+
+  // Encrypt existing bank account numbers if not already encrypted
+  try {
+    const { encrypt } = require('../../utils/helpers/crypto');
+    const { rows: bankDetails } = await query(`SELECT id, account_number FROM partner_bank_details`);
+    for (const row of bankDetails) {
+      if (row.account_number && !row.account_number.includes(':')) {
+        const encrypted = encrypt(row.account_number);
+        await query(`UPDATE partner_bank_details SET account_number = $1 WHERE id = $2`, [encrypted, row.id]);
+      }
+    }
+    logger.info('Partner bank details encryption migration completed successfully');
+  } catch (cryptoErr) {
+    logger.warn('Failed to encrypt existing bank details:', cryptoErr.message);
+  }
+
+  // Banner redirect & target page placement columns
+  try {
+    await query(`ALTER TABLE banners ADD COLUMN IF NOT EXISTS link_type VARCHAR(50) DEFAULT 'custom'`);
+    await query(`ALTER TABLE banners ADD COLUMN IF NOT EXISTS click_url VARCHAR(500) DEFAULT '/credit-cards'`);
+    await query(`ALTER TABLE banners ADD COLUMN IF NOT EXISTS target_page VARCHAR(50) DEFAULT 'all'`);
+    logger.info('Banner redirect and target_page columns migration completed successfully');
+  } catch (bannerErr) {
+    logger.warn('Failed to add banner redirect columns:', bannerErr.message);
+  }
+
+  // ── Product Application Settings & Click Logs Migration ───────────────────
+  try {
+    // 1. Create Enums
+    await query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'application_type_enum') THEN
+          CREATE TYPE application_type_enum AS ENUM ('internal_form', 'external_url', 'affiliate_url', 'api_integration');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'open_type_enum') THEN
+          CREATE TYPE open_type_enum AS ENUM ('same_tab', 'new_tab');
+        END IF;
+      END$$;
+    `);
+
+    // 2. Create product_application_settings table
+    await query(`
+      CREATE TABLE IF NOT EXISTS product_application_settings (
+        id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        product_id        UUID NOT NULL UNIQUE REFERENCES products(id) ON DELETE CASCADE,
+        application_type  application_type_enum NOT NULL DEFAULT 'internal_form',
+        application_url   VARCHAR(1000),
+        provider_name     VARCHAR(255),
+        open_type         open_type_enum NOT NULL DEFAULT 'same_tab',
+        partner_enabled   BOOLEAN NOT NULL DEFAULT TRUE,
+        customer_enabled  BOOLEAN NOT NULL DEFAULT TRUE,
+        track_clicks      BOOLEAN NOT NULL DEFAULT TRUE,
+        status            VARCHAR(20) NOT NULL DEFAULT 'active',
+        created_by        UUID REFERENCES users(id),
+        updated_by        UUID REFERENCES users(id),
+        created_at        TIMESTAMPTZ DEFAULT NOW(),
+        updated_at        TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_app_settings_product ON product_application_settings(product_id)`);
+
+    // 3. Create application_click_logs table
+    await query(`
+      CREATE TABLE IF NOT EXISTS application_click_logs (
+        id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        product_id        UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        partner_id        UUID REFERENCES partner_profiles(id) ON DELETE SET NULL,
+        customer_id       UUID REFERENCES users(id) ON DELETE SET NULL,
+        application_type  application_type_enum,
+        ip_address        VARCHAR(64),
+        user_agent        TEXT,
+        device_type       VARCHAR(20),
+        browser           VARCHAR(50),
+        clicked_at        TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_click_logs_product ON application_click_logs(product_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_click_logs_partner ON application_click_logs(partner_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_click_logs_clicked_at ON application_click_logs(clicked_at)`);
+
+    logger.info('Product application settings and click logs migration completed successfully');
+  } catch (appSettingsErr) {
+    logger.error('Failed to run product application settings and click logs migration:', appSettingsErr);
+    throw appSettingsErr;
+  }
+
+  // ── Partner Team Management Migration ─────────────────────────────────────
+  try {
+    await query(`
+      ALTER TABLE partner_profiles 
+      ADD COLUMN IF NOT EXISTS team_level INTEGER DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS team_status VARCHAR(50) DEFAULT 'ACTIVE',
+      ADD COLUMN IF NOT EXISTS allow_team_creation BOOLEAN DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS team_joined_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS children_count INTEGER DEFAULT 0
+    `);
+
+    await query(`
+      ALTER TABLE partner_wallets 
+      ADD COLUMN IF NOT EXISTS personal_earnings DECIMAL(15,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS team_earnings DECIMAL(15,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS referral_bonus DECIMAL(15,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS pending_team_commission DECIMAL(15,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS released_team_commission DECIMAL(15,2) DEFAULT 0
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS partner_team_relationships (
+        id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        parent_partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        child_partner_id  UUID NOT NULL UNIQUE REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        level             INTEGER NOT NULL,
+        created_at        TIMESTAMPTZ DEFAULT NOW(),
+        status            VARCHAR(20) DEFAULT 'ACTIVE'
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_team_rels_parent ON partner_team_relationships(parent_partner_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_team_rels_child ON partner_team_relationships(child_partner_id)`);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS partner_referrals (
+        id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id        UUID UNIQUE NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        referral_code     VARCHAR(50) UNIQUE NOT NULL,
+        referral_link     VARCHAR(1000) NOT NULL,
+        total_invites     INTEGER DEFAULT 0,
+        total_registered  INTEGER DEFAULT 0,
+        created_at        TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_referrals_partner ON partner_referrals(partner_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_referrals_code ON partner_referrals(referral_code)`);
+
+    await query(`
+      INSERT INTO system_settings (key, value)
+      VALUES ('team_commission_child_pct', '90'), ('team_commission_parent_pct', '10')
+      ON CONFLICT (key) DO NOTHING
+    `);
+
+    logger.info('Partner Team Management migration completed successfully');
+  } catch (teamMigrateErr) {
+    logger.error('Failed to run Partner Team Management migration:', teamMigrateErr);
+    throw teamMigrateErr;
+  }
+
+  // ── Wallet Engine Migrations ──────────────────────────────
+  try {
+    logger.info('Running Wallet Engine Migrations...');
+    
+    await query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ledger_transaction_type') THEN
+          CREATE TYPE ledger_transaction_type AS ENUM (
+            'PERSONAL_COMMISSION', 
+            'TEAM_COMMISSION', 
+            'REFERRAL_BONUS', 
+            'CAMPAIGN_BONUS', 
+            'SETTLEMENT', 
+            'WITHDRAWAL', 
+            'ADJUSTMENT', 
+            'REVERSAL', 
+            'REFUND'
+          );
+        END IF;
+      END $$;
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS wallet_ledger (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        wallet_id UUID NOT NULL REFERENCES partner_wallets(id),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id),
+        application_id UUID REFERENCES applications(id),
+        transaction_type ledger_transaction_type NOT NULL,
+        credit DECIMAL(15,2) DEFAULT 0,
+        debit DECIMAL(15,2) DEFAULT 0,
+        balance_after_transaction DECIMAL(15,2) DEFAULT 0,
+        description VARCHAR(500),
+        reference_number VARCHAR(100),
+        status VARCHAR(50) DEFAULT 'completed',
+        created_by UUID REFERENCES users(id),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS commission_rules (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        product_id UUID REFERENCES products(id),
+        partner_percentage DECIMAL(5,2) DEFAULT 90.00,
+        parent_percentage DECIMAL(5,2) DEFAULT 10.00,
+        campaign_bonus DECIMAL(15,2) DEFAULT 0.00,
+        effective_from TIMESTAMPTZ DEFAULT NOW(),
+        effective_to TIMESTAMPTZ,
+        status VARCHAR(50) DEFAULT 'active',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS wallet_withdrawals (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID REFERENCES partner_profiles(id),
+        amount DECIMAL(15,2) NOT NULL,
+        bank_account VARCHAR(100),
+        ifsc VARCHAR(20),
+        status VARCHAR(50) DEFAULT 'pending',
+        requested_at TIMESTAMPTZ DEFAULT NOW(),
+        approved_at TIMESTAMPTZ,
+        approved_by UUID REFERENCES users(id),
+        transaction_reference VARCHAR(100)
+      )
+    `);
+    
+    await query(`ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS tds_rate NUMERIC(5,2) DEFAULT 2.00`);
+    await query(`ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS tds_amount NUMERIC(15,2) DEFAULT 0.00`);
+    await query(`ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS net_amount NUMERIC(15,2)`);
+    
+    logger.info('Wallet Engine Migrations completed successfully');
+  } catch (walletMigrateErr) {
+    logger.error('Failed to run Wallet Engine Migrations:', walletMigrateErr);
+    throw walletMigrateErr;
+  }
+
+  // ── Video KYC & Document Status Migrations ──────────────────────
+  try {
+    logger.info('Running Video KYC Migrations...');
+    
+    // Add new columns to partner_profiles
+    await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS kyc_submitted_at TIMESTAMPTZ`);
+    await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS kyc_reviewed_at TIMESTAMPTZ`);
+    await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS kyc_reviewed_by UUID REFERENCES users(id)`);
+    await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS kyc_rejection_reason TEXT`);
+
+    // Add verification_status to kyc_documents
+    await query(`ALTER TABLE kyc_documents ADD COLUMN IF NOT EXISTS verification_status VARCHAR(50) DEFAULT 'pending'`);
+    await query(`ALTER TABLE kyc_documents ADD COLUMN IF NOT EXISTS rejection_reason TEXT`);
+    await query(`ALTER TABLE partner_videos ADD COLUMN IF NOT EXISTS rejection_reason TEXT`);
+
+    // Create partner_videos table
+    await query(`
+      CREATE TABLE IF NOT EXISTS partner_videos (
+        id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id          UUID UNIQUE NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        video_url           VARCHAR(500) NOT NULL,
+        video_duration      INTEGER,
+        video_size          INTEGER,
+        storage_key         VARCHAR(500) NOT NULL,
+        uploaded_at         TIMESTAMPTZ DEFAULT NOW(),
+        verification_status VARCHAR(50) DEFAULT 'pending',
+        rejection_reason    TEXT
+      )
+    `);
+
+    logger.info('Video KYC Migrations completed successfully');
+  } catch (videoMigrateErr) {
+    logger.error('Failed to run Video KYC Migrations:', videoMigrateErr);
+    throw videoMigrateErr;
+  }
+
+  // ── Product Links & Click Tracking Migrations ──────────────────────
+  try {
+    logger.info('Running Product Links & Click Tracking Migrations...');
+
+    // Add new columns to products table
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS public_url VARCHAR(1000)`);
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS partner_url VARCHAR(1000)`);
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS tracking_enabled BOOLEAN DEFAULT TRUE`);
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS button_text VARCHAR(100) DEFAULT 'Apply Now'`);
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS redirect_type VARCHAR(20) DEFAULT 'new_tab'`);
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS utm_source VARCHAR(100)`);
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS utm_medium VARCHAR(100)`);
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS utm_campaign VARCHAR(100)`);
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS last_updated_by UUID REFERENCES users(id)`);
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS last_updated_at TIMESTAMPTZ DEFAULT NOW()`);
+
+    // Create click_tracking table
+    await query(`
+      CREATE TABLE IF NOT EXISTS click_tracking (
+        click_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id        UUID REFERENCES partner_profiles(id) ON DELETE SET NULL,
+        product_id        UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        bank_id           UUID REFERENCES banks(id) ON DELETE SET NULL,
+        customer_id       UUID REFERENCES users(id) ON DELETE SET NULL,
+        customer_mobile   VARCHAR(15),
+        tracking_url      VARCHAR(1000),
+        original_url      VARCHAR(1000),
+        ip_address        VARCHAR(45),
+        browser           VARCHAR(100),
+        device            VARCHAR(50),
+        operating_system  VARCHAR(50),
+        campaign          VARCHAR(100),
+        referral_source   VARCHAR(255),
+        location          VARCHAR(255),
+        clicked_at        TIMESTAMPTZ DEFAULT NOW(),
+        conversion_status VARCHAR(20) DEFAULT 'pending'
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_click_tracking_product ON click_tracking(product_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_click_tracking_partner ON click_tracking(partner_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_click_tracking_clicked_at ON click_tracking(clicked_at)`);
+
+    // Create product_link_audits table
+    await query(`
+      CREATE TABLE IF NOT EXISTS product_link_audits (
+        id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        product_id    UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        old_url       VARCHAR(1000),
+        new_url       VARCHAR(1000),
+        updated_by    UUID REFERENCES users(id) ON DELETE SET NULL,
+        updated_at    TIMESTAMPTZ DEFAULT NOW(),
+        reason        TEXT,
+        ip_address    VARCHAR(45)
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_link_audits_product ON product_link_audits(product_id)`);
+
+    logger.info('Product Links & Click Tracking Migrations completed successfully');
+  } catch (linkMigrateErr) {
+    logger.error('Failed to run Product Links & Click Tracking Migrations:', linkMigrateErr);
+    throw linkMigrateErr;
+  }
+
+  // Wallet Schema Updates (Task 8)
+  try {
+    logger.info('Running Wallet Schema Updates (Task 8)...');
+    
+    // 0. Update ledger_transaction_type enum to include OVERRIDE_COMMISSION
+    await addEnumValue('ledger_transaction_type', 'OVERRIDE_COMMISSION');
+
+    // 1. Wallets table balance columns
+    await query(`
+      ALTER TABLE partner_wallets 
+      ADD COLUMN IF NOT EXISTS pending_balance DECIMAL(15,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS withdrawn_balance DECIMAL(15,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS override_balance DECIMAL(15,2) DEFAULT 0
+    `);
+
+    // 2. Wallet transactions table columns
+    await query(`
+      ALTER TABLE wallet_transactions 
+      ADD COLUMN IF NOT EXISTS product_id UUID REFERENCES products(id),
+      ADD COLUMN IF NOT EXISTS commission_type VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS gst DECIMAL(15,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS tds DECIMAL(15,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS net_amount DECIMAL(15,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS remarks TEXT
+    `);
+
+    // 3. Partner bank details columns
+    await query(`
+      ALTER TABLE partner_bank_details 
+      ADD COLUMN IF NOT EXISTS upi_id VARCHAR(100)
+    `);
+
+    // 4. Partner settlements table
+    await query(`
+      CREATE TABLE IF NOT EXISTS partner_settlements (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        withdrawal_id UUID REFERENCES withdrawal_requests(id) ON DELETE SET NULL,
+        partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        payment_mode VARCHAR(50),
+        payment_gateway VARCHAR(50),
+        utr_number VARCHAR(100),
+        bank_reference VARCHAR(100),
+        settled_at TIMESTAMPTZ DEFAULT NOW(),
+        status VARCHAR(50) DEFAULT 'completed'
+      )
+    `);
+
+    logger.info('Wallet Schema Updates (Task 8) completed successfully');
+  } catch (walletMigrateErr) {
+    logger.error('Failed to run Wallet Schema Updates (Task 8):', walletMigrateErr);
+    throw walletMigrateErr;
+  }
+
+  // Application Lifecycle Schema Updates (Task 9)
+  try {
+    logger.info('Running Application Lifecycle Schema Updates (Task 9)...');
+
+    // 1. Applications table tracking updates
+    await query(`
+      ALTER TABLE applications
+      ADD COLUMN IF NOT EXISTS parent_partner_id UUID REFERENCES partner_profiles(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS bank_id UUID REFERENCES banks(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS tracking_id VARCHAR(100) NULL,
+      ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ NULL,
+      ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ NULL,
+      ADD COLUMN IF NOT EXISTS commission_received_at TIMESTAMPTZ NULL,
+      ADD COLUMN IF NOT EXISTS commission_paid_at TIMESTAMPTZ NULL
+    `);
+
+    // 2. Application Timeline table
+    await query(`
+      CREATE TABLE IF NOT EXISTS application_timeline (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+        status VARCHAR(50) NOT NULL,
+        activity VARCHAR(255) NOT NULL,
+        remarks TEXT NULL,
+        performed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        performed_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_timeline_app ON application_timeline(application_id)`);
+
+    // 3. Application Notes table
+    await query(`
+      CREATE TABLE IF NOT EXISTS application_notes (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        note TEXT NOT NULL,
+        visibility VARCHAR(50) DEFAULT 'public',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_notes_app ON application_notes(application_id)`);
+
+    // 4. Application Documents table
+    await query(`
+      CREATE TABLE IF NOT EXISTS application_documents (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+        document_type VARCHAR(50) NOT NULL,
+        file_url VARCHAR(1000) NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        uploaded_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_docs_app ON application_documents(application_id)`);
+
+    // 5. Commission Ledger table
+    await query(`
+      CREATE TABLE IF NOT EXISTS commission_ledger (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        parent_partner_id UUID REFERENCES partner_profiles(id) ON DELETE SET NULL,
+        commission_amount DECIMAL(15,2) DEFAULT 0,
+        override_amount DECIMAL(15,2) DEFAULT 0,
+        status VARCHAR(50) DEFAULT 'pending',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_comm_ledger_app ON commission_ledger(application_id)`);
+
+    logger.info('Application Lifecycle Schema Updates (Task 9) completed successfully');
+  } catch (lifecycleMigrateErr) {
+    logger.error('Failed to run Application Lifecycle Schema Updates (Task 9):', lifecycleMigrateErr);
+    throw lifecycleMigrateErr;
+  }
+
+  // Notification System Schema Updates (Task 10)
+  try {
+    logger.info('Running Notification System Schema Updates (Task 10)...');
+
+    // 1. Notifications table updates
+    await query(`
+      ALTER TABLE notifications
+      ADD COLUMN IF NOT EXISTS user_role VARCHAR(50) NULL,
+      ADD COLUMN IF NOT EXISTS category VARCHAR(50) DEFAULT 'system',
+      ADD COLUMN IF NOT EXISTS priority VARCHAR(20) DEFAULT 'normal',
+      ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'sent',
+      ADD COLUMN IF NOT EXISTS channel VARCHAR(50) DEFAULT 'in-app',
+      ADD COLUMN IF NOT EXISTS redirect_url VARCHAR(500) NULL,
+      ADD COLUMN IF NOT EXISTS icon VARCHAR(100) NULL,
+      ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ NULL
+    `);
+
+    // 2. Notification Preferences
+    await query(`
+      CREATE TABLE IF NOT EXISTS notification_preferences (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+        email_enabled BOOLEAN DEFAULT TRUE,
+        sms_enabled BOOLEAN DEFAULT TRUE,
+        app_enabled BOOLEAN DEFAULT TRUE,
+        marketing_enabled BOOLEAN DEFAULT TRUE,
+        commission_enabled BOOLEAN DEFAULT TRUE,
+        kyc_enabled BOOLEAN DEFAULT TRUE,
+        application_enabled BOOLEAN DEFAULT TRUE,
+        language VARCHAR(10) DEFAULT 'en',
+        frequency VARCHAR(20) DEFAULT 'instant'
+      )
+    `);
+
+    // 3. Announcements & Complete Enterprise Communication Infrastructure
+    await query(`
+      CREATE TABLE IF NOT EXISTS announcements (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        announcement_id VARCHAR(50) UNIQUE,
+        title VARCHAR(255) NOT NULL,
+        short_description TEXT,
+        message TEXT,
+        description TEXT,
+        banner_image VARCHAR(500) NULL,
+        audience_type VARCHAR(50) DEFAULT 'ALL_USERS',
+        target_role VARCHAR(50) DEFAULT 'all',
+        priority VARCHAR(20) DEFAULT 'MEDIUM',
+        status VARCHAR(20) DEFAULT 'PUBLISHED',
+        delivery_channels JSONB DEFAULT '["in-app"]',
+        target_user_ids JSONB DEFAULT '[]',
+        target_team_ids JSONB DEFAULT '[]',
+        scheduled_at TIMESTAMPTZ NULL,
+        published_at TIMESTAMPTZ DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NULL,
+        start_date DATE NULL,
+        end_date DATE NULL,
+        redirect_url VARCHAR(500) NULL,
+        views_count INT DEFAULT 0,
+        reach_count INT DEFAULT 0,
+        clicks_count INT DEFAULT 0,
+        acknowledgements_count INT DEFAULT 0,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS announcement_id VARCHAR(50);
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS short_description TEXT;
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS message TEXT;
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS audience_type VARCHAR(50) DEFAULT 'ALL_USERS';
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS delivery_channels JSONB DEFAULT '["in-app"]';
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_user_ids JSONB DEFAULT '[]';
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_team_ids JSONB DEFAULT '[]';
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_designations JSONB DEFAULT '[]';
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ NULL;
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ DEFAULT NOW();
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ NULL;
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS views_count INT DEFAULT 0;
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS reach_count INT DEFAULT 0;
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS clicks_count INT DEFAULT 0;
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS acknowledgements_count INT DEFAULT 0;
+      ALTER TABLE announcements ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+      -- Create announcement sequence
+      CREATE SEQUENCE IF NOT EXISTS announcement_seq START 1001;
+
+      -- Announcement Recipients Table
+      CREATE TABLE IF NOT EXISTS announcement_recipients (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        announcement_id UUID NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        delivery_status VARCHAR(50) DEFAULT 'DELIVERED',
+        delivered_at TIMESTAMPTZ DEFAULT NOW(),
+        read_at TIMESTAMPTZ NULL,
+        clicked_at TIMESTAMPTZ NULL,
+        acknowledged_at TIMESTAMPTZ NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(announcement_id, user_id)
+      );
+
+      -- Announcement Reads / Engagement Table
+      CREATE TABLE IF NOT EXISTS announcement_reads (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        announcement_id UUID NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        read_at TIMESTAMPTZ DEFAULT NOW(),
+        clicked_at TIMESTAMPTZ NULL,
+        acknowledged_at TIMESTAMPTZ NULL,
+        UNIQUE(announcement_id, user_id)
+      );
+
+      -- Announcement Audit Logs Table
+      CREATE TABLE IF NOT EXISTS announcement_audit_logs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        announcement_id UUID NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+        action VARCHAR(100) NOT NULL,
+        performed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        performed_by_name VARCHAR(255),
+        old_value JSONB DEFAULT '{}',
+        new_value JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // 4. Templates
+    await query(`
+      CREATE TABLE IF NOT EXISTS notification_templates (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        template_name VARCHAR(100) UNIQUE NOT NULL,
+        subject VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL,
+        channel VARCHAR(50) DEFAULT 'in-app',
+        variables JSONB DEFAULT '[]',
+        status VARCHAR(20) DEFAULT 'active'
+      )
+    `);
+
+    logger.info('Notification System Schema Updates (Task 10) completed successfully');
+  } catch (notificationMigrateErr) {
+    logger.error('Failed to run Notification System Schema Updates (Task 10):', notificationMigrateErr);
+    throw notificationMigrateErr;
+  }
+
+  // Product Management System Schema Updates (Task 7)
+  try {
+    logger.info('Running Product Management System Schema Updates (Task 7)...');
+
+    await query(`
+      ALTER TABLE products
+      ADD COLUMN IF NOT EXISTS short_description VARCHAR(500) NULL,
+      ADD COLUMN IF NOT EXISTS logo VARCHAR(500) NULL,
+      ADD COLUMN IF NOT EXISTS banner VARCHAR(500) NULL,
+      ADD COLUMN IF NOT EXISTS image VARCHAR(500) NULL,
+      ADD COLUMN IF NOT EXISTS commission_enabled BOOLEAN DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS commission_amount DECIMAL(12,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS override_percentage DECIMAL(5,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS featured BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS public_visible BOOLEAN DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS partner_visible BOOLEAN DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id),
+      ADD COLUMN IF NOT EXISTS updated_by UUID REFERENCES users(id),
+      ADD COLUMN IF NOT EXISTS eligibility_criteria TEXT NULL,
+      ADD COLUMN IF NOT EXISTS documents_required TEXT NULL,
+      ADD COLUMN IF NOT EXISTS benefits TEXT NULL,
+      ADD COLUMN IF NOT EXISTS fees_charges TEXT NULL,
+      ADD COLUMN IF NOT EXISTS apply_button_text VARCHAR(100) DEFAULT 'Apply Now',
+      ADD COLUMN IF NOT EXISTS seo_title VARCHAR(255) NULL,
+      ADD COLUMN IF NOT EXISTS seo_description VARCHAR(500) NULL,
+      ADD COLUMN IF NOT EXISTS seo_keywords VARCHAR(500) NULL
+    `);
+
+    logger.info('Product Management System Schema Updates (Task 7) completed successfully');
+  } catch (productMigrateErr) {
+    logger.error('Failed to run Product Management System Schema Updates (Task 7):', productMigrateErr);
+    throw productMigrateErr;
+  }
+
+  // ── Enterprise Database Schema Alignment ─────────────────────────────
+  try {
+    logger.info('Running Enterprise Database Schema Alignment...');
+
+    // 1. users
+    await query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS mobile_verified BOOLEAN DEFAULT FALSE;
+    `);
+
+    // 2. partner_profiles
+    await query(`
+      ALTER TABLE partner_profiles
+      ADD COLUMN IF NOT EXISTS referral_level INTEGER DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0;
+    `);
+
+    // 3. partner_bank_details
+    await query(`
+      ALTER TABLE partner_bank_details
+      ADD COLUMN IF NOT EXISTS branch_name VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS cancelled_cheque_url VARCHAR(500),
+      ADD COLUMN IF NOT EXISTS verified_by UUID REFERENCES users(id);
+    `);
+
+    // 4. training_modules
+    await query(`
+      CREATE TABLE IF NOT EXISTS training_modules (
+        id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        title       VARCHAR(255) NOT NULL,
+        description TEXT,
+        video_url   VARCHAR(500),
+        pdf_url     VARCHAR(500),
+        is_active   BOOLEAN DEFAULT TRUE,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // 5. partner_training_progress
+    await query(`
+      CREATE TABLE IF NOT EXISTS partner_training_progress (
+        id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id    UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        training_id   UUID NOT NULL REFERENCES training_modules(id) ON DELETE CASCADE,
+        progress      INTEGER DEFAULT 0, -- percentage
+        completed     BOOLEAN DEFAULT FALSE,
+        completed_at  TIMESTAMPTZ,
+        created_at    TIMESTAMPTZ DEFAULT NOW(),
+        updated_at    TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(partner_id, training_id)
+      );
+    `);
+
+    // 6. views for enterprise compatibility
+    await query(`
+      CREATE OR REPLACE VIEW referral_tree AS 
+      SELECT id, parent_partner_id, child_partner_id, level, created_at AS joined_at 
+      FROM partner_team_relationships;
+    `);
+    
+    await query(`
+      CREATE OR REPLACE VIEW cms_sections AS 
+      SELECT id, key AS section_key, title, items AS content, NULL::VARCHAR AS language, is_active, updated_at 
+      FROM homepage_sections;
+    `);
+
+    // 7. seed default training modules if empty
+    const { rows: [{ count: trainCount }] } = await query(`SELECT COUNT(*) FROM training_modules`);
+    if (parseInt(trainCount) === 0) {
+      await query(`
+        INSERT INTO training_modules (title, description, video_url, is_active)
+        VALUES 
+        ('Introduction to GharKaPaisa Platform', 'Essential platform rules and guides to start earning.', 'https://www.w3schools.com/html/mov_bbb.mp4', true),
+        ('Pitching Credit Cards effectively', 'Learn best practices on how to recommend cards to customers.', 'https://www.w3schools.com/html/mov_bbb.mp4', true),
+        ('Pitching Personal Loans effectively', 'Step-by-step guide for personal loan leads.', 'https://www.w3schools.com/html/mov_bbb.mp4', true);
+      `);
+    }
+
+    logger.info('Enterprise Database Schema Alignment completed successfully');
+  } catch (alignErr) {
+    logger.error('Failed to run Enterprise Database Schema Alignment:', alignErr);
+    throw alignErr;
+  }
+
+  // ── Wallet & Razorpay Payout System Alignment Migrations ──
+  try {
+    logger.info('Running Wallet & Razorpay Payout System Alignment Migrations...');
+
+    // 1. Rename wallets table to partner_wallets
+    await query(`
+      DO $$
+      DECLARE
+        pw_count INTEGER;
+        wallets_exists BOOLEAN;
+        partner_wallets_exists BOOLEAN;
+      BEGIN
+        SELECT EXISTS (
+          SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'wallets'
+        ) INTO wallets_exists;
+
+        SELECT EXISTS (
+          SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'partner_wallets'
+        ) INTO partner_wallets_exists;
+
+        IF wallets_exists THEN
+          IF partner_wallets_exists THEN
+            EXECUTE 'SELECT COUNT(*) FROM partner_wallets' INTO pw_count;
+            IF pw_count = 0 THEN
+              EXECUTE 'DROP TABLE partner_wallets CASCADE';
+              EXECUTE 'ALTER TABLE wallets RENAME TO partner_wallets';
+              RAISE NOTICE 'Dropped empty partner_wallets and renamed wallets to partner_wallets';
+            ELSE
+              RAISE NOTICE 'Both wallets and partner_wallets contain records. Manual merge needed.';
+            END IF;
+          ELSE
+            EXECUTE 'ALTER TABLE wallets RENAME TO partner_wallets';
+            RAISE NOTICE 'Renamed table wallets to partner_wallets';
+          END IF;
+        END IF;
+      END $$;
+    `);
+
+    // 2. Align partner_wallets columns
+    await query(`
+      ALTER TABLE partner_wallets ADD COLUMN IF NOT EXISTS locked_balance DECIMAL(15,2) DEFAULT 0.00;
+      ALTER TABLE partner_wallets ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active';
+      ALTER TABLE partner_wallets ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+      ALTER TABLE partner_wallets ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+    `);
+
+    // Fix wallet_ledger FK constraint if it references old 'wallets' table or view instead of 'partner_wallets'
+    await query(`
+      DO $$
+      DECLARE
+        ref_table TEXT;
+      BEGIN
+        SELECT ccu.table_name INTO ref_table
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+        WHERE tc.table_name = 'wallet_ledger' AND tc.constraint_type = 'FOREIGN KEY'
+          AND tc.constraint_name = 'wallet_ledger_wallet_id_fkey';
+
+        IF ref_table IS NOT NULL AND ref_table <> 'partner_wallets' THEN
+          -- 1. Ensure partner_wallets exist for all partners in wallet_ledger
+          EXECUTE 'INSERT INTO partner_wallets (partner_id)
+          SELECT DISTINCT wl.partner_id
+          FROM wallet_ledger wl
+          WHERE wl.partner_id IS NOT NULL 
+            AND NOT EXISTS (SELECT 1 FROM partner_wallets pw WHERE pw.partner_id = wl.partner_id)
+            AND EXISTS (SELECT 1 FROM partner_profiles pp WHERE pp.id = wl.partner_id)
+          ON CONFLICT (partner_id) DO NOTHING';
+
+          -- 2. Remap wallet_id in wallet_ledger if it stored partner_profiles.id instead of partner_wallets.id
+          EXECUTE 'UPDATE wallet_ledger wl
+          SET wallet_id = pw.id
+          FROM partner_wallets pw
+          WHERE (wl.wallet_id = pw.partner_id OR (wl.wallet_id IS NOT NULL AND wl.partner_id = pw.partner_id))
+            AND NOT EXISTS (SELECT 1 FROM partner_wallets pw2 WHERE pw2.id = wl.wallet_id)';
+
+          -- 3. Create fallback partner_wallets records for any remaining orphan wallet_id in wallet_ledger
+          EXECUTE 'INSERT INTO partner_wallets (id, partner_id)
+          SELECT DISTINCT wl.wallet_id, wl.partner_id
+          FROM wallet_ledger wl
+          WHERE wl.wallet_id IS NOT NULL 
+            AND NOT EXISTS (SELECT 1 FROM partner_wallets pw WHERE pw.id = wl.wallet_id)
+            AND EXISTS (SELECT 1 FROM partner_profiles pp WHERE pp.id = wl.partner_id)
+          ON CONFLICT (id) DO NOTHING';
+
+          -- 4. Clean up any remaining unresolvable orphan records from wallet_ledger
+          EXECUTE 'DELETE FROM wallet_ledger wl
+          WHERE NOT EXISTS (SELECT 1 FROM partner_wallets pw WHERE pw.id = wl.wallet_id)';
+
+          EXECUTE 'ALTER TABLE wallet_ledger DROP CONSTRAINT wallet_ledger_wallet_id_fkey';
+          EXECUTE 'ALTER TABLE wallet_ledger ADD CONSTRAINT wallet_ledger_wallet_id_fkey FOREIGN KEY (wallet_id) REFERENCES partner_wallets(id)';
+          RAISE NOTICE 'Fixed wallet_ledger FK to point to partner_wallets';
+        END IF;
+      END $$;
+    `);
+
+    // 3. Rename withdrawal_requests table to wallet_withdrawals
+    await query(`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'withdrawal_requests') AND NOT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'wallet_withdrawals') THEN
+          EXECUTE 'ALTER TABLE withdrawal_requests RENAME TO wallet_withdrawals';
+          RAISE NOTICE 'Renamed table withdrawal_requests to wallet_withdrawals';
+        END IF;
+      END $$;
+    `);
+
+    // 4. Align wallet_withdrawals columns
+    await query(`
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS wallet_id UUID REFERENCES partner_wallets(id);
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS bank_account_id UUID REFERENCES partner_bank_details(id);
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS transferred_by UUID REFERENCES users(id);
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS transferred_at TIMESTAMPTZ;
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS razorpay_contact_id VARCHAR(100);
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS razorpay_fund_account_id VARCHAR(100);
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS razorpay_payout_id VARCHAR(100);
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS bank_reference VARCHAR(100);
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS failure_reason TEXT;
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS utr VARCHAR(100);
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS remarks TEXT;
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS processed_by UUID REFERENCES users(id);
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ;
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS admin_note TEXT;
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+      ALTER TABLE wallet_withdrawals ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+    `);
+    await query(`DROP TRIGGER IF EXISTS set_updated_at ON wallet_withdrawals`);
+    await query(`
+      CREATE TRIGGER set_updated_at BEFORE UPDATE ON wallet_withdrawals
+      FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+    `);
+
+    // Migrate existing data if needed (checking if columns exist to prevent errors)
+    const { rows: utrNumCol } = await query(`
+      SELECT 1 FROM information_schema.columns 
+      WHERE table_name='wallet_withdrawals' AND column_name='utr_number'
+    `);
+    if (utrNumCol.length > 0) {
+      await query(`
+        UPDATE wallet_withdrawals 
+        SET utr = utr_number 
+        WHERE utr IS NULL AND utr_number IS NOT NULL
+      `);
+    }
+
+    const { rows: txnRefCol } = await query(`
+      SELECT 1 FROM information_schema.columns 
+      WHERE table_name='wallet_withdrawals' AND column_name='transaction_reference'
+    `);
+    if (txnRefCol.length > 0) {
+      await query(`
+        UPDATE wallet_withdrawals 
+        SET utr = transaction_reference 
+        WHERE utr IS NULL AND transaction_reference IS NOT NULL
+      `);
+    }
+
+    // 5. Create payout_logs table
+    await query(`
+      CREATE TABLE IF NOT EXISTS payout_logs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        withdrawal_id UUID REFERENCES wallet_withdrawals(id) ON DELETE CASCADE,
+        api_request JSONB,
+        api_response JSONB,
+        http_status INTEGER,
+        retry_count INTEGER DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // 6. Clean up legacy wallets view/table to enforce partner_wallets schema
+    await query(`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'wallets' AND relkind = 'v') THEN
+          DROP VIEW wallets CASCADE;
+        ELSIF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'wallets' AND relkind = 'r') THEN
+          DROP TABLE wallets CASCADE;
+        END IF;
+      END $$;
+    `);
+
+    await query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'withdrawal_requests' AND table_type = 'BASE TABLE') THEN
+          CREATE OR REPLACE VIEW withdrawal_requests AS
+          SELECT
+            id, wallet_id, partner_id, amount, status,
+            bank_name, account_number, ifsc_code, utr as utr_number,
+            processed_by, processed_at, rejection_reason, admin_note,
+            created_at, updated_at
+          FROM wallet_withdrawals;
+        END IF;
+      END $$;
+    `);
+
+    logger.info('Wallet & Razorpay Payout System Alignment Migrations completed successfully.');
+  } catch (payoutMigrateErr) {
+    logger.error('Failed to run Wallet & Razorpay Payout System Alignment Migrations:', payoutMigrateErr);
+    throw payoutMigrateErr;
+  }
+
+  // ── GharKaPaisa Enhancements (V2 Features) ───────────────────────────
+  try {
+    logger.info('Running GharKaPaisa Enhancements (V2 Features) Migrations...');
+
+    // 1. Alter partner_profiles to add nominee & emergency contact columns
+    await query(`
+      ALTER TABLE partner_profiles 
+      ADD COLUMN IF NOT EXISTS nominee_name VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS nominee_relation VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS nominee_dob DATE,
+      ADD COLUMN IF NOT EXISTS emergency_contact_name VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS emergency_contact_phone VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS face_match_score DECIMAL(5,2)
+    `);
+
+    // 2. Drop unique constraint on partner_bank_details(partner_id) to allow multiple accounts
+    await query(`
+      ALTER TABLE partner_bank_details DROP CONSTRAINT IF EXISTS partner_bank_details_partner_id_key
+    `);
+
+    // 3. Add is_primary to partner_bank_details
+    await query(`
+      ALTER TABLE partner_bank_details 
+      ADD COLUMN IF NOT EXISTS is_primary BOOLEAN DEFAULT TRUE
+    `);
+
+    // 4. Create bank_details_history table
+    await query(`
+      CREATE TABLE IF NOT EXISTS bank_details_history (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        bank_details_id UUID REFERENCES partner_bank_details(id) ON DELETE SET NULL,
+        changed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        old_data JSONB,
+        new_data JSONB,
+        changed_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // 5. Add index on bank_details_history
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_bank_details_history_partner ON bank_details_history(partner_id)
+    `);
+
+    // 6. Ensure KYC documents table has ocr_data JSONB
+    await query(`
+      ALTER TABLE kyc_documents ADD COLUMN IF NOT EXISTS ocr_data JSONB
+    `);
+
+    // 7. Support Tickets, Marketing Materials, and Partner Training Progress Tables
+    await query(`
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id    UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        subject       VARCHAR(255) NOT NULL,
+        description   TEXT NOT NULL,
+        category      VARCHAR(100) NOT NULL,
+        priority      VARCHAR(50) DEFAULT 'medium',
+        status        VARCHAR(50) DEFAULT 'open',
+        replies       JSONB DEFAULT '[]',
+        created_at    TIMESTAMPTZ DEFAULT NOW(),
+        updated_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_support_tickets_partner ON support_tickets(partner_id)`);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS marketing_materials (
+        id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        title         VARCHAR(255) NOT NULL,
+        description   TEXT,
+        category      VARCHAR(100) NOT NULL,
+        file_url      VARCHAR(500) NOT NULL,
+        thumbnail_url VARCHAR(500),
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Seed dummy marketing materials if empty
+    const { rows: existingMaterials } = await query(`SELECT id FROM marketing_materials LIMIT 1`);
+    if (existingMaterials.length === 0) {
+      await query(`
+        INSERT INTO marketing_materials (title, description, category, file_url, thumbnail_url)
+        VALUES 
+          ('GharKaPaisa Poster', 'High-res promotional poster for credit card referrals.', 'banners', 'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=800', 'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=200'),
+          ('Social Media Banner', 'Optimal dimensions for Instagram/Facebook posts.', 'social_media', 'https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?w=800', 'https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?w=200'),
+          ('Referral Campaign Leaflet', 'Print-ready trifold leaflet details.', 'leaflets', 'https://images.unsplash.com/photo-1606857521015-7f9fcf423740?w=800', 'https://images.unsplash.com/photo-1606857521015-7f9fcf423740?w=200')
+      `);
+    }
+
+    logger.info('GharKaPaisa Enhancements (V2 Features) Migrations completed successfully.');
+  } catch (err) {
+    logger.error('Failed to run GharKaPaisa Enhancements (V2 Features) Migrations:', err);
+    throw err;
+  }
+
+  // ── Production Readiness & Referral Clicks Updates (Task 11) ────
+  try {
+    logger.info('Running Production Readiness & Referral Clicks Updates (Task 11)...');
+
+    // 1. Notifications table updates
+    await query(`
+      ALTER TABLE notifications 
+      ADD COLUMN IF NOT EXISTS entity_type VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS entity_id UUID
+    `);
+
+    // 2. Audit Logs table updates
+    await query(`
+      ALTER TABLE audit_logs 
+      ADD COLUMN IF NOT EXISTS old_data JSONB,
+      ADD COLUMN IF NOT EXISTS new_data JSONB
+    `);
+
+    // 3. Wallet Ledger table updates (avoiding expensive joins)
+    await query(`
+      ALTER TABLE wallet_ledger 
+      ADD COLUMN IF NOT EXISTS product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS bank_id UUID REFERENCES banks(id) ON DELETE SET NULL
+    `);
+
+    // 4. Partner Team Relationships table updates
+    await query(`
+      ALTER TABLE partner_team_relationships 
+      ADD COLUMN IF NOT EXISTS commission_percentage DECIMAL(5,2),
+      ADD COLUMN IF NOT EXISTS override_percentage DECIMAL(5,2)
+    `);
+
+    // 5. Support Tickets table updates
+    await query(`
+      ALTER TABLE support_tickets 
+      ALTER COLUMN partner_id DROP NOT NULL,
+      ADD COLUMN IF NOT EXISTS customer_name VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS mobile VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS contact_email VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS closed_by UUID REFERENCES users(id) ON DELETE SET NULL
+    `);
+
+    // 6. Partner Training Progress table updates
+    await query(`
+      ALTER TABLE partner_training_progress 
+      ADD COLUMN IF NOT EXISTS quiz_score DECIMAL(5,2),
+      ADD COLUMN IF NOT EXISTS certificate_url VARCHAR(500),
+      ADD COLUMN IF NOT EXISTS attempt_count INT DEFAULT 1
+    `);
+
+    // Ensure unique constraint exists for upserts
+    await query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint 
+          WHERE conname = 'partner_training_progress_partner_id_training_id_key' 
+             OR conname = 'unique_partner_training'
+        ) THEN
+          EXECUTE 'ALTER TABLE partner_training_progress ADD CONSTRAINT unique_partner_training UNIQUE (partner_id, training_id)';
+        END IF;
+      END $$;
+    `);
+
+    // 7. Marketing Materials table updates
+    await query(`
+      ALTER TABLE marketing_materials 
+      ADD COLUMN IF NOT EXISTS file_type VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS downloads INT DEFAULT 0
+    `);
+
+    // 8. Applications table updates
+    await query(`
+      ALTER TABLE applications 
+      ADD COLUMN IF NOT EXISTS commission_released BOOLEAN DEFAULT FALSE
+    `);
+
+    // 9. Products table updates and slug generation
+    await query(`
+      ALTER TABLE products 
+      ADD COLUMN IF NOT EXISTS slug VARCHAR(255)
+    `);
+    
+    // Check if unique index is already created, if not create it
+    await query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_products_slug ON products(slug) WHERE slug IS NOT NULL
+    `);
+
+    // Generate slugs for existing products based on name
+    await query(`
+      UPDATE products 
+      SET slug = LOWER(REGEXP_REPLACE(name, '[^a-zA-Z0-9]+', '-', 'g')) 
+      WHERE slug IS NULL;
+    `);
+
+    // 10. Referral Clicks table creation
+    await query(`
+      CREATE TABLE IF NOT EXISTS referral_clicks (
+        id                   UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id           UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        referral_code        VARCHAR(50) NOT NULL,
+        ip_address           VARCHAR(45),
+        user_agent           TEXT,
+        source               VARCHAR(50) DEFAULT 'direct',
+        campaign             VARCHAR(100),
+        clicked_at           TIMESTAMPTZ DEFAULT NOW(),
+        converted            BOOLEAN DEFAULT FALSE,
+        converted_partner_id UUID REFERENCES partner_profiles(id) ON DELETE SET NULL,
+        converted_at         TIMESTAMPTZ
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_referral_clicks_partner ON referral_clicks(partner_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_referral_clicks_code ON referral_clicks(referral_code)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_referral_clicks_converted ON referral_clicks(converted)`);
+
+    // 11. Reports Views
+    await query(`
+      CREATE OR REPLACE VIEW daily_wallet_summary AS
+      SELECT 
+        partner_id,
+        created_at::date AS summary_date,
+        SUM(credit) AS total_credit,
+        SUM(debit) AS total_debit,
+        COUNT(*) AS transaction_count
+      FROM wallet_ledger
+      GROUP BY partner_id, created_at::date;
+    `);
+
+    await query(`
+      CREATE OR REPLACE VIEW daily_application_summary AS
+      SELECT 
+        partner_id,
+        created_at::date AS summary_date,
+        status,
+        COUNT(*) AS application_count,
+        SUM(COALESCE(loan_amount, 0)) AS total_loan_amount,
+        SUM(COALESCE(commission_amount, 0)) AS total_commission_amount
+      FROM applications
+      GROUP BY partner_id, created_at::date, status;
+    `);
+
+    await query(`
+      CREATE OR REPLACE VIEW partner_monthly_summary AS
+      SELECT 
+        partner_id,
+        DATE_TRUNC('month', created_at)::date AS summary_month,
+        SUM(credit) AS monthly_earned,
+        SUM(debit) AS monthly_withdrawn
+      FROM wallet_ledger
+      WHERE status = 'completed'
+      GROUP BY partner_id, DATE_TRUNC('month', created_at)::date;
+    `);
+
+    logger.info('Production Readiness & Referral Clicks Updates (Task 11) completed successfully.');
+  } catch (task11Err) {
+    logger.error('Failed to run Production Readiness & Referral Clicks Updates (Task 11):', task11Err);
+    throw task11Err;
+  }
+
+  // ── Partner Onboarding & Team Metrics Schema Migration (Task 12) ──
+  try {
+    logger.info('Running Partner Onboarding & Team Metrics Schema Migration (Task 12)...');
+
+    await query(`
+      ALTER TABLE partner_profiles 
+        ADD COLUMN IF NOT EXISTS active_children INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS inactive_children INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS verified_children INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS pending_children INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS blocked_children INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS total_leads INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS total_applications INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS total_approved INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS team_commission DECIMAL(15,2) DEFAULT 0.00;
+    `);
+
+    logger.info('Partner Onboarding & Team Metrics Schema Migration (Task 12) completed successfully.');
+  } catch (task12Err) {
+    logger.error('Failed to run Partner Onboarding & Team Metrics Schema Migration (Task 12):', task12Err);
+    throw task12Err;
+  }
+
+  // ── 360 Customer Module Architecture Schema Migration (Task 13) ──
+  try {
+    logger.info('Running 360 Customer Module Architecture Schema Migration (Task 13)...');
+
+    // 1. Customers table extensions
+    await query(`
+      ALTER TABLE customers
+        ADD COLUMN IF NOT EXISTS pipeline_status VARCHAR(50) DEFAULT 'new',
+        ADD COLUMN IF NOT EXISTS status_reason TEXT,
+        ADD COLUMN IF NOT EXISTS alternate_mobile VARCHAR(15),
+        ADD COLUMN IF NOT EXISTS occupation VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS nominee_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS nominee_relation VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS product_interests JSONB DEFAULT '[]',
+        ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS is_merged BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS merged_into_id UUID REFERENCES customers(id) ON DELETE SET NULL;
+    `);
+
+    // 2. Customer Notes
+    await query(`
+      CREATE TABLE IF NOT EXISTS customer_notes (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        note TEXT NOT NULL,
+        visibility VARCHAR(20) DEFAULT 'public',
+        is_pinned BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_cust_notes_customer ON customer_notes(customer_id);
+    `);
+
+    // 3. Customer Documents
+    await query(`
+      CREATE TABLE IF NOT EXISTS customer_documents (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        document_type VARCHAR(50) NOT NULL,
+        file_url VARCHAR(1000) NOT NULL,
+        s3_key VARCHAR(500),
+        status VARCHAR(50) DEFAULT 'pending',
+        verified_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        uploaded_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_cust_docs_customer ON customer_documents(customer_id);
+    `);
+
+    // 4. Customer Timeline
+    await query(`
+      CREATE TABLE IF NOT EXISTS customer_timeline (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        event_type VARCHAR(100) NOT NULL,
+        event_title VARCHAR(255) NOT NULL,
+        event_description TEXT,
+        reference_type VARCHAR(50),
+        reference_id UUID,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_cust_timeline_customer ON customer_timeline(customer_id);
+    `);
+
+    // 5. Customer Followups
+    await query(`
+      CREATE TABLE IF NOT EXISTS customer_followups (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        followup_date TIMESTAMPTZ NOT NULL,
+        priority VARCHAR(20) DEFAULT 'medium',
+        status VARCHAR(20) DEFAULT 'pending',
+        remarks TEXT,
+        completed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_cust_followups_customer ON customer_followups(customer_id);
+    `);
+
+    // 6. Customer Tags
+    await query(`
+      CREATE TABLE IF NOT EXISTS customer_tags (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        tag_name VARCHAR(50) NOT NULL,
+        tag_color VARCHAR(20) DEFAULT '#3B82F6',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT unique_cust_tag UNIQUE(customer_id, tag_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_cust_tags_customer ON customer_tags(customer_id);
+    `);
+
+    // 7. Customer Activity Logs
+    await query(`
+      CREATE TABLE IF NOT EXISTS customer_activity_logs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        activity_type VARCHAR(100) NOT NULL,
+        performed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        reference_type VARCHAR(50),
+        reference_id UUID,
+        ip_address VARCHAR(45),
+        device VARCHAR(100),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_cust_activity_customer ON customer_activity_logs(customer_id);
+    `);
+
+    // 8. Customer Communications
+    await query(`
+      CREATE TABLE IF NOT EXISTS customer_communications (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        type VARCHAR(20) NOT NULL,
+        template_id UUID REFERENCES notification_templates(id) ON DELETE SET NULL,
+        message TEXT NOT NULL,
+        status VARCHAR(20) DEFAULT 'sent',
+        sent_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        sent_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_cust_comm_customer ON customer_communications(customer_id);
+    `);
+
+    logger.info('360 Customer Module Architecture Schema Migration (Task 13) completed successfully.');
+  } catch (task13Err) {
+    logger.error('Failed to run 360 Customer Module Architecture Schema Migration (Task 13):', task13Err);
+    throw task13Err;
+  }
+
+  // ── Enterprise Lead Management Architecture Migration (Task 14) ──
+  try {
+    logger.info('Running Enterprise Lead Management Architecture Migration (Task 14)...');
+
+    // 1. Extend leads table
+    await query(`
+      ALTER TABLE leads
+        ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'partner',
+        ADD COLUMN IF NOT EXISTS priority VARCHAR(20) DEFAULT 'medium',
+        ADD COLUMN IF NOT EXISTS pipeline_stage VARCHAR(50) DEFAULT 'created',
+        ADD COLUMN IF NOT EXISTS rejection_reason TEXT,
+        ADD COLUMN IF NOT EXISTS sla_status VARCHAR(20) DEFAULT 'on_track',
+        ADD COLUMN IF NOT EXISTS expected_completion_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS tracking_token VARCHAR(100) UNIQUE,
+        ADD COLUMN IF NOT EXISTS customer_mobile VARCHAR(15);
+    `);
+
+    // Partner Share Links Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS partner_share_links (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        tracking_token VARCHAR(100) UNIQUE NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        expires_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '30 days'
+      );
+      CREATE INDEX IF NOT EXISTS idx_partner_share_links_token ON partner_share_links(tracking_token);
+      CREATE INDEX IF NOT EXISTS idx_partner_share_links_partner ON partner_share_links(partner_id);
+      ALTER TABLE partner_share_links ADD COLUMN IF NOT EXISTS application_id UUID;
+      ALTER TABLE partner_share_links ADD COLUMN IF NOT EXISTS lead_id UUID;
+      ALTER TABLE partner_share_links ADD COLUMN IF NOT EXISTS created_by UUID;
+      ALTER TABLE partner_share_links ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'ACTIVE';
+    `);
+
+    // 2. Lead Documents
+    await query(`
+      CREATE TABLE IF NOT EXISTS lead_documents (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        document_type VARCHAR(50) NOT NULL,
+        file_url VARCHAR(1000) NOT NULL,
+        s3_key VARCHAR(500),
+        verification_status VARCHAR(50) DEFAULT 'pending',
+        uploaded_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        uploaded_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_lead_docs_lead ON lead_documents(lead_id);
+    `);
+
+    // 3. Lead Timeline
+    await query(`
+      CREATE TABLE IF NOT EXISTS lead_timeline (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        reference_type VARCHAR(50),
+        reference_id UUID,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_lead_timeline_lead ON lead_timeline(lead_id);
+    `);
+
+    // 4. Lead Notes (Visibility: partner | admin | operations | private)
+    await query(`
+      CREATE TABLE IF NOT EXISTS lead_notes (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        role VARCHAR(50),
+        note TEXT NOT NULL,
+        visibility VARCHAR(20) DEFAULT 'partner',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_lead_notes_lead ON lead_notes(lead_id);
+    `);
+
+    // 5. Lead Assignments
+    await query(`
+      CREATE TABLE IF NOT EXISTS lead_assignments (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        assigned_to UUID REFERENCES users(id) ON DELETE CASCADE,
+        team VARCHAR(50) DEFAULT 'operations',
+        assigned_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        assigned_at TIMESTAMPTZ DEFAULT NOW(),
+        status VARCHAR(20) DEFAULT 'active'
+      );
+      CREATE INDEX IF NOT EXISTS idx_lead_assignments_lead ON lead_assignments(lead_id);
+    `);
+
+    // 6. Lead Activity Logs
+    await query(`
+      CREATE TABLE IF NOT EXISTS lead_activity_logs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        activity_type VARCHAR(100) NOT NULL,
+        performed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        reference_type VARCHAR(50),
+        reference_id UUID,
+        ip_address VARCHAR(45),
+        device VARCHAR(100),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_lead_activity_lead ON lead_activity_logs(lead_id);
+    `);
+
+    // 7. Lead Status History
+    await query(`
+      CREATE TABLE IF NOT EXISTS lead_status_history (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        old_status VARCHAR(50),
+        new_status VARCHAR(50) NOT NULL,
+        changed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        remarks TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_lead_history_lead ON lead_status_history(lead_id);
+    `);
+
+    // 8. Lead Verification Checklist
+    await query(`
+      CREATE TABLE IF NOT EXISTS lead_checklist (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        item VARCHAR(100) NOT NULL,
+        status VARCHAR(20) DEFAULT 'pending',
+        verified_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        verified_at TIMESTAMPTZ,
+        CONSTRAINT unique_lead_check_item UNIQUE(lead_id, item)
+      );
+      CREATE INDEX IF NOT EXISTS idx_lead_check_lead ON lead_checklist(lead_id);
+    `);
+
+    // 9. Lead SLA Engine Tracker
+    await query(`
+      CREATE TABLE IF NOT EXISTS lead_sla (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        stage_name VARCHAR(50) NOT NULL,
+        started_at TIMESTAMPTZ DEFAULT NOW(),
+        expected_time_hours INT DEFAULT 48,
+        completed_at TIMESTAMPTZ,
+        is_overdue BOOLEAN DEFAULT FALSE,
+        delay_minutes INT DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_lead_sla_lead ON lead_sla(lead_id);
+    `);
+
+    // 10. Bank Executive Assignments
+    await query(`
+      CREATE TABLE IF NOT EXISTS bank_assignments (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        bank_id UUID REFERENCES banks(id) ON DELETE CASCADE,
+        executive_name VARCHAR(255) NOT NULL,
+        mobile VARCHAR(15),
+        email VARCHAR(255),
+        assigned_at TIMESTAMPTZ DEFAULT NOW(),
+        status VARCHAR(20) DEFAULT 'assigned'
+      );
+      CREATE INDEX IF NOT EXISTS idx_bank_assign_lead ON bank_assignments(lead_id);
+    `);
+
+    logger.info('Enterprise Lead Management Architecture Migration (Task 14) completed successfully.');
+  } catch (task14Err) {
+    logger.error('Failed to run Enterprise Lead Management Architecture Migration (Task 14):', task14Err);
+    throw task14Err;
+  }
+
+  // ── Wallet & Commission Engine Migration (Task 15) ──
+  try {
+    logger.info('Running Wallet & Commission Engine Migration (Task 15)...');
+
+    // 1. Partner Wallets Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS partner_wallets (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID UNIQUE NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        available_balance DECIMAL(15,2) DEFAULT 0.00,
+        hold_balance DECIMAL(15,2) DEFAULT 0.00,
+        bonus_balance DECIMAL(15,2) DEFAULT 0.00,
+        total_earned DECIMAL(15,2) DEFAULT 0.00,
+        total_withdrawn DECIMAL(15,2) DEFAULT 0.00,
+        status VARCHAR(20) DEFAULT 'active',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_partner_wallets_partner ON partner_wallets(partner_id);
+    `);
+
+    // 2. Wallet Ledger Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS wallet_ledger (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        transaction_type VARCHAR(50) NOT NULL,
+        credit DECIMAL(15,2) DEFAULT 0.00,
+        debit DECIMAL(15,2) DEFAULT 0.00,
+        balance_after DECIMAL(15,2) DEFAULT 0.00,
+        reference_number VARCHAR(100),
+        description TEXT,
+        product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+        lead_id UUID REFERENCES leads(id) ON DELETE SET NULL,
+        application_id UUID REFERENCES applications(id) ON DELETE SET NULL,
+        customer_name VARCHAR(255),
+        hold_until TIMESTAMPTZ,
+        status VARCHAR(20) DEFAULT 'completed',
+        remarks TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_wallet_ledger_partner ON wallet_ledger(partner_id);
+    `);
+
+    // 3. Wallet Transactions Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS wallet_transactions (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        wallet_id UUID REFERENCES partner_wallets(id) ON DELETE CASCADE,
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        lead_id UUID REFERENCES leads(id) ON DELETE SET NULL,
+        type VARCHAR(20) NOT NULL,
+        amount DECIMAL(15,2) NOT NULL,
+        status VARCHAR(20) DEFAULT 'completed',
+        description TEXT,
+        reference_number VARCHAR(100),
+        release_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_wallet_txns_partner ON wallet_transactions(partner_id);
+    `);
+
+    // 4. Wallet Withdrawals Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS wallet_withdrawals (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        bank_detail_id UUID REFERENCES partner_bank_details(id) ON DELETE SET NULL,
+        amount DECIMAL(15,2) NOT NULL,
+        status VARCHAR(30) DEFAULT 'pending',
+        otp_code VARCHAR(10),
+        otp_expires_at TIMESTAMPTZ,
+        utr_number VARCHAR(100),
+        bank_reference VARCHAR(100),
+        transfer_id VARCHAR(100),
+        transferred_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        transferred_at TIMESTAMPTZ,
+        settlement_date TIMESTAMPTZ,
+        rejection_reason TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_wallet_withdrawals_partner ON wallet_withdrawals(partner_id);
+    `);
+
+    // 5. Commission Rules Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS commission_rules (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        product_id UUID REFERENCES products(id) ON DELETE CASCADE,
+        partner_id UUID REFERENCES partner_profiles(id) ON DELETE SET NULL,
+        commission_type VARCHAR(20) DEFAULT 'fixed',
+        commission_value DECIMAL(15,2) DEFAULT 0.00,
+        parent_override_type VARCHAR(20) DEFAULT 'fixed',
+        parent_override_value DECIMAL(15,2) DEFAULT 0.00,
+        effective_from DATE DEFAULT CURRENT_DATE,
+        effective_to DATE,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_comm_rules_product ON commission_rules(product_id);
+    `);
+
+    // 6. Commission Release Jobs Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS commission_release_jobs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        ledger_id UUID REFERENCES wallet_ledger(id) ON DELETE CASCADE,
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        amount DECIMAL(15,2) NOT NULL,
+        release_date TIMESTAMPTZ NOT NULL,
+        status VARCHAR(20) DEFAULT 'pending',
+        processed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_comm_release_jobs_date ON commission_release_jobs(release_date, status);
+    `);
+
+    // 7. Withdrawal Audit Logs Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS withdrawal_audit_logs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        withdrawal_id UUID NOT NULL REFERENCES wallet_withdrawals(id) ON DELETE CASCADE,
+        action VARCHAR(50) NOT NULL,
+        performed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        old_status VARCHAR(30),
+        new_status VARCHAR(30),
+        remarks TEXT,
+        ip_address VARCHAR(45),
+        device VARCHAR(100),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_withdrawal_audit_w ON withdrawal_audit_logs(withdrawal_id);
+    `);
+
+    // 8. Wallet Reconciliation Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS wallet_reconciliation (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        reconciliation_date DATE DEFAULT CURRENT_DATE,
+        wallet_balance DECIMAL(15,2) DEFAULT 0.00,
+        ledger_balance DECIMAL(15,2) DEFAULT 0.00,
+        discrepancy DECIMAL(15,2) DEFAULT 0.00,
+        status VARCHAR(20) DEFAULT 'matched',
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_wallet_recon_partner ON wallet_reconciliation(partner_id);
+    `);
+
+    // 9. Wallet Bonus Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS wallet_bonus (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        bonus_type VARCHAR(50) NOT NULL,
+        amount DECIMAL(15,2) NOT NULL,
+        status VARCHAR(20) DEFAULT 'completed',
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_wallet_bonus_partner ON wallet_bonus(partner_id);
+    `);
+
+    // 10. Wallet Adjustments Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS wallet_adjustments (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        type VARCHAR(20) NOT NULL,
+        amount DECIMAL(15,2) NOT NULL,
+        reason TEXT NOT NULL,
+        adjusted_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_wallet_adj_partner ON wallet_adjustments(partner_id);
+    `);
+
+    logger.info('Wallet & Commission Engine Migration (Task 15) completed successfully.');
+  } catch (task15Err) {
+    logger.error('Failed to run Wallet & Commission Engine Migration (Task 15):', task15Err);
+    throw task15Err;
+  }
+
+  // ── Team & Referral Management System Migration (Task 16) ──
+  try {
+    logger.info('Running Team & Referral Management System Migration (Task 16)...');
+
+    // 1. Extend partner_profiles table
+    await query(`
+      ALTER TABLE partner_profiles
+        ADD COLUMN IF NOT EXISTS children_count INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS direct_team_count INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS active_team_count INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS last_team_join TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS team_enabled BOOLEAN DEFAULT TRUE,
+        ADD COLUMN IF NOT EXISTS referral_enabled BOOLEAN DEFAULT TRUE,
+        ADD COLUMN IF NOT EXISTS referral_message TEXT DEFAULT 'Join my team on GharKaPaisa and earn highest financial commission payouts!',
+        ADD COLUMN IF NOT EXISTS referral_banner VARCHAR(500);
+    `);
+
+    // 1b. Partner Team Relationships Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS partner_team_relationships (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        parent_partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        child_partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        member_partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        sponsor_id UUID REFERENCES partner_profiles(id) ON DELETE SET NULL,
+        level INT DEFAULT 1,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT partner_team_relationships_unique_pair UNIQUE (parent_partner_id, child_partner_id)
+      );
+      ALTER TABLE partner_team_relationships ADD COLUMN IF NOT EXISTS member_partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE;
+      ALTER TABLE partner_team_relationships ADD COLUMN IF NOT EXISTS sponsor_id UUID REFERENCES partner_profiles(id) ON DELETE SET NULL;
+      CREATE INDEX IF NOT EXISTS idx_partner_team_rel_parent ON partner_team_relationships(parent_partner_id);
+      CREATE INDEX IF NOT EXISTS idx_partner_team_rel_child ON partner_team_relationships(child_partner_id);
+      CREATE INDEX IF NOT EXISTS idx_partner_team_rel_member ON partner_team_relationships(member_partner_id);
+    `);
+
+    // 2. Referral Clicks Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS referral_clicks (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        referral_code VARCHAR(50) NOT NULL,
+        campaign VARCHAR(100) DEFAULT 'direct',
+        source VARCHAR(100) DEFAULT 'web',
+        ip_address VARCHAR(45),
+        browser VARCHAR(100),
+        device VARCHAR(100),
+        country VARCHAR(100),
+        state VARCHAR(100),
+        city VARCHAR(100),
+        referrer VARCHAR(1000),
+        landing_url VARCHAR(1000),
+        clicked_at TIMESTAMPTZ DEFAULT NOW(),
+        registered BOOLEAN DEFAULT FALSE,
+        registration_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        converted BOOLEAN DEFAULT FALSE,
+        application_created BOOLEAN DEFAULT FALSE,
+        commission_generated BOOLEAN DEFAULT FALSE
+      );
+      CREATE INDEX IF NOT EXISTS idx_ref_clicks_code ON referral_clicks(referral_code);
+      CREATE INDEX IF NOT EXISTS idx_ref_clicks_partner ON referral_clicks(partner_id);
+    `);
+
+    // 3. Invitation History Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS invitation_history (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        method VARCHAR(50) NOT NULL,
+        recipient VARCHAR(255),
+        sent_time TIMESTAMPTZ DEFAULT NOW(),
+        opened_time TIMESTAMPTZ,
+        registered BOOLEAN DEFAULT FALSE,
+        status VARCHAR(20) DEFAULT 'sent'
+      );
+      CREATE INDEX IF NOT EXISTS idx_inv_history_partner ON invitation_history(partner_id);
+
+      ALTER TABLE invitation_history
+        ADD COLUMN IF NOT EXISTS invite_type VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS recipient_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS recipient_email VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS recipient_mobile VARCHAR(15),
+        ADD COLUMN IF NOT EXISTS referral_code VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ DEFAULT NOW(),
+        ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS registered_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS expired_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS accepted_by_partner_id UUID REFERENCES partner_profiles(id) ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS invitee_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS invitee_mobile VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS invitee_email VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS invite_code TEXT,
+        ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+      ALTER TABLE invitation_history ALTER COLUMN invite_code TYPE TEXT;
+      ALTER TABLE invitation_history ALTER COLUMN referral_code TYPE TEXT;
+    `);
+
+    // 4. Referral Campaigns Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS referral_campaigns (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        campaign_name VARCHAR(255) NOT NULL,
+        platform VARCHAR(100) DEFAULT 'WhatsApp',
+        start_date DATE DEFAULT CURRENT_DATE,
+        end_date DATE,
+        budget DECIMAL(15,2) DEFAULT 0,
+        clicks INT DEFAULT 0,
+        registrations INT DEFAULT 0,
+        conversions INT DEFAULT 0,
+        commission DECIMAL(15,2) DEFAULT 0,
+        roi DECIMAL(10,2) DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await query(`
+      ALTER TABLE referral_campaigns
+      ADD COLUMN IF NOT EXISTS partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE;
+
+      ALTER TABLE referral_campaigns
+      ADD COLUMN IF NOT EXISTS platform VARCHAR(100) DEFAULT 'WhatsApp';
+
+      ALTER TABLE referral_campaigns
+      ADD COLUMN IF NOT EXISTS budget DECIMAL(15,2) DEFAULT 0;
+
+      ALTER TABLE referral_campaigns
+      ADD COLUMN IF NOT EXISTS clicks INT DEFAULT 0;
+
+      ALTER TABLE referral_campaigns
+      ADD COLUMN IF NOT EXISTS registrations INT DEFAULT 0;
+
+      ALTER TABLE referral_campaigns
+      ADD COLUMN IF NOT EXISTS conversions INT DEFAULT 0;
+
+      ALTER TABLE referral_campaigns
+      ADD COLUMN IF NOT EXISTS commission DECIMAL(15,2) DEFAULT 0;
+
+      ALTER TABLE referral_campaigns
+      ADD COLUMN IF NOT EXISTS roi DECIMAL(10,2) DEFAULT 0;
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_ref_campaigns_partner
+      ON referral_campaigns(partner_id);
+    `);
+
+    // 5. Team Activity Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS team_activity (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        child_partner_id UUID REFERENCES partner_profiles(id) ON DELETE SET NULL,
+        activity_type VARCHAR(100) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_team_act_partner ON team_activity(partner_id);
+    `);
+
+    // 6. Team Commissions Overrides Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS team_commissions (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        parent_partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        child_partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        application_id UUID REFERENCES applications(id) ON DELETE CASCADE,
+        amount DECIMAL(15,2) DEFAULT 0.00,
+        level INT DEFAULT 1,
+        released BOOLEAN DEFAULT FALSE,
+        status VARCHAR(20) DEFAULT 'pending',
+        released_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_team_comm_parent ON team_commissions(parent_partner_id);
+      CREATE OR REPLACE VIEW wallets AS SELECT id, partner_id, available_balance, hold_balance, total_earned, total_withdrawn, updated_at FROM partner_wallets;
+    `);
+
+    // 7. Team Goals Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS team_goals (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        goal_title VARCHAR(255) NOT NULL,
+        target_count INT DEFAULT 10,
+        current_count INT DEFAULT 0,
+        reward_amount DECIMAL(15,2) DEFAULT 0.00,
+        status VARCHAR(20) DEFAULT 'in_progress',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_team_goals_partner ON team_goals(partner_id);
+    `);
+
+    // 8. Team Notifications Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS team_notifications (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        child_partner_id UUID REFERENCES partner_profiles(id) ON DELETE SET NULL,
+        title VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL,
+        read BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_team_notif_partner ON team_notifications(partner_id);
+    `);
+
+    logger.info('Team & Referral Management System Migration (Task 16) completed successfully.');
+  } catch (task16Err) {
+    logger.error('Failed to run Team & Referral Management System Migration (Task 16):', task16Err);
+    throw task16Err;
+  }
+
+  // ── Reports Module Architecture Migration (Task 17) ──
+  try {
+    logger.info('Running Reports Module Architecture Migration (Task 17)...');
+
+    // 1. Report Cache Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS report_cache (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        report_type VARCHAR(100) NOT NULL,
+        filter_hash VARCHAR(64) NOT NULL,
+        partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        generated_at TIMESTAMPTZ DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL,
+        report_json JSONB NOT NULL,
+        status VARCHAR(20) DEFAULT 'ready',
+        CONSTRAINT unique_report_cache UNIQUE(report_type, filter_hash, partner_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_report_cache_lookup ON report_cache(report_type, filter_hash, partner_id);
+    `);
+
+    // 2. Report Exports Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS report_exports (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        report_type VARCHAR(100) NOT NULL,
+        format VARCHAR(20) NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        storage_path TEXT,
+        generated_at TIMESTAMPTZ DEFAULT NOW(),
+        downloaded_at TIMESTAMPTZ,
+        status VARCHAR(20) DEFAULT 'completed'
+      );
+      CREATE INDEX IF NOT EXISTS idx_report_exports_partner ON report_exports(partner_id);
+    `);
+
+    // 3. Scheduled Reports Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS scheduled_reports (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        report_type VARCHAR(100) NOT NULL,
+        frequency VARCHAR(20) DEFAULT 'monthly',
+        recipient_email VARCHAR(255) NOT NULL,
+        next_run TIMESTAMPTZ,
+        last_run TIMESTAMPTZ,
+        status VARCHAR(20) DEFAULT 'active',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_sched_reports_partner ON scheduled_reports(partner_id);
+    `);
+
+    logger.info('Reports Module Architecture Migration (Task 17) completed successfully.');
+  } catch (task17Err) {
+    logger.error('Failed to run Reports Module Architecture Migration (Task 17):', task17Err);
+    throw task17Err;
+  }
+
+  // ── Notification & Activity System Migration (Task 18) ──
+  try {
+    logger.info('Running Notification & Activity System Migration (Task 18)...');
+
+    // 1. Extend notifications table schema
+    await query(`
+      ALTER TABLE notifications
+        ADD COLUMN IF NOT EXISTS partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        ADD COLUMN IF NOT EXISTS action_url TEXT,
+        ADD COLUMN IF NOT EXISTS reference_type VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS reference_id UUID,
+        ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+    `);
+
+    // 2. Notification Preferences Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS notification_preferences (
+        user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        email_enabled BOOLEAN DEFAULT TRUE,
+        sms_enabled BOOLEAN DEFAULT TRUE,
+        browser_enabled BOOLEAN DEFAULT TRUE,
+        push_enabled BOOLEAN DEFAULT TRUE,
+        wallet_notifications BOOLEAN DEFAULT TRUE,
+        commission_notifications BOOLEAN DEFAULT TRUE,
+        application_notifications BOOLEAN DEFAULT TRUE,
+        marketing_notifications BOOLEAN DEFAULT TRUE,
+        system_notifications BOOLEAN DEFAULT TRUE,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // 3. Activity Logs Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS activity_logs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        activity_type VARCHAR(100) NOT NULL,
+        module VARCHAR(100) DEFAULT 'system',
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        reference_id UUID,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        performed_by UUID REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_act_logs_partner ON activity_logs(partner_id);
+    `);
+
+    // 4. Audit Logs Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        role VARCHAR(50),
+        module VARCHAR(100) NOT NULL,
+        action VARCHAR(100) NOT NULL,
+        old_data JSONB,
+        new_data JSONB,
+        ip VARCHAR(45),
+        device VARCHAR(100),
+        browser VARCHAR(100),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id);
+    `);
+
+    // 5. Broadcast Notifications Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS broadcast_notifications (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        title VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL,
+        target VARCHAR(50) DEFAULT 'all',
+        priority VARCHAR(20) DEFAULT 'information',
+        scheduled_at TIMESTAMPTZ,
+        expires_at TIMESTAMPTZ,
+        status VARCHAR(20) DEFAULT 'active',
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // 6. Login Activity Table
+    await query(`
+      CREATE TABLE IF NOT EXISTS login_activity (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        ip_address VARCHAR(45),
+        device VARCHAR(100),
+        browser VARCHAR(100),
+        location VARCHAR(100),
+        status VARCHAR(20) DEFAULT 'success',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_login_act_user ON login_activity(user_id);
+    `);
+
+    logger.info('Notification & Activity System Migration (Task 18) completed successfully.');
+  } catch (task18Err) {
+    logger.error('Failed to run Notification & Activity System Migration (Task 18):', task18Err);
+    throw task18Err;
+  }
+
+  // ── Registration Validation & Business Rules Updates (Task 13) ──
+  try {
+    logger.info('Running Registration Validation & Business Rules Updates (Task 13)...');
+
+    // 1. Add fields to partner_profiles
+    await query(`
+      ALTER TABLE partner_profiles 
+        ADD COLUMN IF NOT EXISTS pan_number VARCHAR(10) UNIQUE,
+        ADD COLUMN IF NOT EXISTS aadhaar_number VARCHAR(12) UNIQUE,
+        ADD COLUMN IF NOT EXISTS can_create_team BOOLEAN DEFAULT TRUE,
+        ADD COLUMN IF NOT EXISTS rank VARCHAR(50) DEFAULT 'Silver';
+    `);
+
+    // 2. Create referral_campaigns table
+    await query(`
+      CREATE TABLE IF NOT EXISTS referral_campaigns (
+        id            UUID PRIMARY KEY DEFAULT uuid_generate_v4()
+      );
+      ALTER TABLE referral_campaigns ADD COLUMN IF NOT EXISTS campaign_name VARCHAR(255);
+      ALTER TABLE referral_campaigns ADD COLUMN IF NOT EXISTS campaign_code VARCHAR(100) UNIQUE;
+      ALTER TABLE referral_campaigns ADD COLUMN IF NOT EXISTS description TEXT;
+      ALTER TABLE referral_campaigns ADD COLUMN IF NOT EXISTS start_date TIMESTAMPTZ;
+      ALTER TABLE referral_campaigns ADD COLUMN IF NOT EXISTS end_date TIMESTAMPTZ;
+      ALTER TABLE referral_campaigns ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'ACTIVE';
+      ALTER TABLE referral_campaigns ADD COLUMN IF NOT EXISTS target INT DEFAULT 0;
+      ALTER TABLE referral_campaigns ADD COLUMN IF NOT EXISTS bonus_type VARCHAR(50);
+      ALTER TABLE referral_campaigns ADD COLUMN IF NOT EXISTS bonus_amount DECIMAL(15,2) DEFAULT 0.00;
+      ALTER TABLE referral_campaigns ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id);
+      ALTER TABLE referral_campaigns ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+      ALTER TABLE referral_campaigns ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+    `);
+
+    // 3. Create registration_logs table
+    await query(`
+      CREATE TABLE IF NOT EXISTS registration_logs (
+        id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        email              VARCHAR(255),
+        mobile             VARCHAR(15),
+        referral_code      VARCHAR(50),
+        parent_partner_id  UUID REFERENCES partner_profiles(id) ON DELETE SET NULL,
+        status             VARCHAR(50),
+        failure_reason     TEXT,
+        ip_address         VARCHAR(45),
+        device             VARCHAR(255),
+        browser            VARCHAR(255),
+        created_at         TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // 4. Create invitation_history table
+    await query(`
+      CREATE TABLE IF NOT EXISTS invitation_history (
+        id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id       UUID REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        invite_type      VARCHAR(50),
+        recipient_name   VARCHAR(255),
+        recipient_email  VARCHAR(255),
+        recipient_mobile VARCHAR(15),
+        referral_code    VARCHAR(50),
+        status           VARCHAR(50) DEFAULT 'PENDING',
+        sent_at          TIMESTAMPTZ DEFAULT NOW(),
+        opened_at        TIMESTAMPTZ,
+        registered_at    TIMESTAMPTZ,
+        expired_at       TIMESTAMPTZ
+      );
+    `);
+
+    // 5. Create blacklist table
+    await query(`
+      CREATE TABLE IF NOT EXISTS blacklist (
+        id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        type       VARCHAR(50),
+        value      VARCHAR(255) UNIQUE NOT NULL,
+        reason     TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // 6. Alter referral_clicks to add campaign_id
+    await query(`
+      ALTER TABLE referral_clicks 
+        ADD COLUMN IF NOT EXISTS campaign_id UUID REFERENCES referral_campaigns(id) ON DELETE SET NULL;
+    `);
+
+    logger.info('Registration Validation & Business Rules Updates (Task 13) completed successfully.');
+  } catch (task13Err) {
+    logger.error('Failed to run Registration Validation & Business Rules Updates (Task 13):', task13Err);
+    throw task13Err;
+  }
+
+  // ── Product Lifecycle Management (Task 14) ──
+  try {
+    logger.info('Running Product Lifecycle Management Schema Migration (Task 14)...');
+
+    // 1. Alter products table with new columns
+    await query(`
+      ALTER TABLE products 
+        ADD COLUMN IF NOT EXISTS joining_fee VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS interest_rate VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS rewards TEXT,
+        ADD COLUMN IF NOT EXISTS cashback TEXT,
+        ADD COLUMN IF NOT EXISTS lounge_access TEXT,
+        ADD COLUMN IF NOT EXISTS fuel_surcharge TEXT,
+        ADD COLUMN IF NOT EXISTS travel_benefits TEXT,
+        ADD COLUMN IF NOT EXISTS company_margin DECIMAL(12,2) DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS hold_days INT DEFAULT 7,
+        ADD COLUMN IF NOT EXISTS approval_rate INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS trending BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS internal_notes TEXT;
+    `);
+
+    // 2. Product Features (structured, separate from JSONB)
+    await query(`
+      CREATE TABLE IF NOT EXISTS product_features (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        icon VARCHAR(100),
+        display_order INT DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_prod_features_product ON product_features(product_id);
+    `);
+
+    // 3. Product Documents / Brochures
+    await query(`
+      CREATE TABLE IF NOT EXISTS product_documents (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        document_type VARCHAR(50) DEFAULT 'brochure',
+        file_url VARCHAR(500) NOT NULL,
+        file_size INT,
+        display_order INT DEFAULT 0,
+        is_active BOOLEAN DEFAULT TRUE,
+        uploaded_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_prod_docs_product ON product_documents(product_id);
+    `);
+
+    // 4. Product FAQs
+    await query(`
+      CREATE TABLE IF NOT EXISTS product_faq (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        question TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        display_order INT DEFAULT 0,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_prod_faq_product ON product_faq(product_id);
+    `);
+
+    // 5. Product Videos
+    await query(`
+      CREATE TABLE IF NOT EXISTS product_videos (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        youtube_url VARCHAR(500),
+        video_url VARCHAR(500),
+        thumbnail_url VARCHAR(500),
+        duration VARCHAR(20),
+        display_order INT DEFAULT 0,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_prod_videos_product ON product_videos(product_id);
+    `);
+
+    // 6. Product Offers
+    await query(`
+      CREATE TABLE IF NOT EXISTS product_offers (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        offer_type VARCHAR(50) DEFAULT 'discount',
+        discount_value DECIMAL(12,2) DEFAULT 0,
+        start_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        end_date TIMESTAMPTZ NOT NULL,
+        badge_text VARCHAR(100),
+        banner_url VARCHAR(500),
+        is_active BOOLEAN DEFAULT TRUE,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_prod_offers_product ON product_offers(product_id);
+      CREATE INDEX IF NOT EXISTS idx_prod_offers_active ON product_offers(is_active, start_date, end_date);
+    `);
+
+    // 7. Product Ratings
+    await query(`
+      CREATE TABLE IF NOT EXISTS product_ratings (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        rating INT NOT NULL CHECK (rating >= 1 AND rating <= 5),
+        feedback TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT unique_product_rating UNIQUE(product_id, partner_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_prod_ratings_product ON product_ratings(product_id);
+    `);
+
+    // 8. Product Share Logs
+    await query(`
+      CREATE TABLE IF NOT EXISTS product_share_logs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        share_method VARCHAR(50) NOT NULL,
+        customer_contact VARCHAR(255),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_prod_share_partner ON product_share_logs(partner_id);
+    `);
+
+    // 9. Partner Saved/Bookmarked Products
+    await query(`
+      CREATE TABLE IF NOT EXISTS partner_saved_products (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT unique_partner_bookmark UNIQUE(partner_id, product_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_saved_partner ON partner_saved_products(partner_id);
+    `);
+
+    // 10. Partner Recently Viewed Products
+    await query(`
+      CREATE TABLE IF NOT EXISTS partner_recent_products (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        last_viewed_at TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT unique_partner_recent UNIQUE(partner_id, product_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_recent_partner ON partner_recent_products(partner_id);
+    `);
+
+    // 11. Product Views (analytics)
+    await query(`
+      CREATE TABLE IF NOT EXISTS product_views (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        partner_id UUID REFERENCES partner_profiles(id) ON DELETE SET NULL,
+        viewer_ip VARCHAR(45),
+        user_agent TEXT,
+        viewed_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_prod_views_product ON product_views(product_id);
+      CREATE INDEX IF NOT EXISTS idx_prod_views_date ON product_views(viewed_at);
+    `);
+
+    // 12. Partner Preferences (for recommendation engine)
+    await query(`
+      CREATE TABLE IF NOT EXISTS partner_preferences (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        partner_id UUID UNIQUE NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+        preferred_categories JSONB DEFAULT '[]',
+        preferred_banks JSONB DEFAULT '[]',
+        preferred_commission_type VARCHAR(20),
+        min_commission DECIMAL(12,2) DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    logger.info('Product Lifecycle Management Schema Migration (Task 14) completed successfully.');
+
+    // 13. Alter partner_profiles to support company logos
+    await query(`
+      ALTER TABLE partner_profiles
+      ADD COLUMN IF NOT EXISTS company_logo_url VARCHAR(500) NULL;
+    `);
+
+    // 14. Alter referral_clicks to ensure missing tracking columns exist
+    await query(`
+      ALTER TABLE referral_clicks
+        ADD COLUMN IF NOT EXISTS partner_code VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS session_id VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS visitor_ip VARCHAR(45),
+        ADD COLUMN IF NOT EXISTS device_type VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS browser VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS os VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS utm_source VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS utm_medium VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS utm_campaign VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS referrer VARCHAR(1000),
+        ADD COLUMN IF NOT EXISTS landing_page VARCHAR(1000),
+        ADD COLUMN IF NOT EXISTS registered BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'CLICKED',
+        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS application_id UUID;
+    `);
+    
+    // Run Wallet Engine Migrations
+    const runWalletEngineMigrations = require('./migrate_wallet_engine');
+    await runWalletEngineMigrations();
+
+    // Task 15: New Commission Flow (Manual approval, drop hold fields, rename statuses)
+    try {
+      logger.info('Running New Commission Flow Schema Migration (Task 15)...');
+      
+      // Update statuses to simplified values
+      await query(`
+        UPDATE wallet_ledger 
+        SET status = CASE 
+          WHEN status IN ('pending', 'held') THEN 'Pending Approval'
+          WHEN status = 'completed' THEN 'Released'
+          WHEN status = 'rejected' THEN 'Rejected'
+          WHEN status IN ('cancelled', 'expired') THEN 'Cancelled'
+          ELSE status
+        END;
+      `);
+      
+      await query(`
+        UPDATE wallet_transactions 
+        SET status = CASE 
+          WHEN status IN ('pending', 'held') THEN 'Pending Approval'
+          WHEN status = 'completed' THEN 'Released'
+          WHEN status = 'rejected' THEN 'Rejected'
+          WHEN status IN ('cancelled', 'expired') THEN 'Cancelled'
+          ELSE status
+        END;
+      `);
+
+      // Drop hold/release columns if they exist
+      await query(`ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS release_at`);
+      await query(`ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS auto_release`);
+      await query(`ALTER TABLE wallet_ledger DROP COLUMN IF EXISTS hold_until`);
+      await query(`ALTER TABLE commission_ledger DROP COLUMN IF EXISTS hold_until`);
+      
+      logger.info('New Commission Flow Schema Migration (Task 15) completed successfully.');
+    } catch (task15Err) {
+      logger.error('Failed to run New Commission Flow Schema Migration (Task 15):', task15Err.message);
+      throw task15Err;
+    }
+
+    // Task 16: Customer Document Collection & Application Tracking Workflow
+    try {
+      logger.info('Running Customer Document Workflow Schema Migration (Task 16)...');
+
+      // Add required_documents column to products table
+      await query(`
+        ALTER TABLE products
+        ADD COLUMN IF NOT EXISTS required_documents JSONB DEFAULT '["pan_card", "aadhaar", "income_proof", "salary_slip", "bank_statement", "selfie", "address_proof"]'::jsonb;
+      `);
+
+      // Customer Access Tokens
+      await query(`
+        CREATE TABLE IF NOT EXISTS customer_access_tokens (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+          customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
+          token VARCHAR(255) UNIQUE NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL,
+          is_used BOOLEAN DEFAULT FALSE,
+          token_type VARCHAR(50) DEFAULT 'general',
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_cat_token ON customer_access_tokens(token);
+        CREATE INDEX IF NOT EXISTS idx_cat_app ON customer_access_tokens(application_id);
+        ALTER TABLE customer_access_tokens ADD COLUMN IF NOT EXISTS token_type VARCHAR(50) DEFAULT 'general';
+        ALTER TABLE customer_access_tokens ALTER COLUMN customer_id DROP NOT NULL;
+      `);
+
+      // Physical Application Details Table
+      await query(`
+        CREATE TABLE IF NOT EXISTS physical_application_details (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          application_id UUID UNIQUE NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+          aadhaar_linked_mobile VARCHAR(20),
+          pan_name VARCHAR(255),
+          dob VARCHAR(50),
+          pan_number VARCHAR(20),
+          mother_name VARCHAR(255),
+          personal_email VARCHAR(255),
+          company_name VARCHAR(255),
+          designation VARCHAR(255),
+          flat_no VARCHAR(255),
+          sub_area VARCHAR(255),
+          landmark VARCHAR(255),
+          pincode VARCHAR(20),
+          company_address TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_pad_app ON physical_application_details(application_id);
+      `);
+
+      // Application Documents
+      await query(`
+        CREATE TABLE IF NOT EXISTS application_documents (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+          document_type VARCHAR(100) NOT NULL,
+          file_url TEXT NOT NULL,
+          file_name VARCHAR(255) NOT NULL,
+          mime_type VARCHAR(100) NOT NULL,
+          status VARCHAR(50) DEFAULT 'uploaded',
+          uploaded_by_customer BOOLEAN DEFAULT TRUE,
+          uploaded_at TIMESTAMPTZ DEFAULT NOW(),
+          verified_by UUID REFERENCES users(id),
+          verified_at TIMESTAMPTZ,
+          rejection_reason TEXT,
+          version INT DEFAULT 1,
+          is_latest BOOLEAN DEFAULT TRUE
+        );
+        CREATE INDEX IF NOT EXISTS idx_app_docs_app ON application_documents(application_id);
+        CREATE INDEX IF NOT EXISTS idx_app_docs_type ON application_documents(document_type);
+      `);
+
+      // Application Timeline
+      await query(`
+        CREATE TABLE IF NOT EXISTS application_timeline (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+          event_type VARCHAR(100) NOT NULL,
+          title VARCHAR(255) NOT NULL,
+          description TEXT,
+          actor_type VARCHAR(50) DEFAULT 'system',
+          actor_id UUID,
+          metadata JSONB DEFAULT '{}',
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        ALTER TABLE application_timeline
+          ADD COLUMN IF NOT EXISTS event_type VARCHAR(100) NULL,
+          ADD COLUMN IF NOT EXISTS title VARCHAR(255) NULL,
+          ADD COLUMN IF NOT EXISTS description TEXT NULL,
+          ADD COLUMN IF NOT EXISTS actor_type VARCHAR(50) DEFAULT 'system',
+          ADD COLUMN IF NOT EXISTS actor_id UUID NULL,
+          ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}',
+          ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+        ALTER TABLE application_timeline ALTER COLUMN status DROP NOT NULL;
+        ALTER TABLE application_timeline ALTER COLUMN activity DROP NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_app_timeline_app ON application_timeline(application_id);
+        CREATE INDEX IF NOT EXISTS idx_app_timeline_created ON application_timeline(created_at ASC);
+      `);
+
+      logger.info('Customer Document Workflow Schema Migration (Task 16) completed successfully.');
+    } catch (task16Err) {
+      logger.error('Failed to run Customer Document Workflow Schema Migration (Task 16):', task16Err.message);
+      throw task16Err;
+    }
+
+    // Task 17: Enhanced Partner Product Application Form Schema
+    try {
+      logger.info('Running Enhanced Partner Product Application Schema Migration (Task 17)...');
+
+      await addEnumValue('application_status', 'draft');
+      await addEnumValue('application_status', 'link_sent');
+      await addEnumValue('application_status', 'verification_completed');
+
+      await query(`
+        ALTER TABLE applications
+        ADD COLUMN IF NOT EXISTS process_type VARCHAR(50) DEFAULT 'partner_cell',
+        ADD COLUMN IF NOT EXISTS business_type VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS gst_number VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS trade_license_number VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS company_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS pincode VARCHAR(10),
+        ADD COLUMN IF NOT EXISTS city VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS state VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS country_code VARCHAR(10) DEFAULT '+91',
+        ADD COLUMN IF NOT EXISTS agree_terms BOOLEAN DEFAULT TRUE;
+      `);
+
+      await query(`
+        ALTER TABLE customers
+        ADD COLUMN IF NOT EXISTS company_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS business_type VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS gst_number VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS trade_license_number VARCHAR(50);
+      `);
+
+      logger.info('Enhanced Partner Product Application Schema Migration (Task 17) completed successfully.');
+    } catch (task17Err) {
+      logger.error('Failed to run Enhanced Partner Product Application Schema Migration (Task 17):', task17Err.message);
+      throw task17Err;
+    }
+
+    // Task 18: Loans & Insurance Application Tables and Section Renaming
+    try {
+      logger.info('Running Loans & Insurance Applications Schema Migration (Task 18)...');
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS loan_applications (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          loan_type_slug VARCHAR(100) NOT NULL,
+          customer_name VARCHAR(255) NOT NULL,
+          mobile VARCHAR(15) NOT NULL,
+          email VARCHAR(255),
+          loan_amount NUMERIC(15, 2),
+          tenure_months INT,
+          interest_rate NUMERIC(5, 2),
+          monthly_income NUMERIC(15, 2),
+          employer_name VARCHAR(255),
+          pincode VARCHAR(10),
+          city VARCHAR(100),
+          state VARCHAR(100),
+          partner_id UUID REFERENCES partner_profiles(id),
+          status VARCHAR(50) DEFAULT 'submitted',
+          remarks TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_loan_app_type ON loan_applications(loan_type_slug);
+        CREATE INDEX IF NOT EXISTS idx_loan_app_status ON loan_applications(status);
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS insurance_applications (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          insurance_type_slug VARCHAR(100) NOT NULL,
+          customer_name VARCHAR(255) NOT NULL,
+          mobile VARCHAR(15) NOT NULL,
+          email VARCHAR(255),
+          policy_type VARCHAR(100),
+          sum_insured NUMERIC(15, 2),
+          premium_amount NUMERIC(15, 2),
+          pincode VARCHAR(10),
+          city VARCHAR(100),
+          state VARCHAR(100),
+          nominee_name VARCHAR(255),
+          partner_id UUID REFERENCES partner_profiles(id),
+          status VARCHAR(50) DEFAULT 'submitted',
+          remarks TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_ins_app_type ON insurance_applications(insurance_type_slug);
+        CREATE INDEX IF NOT EXISTS idx_ins_app_status ON insurance_applications(status);
+      `);
+
+      await query(`
+        UPDATE homepage_sections
+        SET title = 'Recharge & Bills'
+        WHERE key = 'money_transfer';
+      `).catch(() => {});
+
+      logger.info('Loans & Insurance Applications Schema Migration (Task 18) completed successfully.');
+    } catch (task18Err) {
+      logger.error('Failed to run Loans & Insurance Applications Schema Migration (Task 18):', task18Err.message);
+      throw task18Err;
+    }
+
+    // Task 19: Bank-Wise Credit Card Application Module Tables
+    try {
+      logger.info('Running Bank-Wise Credit Card Application Schema Migration (Task 19)...');
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS bank_card_applications (
+          id                        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          application_no            VARCHAR(30) UNIQUE NOT NULL,
+          bank_id                   UUID NOT NULL REFERENCES banks(id),
+          customer_id               UUID REFERENCES customers(id),
+          partner_id                UUID REFERENCES partner_profiles(id),
+
+          -- Step 1: Credit Card Application
+          credit_card_category      VARCHAR(100),
+          customer_name             VARCHAR(255) NOT NULL,
+          customer_mobile           VARCHAR(15) NOT NULL,
+          pan_number                VARCHAR(10) NOT NULL,
+          resident_pincode          VARCHAR(10),
+          process_by                UUID REFERENCES users(id),
+          pan_check_comments        TEXT,
+          qd_executive_name         VARCHAR(255),
+          resident_pin_comments     TEXT,
+          next_qd_date              DATE,
+
+          -- Step 2: Credit Card Assist
+          dob                       DATE,
+          mother_name               VARCHAR(255),
+          residence_address         TEXT,
+          company_name              VARCHAR(255),
+          designation               VARCHAR(255),
+          email                     VARCHAR(255),
+          official_email            VARCHAR(255),
+          gross_monthly_income      DECIMAL(12,2),
+          pan_check_executive_name  VARCHAR(255),
+
+          -- Status Information
+          app_code_status           VARCHAR(50),
+          qd_status                 VARCHAR(50),
+          surrogate                 VARCHAR(100),
+          income_status             VARCHAR(50),
+          blaze_status               VARCHAR(50),
+          telco_stage                VARCHAR(50),
+          official_mail_status       VARCHAR(50),
+          vkyc_status                VARCHAR(50),
+          dispatch_stage              VARCHAR(50),
+          final_stage                 VARCHAR(50) DEFAULT 'Customer Details',
+
+          -- Rejection Information
+          decline_description        TEXT,
+          decline_code                VARCHAR(50),
+          curable_solved              VARCHAR(50),
+          curable_executive           VARCHAR(255),
+          other_comments               TEXT,
+
+          not_interested_comment      TEXT,
+          kyc_pending_comment          TEXT,
+
+          created_by                   UUID REFERENCES users(id),
+          updated_by                   UUID REFERENCES users(id),
+          created_at                   TIMESTAMPTZ DEFAULT NOW(),
+          updated_at                   TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_bcca_bank ON bank_card_applications(bank_id);
+        CREATE INDEX IF NOT EXISTS idx_bcca_status ON bank_card_applications(final_stage);
+        CREATE INDEX IF NOT EXISTS idx_bcca_pan ON bank_card_applications(pan_number);
+
+        ALTER TABLE bank_card_applications ADD COLUMN IF NOT EXISTS bank_application_number VARCHAR(100);
+        ALTER TABLE bank_card_applications ADD COLUMN IF NOT EXISTS bank_ref_number VARCHAR(100);
+
+        CREATE TABLE IF NOT EXISTS bank_card_application_timeline (
+          id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          application_id UUID NOT NULL REFERENCES bank_card_applications(id) ON DELETE CASCADE,
+          stage          VARCHAR(50) NOT NULL,
+          note           TEXT,
+          changed_by     UUID REFERENCES users(id),
+          created_at     TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_bcat_app ON bank_card_application_timeline(application_id);
+      `);
+
+      logger.info('Bank-Wise Credit Card Application Schema Migration (Task 19) completed successfully.');
+    } catch (task19Err) {
+      logger.error('Failed to run Bank-Wise Credit Card Application Schema Migration (Task 19):', task19Err.message);
+      throw task19Err;
+    }
+
+    // Task 20: Dynamic Bank & Product Management Schema Extensions
+    try {
+      logger.info('Running Dynamic Bank & Product Management Schema Migration (Task 20)...');
+
+      await query(`
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS display_order INT DEFAULT 0;
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'Active';
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS slug VARCHAR(255);
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS sub_category VARCHAR(100);
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS fees_structure JSONB DEFAULT '{}';
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS eligibility_criteria JSONB DEFAULT '{}';
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS commissions_json JSONB DEFAULT '{}';
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS features_list JSONB DEFAULT '[]';
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS benefits_list JSONB DEFAULT '[]';
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS required_documents JSONB DEFAULT '[]';
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS compare_specs JSONB DEFAULT '{}';
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS visibility JSONB DEFAULT '{"show_on_website":true,"show_in_partner":true,"is_featured":false,"is_popular":false}';
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS seo_metadata JSONB DEFAULT '{}';
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS card_image_url VARCHAR(500);
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS thumbnail_url VARCHAR(500);
+      `);
+
+      logger.info('Dynamic Bank & Product Management Schema Migration (Task 20) completed successfully.');
+    } catch (task20Err) {
+      logger.error('Failed to run Dynamic Bank & Product Management Schema Migration (Task 20):', task20Err.message);
+      throw task20Err;
+    }
+
+    // Task 21: SBI Credit Card Application Module Tables
+    try {
+      logger.info('Running SBI Credit Card Application Schema Migration (Task 21)...');
+
+      await query(`
+        CREATE SEQUENCE IF NOT EXISTS sbi_app_number_seq START 1245;
+
+        CREATE TABLE IF NOT EXISTS sbi_credit_card_applications (
+          id                        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          application_no            VARCHAR(30) UNIQUE NOT NULL,
+          customer_id               UUID REFERENCES customers(id),
+          partner_id                UUID REFERENCES partner_profiles(id),
+          credit_card_category      VARCHAR(100),
+          customer_name             VARCHAR(255) NOT NULL,
+          customer_mobile           VARCHAR(15) NOT NULL,
+          pan_number                VARCHAR(10) NOT NULL,
+          resident_pincode          VARCHAR(10),
+          process_by                UUID REFERENCES users(id),
+          pan_check_comments        TEXT,
+          qd_executive_name         VARCHAR(255),
+          resident_pin_comments     TEXT,
+          next_qd_date              DATE,
+          dob                       DATE,
+          mother_name               VARCHAR(255),
+          residence_address         TEXT,
+          company_name              VARCHAR(255),
+          designation               VARCHAR(255),
+          email                     VARCHAR(255),
+          official_email            VARCHAR(255),
+          gross_monthly_income      DECIMAL(12,2),
+          resident_pin_comment      TEXT,
+          pan_check_executive       VARCHAR(255),
+          application_code_status   VARCHAR(50),
+          qd_status                 VARCHAR(50),
+          surrogate                 VARCHAR(100),
+          income_status             VARCHAR(50),
+          blaze_status               VARCHAR(50),
+          telco_stage                VARCHAR(50),
+          official_mail_status       VARCHAR(50),
+          vkyc_status                VARCHAR(50),
+          dispatch_stage              VARCHAR(50),
+          final_stage                 VARCHAR(50) DEFAULT 'Customer Details',
+          decline_description        TEXT,
+          decline_code                VARCHAR(50),
+          curable_solved              VARCHAR(50),
+          curable_executive           VARCHAR(255),
+          other_comments               TEXT,
+          created_by                   UUID REFERENCES users(id),
+          updated_by                   UUID REFERENCES users(id),
+          created_at                   TIMESTAMPTZ DEFAULT NOW(),
+          updated_at                   TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS sbi_cc_application_timeline (
+          id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          application_id UUID NOT NULL REFERENCES sbi_credit_card_applications(id) ON DELETE CASCADE,
+          stage          VARCHAR(50) NOT NULL,
+          activity       VARCHAR(100),
+          note           TEXT,
+          changed_by     UUID REFERENCES users(id),
+          created_at     TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sbi_cca_pan ON sbi_credit_card_applications(pan_number);
+        CREATE INDEX IF NOT EXISTS idx_sbi_cca_status ON sbi_credit_card_applications(final_stage);
+        CREATE INDEX IF NOT EXISTS idx_sbi_ccat_app ON sbi_cc_application_timeline(application_id);
+      `);
+
+      logger.info('SBI Credit Card Application Schema Migration (Task 21) completed successfully.');
+    } catch (task21Err) {
+      logger.error('Failed to run SBI Credit Card Application Schema Migration (Task 21):', task21Err.message);
+      throw task21Err;
+    }
+
+    // Task 22: Add Future-ready Bank Fields for Dynamic Page Theme, Banner & SEO
+    try {
+      logger.info('Running Bank Schema Expansion for Dynamic Customization (Task 22)...');
+      await query(`
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS hero_title VARCHAR(255);
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS hero_description TEXT;
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS theme_color VARCHAR(100);
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS banner VARCHAR(500);
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS seo_title VARCHAR(255);
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS seo_description TEXT;
+      `);
+      logger.info('Bank Schema Expansion Migration (Task 22) completed successfully.');
+    } catch (task22Err) {
+      logger.error('Failed to run Bank Schema Expansion Migration (Task 22):', task22Err.message);
+      throw task22Err;
+    }
+
+    // Task 23: Add Full Bank Color Theme Controls (Secondary, Gradient, Button & Accent Colors)
+    try {
+      logger.info('Running Bank Theme Controls Expansion (Task 23)...');
+      await query(`
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS secondary_color VARCHAR(100);
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS gradient VARCHAR(255);
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS button_color VARCHAR(100);
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS accent_color VARCHAR(100);
+      `);
+      logger.info('Bank Theme Controls Migration (Task 23) completed successfully.');
+    } catch (task23Err) {
+      logger.error('Failed to run Bank Theme Controls Migration (Task 23):', task23Err.message);
+      throw task23Err;
+    }
+
+    // ── TASK 24: Fix CloudFront URLs (Remove erroneous /public/ path) ────────────
+    try {
+      logger.info('Running CloudFront URL Sanitization Migration (Task 24)...');
+      await query(`UPDATE products SET image_url = REPLACE(image_url, 'cloudfront.net/public/', 'cloudfront.net/') WHERE image_url LIKE '%cloudfront.net/public/%'`);
+      await query(`UPDATE products SET logo = REPLACE(logo, 'cloudfront.net/public/', 'cloudfront.net/') WHERE logo LIKE '%cloudfront.net/public/%'`);
+      await query(`UPDATE products SET banner = REPLACE(banner, 'cloudfront.net/public/', 'cloudfront.net/') WHERE banner LIKE '%cloudfront.net/public/%'`);
+      await query(`UPDATE products SET image = REPLACE(image, 'cloudfront.net/public/', 'cloudfront.net/') WHERE image LIKE '%cloudfront.net/public/%'`);
+      await query(`UPDATE banks SET logo_url = REPLACE(logo_url, 'cloudfront.net/public/', 'cloudfront.net/') WHERE logo_url LIKE '%cloudfront.net/public/%'`);
+      await query(`
+        DO $$ BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'banks' AND column_name = 'banner') THEN
+            EXECUTE 'UPDATE banks SET banner = REPLACE(banner, ''cloudfront.net/public/'', ''cloudfront.net/'') WHERE banner LIKE ''%cloudfront.net/public/%''';
+          END IF;
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'banks' AND column_name = 'banner_url') THEN
+            EXECUTE 'UPDATE banks SET banner_url = REPLACE(banner_url, ''cloudfront.net/public/'', ''cloudfront.net/'') WHERE banner_url LIKE ''%cloudfront.net/public/%''';
+          END IF;
+        END $$;
+      `);
+      await query(`UPDATE banners SET image_url = REPLACE(image_url, 'cloudfront.net/public/', 'cloudfront.net/') WHERE image_url LIKE '%cloudfront.net/public/%'`);
+      await query(`UPDATE product_videos SET thumbnail_url = REPLACE(thumbnail_url, 'cloudfront.net/public/', 'cloudfront.net/') WHERE thumbnail_url LIKE '%cloudfront.net/public/%'`);
+      await query(`UPDATE product_offers SET banner_url = REPLACE(banner_url, 'cloudfront.net/public/', 'cloudfront.net/') WHERE banner_url LIKE '%cloudfront.net/public/%'`);
+      logger.info('CloudFront URL Sanitization Migration (Task 24) completed successfully.');
+    } catch (task24Err) {
+      logger.error('Failed to run CloudFront URL Sanitization Migration (Task 24):', task24Err.message);
+    }
+
+    // ── TASK 25: Ensure wallet_ledger & wallet_transactions balance_after column safety ────
+    try {
+      logger.info('Running Wallet Ledger & Transactions Column Safety Migration (Task 25)...');
+      await query(`ALTER TABLE wallet_ledger ADD COLUMN IF NOT EXISTS balance_after DECIMAL(15,2) DEFAULT 0.00`);
+      await query(`ALTER TABLE wallet_ledger ADD COLUMN IF NOT EXISTS balance_after_transaction DECIMAL(15,2) DEFAULT 0.00`);
+      await query(`UPDATE wallet_ledger SET balance_after = COALESCE(balance_after, balance_after_transaction, 0.00) WHERE balance_after IS NULL`);
+      await query(`UPDATE wallet_ledger SET balance_after_transaction = COALESCE(balance_after_transaction, balance_after, 0.00) WHERE balance_after_transaction IS NULL`);
+
+      await query(`ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS balance_after DECIMAL(15,2) DEFAULT 0.00`);
+      await query(`ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS balance_after_transaction DECIMAL(15,2) DEFAULT 0.00`);
+      await query(`UPDATE wallet_transactions SET balance_after = COALESCE(balance_after, balance_after_transaction, 0.00) WHERE balance_after IS NULL`);
+      await query(`UPDATE wallet_transactions SET balance_after_transaction = COALESCE(balance_after_transaction, balance_after, 0.00) WHERE balance_after_transaction IS NULL`);
+      logger.info('Wallet Ledger & Transactions Column Safety Migration (Task 25) completed successfully.');
+    } catch (task25Err) {
+      logger.error('Failed to run Wallet Ledger & Transactions Column Safety Migration (Task 25):', task25Err.message);
+    }
+    
+    // ── TASK 26: Team Management Module Schema Enhancements ────────────────────
+    try {
+      logger.info('Running Team Management Module Schema Migration (Task 26)...');
+      await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS team_level INT DEFAULT 1`);
+      await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS rank VARCHAR(50) DEFAULT 'Partner'`);
+      await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS team_enabled BOOLEAN DEFAULT TRUE`);
+      await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS referral_enabled BOOLEAN DEFAULT TRUE`);
+      await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS referral_message TEXT DEFAULT 'Join my team on GharKaPaisa and earn highest financial commission payouts!'`);
+      await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS children_count INT DEFAULT 0`);
+      await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS team_status VARCHAR(20) DEFAULT 'ACTIVE'`);
+      await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS allow_team_creation BOOLEAN DEFAULT TRUE`);
+      await query(`ALTER TABLE partner_profiles ADD COLUMN IF NOT EXISTS can_create_team BOOLEAN DEFAULT TRUE`);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS partner_team_relationships (
+          id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          parent_partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+          child_partner_id  UUID NOT NULL UNIQUE REFERENCES partner_profiles(id) ON DELETE CASCADE,
+          level             INTEGER NOT NULL,
+          created_at        TIMESTAMPTZ DEFAULT NOW(),
+          status            VARCHAR(20) DEFAULT 'ACTIVE'
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_team_rels_parent ON partner_team_relationships(parent_partner_id)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_team_rels_child ON partner_team_relationships(child_partner_id)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_team_rels_parent_level ON partner_team_relationships(parent_partner_id, level)`);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS team_commissions (
+          id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          parent_partner_id UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+          child_partner_id  UUID NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+          application_id    UUID REFERENCES applications(id) ON DELETE SET NULL,
+          amount            DECIMAL(12,2) NOT NULL DEFAULT 0,
+          level             INTEGER NOT NULL DEFAULT 1,
+          status            VARCHAR(20) DEFAULT 'CREDITED',
+          created_at        TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_team_commissions_parent ON team_commissions(parent_partner_id)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_team_commissions_child ON team_commissions(child_partner_id)`);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS team_activity (
+          id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          activity_type     VARCHAR(50) NOT NULL,
+          description       TEXT NOT NULL,
+          metadata          JSONB DEFAULT '{}',
+          created_at        TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(`ALTER TABLE team_activity ADD COLUMN IF NOT EXISTS parent_partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE`);
+      await query(`ALTER TABLE team_activity ADD COLUMN IF NOT EXISTS child_partner_id UUID REFERENCES partner_profiles(id) ON DELETE CASCADE`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_team_activity_parent ON team_activity(parent_partner_id, created_at DESC)`);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS team_goals (
+          id                        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          partner_id                UUID UNIQUE NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+          monthly_member_target     INT DEFAULT 10,
+          monthly_business_target   DECIMAL(15,2) DEFAULT 100000,
+          monthly_commission_target DECIMAL(15,2) DEFAULT 25000,
+          monthly_app_target        INT DEFAULT 20,
+          created_at                TIMESTAMPTZ DEFAULT NOW(),
+          updated_at                TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(`ALTER TABLE team_goals ADD COLUMN IF NOT EXISTS monthly_member_target INT DEFAULT 10`);
+      await query(`ALTER TABLE team_goals ADD COLUMN IF NOT EXISTS monthly_business_target DECIMAL(15,2) DEFAULT 100000`);
+      await query(`ALTER TABLE team_goals ADD COLUMN IF NOT EXISTS monthly_commission_target DECIMAL(15,2) DEFAULT 25000`);
+      await query(`ALTER TABLE team_goals ADD COLUMN IF NOT EXISTS monthly_app_target INT DEFAULT 20`);
+
+      logger.info('Team Management Module Schema Migration (Task 26) completed successfully.');
+    } catch (task26Err) {
+      logger.error('Failed to run Team Management Module Schema Migration (Task 26):', task26Err.message);
+    }
+
+    // ── Referral & Team Business Rules (v2) Migration ──────────────────────────
+    try {
+      await query(`
+        ALTER TABLE partner_profiles
+        ADD COLUMN IF NOT EXISTS referral_bonus_paid BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS approved_credit_cards INTEGER DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS referred_by_id UUID REFERENCES partner_profiles(id)
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS partner_teams (
+          id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          partner_id        UUID UNIQUE NOT NULL REFERENCES partner_profiles(id) ON DELETE CASCADE,
+          team_name         VARCHAR(255) NOT NULL,
+          team_code         VARCHAR(50) UNIQUE NOT NULL,
+          created_at        TIMESTAMPTZ DEFAULT NOW(),
+          updated_at        TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_partner_teams_code ON partner_teams(team_code)`);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS partner_upgrade_requests (
+          id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          partner_id        UUID REFERENCES partner_profiles(id) ON DELETE CASCADE,
+          status            VARCHAR(50) DEFAULT 'PENDING',
+          requested_at      TIMESTAMPTZ DEFAULT NOW(),
+          reviewed_at       TIMESTAMPTZ,
+          reviewed_by       UUID REFERENCES users(id),
+          rejection_reason  TEXT
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_upgrade_requests_user ON partner_upgrade_requests(user_id)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_upgrade_requests_status ON partner_upgrade_requests(status)`);
+
+      await query(`
+        ALTER TABLE products
+        ADD COLUMN IF NOT EXISTS partner_share_value DECIMAL(12,2) DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS team_member_share_value DECIMAL(12,2) DEFAULT 0
+      `);
+
+      // Task 20: Ensure commission_ledger supports both lead_id and application_id
+      await query(`
+        ALTER TABLE commission_ledger
+        ADD COLUMN IF NOT EXISTS lead_id UUID REFERENCES leads(id) ON DELETE CASCADE,
+        ADD COLUMN IF NOT EXISTS product_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS transaction_amount DECIMAL(15,2) DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS commission_rate DECIMAL(15,2) DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS commission_earned DECIMAL(15,2) DEFAULT 0;
+
+        ALTER TABLE commission_ledger ALTER COLUMN application_id DROP NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_comm_ledger_lead ON commission_ledger(lead_id);
+
+        ALTER TABLE leads
+        ADD COLUMN IF NOT EXISTS otp_attempts INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS otp_sent_count INT DEFAULT 1,
+        ADD COLUMN IF NOT EXISTS last_otp_sent_at TIMESTAMPTZ DEFAULT NOW();
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_active_lead_product_mobile 
+        ON leads(product_id, mobile) 
+        WHERE status NOT IN ('rejected', 'cancelled');
+
+        ALTER TABLE banks ALTER COLUMN short_code TYPE VARCHAR(100);
+
+        ALTER TABLE leads ADD COLUMN IF NOT EXISTS process_by VARCHAR(50) DEFAULT 'punching';
+        ALTER TABLE leads ADD COLUMN IF NOT EXISTS process_type VARCHAR(50) DEFAULT 'lead_punching';
+
+        ALTER TABLE applications ADD COLUMN IF NOT EXISTS process_by VARCHAR(50) DEFAULT 'punching';
+        ALTER TABLE applications ADD COLUMN IF NOT EXISTS process_type VARCHAR(50) DEFAULT 'lead_punching';
+
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS public_url VARCHAR(1000);
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS partner_url VARCHAR(1000);
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS application_url VARCHAR(1000);
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS apply_url VARCHAR(1000);
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS redirect_url VARCHAR(1000);
+
+        ALTER TABLE applications ADD COLUMN IF NOT EXISTS bank_application_number VARCHAR(100);
+        ALTER TABLE applications ADD COLUMN IF NOT EXISTS bank_ref_number VARCHAR(100);
+        ALTER TABLE applications ADD COLUMN IF NOT EXISTS vkyc_status VARCHAR(50) DEFAULT 'Pending';
+        ALTER TABLE applications ADD COLUMN IF NOT EXISTS vkyc_url VARCHAR(1000);
+        ALTER TABLE applications ADD COLUMN IF NOT EXISTS salary_slip_url VARCHAR(1000);
+        ALTER TABLE applications ADD COLUMN IF NOT EXISTS pan_card_url VARCHAR(1000);
+        ALTER TABLE applications ADD COLUMN IF NOT EXISTS pan_number VARCHAR(50);
+        ALTER TABLE applications ADD COLUMN IF NOT EXISTS monthly_salary NUMERIC(15,2);
+        ALTER TABLE applications ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
+        ALTER TABLE applications ADD COLUMN IF NOT EXISTS remarks TEXT;
+
+        ALTER TABLE customers ADD COLUMN IF NOT EXISTS dob DATE;
+        ALTER TABLE customers ADD COLUMN IF NOT EXISTS pan VARCHAR(20);
+        ALTER TABLE customers ADD COLUMN IF NOT EXISTS income DECIMAL(15,2);
+        ALTER TABLE customers ADD COLUMN IF NOT EXISTS address TEXT;
+        ALTER TABLE customers ADD COLUMN IF NOT EXISTS employment VARCHAR(100);
+
+        ALTER TABLE banks ADD COLUMN IF NOT EXISTS operation_head_id UUID REFERENCES users(id) ON DELETE SET NULL;
+        ALTER TABLE products ADD COLUMN IF NOT EXISTS operation_head_id UUID REFERENCES users(id) ON DELETE SET NULL;
+
+        CREATE TABLE IF NOT EXISTS bank_product_requirements (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          bank_id UUID REFERENCES banks(id) ON DELETE CASCADE,
+          product_id UUID REFERENCES products(id) ON DELETE CASCADE,
+          fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS application_audit_logs (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          application_id UUID REFERENCES applications(id) ON DELETE CASCADE,
+          entity_id UUID,
+          lead_id UUID REFERENCES leads(id) ON DELETE SET NULL,
+          user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+          role VARCHAR(50),
+          action VARCHAR(100) NOT NULL,
+          entity VARCHAR(50) DEFAULT 'application',
+          old_value JSONB,
+          new_value JSONB,
+          remarks TEXT,
+          ip_address VARCHAR(100),
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        ALTER TABLE application_audit_logs ADD COLUMN IF NOT EXISTS entity_id UUID;
+        ALTER TABLE application_audit_logs ADD COLUMN IF NOT EXISTS remarks TEXT;
+        ALTER TABLE application_audit_logs ADD COLUMN IF NOT EXISTS lead_id UUID;
+        ALTER TABLE application_audit_logs ADD COLUMN IF NOT EXISTS application_id UUID;
+
+        CREATE INDEX IF NOT EXISTS idx_audit_entity ON application_audit_logs(entity, entity_id);
+        CREATE INDEX IF NOT EXISTS idx_audit_user ON application_audit_logs(user_id);
+
+        CREATE TABLE IF NOT EXISTS application_links (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          token VARCHAR(255) UNIQUE NOT NULL,
+          lead_id UUID REFERENCES leads(id) ON DELETE CASCADE,
+          application_id UUID REFERENCES applications(id) ON DELETE CASCADE,
+          product_id UUID REFERENCES products(id) ON DELETE CASCADE,
+          created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+          status VARCHAR(20) DEFAULT 'ACTIVE',
+          expires_at TIMESTAMPTZ NOT NULL,
+          used_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS admin_bank_assignments (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          admin_id UUID REFERENCES users(id) ON DELETE CASCADE,
+          bank_id UUID REFERENCES banks(id) ON DELETE CASCADE,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+          UNIQUE(admin_id, bank_id)
+        );
+
+        ALTER TABLE commission_ledger ADD COLUMN IF NOT EXISTS customer_id UUID;
+        ALTER TABLE commission_ledger ADD COLUMN IF NOT EXISTS bank_id UUID;
+        ALTER TABLE commission_ledger ADD COLUMN IF NOT EXISTS product_id UUID;
+        ALTER TABLE commission_ledger ADD COLUMN IF NOT EXISTS team_member_id UUID;
+        ALTER TABLE commission_ledger ADD COLUMN IF NOT EXISTS commission_rule_id UUID;
+        ALTER TABLE commission_ledger ADD COLUMN IF NOT EXISTS total_commission DECIMAL(15,2);
+        ALTER TABLE commission_ledger ADD COLUMN IF NOT EXISTS partner_pct DECIMAL(5,2);
+        ALTER TABLE commission_ledger ADD COLUMN IF NOT EXISTS team_member_pct DECIMAL(5,2);
+        ALTER TABLE commission_ledger ADD COLUMN IF NOT EXISTS partner_amount DECIMAL(15,2);
+        ALTER TABLE commission_ledger ADD COLUMN IF NOT EXISTS team_member_amount DECIMAL(15,2);
+        ALTER TABLE commission_ledger ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+      `);
+
+      logger.info('Referral & Team Business Rules (v2) Schema Migration completed successfully.');
+    } catch (v2Err) {
+      logger.error('Failed to run Referral & Team Business Rules (v2) Schema Migration:', v2Err.message);
+    }
+
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS admin_bank_assignments (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          admin_id UUID REFERENCES users(id) ON DELETE CASCADE,
+          bank_id UUID REFERENCES banks(id) ON DELETE CASCADE,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+          UNIQUE(admin_id, bank_id)
+        );
+      `);
+      logger.info('admin_bank_assignments table verified/created successfully.');
+    } catch (abaErr) {
+      logger.error('Failed to create admin_bank_assignments table:', abaErr.message);
+    }
+
+    try {
+      await query(`
+        INSERT INTO banks (name, short_code, is_active, status)
+        VALUES ('LOC/EOC (Loan on Card & Smart EMI)', 'LOC_EOC', true, 'Active')
+        ON CONFLICT (short_code) DO UPDATE SET 
+          name = 'LOC/EOC (Loan on Card & Smart EMI)',
+          is_active = true,
+          status = 'Active'
+      `);
+      logger.info("LOC/EOC bank entry verified in banks table");
+    } catch (locErr) {
+      logger.warn('LOC_EOC bank entry migration notice:', locErr.message);
+    }
+
+    try {
+      await query(`
+        ALTER TABLE customer_activity_logs ALTER COLUMN device TYPE TEXT;
+        ALTER TABLE customer_activity_logs ALTER COLUMN ip_address TYPE VARCHAR(100);
+        ALTER TABLE customer_activity_logs ALTER COLUMN activity_type TYPE VARCHAR(255);
+        ALTER TABLE customer_activity_logs ALTER COLUMN reference_type TYPE VARCHAR(100);
+      `);
+      logger.info('customer_activity_logs column sizes expanded successfully.');
+    } catch (calErr) {
+      logger.warn('customer_activity_logs column expansion notice:', calErr.message);
+    }
+
+  } catch (task14Err) {
+    logger.error('Failed to run Product Lifecycle Management Schema Migration (Task 14):', task14Err);
+    throw task14Err;
+  }
+
+  // ── TASK 26: Architectural Consolidation - Tracking Columns & Commission Unique Protection ────
+  try {
+    logger.info('Running Task 26: Architectural Consolidation & Double-Credit Protection...');
+    
+    // Ensure applications table tracking columns exist
+    await query(`
+      ALTER TABLE applications 
+      ADD COLUMN IF NOT EXISTS bank_ref_number VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS vkyc_url TEXT,
+      ADD COLUMN IF NOT EXISTS salary_slip_url TEXT,
+      ADD COLUMN IF NOT EXISTS pan_card_url TEXT,
+      ADD COLUMN IF NOT EXISTS soft_approval_status VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS vkyc_stage VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS iqa_stage VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS dispatch_status VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS bank_remark TEXT,
+      ADD COLUMN IF NOT EXISTS final_status VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS decline_reason TEXT,
+      ADD COLUMN IF NOT EXISTS eligible_reqd VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS approved_amount DECIMAL(15,2);
+    `);
+
+    // Add unique index on wallet_ledger to prevent duplicate commission credits for the same application
+    await query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_wallet_ledger_application_commission 
+      ON wallet_ledger (application_id, transaction_type) 
+      WHERE application_id IS NOT NULL;
+    `);
+
+    logger.info('Task 26 completed successfully.');
+  } catch (task26Err) {
+    logger.error('Failed to run Task 26 migration:', task26Err.message);
+  }
+
+  // ── TASK 27: Customer Profile Columns Safety Check ────────────
+  try {
+    logger.info('Running Task 27 Migration (Customer & Application Profile Columns)...');
+    await query(`
+      ALTER TABLE customers 
+        ADD COLUMN IF NOT EXISTS address TEXT,
+        ADD COLUMN IF NOT EXISTS mother_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS father_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS marital_status VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS gender VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS designation VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS aadhaar_number VARCHAR(20);
+      ALTER TABLE applications
+        ADD COLUMN IF NOT EXISTS address TEXT,
+        ADD COLUMN IF NOT EXISTS mother_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS father_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS marital_status VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS gender VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS designation VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS aadhaar_number VARCHAR(20);
+    `);
+    logger.info('Task 27 completed successfully.');
+  } catch (task27Err) {
+    logger.error('Failed to run Task 27 migration:', task27Err.message);
+  }
+  // ── TASK 28: Structured Address Columns Safety Check ────────────
+  try {
+    logger.info('Running Task 28 Migration (Structured Address Columns: address1, address2, landmark, pincode, city, state)...');
+    await query(`
+      ALTER TABLE customers 
+        ADD COLUMN IF NOT EXISTS address1 TEXT,
+        ADD COLUMN IF NOT EXISTS address2 TEXT,
+        ADD COLUMN IF NOT EXISTS landmark TEXT,
+        ADD COLUMN IF NOT EXISTS pincode VARCHAR(20),
+        ADD COLUMN IF NOT EXISTS city VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS state VARCHAR(100);
+      ALTER TABLE applications
+        ADD COLUMN IF NOT EXISTS address1 TEXT,
+        ADD COLUMN IF NOT EXISTS address2 TEXT,
+        ADD COLUMN IF NOT EXISTS landmark TEXT,
+        ADD COLUMN IF NOT EXISTS pincode VARCHAR(20),
+        ADD COLUMN IF NOT EXISTS city VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS state VARCHAR(100);
+      ALTER TABLE leads
+        ADD COLUMN IF NOT EXISTS address1 TEXT,
+        ADD COLUMN IF NOT EXISTS address2 TEXT,
+        ADD COLUMN IF NOT EXISTS landmark TEXT,
+        ADD COLUMN IF NOT EXISTS pincode VARCHAR(20),
+        ADD COLUMN IF NOT EXISTS city VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS state VARCHAR(100);
+      ALTER TABLE physical_application_details
+        ADD COLUMN IF NOT EXISTS address1 TEXT,
+        ADD COLUMN IF NOT EXISTS address2 TEXT,
+        ADD COLUMN IF NOT EXISTS landmark TEXT,
+        ADD COLUMN IF NOT EXISTS pincode VARCHAR(20),
+        ADD COLUMN IF NOT EXISTS city VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS state VARCHAR(100);
+    `);
+    logger.info('Task 28 completed successfully.');
+  } catch (task28Err) {
+    logger.error('Failed to run Task 28 migration:', task28Err.message);
+  }
+
+  // ── TASK 29: Physical Application Details Token & Tracking Column Safety ────
+  try {
+    logger.info('Running Task 29 Migration (Physical Application Details Token Column)...');
+    await query(`
+      ALTER TABLE physical_application_details 
+        ADD COLUMN IF NOT EXISTS token VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS pan_check VARCHAR(10) DEFAULT 'no',
+        ADD COLUMN IF NOT EXISTS bank_current_lead_status VARCHAR(100);
+      ALTER TABLE applications
+        ADD COLUMN IF NOT EXISTS pan_check VARCHAR(10) DEFAULT 'no',
+        ADD COLUMN IF NOT EXISTS bank_current_lead_status VARCHAR(100);
+    `);
+  } catch (task29Err) {
+    logger.error('Failed to run Task 29 migration:', task29Err.message);
+  }
+
+  try {
+    const migrateEmployeeSystem = require('./migrate_employee_system');
+    await migrateEmployeeSystem();
+  } catch (empMigErr) {
+    logger.error('Failed to run Employee Management System migration:', empMigErr.message);
+  }
+
+  try {
+    const migrateChatbotSystem = require('./migrate_chatbot');
+    await migrateChatbotSystem();
+  } catch (chatbotMigErr) {
+    logger.error('Failed to run Chatbot System migration:', chatbotMigErr.message);
+  }
+
+  try {
+    const migrateAddFunds = require('./migrate_add_funds');
+    await migrateAddFunds();
+  } catch (addFundsMigErr) {
+    logger.error('Failed to run Add Funds migration:', addFundsMigErr.message);
+  }
+
+  // ── TASK 30: Unique Partial Indexes for Immutable Ledger Idempotency ────
+  try {
+    logger.info('Running Task 30 Migration (Unique Partial Indexes for Immutable Ledger Idempotency)...');
+    await query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_commission_release_reference
+      ON wallet_ledger (transaction_type, reference_number)
+      WHERE transaction_type = 'COMMISSION_RELEASE' AND reference_number IS NOT NULL;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_commission_rejected_reference
+      ON wallet_ledger (transaction_type, reference_number)
+      WHERE transaction_type = 'COMMISSION_REJECTED' AND reference_number IS NOT NULL;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_withdrawal_settled_reference
+      ON wallet_ledger (transaction_type, reference_number)
+      WHERE transaction_type = 'WITHDRAWAL_SETTLED' AND reference_number IS NOT NULL;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_withdrawal_cancelled_reference
+      ON wallet_ledger (transaction_type, reference_number)
+      WHERE transaction_type = 'WITHDRAWAL_CANCELLED' AND reference_number IS NOT NULL;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_reversal_reference
+      ON wallet_ledger (transaction_type, reference_number)
+      WHERE transaction_type = 'REVERSAL' AND reference_number IS NOT NULL;
+    `);
+    logger.info('Task 30 completed successfully.');
+  } catch (task30Err) {
+    logger.error('Failed to run Task 30 migration:', task30Err.message);
+  }
+
+  // Cleanup orphan partner profiles for non-partner roles (EMPLOYEE, HR, ADMIN, SUPER_ADMIN)
+  try {
+    const { rowCount } = await query(`
+      DELETE FROM partner_profiles 
+      WHERE user_id IN (
+        SELECT id FROM users WHERE role IN ('EMPLOYEE', 'HR', 'ADMIN', 'SUPER_ADMIN')
+      )
+    `);
+    if (rowCount > 0) {
+      logger.info(`[Migration Cleanup] Removed ${rowCount} invalid partner_profiles associated with employee/admin users.`);
+    }
+  } catch (cleanupErr) {
+    logger.warn('Partner profiles cleanup note:', cleanupErr.message);
+  }
+
+  // ── Make partner_id NULLABLE in applications, leads, partner_share_links ──
+  // Allows direct employee, customer, and admin applications to be processed without errors
+  try {
+    await query(`
+      ALTER TABLE applications ALTER COLUMN partner_id DROP NOT NULL;
+      ALTER TABLE leads ALTER COLUMN partner_id DROP NOT NULL;
+      ALTER TABLE partner_share_links ALTER COLUMN partner_id DROP NOT NULL;
+    `);
+    logger.info('[Migration] Made partner_id NULLABLE in applications, leads, and partner_share_links.');
+  } catch (dropErr) {
+    logger.warn('partner_id DROP NOT NULL migration note:', dropErr.message);
+  }
+
+  // ── Admin Working Hours Migration ──
+  try {
+    await query(`
+      CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+      CREATE TABLE IF NOT EXISTS admin_working_hours (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        designation VARCHAR(100),
+        start_time VARCHAR(10) DEFAULT '09:30 AM',
+        end_time VARCHAR(10) DEFAULT '08:00 PM',
+        timezone VARCHAR(50) DEFAULT 'Asia/Kolkata',
+        is_enabled BOOLEAN DEFAULT TRUE,
+        created_by UUID REFERENCES users(id),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_working_hour_extensions (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        apply_to VARCHAR(20) DEFAULT 'SPECIFIC',
+        extension_date DATE NOT NULL,
+        original_end_time VARCHAR(10) DEFAULT '08:00 PM',
+        extended_end_time VARCHAR(10) NOT NULL,
+        reason TEXT,
+        created_by UUID REFERENCES users(id),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_awhe_date_user ON admin_working_hour_extensions(extension_date, user_id);
+    `);
+
+    // Ensure default global row exists if empty
+    const { rows: existingGlobal } = await query(`SELECT id FROM admin_working_hours WHERE user_id IS NULL AND designation IS NULL`);
+    if (existingGlobal.length === 0) {
+      await query(`
+        INSERT INTO admin_working_hours (user_id, designation, start_time, end_time, timezone, is_enabled)
+        VALUES (NULL, NULL, '09:30 AM', '08:00 PM', 'Asia/Kolkata', TRUE)
+      `);
+    }
+
+    logger.info('[Migration] Successfully initialized admin_working_hours and admin_working_hour_extensions tables.');
+  } catch (whErr) {
+    logger.error('Admin Working Hours migration note:', whErr.message);
+  }
+
+  // ── Admin Working Hours Phase 2 Migration ──
+  try {
+    const migrateWorkingHoursPhase2 = require('./migrate_working_hours_phase2');
+    await migrateWorkingHoursPhase2();
+  } catch (whPhase2Err) {
+    logger.error('Admin Working Hours Phase 2 migration note:', whPhase2Err.message);
+  }
+
+  // ── High Performance Composite Indexes ──────────────────────────
+  try {
+    await query(`CREATE INDEX IF NOT EXISTS idx_applications_app_num_status ON applications(app_number, status, created_at)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_applications_partner_status ON applications(partner_id, status, created_at)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_partner_profiles_parent_user ON partner_profiles(parent_partner_id, user_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_customers_mobile ON customers(mobile)`);
+    logger.info('[Migration] High performance composite indexes verified.');
+  } catch (idxErr) {
+    logger.error('Composite index creation note:', idxErr.message);
+  }
+
+  // ── Messenger Migration ──
+  try {
+    const migrateMessenger = require('./migrate_messenger.js');
+    await migrateMessenger();
+  } catch (mErr) {
+    logger.error('Messenger migration error note:', mErr.message);
+  }
+
+  // ── Seed Smart EMI & Loan on Credit Card Products (Strictly 2 canonical HDFC products) ──
+  try {
+    const { seedSmartEmiAndLoccProducts } = require('../seeds/seed-smart-emi-locc');
+    await seedSmartEmiAndLoccProducts();
+    logger.info('[Migration] Successfully verified LOC/EOC canonical seed products.');
+  } catch (smartEmiSeedErr) {
+    logger.error('Failed to run Smart EMI and LOCC full seeder:', smartEmiSeedErr.message);
+  }
+
+  // ── Seed CIBIL Personal Loan Products (3 Bank + 7 Finance) ──
+  try {
+    const { seedCibilPersonalLoanProducts } = require('../seeds/seed-cibil-personal-loans');
+    await seedCibilPersonalLoanProducts();
+    logger.info('[Migration] Successfully verified CIBIL Personal Loan canonical products.');
+  } catch (cibilSeedErr) {
+    logger.error('Failed to run CIBIL Personal Loan seeder in migration:', cibilSeedErr.message);
+  }
+
+  const { migrateSmartEmiAndLoccSchema } = require('./migrate_smart_emi_locc_and_reports');
+  await migrateSmartEmiAndLoccSchema();
+
+  try {
+    const { migrateWhatsApp } = require('./migrate_whatsapp');
+    await migrateWhatsApp();
+  } catch (waErr) {
+    logger.error('WhatsApp migration error note:', waErr.message);
+  }
+
+  try {
+    logger.info('Starting Final Status Operator & Audit History migration...');
+    await query(`
+      CREATE TABLE IF NOT EXISTS application_operator_history (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+        operator_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        operator_name VARCHAR(255),
+        operator_role VARCHAR(100),
+        operator_designation VARCHAR(100),
+        operator_code VARCHAR(100),
+        action_type VARCHAR(100) NOT NULL,
+        field_changes JSONB DEFAULT '{}',
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_app_op_hist_app_id ON application_operator_history(application_id);
+      CREATE INDEX IF NOT EXISTS idx_app_op_hist_op_id ON application_operator_history(operator_id);
+      CREATE INDEX IF NOT EXISTS idx_app_op_hist_created ON application_operator_history(created_at DESC);
+
+      ALTER TABLE applications 
+      ADD COLUMN IF NOT EXISTS last_operator_id UUID,
+      ADD COLUMN IF NOT EXISTS last_operator_name VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS last_operator_role VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS last_operator_designation VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS last_operator_code VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS final_status_operator_code VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS last_operated_at TIMESTAMPTZ;
+
+      ALTER TABLE physical_application_details 
+      ADD COLUMN IF NOT EXISTS last_operator_id UUID,
+      ADD COLUMN IF NOT EXISTS last_operator_name VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS last_operator_role VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS last_operator_designation VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS last_operator_code VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS final_status_operator_code VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS last_operated_at TIMESTAMPTZ;
+    `);
+    logger.info('Final Status Operator & Audit History migration completed successfully.');
+  } catch (fsoErr) {
+    logger.error('Final Status Operator migration error note:', fsoErr.message);
+  }
+
+  // Phase 6-9: KYC-Based Employee Biometric Enrollment Migration
+  try {
+    const { migrateKycBiometricEnrollmentPhase6_9 } = require('./migrate_kyc_biometric_enrollment_phase6_9');
+    await migrateKycBiometricEnrollmentPhase6_9();
+  } catch (bioErr) {
+    logger.error('Phase 6-9 Biometric Enrollment migration error note:', bioErr.message);
+  }
+
+  // Attendance Environment Status V1 Migration
+  try {
+    const { migrateAttendanceEnvironmentStatusV1 } = require('./migrate_attendance_environment_status_v1');
+    await migrateAttendanceEnvironmentStatusV1();
+  } catch (envStatusErr) {
+    logger.error('Attendance Environment Status V1 migration error note:', envStatusErr.message);
+  }
+
+  // Attendance Consumed At V1 Migration
+  try {
+    const { migrateAttendanceConsumedAtV1 } = require('./migrate_attendance_consumed_at_v1');
+    await migrateAttendanceConsumedAtV1();
+  } catch (consumedAtErr) {
+    logger.error('Attendance Consumed At V1 migration error note:', consumedAtErr.message);
+  }
+
+  // Fix Attendance Verification Sessions Status Constraint (include CONSUMED)
+  try {
+    const { migrateFixStatusConstraint } = require('./migrate_fix_status_constraint');
+    await migrateFixStatusConstraint();
+  } catch (statusConstraintErr) {
+    logger.error('Status constraint fix migration error note:', statusConstraintErr.message);
+  }
+
+  // Messenger 48-Hour Purge Migration
+  try {
+    const { migrateMessenger48hPurge } = require('./migrate_messenger_48h_purge');
+    await migrateMessenger48hPurge();
+  } catch (mPurgeErr) {
+    logger.error('Messenger 48h Purge migration error note:', mPurgeErr.message);
+  }
+
+  // Notification 2-Hour Read Purge Migration
+  try {
+    const { migrateNotification2hPurge } = require('./migrate_notification_2h_purge');
+    await migrateNotification2hPurge();
+  } catch (nPurgeErr) {
+    logger.error('Notification 2h Purge migration error note:', nPurgeErr.message);
+  }
+
+  // Office Building Geofences Migration
+  try {
+    const { migrateOfficeBuildingGeofences } = require('./migrate_office_building_geofences');
+    await migrateOfficeBuildingGeofences();
+  } catch (geoErr) {
+    logger.error('Office Building Geofences migration error note:', geoErr.message);
+  }
+
+  // Matched Building Columns Migration (standalone fallback)
+  try {
+    const { migrate: migrateMatchedBuildingColumns } = require('./migrate_matched_building_columns');
+    await migrateMatchedBuildingColumns();
+  } catch (mbErr) {
+    logger.error('Matched Building Columns migration error note:', mbErr.message);
+  }
+
+  // LOC/EOC Category Migration
+  try {
+    const { migrateLocEocCategory } = require('./migrate_loc_eoc_category');
+    await migrateLocEocCategory();
+  } catch (locEocErr) {
+    logger.error('LOC/EOC Category migration error note:', locEocErr.message);
+  }
+
+  // CRM Application Performance & Schema Alignment Migration
+  try {
+    const { migrateCrmApplicationPerformance } = require('./migrate_crm_application_performance');
+    await migrateCrmApplicationPerformance();
+  } catch (crmPerfErr) {
+    logger.error('CRM Application Performance migration error note:', crmPerfErr.message);
+  }
+
+  // HDFC Curing Designations & Decline Code Migration
+  try {
+    const { migrateHdfcCuringDesignations } = require('./migrate_hdfc_curing_designations');
+    await migrateHdfcCuringDesignations();
+  } catch (hdfcCuringErr) {
+    logger.error('HDFC Curing Designations migration error note:', hdfcCuringErr.message);
+  }
+
+  // Account Activation & Deactivation Lifecycle Migration
+  try {
+    const { migrateAccountActivationLifecycle } = require('./migrate_account_activation_lifecycle');
+    await migrateAccountActivationLifecycle();
+  } catch (accountLifecycleErr) {
+    logger.error('Account Activation Lifecycle migration error note:', accountLifecycleErr.message);
+  }
+
+  // Administrative Sales Operator Claim Migration
+  try {
+    const { migrateSalesOperatorClaim } = require('./migrate_sales_operator_claim');
+    await migrateSalesOperatorClaim();
+    try {
+      const { migrateBankDirectProcessLinks } = require('./migrate_bank_direct_process_links');
+      await migrateBankDirectProcessLinks();
+    } catch (bankLinksErr) {
+      logger.error('Bank Direct Process Links migration error note:', bankLinksErr.message);
+    }
+  } catch (claimErr) {
+    logger.error('Sales Operator Claim migration error note:', claimErr.message);
+  }
+
+  // Admin Review Columns for Biometric Templates Migration
+  try {
+    const { migrateAddAdminReviewColumns } = require('./migrate_add_admin_review_columns');
+    await migrateAddAdminReviewColumns();
+  } catch (adminReviewErr) {
+    logger.error('Admin Review Columns migration error note:', adminReviewErr.message);
+  }
+
+  // Tata Floater Adobe Credit Card Product Migration
+  try {
+    const { migrateAddTataFloaterAdobeProduct } = require('./migrate_add_tata_floater_adobe_product');
+    await migrateAddTataFloaterAdobeProduct();
+  } catch (tataFloaterErr) {
+    logger.error('Tata Floater Adobe Product migration error note:', tataFloaterErr.message);
+  }
+
+  // Bank Direct Process Link Columns Migration
+  try {
+    const { migrateAddBankDirectProcessLink } = require('./migrate_add_bank_direct_process_link');
+    await migrateAddBankDirectProcessLink();
+  } catch (bankLinkErr) {
+    logger.error('Bank Direct Process Link migration error note:', bankLinkErr.message);
+  }
+
+  // Lead Orchestration Performance Indexes & Schema Hardening Migration
+  try {
+    const { migrateLeadOrchestrationPerformanceIndexes } = require('./migrate_lead_orchestration_performance_indexes');
+    await migrateLeadOrchestrationPerformanceIndexes();
+  } catch (leadIndexErr) {
+    logger.error('Lead Orchestration Performance Indexes migration error note:', leadIndexErr.message);
+  }
+
+  // Identity Change Challenges Schema Migration
+  try {
+    const { migrateIdentityChangeChallenges } = require('./migrate_identity_change_challenges');
+    await migrateIdentityChangeChallenges();
+  } catch (identityChallengeErr) {
+    logger.error('Identity Change Challenges migration error note:', identityChallengeErr.message);
+  }
+
+  // HR Profiles & Bank Requirements Schema Migration
+  try {
+    const { migrateHrProfilesAndBankRequirements } = require('./migrate_hr_profiles_and_bank_requirements');
+    await migrateHrProfilesAndBankRequirements();
+  } catch (hrBankErr) {
+    logger.error('HR Profiles & Bank Requirements migration error note:', hrBankErr.message);
+  }
+
+  // Device Push Token Registration Migration
+  try {
+    const { migrateDeviceTokens } = require('./migrate_device_tokens');
+    await migrateDeviceTokens();
+  } catch (deviceTokenErr) {
+    logger.error('Device Tokens migration error note:', deviceTokenErr.message);
+  }
+
+  // Notification Preferences Mobile Toggles Migration
+  try {
+    const { migrateNotificationPreferencesExtend } = require('./migrate_notification_preferences_extend');
+    await migrateNotificationPreferencesExtend();
+  } catch (notifPrefErr) {
+    logger.error('Notification Preferences extend migration error note:', notifPrefErr.message);
+  }
+
+  if (require.main === module) {
+    process.exit(0);
+  }
+};
+
+if (require.main === module) {
+  migrate().catch(err => {
+    logger.error('Migration failed', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { migrate };

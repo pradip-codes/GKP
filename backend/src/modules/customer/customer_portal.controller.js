@@ -1,0 +1,701 @@
+const fs = require('fs');
+const path = require('path');
+const { query } = require('../../config/database');
+const logger = require('../../config/logger');
+const { uploadToS3 } = require('../../services/aws/s3.service');
+const { sendSms } = require('../../services/sms/sms.service');
+const { sendEmail } = require('../../services/email/email.service');
+
+const DEFAULT_DOCUMENTS = [
+  { type: 'pan_card', label: 'PAN Card', required: true },
+  { type: 'aadhaar', label: 'Aadhaar Card', required: true },
+  { type: 'income_proof', label: 'Income Proof', required: true },
+  { type: 'salary_slip', label: 'Salary Slip', required: false },
+  { type: 'bank_statement', label: 'Bank Statement', required: true },
+  { type: 'selfie', label: 'Selfie', required: true },
+  { type: 'address_proof', label: 'Address Proof', required: true }
+];
+
+// Helper to log timeline events
+const addTimelineEvent = async (applicationId, eventType, title, description, actorType = 'customer', actorId = null, metadata = {}) => {
+  try {
+    await query(
+      `INSERT INTO application_timeline 
+        (application_id, event_type, title, description, actor_type, actor_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [applicationId, eventType, title, description, actorType, actorId, JSON.stringify(metadata)]
+    );
+  } catch (err) {
+    logger.error('Failed to log timeline event:', err);
+  }
+};
+
+/**
+ * Validate customer token and fetch portal data
+ * GET /api/v1/customer-portal/:token
+ */
+const getPortalData = async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    const tokenRes = await query(
+      `SELECT cat.*, 
+              a.id as app_id, a.app_number, a.status as app_status, a.loan_amount, a.created_at as app_created_at,
+              c.id as cust_id, c.full_name as customer_name, c.mobile as customer_mobile, c.email as customer_email,
+              p.name as product_name, p.category as product_category, p.required_documents,
+              b.name as bank_name, b.logo_url as bank_logo,
+              pp.first_name as partner_first_name, pp.last_name as partner_last_name, pp.company_name as partner_company
+       FROM customer_access_tokens cat
+       JOIN applications a ON cat.application_id = a.id
+       JOIN customers c ON cat.customer_id = c.id
+       LEFT JOIN products p ON a.product_id = p.id
+       LEFT JOIN banks b ON p.bank_id = b.id
+       LEFT JOIN partner_profiles pp ON a.partner_id = pp.id
+       WHERE cat.token = $1`,
+      [token]
+    );
+
+    if (tokenRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Invalid secure portal link' });
+    }
+
+    const tokenData = tokenRes.rows[0];
+    const now = new Date();
+    if (new Date(tokenData.expires_at) < now) {
+      return res.status(410).json({ 
+        success: false, 
+        expired: true, 
+        message: 'This upload link has expired (72 hours exceeded). Please request a new link.' 
+      });
+    }
+
+    // Log timeline event for link opening (idempotent for session)
+    const openedCheck = await query(
+      `SELECT id FROM application_timeline WHERE application_id = $1 AND event_type = 'customer_opened_link'`,
+      [tokenData.app_id]
+    );
+    if (openedCheck.rows.length === 0) {
+      await addTimelineEvent(
+        tokenData.app_id,
+        'customer_opened_link',
+        'Customer Opened Link',
+        'Customer accessed the secure document portal',
+        'customer',
+        tokenData.cust_id
+      );
+    }
+
+    // Fetch dynamic required documents list
+    let requiredDocs = DEFAULT_DOCUMENTS;
+    if (tokenData.required_documents && Array.isArray(tokenData.required_documents) && tokenData.required_documents.length > 0) {
+      requiredDocs = tokenData.required_documents.map(doc => {
+        if (typeof doc === 'string') {
+          const match = DEFAULT_DOCUMENTS.find(d => d.type === doc);
+          return match || { type: doc, label: doc.replace(/_/g, ' ').toUpperCase(), required: true };
+        }
+        return doc;
+      });
+    }
+
+    // Fetch uploaded documents (latest version per type)
+    const docsRes = await query(
+      `SELECT * FROM application_documents 
+       WHERE application_id = $1 AND is_latest = TRUE 
+       ORDER BY uploaded_at DESC`,
+      [tokenData.app_id]
+    );
+
+    // Fetch history of rejected/earlier versions
+    const docHistoryRes = await query(
+      `SELECT * FROM application_documents 
+       WHERE application_id = $1 AND is_latest = FALSE 
+       ORDER BY uploaded_at DESC`,
+      [tokenData.app_id]
+    );
+
+    // Fetch timeline events
+    const timelineRes = await query(
+      `SELECT * FROM application_timeline 
+       WHERE application_id = $1 
+       ORDER BY created_at ASC`,
+      [tokenData.app_id]
+    );
+
+    const partnerName = tokenData.partner_company || 
+      `${tokenData.partner_first_name || ''} ${tokenData.partner_last_name || ''}`.trim() || 'GharKaPaisa Partner';
+
+    res.json({
+      success: true,
+      data: {
+        application: {
+          id: tokenData.app_id,
+          app_number: tokenData.app_number,
+          status: tokenData.app_status,
+          loan_amount: tokenData.loan_amount,
+          created_at: tokenData.app_created_at,
+          customer_name: tokenData.customer_name,
+          customer_mobile: tokenData.customer_mobile,
+          customer_email: tokenData.customer_email,
+          product_name: tokenData.product_name,
+          product_category: tokenData.product_category,
+          bank_name: tokenData.bank_name,
+          bank_logo: tokenData.bank_logo,
+          partner_name: partnerName,
+          expires_at: tokenData.expires_at
+        },
+        required_documents: requiredDocs,
+        uploaded_documents: docsRes.rows,
+        document_history: docHistoryRes.rows,
+        timeline: timelineRes.rows
+      }
+    });
+  } catch (err) {
+    logger.error('Error fetching portal data:', err);
+    res.status(500).json({ success: false, message: 'Failed to load customer portal details' });
+  }
+};
+
+/**
+ * Customer uploads a document via secure token
+ * POST /api/v1/customer-portal/:token/upload
+ */
+const uploadCustomerDocument = async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { document_type } = req.body;
+
+    if (!document_type) {
+      return res.status(400).json({ success: false, message: 'document_type is required' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+
+    // Validate token
+    const tokenRes = await query(
+      `SELECT cat.*, a.id as app_id, c.full_name as customer_name 
+       FROM customer_access_tokens cat
+       JOIN applications a ON cat.application_id = a.id
+       JOIN customers c ON cat.customer_id = c.id
+       WHERE cat.token = $1`,
+      [token]
+    );
+
+    if (tokenRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Invalid secure portal link' });
+    }
+
+    const tokenData = tokenRes.rows[0];
+    if (new Date(tokenData.expires_at) < new Date()) {
+      return res.status(410).json({ success: false, message: 'Upload link expired' });
+    }
+
+    // Validate file size and mime type
+    const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+    if (req.file.size > MAX_SIZE) {
+      return res.status(400).json({ success: false, message: 'File size exceeds 5MB limit' });
+    }
+
+    const ALLOWED_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    if (!ALLOWED_MIMES.includes(req.file.mimetype)) {
+      return res.status(400).json({ success: false, message: 'Invalid file format. Allowed: JPEG, PNG, WEBP, PDF' });
+    }
+
+    // Upload to S3 (or fallback to local disk if S3 not set)
+    let fileUrl = '';
+    try {
+      const s3Res = await uploadToS3(req.file.buffer, req.file.originalname, 'customer-documents');
+      fileUrl = s3Res.url;
+    } catch (uploadErr) {
+      logger.warn('S3 Upload failed, writing to fallback public upload folder:', uploadErr.message);
+      const cleanName = req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const filename = `${Date.now()}_${cleanName}`;
+      const uploadDir = path.join(__dirname, '../../../public/uploads/documents');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(uploadDir, filename), req.file.buffer);
+      fileUrl = `/uploads/documents/${filename}`;
+    }
+
+    // Check existing documents of this type to update versioning
+    const existingDocRes = await query(
+      `SELECT id, version FROM application_documents 
+       WHERE application_id = $1 AND document_type = $2 AND is_latest = TRUE`,
+      [tokenData.app_id, document_type]
+    );
+
+    let newVersion = 1;
+    if (existingDocRes.rows.length > 0) {
+      newVersion = (existingDocRes.rows[0].version || 1) + 1;
+      // Mark existing documents as not latest
+      await query(
+        `UPDATE application_documents SET is_latest = FALSE WHERE application_id = $1 AND document_type = $2`,
+        [tokenData.app_id, document_type]
+      );
+    }
+
+    // Insert new document record
+    const insertRes = await query(
+      `INSERT INTO application_documents
+        (application_id, document_type, file_url, file_name, mime_type, status, uploaded_by_customer, version, is_latest)
+       VALUES ($1, $2, $3, $4, $5, 'uploaded', TRUE, $6, TRUE)
+       RETURNING *`,
+      [tokenData.app_id, document_type, fileUrl, req.file.originalname, req.file.mimetype, newVersion]
+    );
+
+    const docLabel = document_type.replace(/_/g, ' ').toUpperCase();
+
+    // Add timeline log
+    await addTimelineEvent(
+      tokenData.app_id,
+      'document_uploaded',
+      `${docLabel} Uploaded`,
+      `Customer uploaded ${docLabel} (v${newVersion})`,
+      'customer',
+      tokenData.customer_id
+    );
+
+    // Update application status to details_submitted if currently pending or draft
+    await query(
+      `UPDATE applications SET status = 'details_submitted', updated_at = NOW() 
+       WHERE id = $1 AND status IN ('pending', 'draft')`,
+      [tokenData.app_id]
+    );
+
+    res.json({
+      success: true,
+      message: `${docLabel} uploaded successfully`,
+      data: insertRes.rows[0]
+    });
+  } catch (err) {
+    logger.error('Error uploading customer document:', err);
+    res.status(500).json({ success: false, message: 'Failed to upload document' });
+  }
+};
+
+/**
+ * Customer submits all required documents
+ * POST /api/v1/customer-portal/:token/submit
+ */
+const submitDocuments = async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    const tokenRes = await query(
+      `SELECT cat.*, a.id as app_id, a.app_number, c.full_name as customer_name, c.mobile
+       FROM customer_access_tokens cat
+       JOIN applications a ON cat.application_id = a.id
+       JOIN customers c ON cat.customer_id = c.id
+       WHERE cat.token = $1`,
+      [token]
+    );
+
+    if (tokenRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Invalid secure portal link' });
+    }
+
+    const tokenData = tokenRes.rows[0];
+
+    // Update application status to details_submitted
+    await query(
+      `UPDATE applications SET status = 'details_submitted', updated_at = NOW() WHERE id = $1`,
+      [tokenData.app_id]
+    );
+
+    // Timeline event
+    await addTimelineEvent(
+      tokenData.app_id,
+      'documents_submitted',
+      'Documents Submitted',
+      'Customer completed and submitted all required documents for verification',
+      'customer',
+      tokenData.customer_id
+    );
+
+    // Send confirmation SMS to customer
+    const smsMsg = `Dear ${tokenData.customer_name}, your documents for Application #${tokenData.app_number} have been submitted successfully. Our team will verify them shortly. Thanks, GharKaPaisa`;
+    await sendSms(tokenData.mobile, smsMsg);
+
+    res.json({
+      success: true,
+      message: 'All documents submitted successfully for verification.'
+    });
+  } catch (err) {
+    logger.error('Error submitting documents:', err);
+    res.status(500).json({ success: false, message: 'Failed to finalize document submission' });
+  }
+};
+
+/**
+ * Validate customer share token and fetch customer details & documents
+ * GET /api/v1/customer-portal/link/:token
+ */
+const getCustomerPortalLinkData = async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    const tokenRes = await query(
+      `SELECT cat.*, c.*
+       FROM customer_access_tokens cat
+       JOIN customers c ON cat.customer_id = c.id
+       WHERE cat.token = $1`,
+      [token]
+    );
+
+    if (tokenRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Invalid or expired upload portal link' });
+    }
+
+    const tokenData = tokenRes.rows[0];
+    if (new Date(tokenData.expires_at) < new Date()) {
+      return res.status(410).json({ success: false, expired: true, message: 'This upload link has expired. Please ask your partner to send a new link.' });
+    }
+
+    const docsRes = await query(
+      `SELECT * FROM customer_documents WHERE customer_id = $1 ORDER BY uploaded_at DESC`,
+      [tokenData.customer_id]
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        customer: {
+          id: tokenData.customer_id,
+          full_name: tokenData.full_name,
+          mobile: tokenData.mobile,
+          email: tokenData.email,
+          dob: tokenData.dob,
+          pan_number: tokenData.pan_number ? `${tokenData.pan_number.slice(0, 5)}****${tokenData.pan_number.slice(-1)}` : null,
+          aadhaar_last4: tokenData.aadhaar_last4 ? `XXXX-XXXX-${tokenData.aadhaar_last4}` : null,
+          city: tokenData.city,
+          state: tokenData.state,
+          pincode: tokenData.pincode,
+          employment_type: tokenData.employment_type,
+          monthly_income: tokenData.monthly_income,
+          employer: tokenData.employer,
+          occupation: tokenData.occupation,
+          pipeline_status: tokenData.pipeline_status
+        },
+        uploaded_documents: docsRes.rows,
+        expires_at: tokenData.expires_at
+      }
+    });
+  } catch (err) {
+    logger.error('Error fetching portal link data:', err);
+    res.status(500).json({ success: false, message: 'Failed to load upload portal details' });
+  }
+};
+
+/**
+ * Update Customer Details via Token
+ * POST /api/v1/customer-portal/link/:token/update-details
+ */
+const updateCustomerPortalDetails = async (req, res) => {
+  try {
+    const { token } = req.params;
+    const {
+      full_name, email, dob, pan_number, aadhaar_last4,
+      city, state, pincode, employment_type, monthly_income, employer, occupation
+    } = req.body;
+
+    const tokenRes = await query(
+      `SELECT customer_id FROM customer_access_tokens WHERE token = $1 AND expires_at > NOW()`,
+      [token]
+    );
+
+    if (tokenRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Invalid or expired upload portal link' });
+    }
+
+    const customerId = tokenRes.rows[0].customer_id;
+
+    const { rows: [updated] } = await query(`
+      UPDATE customers SET
+        full_name = COALESCE($1, full_name),
+        email = COALESCE($2, email),
+        dob = COALESCE($3, dob),
+        pan_number = COALESCE($4, pan_number),
+        aadhaar_last4 = COALESCE($5, aadhaar_last4),
+        city = COALESCE($6, city),
+        state = COALESCE($7, state),
+        pincode = COALESCE($8, pincode),
+        employment_type = COALESCE($9, employment_type),
+        monthly_income = COALESCE($10, monthly_income),
+        employer = COALESCE($11, employer),
+        occupation = COALESCE($12, occupation),
+        updated_at = NOW()
+      WHERE id = $13
+      RETURNING *
+    `, [
+      full_name, email, dob, pan_number ? pan_number.toUpperCase() : null, aadhaar_last4,
+      city, state, pincode, employment_type, monthly_income, employer, occupation, customerId
+    ]);
+
+    await query(
+      `INSERT INTO customer_timeline (customer_id, event_type, title, description, actor_type, actor_id)
+       VALUES ($1, 'profile_updated', 'Profile Updated', 'Customer updated details via upload portal', 'customer', $1)`,
+      [customerId]
+    ).catch(() => {});
+
+    return res.json({
+      success: true,
+      message: 'Profile details updated successfully',
+      data: updated
+    });
+  } catch (err) {
+    logger.error('Error updating customer portal details:', err);
+    res.status(500).json({ success: false, message: 'Failed to update profile details' });
+  }
+};
+
+/**
+ * Upload Document via Customer Share Link Token
+ * POST /api/v1/customer-portal/link/:token/upload-document
+ */
+const uploadCustomerPortalDocument = async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { document_type } = req.body;
+
+    if (!document_type) return res.status(400).json({ success: false, message: 'document_type is required' });
+    if (!req.file) return res.status(400).json({ success: false, message: 'No document file uploaded' });
+
+    const tokenRes = await query(
+      `SELECT customer_id FROM customer_access_tokens WHERE token = $1 AND expires_at > NOW()`,
+      [token]
+    );
+
+    if (tokenRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Invalid or expired upload portal link' });
+    }
+
+    const customerId = tokenRes.rows[0].customer_id;
+
+    let fileUrl = '';
+    try {
+      const s3Res = await uploadToS3(req.file.buffer, req.file.originalname, 'customer-documents');
+      fileUrl = s3Res.url;
+    } catch (uploadErr) {
+      logger.warn('S3 upload fallback to local path:', uploadErr.message);
+      const cleanName = req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const filename = `${Date.now()}_${cleanName}`;
+      const uploadDir = path.join(__dirname, '../../../public/uploads/documents');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(uploadDir, filename), req.file.buffer);
+      fileUrl = `/uploads/documents/${filename}`;
+    }
+
+    const docTypeLabel = document_type.toLowerCase();
+    const { rows: [doc] } = await query(`
+      INSERT INTO customer_documents (customer_id, document_type, file_url, status, uploaded_at)
+      VALUES ($1, $2, $3, 'uploaded', NOW())
+      RETURNING *
+    `, [customerId, docTypeLabel, fileUrl]);
+
+    // Update customer status to documents_pending if currently new
+    await query(
+      `UPDATE customers SET pipeline_status = 'documents_pending', updated_at = NOW() WHERE id = $1 AND pipeline_status = 'new'`,
+      [customerId]
+    ).catch(() => {});
+
+    await query(
+      `INSERT INTO customer_timeline (customer_id, event_type, title, description, actor_type, actor_id)
+       VALUES ($1, 'document_uploaded', '${docTypeLabel.toUpperCase()} Uploaded', 'Customer uploaded ${docTypeLabel} via upload portal', 'customer', $1)`,
+      [customerId]
+    ).catch(() => {});
+
+    return res.json({
+      success: true,
+      message: `${docTypeLabel.toUpperCase()} uploaded successfully`,
+      data: doc
+    });
+  } catch (err) {
+    logger.error('Error uploading customer portal document:', err);
+    res.status(500).json({ success: false, message: 'Failed to upload document' });
+  }
+};
+
+/**
+ * Public Customer Application Tracking Endpoint
+ * GET or POST /api/v1/customer-portal/public/track-application
+ */
+const trackCustomerApplication = async (req, res) => {
+  try {
+    const rawAppNum = (req.query.app_number || req.query.appNumber || req.body.app_number || req.body.appNumber || '').toString().trim();
+    const rawMobile = (req.query.mobile || req.query.mobileNumber || req.query.phone || req.body.mobile || req.body.phone || '').toString().trim();
+
+    if (!rawAppNum || !rawMobile) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both Application Number and Mobile Number are required to track status.'
+      });
+    }
+
+    const cleanMobile = rawMobile.replace(/\D/g, '').slice(-10);
+    if (cleanMobile.length !== 10) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter a valid 10-digit customer mobile number.'
+      });
+    }
+
+    const cleanAppNum = rawAppNum.toUpperCase();
+
+    // 1. Search in applications table
+    const appQuery = await query(
+      `SELECT a.id as app_id, a.app_number, a.status as app_status,
+              a.loan_amount, a.approved_amount, a.credit_limit,
+              a.created_at as app_created_at, a.updated_at as app_updated_at,
+              a.rejection_reason, a.bank_application_number, a.vkyc_status,
+              c.id as cust_id, c.full_name as customer_name, c.mobile as customer_mobile, c.email as customer_email,
+              p.name as product_name, p.category as product_category, p.image_url as product_image,
+              b.name as bank_name, b.logo_url as bank_logo
+       FROM applications a
+       JOIN customers c ON a.customer_id = c.id
+       LEFT JOIN products p ON a.product_id = p.id
+       LEFT JOIN banks b ON p.bank_id = b.id
+       WHERE (
+         UPPER(a.app_number) = $1
+         OR UPPER(a.bank_application_number) = $1
+         OR a.id::text = $1
+       )
+       AND RIGHT(REGEXP_REPLACE(c.mobile, '\\D', '', 'g'), 10) = $2
+       LIMIT 1`,
+      [cleanAppNum, cleanMobile]
+    );
+
+    let match = null;
+    let isLead = false;
+
+    if (appQuery.rows.length > 0) {
+      match = appQuery.rows[0];
+    } else {
+      // 2. Fallback: Search in leads table
+      const leadQuery = await query(
+        `SELECT l.id as app_id,
+                COALESCE(NULLIF(l.lead_number, ''), CONCAT('LEAD-', UPPER(SUBSTRING(l.id::text, 1, 8)))) as app_number,
+                l.status as app_status, l.loan_amount, NULL as approved_amount, NULL as credit_limit,
+                l.created_at as app_created_at, l.updated_at as app_updated_at,
+                l.notes as rejection_reason, NULL as bank_application_number, NULL as vkyc_status,
+                c.id as cust_id, COALESCE(l.customer_name, c.full_name, 'Customer') as customer_name,
+                COALESCE(l.mobile, c.mobile) as customer_mobile, c.email as customer_email,
+                p.name as product_name, p.category as product_category, p.image_url as product_image,
+                b.name as bank_name, b.logo_url as bank_logo
+         FROM leads l
+         LEFT JOIN customers c ON l.customer_id = c.id
+         LEFT JOIN products p ON l.product_id = p.id
+         LEFT JOIN banks b ON p.bank_id = b.id
+         WHERE (
+           UPPER(l.lead_number) = $1
+           OR UPPER(CONCAT('LEAD-', UPPER(SUBSTRING(l.id::text, 1, 8)))) = $1
+           OR l.id::text = $1
+         )
+         AND (
+           RIGHT(REGEXP_REPLACE(l.mobile, '\\D', '', 'g'), 10) = $2
+           OR RIGHT(REGEXP_REPLACE(c.mobile, '\\D', '', 'g'), 10) = $2
+         )
+         LIMIT 1`,
+        [cleanAppNum, cleanMobile]
+      );
+
+      if (leadQuery.rows.length > 0) {
+        match = leadQuery.rows[0];
+        isLead = true;
+      }
+    }
+
+    if (!match) {
+      return res.status(404).json({
+        success: false,
+        message: 'No matching application found for the provided Application Number and Mobile Number. Please verify your details.'
+      });
+    }
+
+    // Mask customer name for privacy (e.g. Ramesh Kumar -> R***h K***r)
+    const maskName = (nameStr) => {
+      if (!nameStr) return 'Customer';
+      return nameStr.split(' ').map(part => {
+        if (part.length <= 2) return part[0] + '*';
+        return part[0] + '*'.repeat(part.length - 2) + part[part.length - 1];
+      }).join(' ');
+    };
+
+    // Mask mobile number for privacy (e.g. 9876543210 -> 98******10)
+    const maskMobile = (mob) => {
+      if (!mob || mob.length < 10) return '******';
+      const clean = mob.slice(-10);
+      return clean.slice(0, 2) + '******' + clean.slice(-2);
+    };
+
+    let currentStage = 1;
+    let stageStatus = 'active';
+    const statusLower = (match.app_status || '').toLowerCase();
+
+    if (['approved', 'disbursed', 'completed'].includes(statusLower)) {
+      currentStage = 4;
+      stageStatus = 'completed';
+    } else if (['in_progress', 'bank_processing', 'bank_submitted', 'sent_to_bank', 'vkyc_completed'].includes(statusLower)) {
+      currentStage = 3;
+      stageStatus = 'active';
+    } else if (['details_submitted', 'under_review', 'pending_verification', 'assigned', 'review_pending'].includes(statusLower)) {
+      currentStage = 2;
+      stageStatus = 'active';
+    } else if (['rejected', 'declined', 'cancelled'].includes(statusLower)) {
+      stageStatus = 'rejected';
+    }
+
+    let timelineEvents = [];
+    if (!isLead) {
+      const timelineRes = await query(
+        `SELECT event_type, title, description, created_at
+         FROM application_timeline
+         WHERE application_id = $1
+         ORDER BY created_at ASC`,
+        [match.app_id]
+      );
+      timelineEvents = timelineRes.rows;
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        application_id: match.app_id,
+        app_number: match.app_number,
+        bank_application_number: match.bank_application_number,
+        status: match.app_status,
+        status_label: (match.app_status || 'Submitted').replace(/_/g, ' ').toUpperCase(),
+        current_stage: currentStage,
+        stage_status: stageStatus,
+        customer_name_masked: maskName(match.customer_name),
+        customer_mobile_masked: maskMobile(match.customer_mobile),
+        product_name: match.product_name || 'Credit / Loan Product',
+        product_category: match.product_category || 'financial_services',
+        bank_name: match.bank_name || 'Partner Bank',
+        bank_logo: match.bank_logo || null,
+        loan_amount: match.loan_amount || match.approved_amount || match.credit_limit || null,
+        rejection_reason: match.rejection_reason || null,
+        applied_at: match.app_created_at,
+        updated_at: match.app_updated_at,
+        timeline: timelineEvents
+      }
+    });
+  } catch (err) {
+    logger.error('Error tracking customer application:', err);
+    res.status(500).json({ success: false, message: 'Server error while tracking application details.' });
+  }
+};
+
+module.exports = {
+  getPortalData,
+  uploadCustomerDocument,
+  submitDocuments,
+  addTimelineEvent,
+  getCustomerPortalLinkData,
+  updateCustomerPortalDetails,
+  uploadCustomerPortalDocument,
+  trackCustomerApplication
+};

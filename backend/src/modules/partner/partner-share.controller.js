@@ -1,0 +1,1435 @@
+const { query } = require('../../config/database');
+const { success, created, error, notFound } = require('../../utils/response/response');
+const crypto = require('crypto');
+const { getBankApplyLinkBackend } = require('../crm/lead.controller');
+const logger = require('../../config/logger');
+
+/**
+ * Partner Share Link Tracking Controller
+ * Handles partner referral link generation and customer lead tracking
+ */
+
+// Generate a unique tracking token
+const generateTrackingToken = () => {
+  return crypto.randomBytes(32).toString('hex');
+};
+
+// POST /partner/share-link - Generate share link for a product
+const generateShareLink = async (req, res, next) => {
+  try {
+    let productId = req.body.productId || req.body.product_id;
+    let applicationId = req.body.application_id || req.body.applicationId || null;
+    let leadId = req.body.lead_id || req.body.leadId || null;
+    let partnerId = null;
+    let partnerCode = null;
+
+    if (!productId && applicationId) {
+      const { rows: [app] } = await query(`SELECT product_id, partner_id FROM applications WHERE id = $1`, [applicationId]);
+      if (app) {
+        productId = app.product_id;
+        partnerId = app.partner_id;
+      } else {
+        const { rows: [lead] } = await query(`SELECT product_id, partner_id FROM leads WHERE id = $1`, [applicationId]);
+        if (lead) {
+          productId = lead.product_id;
+          if (!partnerId) partnerId = lead.partner_id;
+          leadId = lead.id;
+          applicationId = null;
+        }
+      }
+    }
+
+    if (!productId && leadId) {
+      const { rows: [lead] } = await query(`SELECT product_id, partner_id FROM leads WHERE id = $1`, [leadId]);
+      if (lead) {
+        productId = lead.product_id;
+        if (!partnerId) partnerId = lead.partner_id;
+      }
+    }
+
+    if (!productId) {
+      return error(res, 'Product ID is required', 400);
+    }
+
+    // Get partner profile if not resolved
+    if (!partnerId && req.user) {
+      const { rows: [partner] } = await query(
+        `SELECT id, partner_code FROM partner_profiles WHERE user_id = $1`,
+        [req.user.id]
+      );
+      if (partner) {
+        partnerId = partner.id;
+        partnerCode = partner.partner_code;
+      }
+    }
+
+    if (!partnerId) {
+      return error(res, 'Partner profile is required to generate share links', 400);
+    }
+
+    // Verify product exists
+    const { rows: [product] } = await query(
+      `SELECT id, name, public_url, partner_url, category FROM products WHERE id = $1`,
+      [productId]
+    );
+
+    if (!product) {
+      return error(res, 'Product not found', 404);
+    }
+
+    // Check for employee assigned custom bank URL
+    let employeeBankUrl = null;
+    if (req.user) {
+      const { rows: [emp] } = await query(
+        `SELECT id FROM employees WHERE user_id = $1 OR mobile_number = $2 LIMIT 1`,
+        [req.user.id, req.user.mobile]
+      );
+      if (emp) {
+        const { rows: [empLink] } = await query(
+          `SELECT employee_referral_url FROM employee_product_links WHERE employee_id = $1 AND product_id = $2 AND status = 'ACTIVE'`,
+          [emp.id, productId]
+        );
+        if (empLink && empLink.employee_referral_url) {
+          employeeBankUrl = empLink.employee_referral_url.trim();
+        }
+      }
+    }
+
+    // Generate tracking token
+    const trackingToken = generateTrackingToken();
+
+    // Store in partner_share_links table
+    await query(`
+      INSERT INTO partner_share_links (partner_id, product_id, tracking_token, application_id, lead_id, expires_at, status)
+      VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '30 days', 'ACTIVE')
+    `, [partnerId, productId, trackingToken, applicationId, leadId]);
+
+    // Generate share link URL pointing to GharKaPaisa customer detail collection page
+    const appUrl = process.env.FRONTEND_URL || 'https://gharkapaisa.in';
+    const directBankUrl = employeeBankUrl || product.partner_url?.trim() || getBankApplyLinkBackend(product.name, product.bank_name || product.bank_code, product);
+    const shareLink = `${appUrl}/apply/${trackingToken}`;
+    const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(`Apply for ${product.name} directly using your official application link:\n${shareLink}`)}`;
+
+    const targetMobile = req.body.customer_mobile || req.body.mobile;
+    const targetName = req.body.customer_name || req.body.full_name || 'Customer';
+
+    const { sendLinkedShareSms } = require('../../services/sms/sms.service');
+    let partnerMobile = req.user?.mobile;
+    if (!partnerMobile && partnerId) {
+      try {
+        const { rows: [pUser] } = await query(`
+          SELECT u.mobile, u.mobile as partner_mobile 
+          FROM partner_profiles pp 
+          LEFT JOIN users u ON u.id = pp.user_id 
+          WHERE pp.id = $1 OR pp.user_id = $1
+        `, [partnerId]);
+        partnerMobile = pUser?.mobile || pUser?.partner_mobile;
+      } catch (e) {}
+    }
+
+    if (partnerMobile) {
+      sendLinkedShareSms(partnerMobile, targetName, product.name, shareLink).catch(() => {});
+    }
+    if (targetMobile && targetMobile !== partnerMobile) {
+      sendLinkedShareSms(targetMobile, targetName, product.name, shareLink).catch(() => {});
+    }
+
+    return success(res, {
+      tracking_token: trackingToken,
+      partner_url: directBankUrl || product.partner_url || '',
+      share_link: shareLink,
+      share_url: shareLink,
+      whatsapp_url: whatsappUrl,
+      product_id: product.id,
+      product_name: product.name,
+      application_id: applicationId,
+      lead_id: leadId,
+      partner_code: partnerCode || 'PARTNER',
+      process_type: 'linked_share',
+      process_by: 'partner',
+      source: 'share_link'
+    }, 'Share link generated successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Helper to resolve share token across partner_share_links, leads, applications, click_tracking, and products tables
+ */
+const resolveShareToken = async (token) => {
+  if (!token) return null;
+
+  const cleanToken = String(token).trim();
+
+  // 1. Check partner_share_links (exact match or prefix match) with expiration & status check
+  const { rows: [linkRes] } = await query(
+    `SELECT product_id, partner_id, application_id, lead_id, created_at 
+     FROM partner_share_links 
+     WHERE (tracking_token = $1 OR tracking_token ILIKE $2)
+       AND (expires_at IS NULL OR expires_at > NOW())
+       AND (status IS NULL OR status = 'ACTIVE')
+     ORDER BY created_at DESC LIMIT 1`,
+    [cleanToken, `${cleanToken}%`]
+  );
+  if (linkRes) return linkRes;
+
+  // 2. Check leads table by tracking_token, lead_number, or ID
+  const { rows: [leadRes] } = await query(
+    `SELECT product_id, partner_id, customer_id, id as lead_id, created_at 
+     FROM leads 
+     WHERE tracking_token = $1 OR tracking_token ILIKE $2 OR lead_number = $1 OR id::text = $1 
+     ORDER BY created_at DESC LIMIT 1`,
+    [cleanToken, `${cleanToken}%`]
+  );
+  if (leadRes) {
+    return {
+      product_id: leadRes.product_id,
+      partner_id: leadRes.partner_id,
+      application_id: null,
+      lead_id: leadRes.lead_id,
+      created_at: leadRes.created_at
+    };
+  }
+
+  // 3. Check applications table by app_number or ID
+  const { rows: [appRes] } = await query(
+    `SELECT product_id, partner_id, id as application_id, lead_id, created_at 
+     FROM applications 
+     WHERE app_number = $1 OR id::text = $1 
+     ORDER BY created_at DESC LIMIT 1`,
+    [cleanToken]
+  );
+  if (appRes) {
+    return {
+      product_id: appRes.product_id,
+      partner_id: appRes.partner_id,
+      application_id: appRes.application_id,
+      lead_id: appRes.lead_id,
+      created_at: appRes.created_at
+    };
+  }
+
+  // 4. Check click_tracking table safely
+  try {
+    const { rows: [clickRes] } = await query(
+      `SELECT product_id, partner_id 
+       FROM click_tracking 
+       WHERE tracking_url ILIKE $1 OR original_url ILIKE $1 
+       LIMIT 1`,
+      [`%${cleanToken}%`]
+    );
+    if (clickRes && clickRes.product_id) {
+      return {
+        product_id: clickRes.product_id,
+        partner_id: clickRes.partner_id,
+        application_id: null,
+        lead_id: null,
+        created_at: new Date()
+      };
+    }
+  } catch (clickErr) {
+    // Non-blocking fallback if click_tracking has different columns
+  }
+
+  // 5. Check products table by ID, slug, or name (Direct product link — NO random partner fallback)
+  const { rows: [prodRes] } = await query(
+    `SELECT id as product_id FROM products 
+     WHERE id::text = $1 OR slug ILIKE $2 OR name ILIKE $2 
+     ORDER BY is_active DESC, created_at DESC LIMIT 1`,
+    [cleanToken, `%${cleanToken.replace(/-/g, ' ')}%`]
+  );
+  if (prodRes) {
+    return {
+      product_id: prodRes.product_id,
+      partner_id: null,
+      application_id: null,
+      lead_id: null,
+      created_at: new Date()
+    };
+  }
+
+  // NOTE: Token not found -> Return null (404 Invalid or expired share link). Never fall back to arbitrary partners!
+  return null;
+};
+
+// GET /public/share/:trackingToken - Public endpoint to get product details for landing page
+const getShareLinkDetails = async (req, res, next) => {
+  try {
+    const { trackingToken } = req.params;
+
+    const shareLinkData = await resolveShareToken(trackingToken);
+
+    if (!shareLinkData) {
+      return error(res, 'Invalid or expired share link', 404);
+    }
+
+    // Get product details
+    const { rows: [product] } = await query(`
+      SELECT p.*, b.name as bank_name, b.short_code as bank_code, b.logo_url as bank_logo
+      FROM products p
+      LEFT JOIN banks b ON b.id = p.bank_id
+      WHERE p.id = $1
+    `, [shareLinkData.product_id]);
+
+    if (!product) {
+      return error(res, 'Product not found', 404);
+    }
+
+    // Get partner info (optional - for attribution display)
+    let partner = null;
+    if (shareLinkData.partner_id) {
+      const { rows: [p] } = await query(
+        `SELECT partner_code, first_name, last_name FROM partner_profiles WHERE id = $1`,
+        [shareLinkData.partner_id]
+      );
+      partner = p || null;
+    }
+
+    let existingApplication = null;
+    if (shareLinkData.application_id) {
+      const { rows: [app] } = await query(`
+        SELECT a.id, a.app_number, a.bank_application_number, a.vkyc_status, a.vkyc_url, a.monthly_salary, a.pan_number,
+               c.full_name as customer_name, c.mobile as customer_mobile, c.email as customer_email
+        FROM applications a
+        JOIN customers c ON c.id = a.customer_id
+        WHERE a.id = $1
+      `, [shareLinkData.application_id]);
+      if (app) existingApplication = app;
+    } else if (shareLinkData.lead_id) {
+      const { rows: [lead] } = await query(`
+        SELECT l.id, l.lead_number as app_number, l.customer_name, l.mobile as customer_mobile,
+               c.monthly_income as monthly_salary, c.pan_number
+        FROM leads l
+        LEFT JOIN customers c ON (c.id = l.customer_id OR c.mobile = l.mobile)
+        WHERE l.id = $1
+      `, [shareLinkData.lead_id]);
+      if (lead) existingApplication = lead;
+    }
+
+    return success(res, {
+      product,
+      partner: partner || null,
+      tracking_token: trackingToken,
+      has_application: !!(shareLinkData.application_id || shareLinkData.lead_id),
+      application_id: shareLinkData.application_id || null,
+      lead_id: shareLinkData.lead_id || null,
+      existing_application: existingApplication
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /public/share/submit - Public endpoint to submit customer info from landing page
+const submitShareLead = async (req, res, next) => {
+  try {
+    const {
+      trackingToken, customerName, customerMobile,
+      panNumber, monthlyIncome, bankAppNumber, vkycStatus, vkycUrl, remarks
+    } = req.body;
+
+    if (!trackingToken || !customerName || !customerMobile) {
+      return error(res, 'Tracking token, customer name, and mobile are required', 400);
+    }
+
+    // Get share link details
+    const shareLinkData = await resolveShareToken(trackingToken);
+
+    if (!shareLinkData) {
+      return error(res, 'Invalid or expired share link', 404);
+    }
+
+    // Get partner user_id for customer record creation
+    const { rows: [partnerUser] } = await query(
+      `SELECT user_id FROM partner_profiles WHERE id = $1`,
+      [shareLinkData.partner_id]
+    );
+    const partnerUserId = partnerUser?.user_id || null;
+
+    const cleanMobile = customerMobile.replace(/\D/g, '').slice(-10);
+    const numIncome = monthlyIncome ? Number(monthlyIncome) : null;
+    const cleanPan = panNumber ? panNumber.trim().toUpperCase() : null;
+
+    // Upsert customer in customers table so they appear under Partner CRM / Customers panel
+    let customerId = null;
+    try {
+      const { rows: [existingCust] } = await query(
+        `SELECT id FROM customers WHERE mobile = $1 LIMIT 1`,
+        [cleanMobile]
+      );
+
+      if (existingCust) {
+        customerId = existingCust.id;
+        await query(
+          `UPDATE customers
+           SET full_name = COALESCE(NULLIF(full_name, ''), $1),
+               pan_number = COALESCE(NULLIF($2, ''), pan_number),
+               monthly_income = COALESCE($3, monthly_income),
+               updated_at = NOW()
+           WHERE id = $4`,
+          [customerName.trim(), cleanPan, numIncome, customerId]
+        );
+      } else {
+        const { rows: [newCust] } = await query(
+          `INSERT INTO customers (full_name, mobile, pan_number, monthly_income, created_by)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id`,
+          [customerName.trim(), cleanMobile, cleanPan, numIncome, partnerUserId]
+        );
+        customerId = newCust?.id || null;
+      }
+    } catch (custErr) {
+      console.warn('Customer record creation fallback:', custErr.message);
+    }
+
+    // If an application_id was attached to this share link, update that specific application record!
+    if (shareLinkData.application_id) {
+      await query(`
+        UPDATE applications
+        SET 
+          bank_application_number = COALESCE(NULLIF($1, ''), bank_application_number),
+          bank_ref_number = COALESCE(NULLIF($1, ''), bank_ref_number),
+          vkyc_status = COALESCE(NULLIF($2, ''), vkyc_status),
+          monthly_salary = COALESCE($3, monthly_salary),
+          vkyc_url = COALESCE(NULLIF($4, ''), vkyc_url),
+          pan_number = COALESCE(NULLIF($5, ''), pan_number),
+          notes = COALESCE(NULLIF($6, ''), notes),
+          updated_at = NOW()
+        WHERE id = $7
+      `, [
+        bankAppNumber?.trim() || null,
+        vkycStatus?.trim() || null,
+        numIncome,
+        vkycUrl?.trim() || null,
+        cleanPan,
+        remarks?.trim() || null,
+        shareLinkData.application_id
+      ]);
+    }
+
+    // Check if lead already exists for this tracking token OR active (product_id, mobile) pair
+    const { rows: [existingLead] } = await query(
+      `SELECT id FROM leads 
+       WHERE (tracking_token = $1 OR id = $4 OR (product_id = $2 AND (mobile = $3 OR customer_mobile = $3)))
+         AND status NOT IN ('rejected', 'cancelled')
+       ORDER BY created_at DESC LIMIT 1`,
+      [trackingToken, shareLinkData.product_id, cleanMobile, shareLinkData.lead_id || null]
+    );
+
+    if (existingLead) {
+      // Update existing lead
+      const { rows: [updatedLead] } = await query(`
+        UPDATE leads 
+        SET customer_name = $1, customer_mobile = $2, mobile = $2, tracking_token = $3,
+            customer_id = COALESCE($5, customer_id),
+            updated_at = NOW()
+        WHERE id = $4
+        RETURNING *
+      `, [customerName.trim(), cleanMobile, trackingToken, existingLead.id, customerId]);
+
+      // Get product bank link
+      const { rows: [product] } = await query(`
+        SELECT p.*, b.name AS bank_name, b.short_code AS bank_code
+        FROM products p
+        LEFT JOIN banks b ON b.id = p.bank_id
+        WHERE p.id = $1
+      `, [shareLinkData.product_id]);
+
+      const targetRedirectUrl = getBankApplyLinkBackend(product?.name, product?.bank_name || product?.bank_code, product) || null;
+
+      return success(res, {
+        lead_id: updatedLead.id,
+        application_id: shareLinkData.application_id || null,
+        redirect_url: targetRedirectUrl,
+        message: 'Application details submitted and saved successfully'
+      });
+    }
+
+    // Create new lead with fallback if race condition triggers 23505
+    let lead;
+    try {
+      const { rows } = await query(`
+        INSERT INTO leads (
+          partner_id, product_id, customer_name, customer_mobile, mobile,
+          tracking_token, source, process_type, process_by, status, pipeline_stage, customer_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 'linked_share', 'linked_share', 'partner', 'details_submitted', 'created', $7)
+        RETURNING *
+      `, [
+        shareLinkData.partner_id,
+        shareLinkData.product_id,
+        customerName.trim(),
+        cleanMobile,
+        cleanMobile,
+        trackingToken,
+        customerId
+      ]);
+      lead = rows[0];
+    } catch (insertErr) {
+      if (insertErr.code === '23505') {
+        const { rows: [fallbackLead] } = await query(`
+          UPDATE leads
+          SET customer_name = $1, tracking_token = $2, source = 'linked_share', process_type = 'linked_share', process_by = 'partner', customer_id = COALESCE($5, customer_id),
+              updated_at = NOW()
+          WHERE product_id = $3 AND (mobile = $4 OR customer_mobile = $4) AND status NOT IN ('rejected', 'cancelled')
+          RETURNING *
+        `, [customerName.trim(), trackingToken, shareLinkData.product_id, cleanMobile, customerId]);
+
+        if (fallbackLead) {
+          lead = fallbackLead;
+        } else {
+          throw insertErr;
+        }
+      } else {
+        throw insertErr;
+      }
+    }
+
+    // Get product bank link for redirect
+    const { rows: [product] } = await query(`
+      SELECT p.*, b.name AS bank_name, b.short_code AS bank_code
+      FROM products p
+      LEFT JOIN banks b ON b.id = p.bank_id
+      WHERE p.id = $1
+    `, [shareLinkData.product_id]);
+
+    const targetRedirectUrl = getBankApplyLinkBackend(product?.name, product?.bank_name || product?.bank_code, product) || null;
+
+    return created(res, {
+      lead_id: lead.id,
+      redirect_url: targetRedirectUrl,
+      product_name: product?.name,
+      message: 'Lead created successfully'
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /partner/share-tracking - Get all tracking leads for the logged-in partner
+const getPartnerShareTracking = async (req, res, next) => {
+  try {
+    const { page, limit, offset } = require('../../utils/helpers/helpers').getPaginationParams(req.query);
+    const { status, from_date, to_date } = req.query;
+
+    // Get partner profile
+    const { rows: [partner] } = await query(
+      `SELECT id FROM partner_profiles WHERE user_id = $1`,
+      [req.user.id]
+    );
+
+    if (!partner) {
+      return error(res, 'Partner profile not found', 404);
+    }
+
+    // Share-link leads are written with source 'linked_share' / 'share_link'
+    // (see submitShareLead + updateApplyTokenDetails). 'partner_share' is kept
+    // for historical rows only.
+    let where = `WHERE l.partner_id = $1 AND (l.source IN ('partner_share', 'linked_share', 'share_link') OR l.process_type = 'linked_share')`;
+    const values = [partner.id];
+    let idx = 2;
+
+    if (status) {
+      where += ` AND l.status = $${idx++}`;
+      values.push(status);
+    }
+    if (from_date) {
+      where += ` AND l.created_at >= $${idx++}`;
+      values.push(from_date);
+    }
+    if (to_date) {
+      where += ` AND l.created_at <= $${idx++}`;
+      values.push(to_date + ' 23:59:59');
+    }
+
+    const [countRes, dataRes] = await Promise.all([
+      query(`SELECT COUNT(*) FROM leads l ${where}`, values),
+      query(`
+        SELECT l.*,
+               p.name as product_name, p.category,
+               b.name as bank_name, b.short_code as bank_code,
+               l.tracking_token
+        FROM leads l
+        LEFT JOIN products p ON p.id = l.product_id
+        LEFT JOIN banks b ON b.id = p.bank_id
+        ${where}
+        ORDER BY l.created_at DESC
+        LIMIT $${idx++} OFFSET $${idx++}
+      `, [...values, limit, offset])
+    ]);
+
+    const total = parseInt(countRes.rows[0].count);
+    return require('../../utils/response/response').paginate(res, dataRes.rows, total, page, limit);
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * GET /public/apply/:token — Step 1: Get product details and prefilled customer data
+ */
+const getApplyTokenDetails = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+    if (!token) return error(res, 'Token is required', 400);
+
+    // Find share link or lead by token
+    const shareData = await resolveShareToken(token);
+
+    if (!shareData) {
+      return error(res, 'Invalid or expired application link', 404);
+    }
+
+    // Get Product info with all details for Product Details tab
+    const { rows: [product] } = await query(`
+      SELECT p.*, b.name as bank_name, b.short_code as bank_code, b.logo_url as bank_logo
+      FROM products p
+      LEFT JOIN banks b ON b.id = p.bank_id
+      WHERE p.id = $1
+    `, [shareData.product_id]);
+
+    if (!product) {
+      return error(res, 'Product not found', 404);
+    }
+
+    // Resolve prefilled customer data
+    let custRecord = null;
+    let leadRec = null;
+
+    if (shareData.lead_id) {
+      const { rows: [l] } = await query(`SELECT * FROM leads WHERE id = $1`, [shareData.lead_id]);
+      leadRec = l || null;
+    }
+
+    if (shareData.application_id && !leadRec) {
+      const { rows: [a] } = await query(`SELECT * FROM applications WHERE id = $1`, [shareData.application_id]);
+      if (a && a.customer_id) {
+        const { rows: [c] } = await query(`SELECT * FROM customers WHERE id = $1`, [a.customer_id]);
+        custRecord = c || null;
+      }
+    }
+
+    if (!custRecord && leadRec) {
+      if (leadRec.customer_id) {
+        const { rows: [c] } = await query(`SELECT * FROM customers WHERE id = $1`, [leadRec.customer_id]);
+        custRecord = c || null;
+      } else if (leadRec.mobile) {
+        const { rows: [c] } = await query(`SELECT * FROM customers WHERE mobile = $1 LIMIT 1`, [leadRec.mobile]);
+        custRecord = c || null;
+      }
+    }
+
+    const rawFullName = custRecord?.full_name || leadRec?.customer_name || shareData.customer_name || '';
+    const fullName = (rawFullName && rawFullName !== 'Valued Customer') ? rawFullName : '';
+    const mobile = custRecord?.mobile || leadRec?.mobile || leadRec?.customer_mobile || shareData.mobile || '';
+    const firstName = fullName ? fullName.trim().split(' ')[0] : '';
+
+    return success(res, {
+      token,
+      process_type: 'linked_share',
+      process_by: 'partner',
+      source: 'share_link',
+      lead_id: shareData.lead_id || null,
+      application_id: shareData.application_id || null,
+      product_id: product.id,
+      pipeline_stage: leadRec?.pipeline_stage || shareData.pipeline_stage || 'created',
+      product: {
+        id: product.id,
+        name: product.name,
+        category: product.category,
+        sub_category: product.sub_category,
+        bank_name: product.bank_name,
+        bank_code: product.bank_code,
+        bank_logo: product.bank_logo,
+        annual_fee: product.annual_fee,
+        description: product.description,
+        short_description: product.short_description,
+        features: Array.isArray(product.features) ? product.features : (typeof product.features === 'string' ? JSON.parse(product.features || '[]') : []),
+        eligibility: typeof product.eligibility === 'string' ? JSON.parse(product.eligibility || '{}') : (product.eligibility || {}),
+        eligibility_criteria: product.eligibility_criteria,
+        benefits: product.benefits,
+        fees_charges: product.fees_charges,
+        rewards: product.rewards,
+        cashback: product.cashback,
+        card_variant: product.card_variant,
+        card_network: product.card_network,
+        welcome_benefits: product.welcome_benefits,
+        is_lifetime_free: product.is_lifetime_free,
+        image_url: product.image_url,
+        apply_button_text: product.apply_button_text || 'Apply Now',
+        partner_url: getBankApplyLinkBackend(product.name, product.bank_name || product.bank_code, product) || product.partner_url || product.application_url || product.public_url || product.apply_url || product.redirect_url || '',
+        application_url: product.application_url || product.partner_url || product.public_url || product.apply_url || product.redirect_url || '',
+        public_url: product.public_url || product.partner_url || product.application_url || product.apply_url || product.redirect_url || '',
+        apply_url: product.apply_url || product.partner_url || product.application_url || product.public_url || product.redirect_url || '',
+        redirect_url: product.redirect_url || product.partner_url || product.application_url || product.public_url || product.apply_url || ''
+      },
+      customer: {
+        full_name: fullName,
+        first_name: firstName,
+        mobile: mobile,
+        email: custRecord?.email || '',
+        dob: custRecord?.dob ? new Date(custRecord.dob).toISOString().split('T')[0] : '',
+        pan_number: custRecord?.pan_number || '',
+        aadhaar_number: custRecord?.aadhaar_number || custRecord?.aadhaar_last4 || '',
+        occupation: custRecord?.occupation || custRecord?.employment_type || 'Salaried',
+        employment_type: custRecord?.employment_type || 'Salaried',
+        monthly_income: custRecord?.monthly_income || '',
+        employer: custRecord?.employer || '',
+        city: custRecord?.city || leadRec?.city || '',
+        state: custRecord?.state || '',
+        pincode: custRecord?.pincode || ''
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * PATCH /public/apply/:token — Step 1: Submit Customer Form & update customer details in DB
+ */
+const updateApplyTokenDetails = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+    const {
+      full_name, customer_name, name,
+      mobile, customer_mobile,
+      email, dob, occupation, employment, employment_type, income, monthly_income,
+      employer, company_name, pan, pan_number, aadhaar_number, aadhaar,
+      city, state, pincode, address
+    } = req.body;
+
+    if (!token) return error(res, 'Token is required', 400);
+
+    const shareData = await resolveShareToken(token);
+    if (!shareData) {
+      return error(res, 'Invalid or expired application link', 404);
+    }
+
+    const cleanName = (full_name || customer_name || name || '').toString().trim();
+    const cleanMobile = (mobile || customer_mobile || '').toString().replace(/\D/g, '').slice(-10);
+    const cleanPan = (pan_number || pan || '').toString().trim().toUpperCase();
+    const cleanEmail = (email || '').toString().trim().toLowerCase();
+    const rawAadhaar = (aadhaar_number || aadhaar || '').toString().replace(/\D/g, '');
+    const cleanAadhaar = rawAadhaar || null;
+    const cleanAadhaarLast4 = rawAadhaar.length >= 4 ? rawAadhaar.slice(-4) : null;
+    const cleanOccupation = (occupation || employment || employment_type || 'Salaried').toString().trim();
+    const cleanEmployer = (employer || company_name || '').toString().trim();
+
+    const rawInc = (monthly_income !== undefined && monthly_income !== null && monthly_income !== '')
+      ? monthly_income
+      : (income !== undefined && income !== null && income !== '' ? income : null);
+    let numIncome = null;
+    if (rawInc !== null && rawInc !== undefined) {
+      const cleanedInc = rawInc.toString().replace(/[^0-9.]/g, '');
+      if (cleanedInc) {
+        const parsed = parseFloat(cleanedInc);
+        if (!isNaN(parsed)) numIncome = parsed;
+      }
+    }
+
+    const cleanCity = (city || '').toString().trim();
+    const cleanState = (state || '').toString().trim();
+    const cleanPincode = (pincode || '').toString().replace(/\D/g, '').slice(0, 6);
+
+
+
+    // Fetch Product for target redirect URL
+    const { rows: [product] } = await query(`SELECT * FROM products WHERE id = $1`, [shareData.product_id]);
+    const targetRedirectUrl = product?.partner_url || product?.public_url || product?.application_url || product?.apply_url || product?.redirect_url || 'https://gharkapaisa.in';
+
+    // Find customer ID to update
+    let targetCustomerId = shareData.customer_id;
+    let targetLeadId = shareData.lead_id;
+
+    if (!targetCustomerId && targetLeadId) {
+      const { rows: [leadRec] } = await query(`SELECT customer_id, mobile, customer_name FROM leads WHERE id = $1`, [targetLeadId]);
+      if (leadRec?.customer_id) {
+        targetCustomerId = leadRec.customer_id;
+      } else if (leadRec?.mobile || cleanMobile) {
+        const checkMobile = cleanMobile || leadRec?.mobile;
+        const { rows: [custRec] } = await query(`SELECT id FROM customers WHERE mobile = $1 LIMIT 1`, [checkMobile]);
+        if (custRec) {
+          targetCustomerId = custRec.id;
+        }
+      }
+    }
+
+    if (!targetCustomerId && cleanMobile) {
+      const { rows: [custRec] } = await query(`SELECT id FROM customers WHERE mobile = $1 LIMIT 1`, [cleanMobile]);
+      if (custRec) {
+        targetCustomerId = custRec.id;
+      }
+    }
+
+    // Resolve Partner User ID for created_by attribution
+    let partnerUserId = null;
+    if (shareData.partner_id) {
+      const { rows: [pUser] } = await query(`SELECT user_id FROM partner_profiles WHERE id = $1`, [shareData.partner_id]);
+      partnerUserId = pUser?.user_id || null;
+    }
+    if (!partnerUserId) {
+      const { rows: [adminUser] } = await query(`SELECT id FROM users WHERE role IN ('SUPER_ADMIN', 'ADMIN') ORDER BY created_at ASC LIMIT 1`);
+      partnerUserId = adminUser?.id || null;
+    }
+
+    // Create or Update customer record in customers table with exact 1-to-1 parameter alignment ($1..$14)
+    if (targetCustomerId) {
+      await query(`
+        UPDATE customers
+        SET 
+          full_name = COALESCE(NULLIF($1, ''), full_name),
+          email = COALESCE(NULLIF($2, ''), email),
+          dob = COALESCE(NULLIF($3, '')::date, dob),
+          pan_number = COALESCE(NULLIF($4, ''), pan_number),
+          aadhaar_number = COALESCE(NULLIF($5, ''), aadhaar_number),
+          aadhaar_last4 = COALESCE(NULLIF($6, ''), aadhaar_last4),
+          employment_type = COALESCE(NULLIF($7, ''), employment_type),
+          occupation = COALESCE(NULLIF($8, ''), occupation),
+          monthly_income = COALESCE($9, monthly_income),
+          employer = COALESCE(NULLIF($10, ''), employer),
+          city = COALESCE(NULLIF($11, ''), city),
+          state = COALESCE(NULLIF($12, ''), state),
+          pincode = COALESCE(NULLIF($13, ''), pincode),
+          updated_at = NOW()
+        WHERE id = $14
+      `, [
+        cleanName,
+        cleanEmail,
+        dob || null,
+        cleanPan,
+        cleanAadhaar,
+        cleanAadhaarLast4,
+        cleanOccupation,
+        cleanOccupation,
+        numIncome,
+        cleanEmployer,
+        cleanCity,
+        cleanState,
+        cleanPincode,
+        targetCustomerId
+      ]);
+    } else if (cleanMobile) {
+      const finalName = cleanName || 'Customer';
+      const { rows: [newCust] } = await query(`
+        INSERT INTO customers (
+          full_name, mobile, email, dob, pan_number, aadhaar_number, aadhaar_last4,
+          employment_type, occupation, monthly_income, employer, city, state, pincode, created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        RETURNING id
+      `, [
+        finalName, cleanMobile, cleanEmail || null, dob || null, cleanPan || null,
+        cleanAadhaar, cleanAadhaarLast4, cleanOccupation, cleanOccupation,
+        numIncome, cleanEmployer || null, cleanCity || null, cleanState || null, cleanPincode || null,
+        partnerUserId
+      ]);
+      targetCustomerId = newCust?.id || null;
+    }
+
+    // 1. Ensure Lead record exists or is updated with process_type = 'linked_share'
+    if (targetLeadId) {
+      await query(`
+        UPDATE leads
+        SET pipeline_stage = 'details_submitted', status = 'pending',
+            customer_id = COALESCE($2, customer_id),
+            customer_name = COALESCE(NULLIF($3, ''), customer_name),
+            city = COALESCE(NULLIF($4, ''), city),
+            pan_number = COALESCE(NULLIF($5, ''), pan_number),
+            process_type = 'linked_share',
+            process_by = 'partner',
+            source = 'linked_share',
+            updated_at = NOW()
+        WHERE id = $1
+      `, [targetLeadId, targetCustomerId, cleanName, cleanCity, cleanPan]);
+    } else {
+      const { rows: [existingLead] } = await query(`
+        SELECT id FROM leads
+        WHERE (tracking_token = $1 OR (product_id = $2 AND (mobile = $3 OR customer_mobile = $3)))
+          AND status NOT IN ('rejected', 'cancelled')
+        ORDER BY created_at DESC LIMIT 1
+      `, [token, shareData.product_id, cleanMobile]);
+
+      if (existingLead) {
+        targetLeadId = existingLead.id;
+        await query(`
+          UPDATE leads
+          SET pipeline_stage = 'details_submitted', status = 'pending',
+              customer_id = COALESCE($2, customer_id),
+              customer_name = COALESCE(NULLIF($3, ''), customer_name),
+              city = COALESCE(NULLIF($4, ''), city),
+              pan_number = COALESCE(NULLIF($5, ''), pan_number),
+              process_type = 'linked_share',
+              process_by = 'partner',
+              source = 'linked_share',
+              updated_at = NOW()
+          WHERE id = $1
+        `, [targetLeadId, targetCustomerId, cleanName, cleanCity, cleanPan]);
+      } else {
+        const leadNum = 'LEAD-' + Date.now().toString(36).toUpperCase();
+        const { rows: [parentP] } = shareData.partner_id ? await query(`SELECT parent_partner_id FROM partner_profiles WHERE id = $1`, [shareData.partner_id]).catch(() => ({ rows: [] })) : { rows: [] };
+        
+        try {
+          const { rows: [newLead] } = await query(`
+            INSERT INTO leads (
+              lead_number, partner_id, parent_partner_id, created_by, customer_id,
+              product_id, customer_name, mobile, customer_mobile, city, pan_number, status, process_type, process_by,
+              otp_verified, source, priority, pipeline_stage, tracking_token
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, 'pending', 'linked_share', 'partner', TRUE, 'linked_share', 'medium', 'details_submitted', $11)
+            RETURNING *
+          `, [
+            leadNum, shareData.partner_id || null, parentP?.parent_partner_id || null, partnerUserId, targetCustomerId,
+            shareData.product_id, cleanName || 'Customer', cleanMobile, cleanCity || null, cleanPan || null, token
+          ]);
+          targetLeadId = newLead.id;
+        } catch (insertErr) {
+          if (insertErr.code === '23505') {
+            const { rows: [fallbackLead] } = await query(`
+              UPDATE leads
+              SET pipeline_stage = 'details_submitted', status = 'pending',
+                  customer_id = COALESCE($2, customer_id),
+                  customer_name = COALESCE(NULLIF($3, ''), customer_name),
+                  city = COALESCE(NULLIF($4, ''), city),
+                  pan_number = COALESCE(NULLIF($5, ''), pan_number),
+                  process_type = 'linked_share',
+                  process_by = 'partner',
+                  source = 'linked_share',
+                  updated_at = NOW()
+              WHERE product_id = $1 AND (mobile = $6 OR customer_mobile = $6)
+              RETURNING *
+            `, [shareData.product_id, targetCustomerId, cleanName, cleanCity, cleanPan, cleanMobile]);
+
+            if (fallbackLead) {
+              targetLeadId = fallbackLead.id;
+            } else {
+              throw insertErr;
+            }
+          } else {
+            throw insertErr;
+          }
+        }
+      }
+    }
+
+    // 2. Ensure Application record exists in applications table with process_type = 'linked_share'
+    let targetAppId = shareData.application_id;
+    if (!targetAppId && targetLeadId) {
+      const { rows: [existingApp] } = await query(`SELECT id FROM applications WHERE lead_id = $1 LIMIT 1`, [targetLeadId]);
+      if (existingApp) {
+        targetAppId = existingApp.id;
+      }
+    }
+
+    if (targetAppId) {
+      await query(`
+        UPDATE applications
+        SET status = 'pending',
+            customer_id = COALESCE($1, customer_id),
+            pan_number = COALESCE(NULLIF($2, ''), pan_number),
+            monthly_salary = COALESCE($3, monthly_salary),
+            company_name = COALESCE(NULLIF($5, ''), company_name),
+            designation = COALESCE(NULLIF($6, ''), designation),
+            company_address = COALESCE(NULLIF($7, ''), company_address),
+            mother_name = COALESCE(NULLIF($8, ''), mother_name),
+            address = COALESCE(NULLIF($9, ''), address),
+            process_type = 'linked_share',
+            process_by = 'partner',
+            source = 'linked_share',
+            updated_at = NOW()
+        WHERE id = $4
+      `, [
+        targetCustomerId,
+        cleanPan,
+        numIncome,
+        targetAppId,
+        cleanEmployer || null,
+        (req.body.designation || '').toString().trim() || null,
+        (req.body.company_address || '').toString().trim() || null,
+        (req.body.mother_name || '').toString().trim() || null,
+        (address || '').toString().trim() || null
+      ]);
+    } else if (targetLeadId) {
+      const date = new Date();
+      const datePart = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+      const appNum = 'APP' + datePart + Math.floor(1000 + Math.random() * 9000);
+
+      const { rows: [newApp] } = await query(`
+        INSERT INTO applications (
+          app_number, lead_id, customer_id, product_id, partner_id, bank_id,
+          submitted_by, loan_amount, status, process_type, process_by, source, tracking_token, agree_terms, pan_number, submitted_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', 'linked_share', 'partner', 'linked_share', $9, TRUE, $10, NOW())
+        RETURNING *
+      `, [
+        appNum, targetLeadId, targetCustomerId, shareData.product_id, shareData.partner_id || null, product?.bank_id || null,
+        partnerUserId, numIncome || 0, token, cleanPan || null
+      ]);
+      targetAppId = newApp.id;
+    }
+
+    const host = req.get('host') || 'gharkapaisa.in';
+    const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+    const baseUrl = process.env.FRONTEND_URL || `${protocol}://${host}`;
+    const qdFormUrl = `${baseUrl.replace(/\/$/, '')}/apply/${token}/post-apply`;
+
+    // Automatically schedule QD Form link SMS dispatch after 10 minutes for linked_share process
+    if (targetLeadId) {
+      setTimeout(async () => {
+        try {
+          const { rows: [targetLead] } = await query(`
+            SELECT l.customer_name, l.mobile, p.name as product_name
+            FROM leads l
+            LEFT JOIN products p ON p.id = l.product_id
+            WHERE l.id = $1
+          `, [targetLeadId]);
+
+          if (targetLead && targetLead.mobile) {
+            const { sendPostApplyStep2Sms } = require('../../services/sms/sms.service');
+            await sendPostApplyStep2Sms(targetLead.mobile, targetLead.customer_name, targetLead.product_name, token);
+            logger.info(`[QD-FORM-SMS] Automatically dispatched QD Form SMS link after 10 mins to ${targetLead.mobile}`);
+          }
+        } catch (timerErr) {
+          console.warn('[QD-FORM-SMS] Delayed SMS timer error:', timerErr.message);
+        }
+      }, 10 * 60 * 1000); // 10 minutes delay
+    }
+
+    return success(res, {
+      token,
+      lead_id: targetLeadId,
+      customer_id: targetCustomerId,
+      redirect_url: targetRedirectUrl,
+      qd_form_url: qdFormUrl,
+      message: 'Application details saved. QD Form link scheduled for SMS dispatch in 10 minutes.'
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * GET /public/apply/:token/post-apply — Step 2: Get bank details & customer metadata for QD Form
+ */
+const getPostApplyDetails = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+    if (!token) return error(res, 'Token is required', 400);
+
+
+
+    const { rows: [shareData] } = await query(`
+      SELECT 
+        COALESCE(psl.product_id, a.product_id, l.product_id) as product_id,
+        COALESCE(psl.partner_id, a.partner_id, l.partner_id) as partner_id,
+        COALESCE(a.customer_id, l.customer_id) as customer_id,
+        COALESCE(l.id, a.lead_id) as lead_id,
+        a.id as application_id,
+        COALESCE(a.customer_name, l.customer_name, c.full_name) as customer_name,
+        COALESCE(a.customer_mobile, l.mobile, c.mobile) as mobile,
+        a.dob, COALESCE(a.customer_email, c.email) as customer_email, COALESCE(a.pan_number, c.pan_number) as pan_number,
+        a.company_name, a.designation, a.address, a.mother_name,
+        a.soft_approval_status, a.vkyc_stage, a.iqa_stage, a.dispatch_status,
+        a.bank_application_number, a.vkyc_url, a.final_status, a.decline_reason, a.eligible_reqd,
+        COALESCE(a.operational_remarks, a.notes) as operational_remarks,
+        a.ipa_stage, a.kyc_stage, a.card_approval_stage,
+        COALESCE(a.process_type, l.process_type, 'punch_only') as process_type,
+        l.status
+      FROM (SELECT $1::text as tok) t
+      LEFT JOIN partner_share_links psl ON (psl.tracking_token = t.tok)
+      LEFT JOIN applications a ON (a.tracking_token = t.tok OR a.id::text = t.tok OR a.app_number = t.tok)
+      LEFT JOIN leads l ON (l.tracking_token = t.tok OR l.id::text = t.tok OR l.lead_number = t.tok OR l.id = a.lead_id OR l.id = psl.lead_id)
+      LEFT JOIN customers c ON (c.id = COALESCE(a.customer_id, l.customer_id))
+      WHERE psl.id IS NOT NULL OR a.id IS NOT NULL OR l.id IS NOT NULL
+      LIMIT 1
+    `, [token]);
+
+    if (!shareData || !shareData.product_id) return error(res, 'Invalid application token', 404);
+
+    const { rows: [product] } = await query(`
+      SELECT p.id, p.name, p.category, p.partner_url, p.application_url, p.public_url, p.apply_url, p.redirect_url,
+             b.name as bank_name, b.short_code as bank_code, b.logo_url as bank_logo
+      FROM products p
+      LEFT JOIN banks b ON b.id = p.bank_id
+      WHERE p.id = $1
+    `, [shareData.product_id]);
+
+    let custRecord = null;
+    if (shareData.customer_id) {
+      const { rows: [c] } = await query(`SELECT full_name, mobile, email, pan_number FROM customers WHERE id = $1`, [shareData.customer_id]);
+      custRecord = c || null;
+    } else if (shareData.mobile) {
+      const { rows: [c] } = await query(`SELECT full_name, mobile, email, pan_number FROM customers WHERE mobile = $1 LIMIT 1`, [shareData.mobile]);
+      custRecord = c || null;
+    }
+
+    const bankCode = (product?.bank_code || '').toUpperCase();
+    const bankName = (product?.bank_name || '').toUpperCase();
+    const isSbiBank = bankCode === 'SBI' || bankName.includes('SBI') || bankName.includes('STATE BANK');
+    const partnerUrl = getBankApplyLinkBackend(product?.name, product?.bank_name || product?.bank_code, product) || product?.partner_url || product?.application_url || product?.public_url || product?.apply_url || product?.redirect_url || '';
+
+    return success(res, {
+      token,
+      lead_id: shareData.lead_id || null,
+      application_id: shareData.application_id || null,
+      process_type: shareData.process_type || 'punch_only',
+      product_id: product?.id,
+      product_name: product?.name || 'Credit Card / Loan',
+      bank_name: product?.bank_name || 'Bank',
+      bank_logo: product?.bank_logo || null,
+      partner_url: partnerUrl,
+      is_sbi_bank: isSbiBank,
+      customer: {
+        full_name: custRecord?.full_name || shareData.customer_name || 'Customer',
+        mobile: custRecord?.mobile || shareData.mobile || '',
+        email: custRecord?.email || '',
+        pan_number: custRecord?.pan_number || ''
+      },
+      application_details: {
+        customer_mobile: shareData?.mobile || custRecord?.mobile || '',
+        customer_name: shareData?.customer_name || custRecord?.full_name || '',
+        dob: shareData?.dob || '',
+        customer_email: shareData?.customer_email || custRecord?.email || '',
+        pan_number: shareData?.pan_number || custRecord?.pan_number || '',
+        company_name: shareData?.company_name || '',
+        designation: shareData?.designation || '',
+        address: shareData?.address || '',
+        mother_name: shareData?.mother_name || '',
+        soft_approval_status: shareData?.soft_approval_status || 'None',
+        vkyc_stage: shareData?.vkyc_stage || 'None',
+        iqa_stage: shareData?.iqa_stage || 'None',
+        dispatch_status: shareData?.dispatch_status || 'None',
+        bank_application_number: shareData?.bank_application_number || '',
+        vkyc_url: shareData?.vkyc_url || '',
+        final_status: shareData?.final_status || 'In Process',
+        decline_reason: shareData?.decline_reason || '',
+        eligible_reqd: shareData?.eligible_reqd || 'No',
+        operational_remarks: shareData?.operational_remarks || '',
+        ipa_stage: shareData?.ipa_stage || 'None',
+        kyc_stage: shareData?.kyc_stage || 'None',
+        card_approval_stage: shareData?.card_approval_stage || 'None'
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const updatePostApplyDetails = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+    const {
+      bank_application_number, app_number,
+      vkyc_url,
+      customer_mobile, mobile,
+      customer_name, full_name,
+      dob,
+      customer_email, email,
+      pan_number, pan,
+      company_name,
+      designation,
+      address1,
+      address2,
+      landmark,
+      city,
+      state,
+      pincode,
+      address,
+      mother_name,
+      soft_approval_status,
+      vkyc_stage,
+      iqa_stage,
+      dispatch_status,
+      final_status, status,
+      decline_reason,
+      eligible_reqd,
+      operational_remarks, remarks, notes,
+      ipa_stage, kyc_stage, card_approval_stage, card_approval_status
+    } = req.body;
+
+    if (!token) return error(res, 'Token is required', 400);
+
+    const { rows: [shareData] } = await query(`
+      SELECT 
+        COALESCE(psl.product_id, a.product_id, l.product_id) as product_id,
+        COALESCE(psl.partner_id, a.partner_id, l.partner_id) as partner_id,
+        COALESCE(a.customer_id, l.customer_id) as customer_id,
+        COALESCE(l.id, a.lead_id) as lead_id,
+        a.id as application_id,
+        l.customer_id as lead_cust_id
+      FROM (SELECT $1::text as tok) t
+      LEFT JOIN partner_share_links psl ON (psl.tracking_token = t.tok)
+      LEFT JOIN applications a ON (a.tracking_token = t.tok OR a.id::text = t.tok OR a.app_number = t.tok)
+      LEFT JOIN leads l ON (l.tracking_token = t.tok OR l.id::text = t.tok OR l.lead_number = t.tok OR l.id = a.lead_id OR l.id = psl.lead_id)
+      WHERE psl.id IS NOT NULL OR a.id IS NOT NULL OR l.id IS NOT NULL
+      LIMIT 1
+    `, [token]);
+
+    if (!shareData) return error(res, 'Invalid application token', 404);
+
+    const cleanAppNum = (bank_application_number || app_number || '').toString().trim();
+    const cleanVkyc = (vkyc_url || '').toString().trim();
+    const cleanPan = (pan_number || pan || '').toString().trim().toUpperCase();
+    const cleanMobile = (customer_mobile || mobile || '').toString().trim();
+    const cleanName = (customer_name || full_name || '').toString().trim();
+    const cleanDob = (dob || '').toString().trim();
+    const cleanEmail = (customer_email || email || '').toString().trim();
+    const cleanCompany = (company_name || '').toString().trim();
+    const cleanDesignation = (designation || '').toString().trim();
+    const cleanAddress1 = (address1 || '').toString().trim();
+    const cleanAddress2 = (address2 || '').toString().trim();
+    const cleanLandmark = (landmark || '').toString().trim();
+    const cleanCity = (city || '').toString().trim();
+    const cleanState = (state || '').toString().trim();
+    const cleanPincode = (pincode || '').toString().trim();
+    const cleanAddress = (address || [cleanAddress1, cleanAddress2, cleanLandmark, cleanCity, cleanState, cleanPincode].filter(Boolean).join(', ') || '').toString().trim();
+    const cleanMother = (mother_name || '').toString().trim();
+
+    // Safely parse cleanDob for Postgres DATE column in customers table
+    let parsedDobDate = null;
+    if (cleanDob) {
+      const parts = cleanDob.split(/[-/.]/);
+      if (parts.length === 3) {
+        if (parts[0].length === 4) { // YYYY-MM-DD
+          parsedDobDate = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        } else if (parts[2].length === 4) { // DD-MM-YYYY
+          parsedDobDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        }
+      }
+    }
+
+    const cleanSoftApproval = (soft_approval_status || '').toString().trim();
+    const cleanVkycStage = (vkyc_stage || '').toString().trim();
+    const cleanIqaStage = (iqa_stage || '').toString().trim();
+    const cleanDispatch = (dispatch_status || '').toString().trim();
+    const cleanFinalStatus = (final_status || status || '').toString().trim();
+    const cleanDeclineReason = (decline_reason || '').toString().trim();
+    const cleanEligibleReqd = (eligible_reqd || '').toString().trim();
+    const cleanOperationalRemarks = (operational_remarks || remarks || notes || '').toString().trim();
+    const cleanIpaStage = (ipa_stage || '').toString().trim();
+    const cleanKycStage = (kyc_stage || '').toString().trim();
+    const cleanCardApprovalStage = (card_approval_stage || card_approval_status || '').toString().trim();
+
+    // Safely map cleanFinalStatus to Postgres application_status enum
+    let mappedAppEnumStatus = null;
+    if (cleanFinalStatus) {
+      const lower = cleanFinalStatus.toLowerCase();
+      if (lower.includes('approved')) mappedAppEnumStatus = 'approved';
+      else if (lower.includes('decline') || lower.includes('reject')) mappedAppEnumStatus = 'rejected';
+      else if (lower.includes('process')) mappedAppEnumStatus = 'in_process';
+      else mappedAppEnumStatus = 'submitted';
+    }
+
+
+
+    let targetCustId = shareData.customer_id || shareData.lead_cust_id;
+
+    if (!targetCustId && cleanMobile) {
+      const { rows: [c] } = await query(`SELECT id FROM customers WHERE mobile = $1 LIMIT 1`, [cleanMobile]);
+      if (c) targetCustId = c.id;
+    }
+    if (!targetCustId && cleanPan) {
+      const { rows: [c] } = await query(`SELECT id FROM customers WHERE pan_number = $1 LIMIT 1`, [cleanPan]);
+      if (c) targetCustId = c.id;
+    }
+
+    if (!targetCustId && (cleanName || cleanMobile)) {
+      try {
+        const { rows: [newCust] } = await query(`
+          INSERT INTO customers (
+            full_name, mobile, email, pan_number, dob, employer, company_name, designation, address, mother_name, city, state, pincode, address1, address2, landmark
+          )
+          VALUES ($1, $2, $3, $4, $5::date, $6, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          RETURNING id
+        `, [
+          cleanName || 'Customer', cleanMobile || null, cleanEmail || null, cleanPan || null,
+          parsedDobDate, cleanCompany || null, cleanDesignation || null, cleanAddress || null, cleanMother || null,
+          cleanCity || null, cleanState || null, cleanPincode || null, cleanAddress1 || null, cleanAddress2 || null, cleanLandmark || null
+        ]);
+        if (newCust) targetCustId = newCust.id;
+      } catch (custInsertErr) {
+        logger.warn('[POST-APPLY] Create customer notice:', custInsertErr.message);
+      }
+    }
+
+    if (targetCustId) {
+      try {
+        await query(`
+          UPDATE customers
+          SET full_name = COALESCE(NULLIF($1, ''), full_name),
+              mobile = COALESCE(NULLIF($2, ''), mobile),
+              email = COALESCE(NULLIF($3, ''), email),
+              pan_number = COALESCE(NULLIF($4, ''), pan_number),
+              dob = COALESCE($5::date, dob),
+              employer = COALESCE(NULLIF($6, ''), employer),
+              company_name = COALESCE(NULLIF($6, ''), company_name),
+              designation = COALESCE(NULLIF($7, ''), designation),
+              address = COALESCE(NULLIF($8, ''), address),
+              mother_name = COALESCE(NULLIF($9, ''), mother_name),
+              city = COALESCE(NULLIF($10, ''), city),
+              state = COALESCE(NULLIF($11, ''), state),
+              pincode = COALESCE(NULLIF($12, ''), pincode),
+              address1 = COALESCE(NULLIF($14, ''), address1),
+              address2 = COALESCE(NULLIF($15, ''), address2),
+              landmark = COALESCE(NULLIF($16, ''), landmark),
+              updated_at = NOW()
+          WHERE id = $13
+        `, [cleanName, cleanMobile, cleanEmail, cleanPan, parsedDobDate, cleanCompany, cleanDesignation, cleanAddress, cleanMother, cleanCity, cleanState, cleanPincode, targetCustId, cleanAddress1, cleanAddress2, cleanLandmark]);
+      } catch (errCust) {
+        logger.warn('[POST-APPLY] Update customers table notice:', errCust.message);
+      }
+    }
+
+    if (shareData.lead_id) {
+      await query(`
+        UPDATE leads
+        SET customer_name = COALESCE(NULLIF($1, ''), customer_name),
+            mobile = COALESCE(NULLIF($2, ''), mobile),
+            pan_number = COALESCE(NULLIF($3, ''), pan_number),
+            customer_id = COALESCE($4, customer_id),
+            city = COALESCE(NULLIF($5, ''), city),
+            state = COALESCE(NULLIF($6, ''), state),
+            pincode = COALESCE(NULLIF($7, ''), pincode),
+            status = 'submitted', pipeline_stage = 'submitted',
+            updated_at = NOW()
+        WHERE id = $8
+      `, [cleanName, cleanMobile, cleanPan, targetCustId, cleanCity, cleanState, cleanPincode, shareData.lead_id]);
+    }
+
+    if (shareData.application_id || shareData.lead_id) {
+      await query(`
+        UPDATE applications
+        SET customer_id = COALESCE($1, customer_id),
+            customer_mobile = COALESCE(NULLIF($2, ''), customer_mobile),
+            customer_name = COALESCE(NULLIF($3, ''), customer_name),
+            dob = COALESCE(NULLIF($4, ''), dob),
+            customer_email = COALESCE(NULLIF($5, ''), customer_email),
+            pan_number = COALESCE(NULLIF($6, ''), pan_number),
+            company_name = COALESCE(NULLIF($7, ''), company_name),
+            designation = COALESCE(NULLIF($8, ''), designation),
+            address = COALESCE(NULLIF($9, ''), address),
+            mother_name = COALESCE(NULLIF($10, ''), mother_name),
+            soft_approval_status = COALESCE(NULLIF($11, ''), soft_approval_status),
+            vkyc_stage = COALESCE(NULLIF($12, ''), vkyc_stage),
+            iqa_stage = COALESCE(NULLIF($13, ''), iqa_stage),
+            dispatch_status = COALESCE(NULLIF($14, ''), dispatch_status),
+            bank_application_number = COALESCE(NULLIF($15, ''), bank_application_number),
+            vkyc_url = COALESCE(NULLIF($16, ''), vkyc_url),
+            final_status = COALESCE(NULLIF($17, ''), final_status),
+            decline_reason = COALESCE(NULLIF($18, ''), decline_reason),
+            eligible_reqd = COALESCE(NULLIF($19, ''), eligible_reqd),
+            city = COALESCE(NULLIF($21, ''), city),
+            state = COALESCE(NULLIF($22, ''), state),
+            pincode = COALESCE(NULLIF($23, ''), pincode),
+            address1 = COALESCE(NULLIF($26, ''), address1),
+            address2 = COALESCE(NULLIF($27, ''), address2),
+            landmark = COALESCE(NULLIF($28, ''), landmark),
+            operational_remarks = COALESCE(NULLIF($29, ''), operational_remarks),
+            notes = COALESCE(NULLIF($29, ''), notes),
+            ipa_stage = COALESCE(NULLIF($30, ''), ipa_stage),
+            kyc_stage = COALESCE(NULLIF($31, ''), kyc_stage),
+            card_approval_stage = COALESCE(NULLIF($32, ''), card_approval_stage),
+            status = COALESCE($20::application_status, status),
+            updated_at = NOW()
+        WHERE id = $24 OR (lead_id IS NOT NULL AND lead_id = $25)
+      `, [
+        targetCustId,
+        cleanMobile, cleanName, cleanDob, cleanEmail, cleanPan,
+        cleanCompany, cleanDesignation, cleanAddress, cleanMother,
+        cleanSoftApproval, cleanVkycStage, cleanIqaStage, cleanDispatch,
+        cleanAppNum, cleanVkyc, cleanFinalStatus, cleanDeclineReason, cleanEligibleReqd,
+        mappedAppEnumStatus, cleanCity, cleanState, cleanPincode,
+        shareData.application_id || null, shareData.lead_id || null,
+        cleanAddress1, cleanAddress2, cleanLandmark, cleanOperationalRemarks,
+        cleanIpaStage, cleanKycStage, cleanCardApprovalStage
+      ]);
+    }
+
+    if (shareData.application_id) {
+      try {
+        await query(`
+          INSERT INTO physical_application_details (
+            application_id, appcode_status, soft_approval_status, vkyc_stage, iqa_stage, dispatch_status,
+            bank_application_number, vkyc_url, final_status, decline_reason, eligible_reqd,
+            full_name, mobile, email, pan_number, dob, company_name, designation, address, mother_name, city, state, pincode, address1, address2, landmark
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+          ON CONFLICT (application_id) DO UPDATE SET
+            appcode_status = COALESCE(EXCLUDED.appcode_status, physical_application_details.appcode_status),
+            soft_approval_status = COALESCE(EXCLUDED.soft_approval_status, physical_application_details.soft_approval_status),
+            vkyc_stage = COALESCE(EXCLUDED.vkyc_stage, physical_application_details.vkyc_stage),
+            iqa_stage = COALESCE(EXCLUDED.iqa_stage, physical_application_details.iqa_stage),
+            dispatch_status = COALESCE(EXCLUDED.dispatch_status, physical_application_details.dispatch_status),
+            bank_application_number = COALESCE(EXCLUDED.bank_application_number, physical_application_details.bank_application_number),
+            vkyc_url = COALESCE(EXCLUDED.vkyc_url, physical_application_details.vkyc_url),
+            final_status = COALESCE(EXCLUDED.final_status, physical_application_details.final_status),
+            decline_reason = COALESCE(EXCLUDED.decline_reason, physical_application_details.decline_reason),
+            eligible_reqd = COALESCE(EXCLUDED.eligible_reqd, physical_application_details.eligible_reqd),
+            full_name = COALESCE(EXCLUDED.full_name, physical_application_details.full_name),
+            mobile = COALESCE(EXCLUDED.mobile, physical_application_details.mobile),
+            email = COALESCE(EXCLUDED.email, physical_application_details.email),
+            pan_number = COALESCE(EXCLUDED.pan_number, physical_application_details.pan_number),
+            dob = COALESCE(EXCLUDED.dob, physical_application_details.dob),
+            company_name = COALESCE(EXCLUDED.company_name, physical_application_details.company_name),
+            designation = COALESCE(EXCLUDED.designation, physical_application_details.designation),
+            address = COALESCE(EXCLUDED.address, physical_application_details.address),
+            mother_name = COALESCE(EXCLUDED.mother_name, physical_application_details.mother_name),
+            city = COALESCE(EXCLUDED.city, physical_application_details.city),
+            state = COALESCE(EXCLUDED.state, physical_application_details.state),
+            pincode = COALESCE(EXCLUDED.pincode, physical_application_details.pincode),
+            address1 = COALESCE(EXCLUDED.address1, physical_application_details.address1),
+            address2 = COALESCE(EXCLUDED.address2, physical_application_details.address2),
+            landmark = COALESCE(EXCLUDED.landmark, physical_application_details.landmark),
+            updated_at = NOW()
+        `, [
+          shareData.application_id,
+          cleanSoftApproval ? 'Appcode Send' : null, cleanSoftApproval || null, cleanVkycStage || null, cleanIqaStage || null, cleanDispatch || null,
+          cleanAppNum || null, cleanVkyc || null, cleanFinalStatus || null, cleanDeclineReason || null, cleanEligibleReqd || null,
+          cleanName || null, cleanMobile || null, cleanEmail || null, cleanPan || null, cleanDob || null, cleanCompany || null, cleanDesignation || null, cleanAddress || null, cleanMother || null,
+          cleanCity || null, cleanState || null, cleanPincode || null, cleanAddress1 || null, cleanAddress2 || null, cleanLandmark || null
+        ]);
+      } catch (physErr) {
+        logger.warn('[POST-APPLY] Update physical_application_details notice:', physErr.message);
+      }
+    }
+
+    return success(res, {
+      token,
+      product_id: shareData.product_id,
+      customer_id: targetCustId || null,
+      message: 'Application Quick Details, Remarks, and Final Status recorded successfully.'
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /app/:trackingToken — Direct 302 Redirect to Bank Partner URL
+const handleDirectAppRedirect = async (req, res, next) => {
+  try {
+    const { trackingToken } = req.params;
+    const shareData = await resolveShareToken(trackingToken);
+    if (!shareData) {
+      return res.redirect('https://gharkapaisa.in');
+    }
+    const { rows: [product] } = await query(`SELECT * FROM products WHERE id = $1`, [shareData.product_id]);
+    const targetUrl = product?.partner_url || product?.application_url || product?.public_url || product?.apply_url || product?.redirect_url || 'https://gharkapaisa.in';
+    return res.redirect(302, targetUrl);
+  } catch (err) {
+    return res.redirect('https://gharkapaisa.in');
+  }
+};
+
+module.exports = {
+  generateShareLink,
+  getShareLinkDetails,
+  submitShareLead,
+  getPartnerShareTracking,
+  getApplyTokenDetails,
+  updateApplyTokenDetails,
+  getPostApplyDetails,
+  updatePostApplyDetails,
+  handleDirectAppRedirect
+};
+

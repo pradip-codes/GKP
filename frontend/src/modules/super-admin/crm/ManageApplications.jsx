@@ -1,0 +1,1625 @@
+import React, { useState, useEffect } from 'react';
+import api from '../../../services/api';
+import { useTheme, makeS } from '../../../contexts/ThemeContext';
+import { Icons } from '../../../components/Icon/PartnerIcons';
+import AdminDocumentVerificationModal from '../../admin/reports/AdminDocumentVerificationModal';
+import AssignSalesExecutiveModal from '../../admin/reports/AssignSalesExecutiveModal';
+import ExportApplicationsModal from '../../../components/Admin/ExportApplicationsModal';
+import { ShieldCheck, Zap, Loader2, UserCheck, CheckCircle2, UserPlus } from 'lucide-react';
+import { 
+  MdSearch, MdFilterList, MdCheckCircle, MdBlock, 
+  MdCompareArrows, MdHistory, MdFileDownload, MdClose,
+  MdModeEdit, MdSwapHoriz, MdAssignment, MdVisibility,
+  MdShare, MdTrackChanges, MdDelete, MdMoreVert,
+  MdHourglassEmpty, MdVerified, MdMonetizationOn, MdAttachMoney, MdCancel,
+  MdPerson, MdPhone, MdLocationOn, MdRefresh, MdAdd, MdDownload, MdChevronLeft, MdChevronRight
+} from 'react-icons/md';
+import { 
+  FaUniversity, FaCreditCard, 
+  FaShieldAlt, FaUser, FaFileAlt, 
+  FaLink, FaShareAlt, FaCalendarAlt, FaSlidersH, FaWhatsapp
+} from 'react-icons/fa';
+import SendWhatsAppModal from '../../../components/whatsapp/SendWhatsAppModal';
+
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useAuthStore } from '../../../app/store/authStore';
+import LoadingLogo from '../../../components/Loader/LoadingLogo';
+
+// Get initials for Avatar badge
+const getInitials = (name) => {
+  if (!name) return 'CU';
+  const parts = name.trim().split(' ');
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+};
+
+export default function ManageApplications() {
+  const { C, isDark } = useTheme();
+  const S = makeS(C);
+  const user = useAuthStore((state) => state.user);
+  const userRole = (user?.role || '').toUpperCase();
+  const userDesignation = (user?.designation || '').toUpperCase();
+  const isSalesExecUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+  const isPanCheckerUser = ['PAN CHECKER', 'PAN_CHECKER'].includes(userDesignation) || ['PAN CHECKER', 'PAN_CHECKER'].includes(userRole);
+  const isRemarkOperatorUser = ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userDesignation) || ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userRole);
+  const isFinalStatusOperatorUser = ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userDesignation) || ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userRole);
+  const isQuerableOperatorUser = ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userDesignation) || ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userRole);
+  const navigate = useNavigate();
+
+  const [searchParams] = useSearchParams();
+  const urlStatus = searchParams.get('status');
+
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth <= 768 : false);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Verification modal state
+  const [verifyModalApp, setVerifyModalApp] = useState(null);
+  const [verifyModalTab, setVerifyModalTab] = useState('qd');
+  const [assignModalApp, setAssignModalApp] = useState(null);
+  const [whatsAppData, setWhatsAppData] = useState(null);
+
+  // Active Main Tab: 'applications' | 'partner_share'
+  const [activeTab, setActiveTab] = useState('applications');
+
+  // Main Applications & Pagination States
+  const [applications, setApplications] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [claimingId, setClaimingId] = useState(null);
+  const [searchDebounceTimer, setSearchDebounceTimer] = useState(null);
+
+  // ── FILTER STATES ──
+  const [search, setSearch] = useState('');
+  const [searchField, setSearchField] = useState('all');
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [dateRange, setDateRange] = useState('all');
+  const [productFilter, setProductFilter] = useState('all');
+  const [bankFilter, setBankFilter] = useState('all');
+  const [processTypeFilter, setProcessTypeFilter] = useState('all'); // all | direct_link | share_link | punch_only
+  const [sourceTypeFilter, setSourceTypeFilter] = useState('all');   // all | partner | employee | customer
+  const [partnerFilter, setPartnerFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState(urlStatus || 'all');
+  const [commFilter, setCommFilter] = useState('all');
+
+  // ── BULK SELECTION ──
+  const [selectedAppIds, setSelectedAppIds] = useState([]);
+
+  // ── 360° DRAWER STATE ──
+  const [selectedApp, setSelectedApp] = useState(null);
+  const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
+  const [activeDrawerTab, setActiveDrawerTab] = useState('overview'); // overview | timeline | documents | notes
+  const [timelines, setTimelines] = useState([]);
+  const [documents, setDocuments] = useState([]);
+  const [notes, setNotes] = useState([]);
+  const [noteForm, setNoteForm] = useState({ note: '', visibility: 'public' });
+  const [postingNote, setPostingNote] = useState(false);
+
+  // Partner / Employee Filter lists
+  const [partnersList, setPartnersList] = useState([]);
+  const [employeesList, setEmployeesList] = useState([]);
+  const [banksList, setBanksList] = useState([]);
+
+  useEffect(() => {
+    const fetchAgents = async () => {
+      try {
+        const [pRes, eRes] = await Promise.all([
+          api.get('/admin/partners', { params: { limit: 1000 } }).catch(() => null),
+          api.get('/employees', { params: { limit: 1000 } }).catch(() => null)
+        ]);
+        
+        let pArr = pRes?.data?.data?.partners || pRes?.data?.data || pRes?.data?.partners || pRes?.data || [];
+        if (!Array.isArray(pArr) && typeof pArr === 'object') {
+          pArr = pArr.rows || Object.values(pArr).find(v => Array.isArray(v)) || [];
+        }
+        setPartnersList(Array.isArray(pArr) ? pArr : []);
+
+        let eArr = eRes?.data?.data?.employees || eRes?.data?.data || eRes?.data?.employees || eRes?.data || [];
+        if (!Array.isArray(eArr) && typeof eArr === 'object') {
+          eArr = eArr.rows || Object.values(eArr).find(v => Array.isArray(v)) || [];
+        }
+        setEmployeesList(Array.isArray(eArr) ? eArr : []);
+      } catch (err) {
+        console.error('Error fetching agents for filter:', err);
+      }
+    };
+    fetchAgents();
+
+    api.get('/banks')
+      .then(res => {
+        let bArr = res.data?.data || res.data || [];
+        if (!Array.isArray(bArr) && typeof bArr === 'object') {
+          bArr = bArr.banks || bArr.rows || [];
+        }
+        setBanksList(Array.isArray(bArr) ? bArr : []);
+      })
+      .catch(err => console.error('Failed to load banks for filter:', err));
+  }, []);
+
+  // Table row 3-dots action menu open state
+  const [actionMenuAppId, setActionMenuAppId] = useState(null);
+
+  // Approval / Verification Remark State
+  const [opsRemark, setOpsRemark] = useState('');
+  const [submittingOpsAction, setSubmittingOpsAction] = useState(false);
+
+  // Modals for Edit/Create Lead
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingApp, setEditingApp] = useState(null);
+  const [submittingEdit, setSubmittingEdit] = useState(false);
+  const [editForm, setEditForm] = useState({
+    full_name: '', mobile: '', email: '', pincode: '', city: '', state: '',
+    monthly_salary: '', pan_number: '', bank_name: '', bank_application_number: '',
+    vkyc_status: 'Pending', status: 'submitted', remarks: ''
+  });
+
+  // Partner Share Tracking State
+  const [shareLeads, setShareLeads] = useState([]);
+  const [shareLoading, setShareLoading] = useState(false);
+
+  // Global Stats from backend /applications/dashboard
+  const [globalStats, setGlobalStats] = useState(null);
+
+  // KPI Metrics Calculation from backend DB stats or fallback
+  const kpis = {
+    total: globalStats?.total ?? totalCount ?? applications.length,
+    pending: globalStats?.pending ?? (Array.isArray(applications) ? applications : []).filter(a => ['submitted', 'pending', 'lead_created', 'created', 'initiated', 'new', 'draft'].includes((a.status || '').toLowerCase())).length,
+    operationalVerified: globalStats?.operational_verified ?? (Array.isArray(applications) ? applications : []).filter(a => ['operational_verified', 'under_review', 'under review', 'verification', 'in_progress', 'bank_verification'].includes((a.status || '').toLowerCase())).length,
+    approved: globalStats?.approved ?? (Array.isArray(applications) ? applications : []).filter(a => ['approved', 'super_admin_approved', 'sanctioned', 'disbursed'].includes((a.status || '').toLowerCase())).length,
+    rejected: globalStats?.rejected ?? (Array.isArray(applications) ? applications : []).filter(a => ['rejected', 'declined', 'cancelled'].includes((a.status || '').toLowerCase())).length
+  };
+
+  // Today's Activity Stats
+  const todayStr = new Date().toISOString().split('T')[0];
+  const todayApps = (Array.isArray(applications) ? applications : []).filter(a => (a.created_at || '').startsWith(todayStr));
+  const todayStats = {
+    newLeads: globalStats?.today ?? todayApps.length,
+    operationalVerified: (Array.isArray(todayApps) ? todayApps : []).filter(a => (a.status || '').toLowerCase().includes('verified') || (a.status || '').toLowerCase().includes('review')).length,
+    approved: (Array.isArray(todayApps) ? todayApps : []).filter(a => (a.status || '').toLowerCase().includes('approved')).length,
+    rejected: (Array.isArray(todayApps) ? todayApps : []).filter(a => (a.status || '').toLowerCase().includes('reject')).length
+  };
+
+  const fetchApplications = async () => {
+    setLoading(true);
+    try {
+      const activePartnerId = (partnerFilter && partnerFilter !== 'ALL_PARTNERS' && partnerFilter !== 'ALL_EMPLOYEES') ? partnerFilter.trim() : undefined;
+      const activeSourceType = sourceTypeFilter !== 'all' ? sourceTypeFilter : (partnerFilter === 'ALL_PARTNERS' ? 'partner' : partnerFilter === 'ALL_EMPLOYEES' ? 'employee' : undefined);
+
+      const [res, dashRes] = await Promise.all([
+        api.get('/applications', {
+          params: {
+            page,
+            limit,
+            status: statusFilter !== 'all' ? statusFilter : undefined,
+            commission_status: commFilter !== 'all' ? commFilter : undefined,
+            bank_id: bankFilter !== 'all' ? bankFilter : undefined,
+            partner_id: activePartnerId,
+            source_type: activeSourceType,
+            process_by: processTypeFilter !== 'all' ? processTypeFilter : undefined,
+            search: search.trim() || undefined
+          }
+        }),
+        api.get('/applications/dashboard').catch(() => null)
+      ]);
+
+      if (dashRes?.data?.data?.stats) {
+        setGlobalStats(dashRes.data.data.stats);
+      }
+      if (res.data?.success) {
+        let list = res.data.data || [];
+        if (partnerFilter === 'ALL_PARTNERS' || sourceTypeFilter === 'partner') {
+          list = (Array.isArray(list) ? list : []).filter(a => a.partner_code || a.partner_id || (a.process_by && String(a.process_by).toLowerCase().includes('partner')));
+        } else if (partnerFilter === 'ALL_EMPLOYEES' || sourceTypeFilter === 'employee') {
+          list = (Array.isArray(list) ? list : []).filter(a => a.employee_code || a.employee_id || (a.process_by && String(a.process_by).toLowerCase().includes('employee')));
+        } else if (partnerFilter && partnerFilter !== 'ALL_PARTNERS' && partnerFilter !== 'ALL_EMPLOYEES') {
+          const pf = partnerFilter.toLowerCase();
+          list = (Array.isArray(list) ? list : []).filter(a => 
+            (a.partner_code && a.partner_code.toLowerCase().includes(pf)) ||
+            (a.employee_code && a.employee_code.toLowerCase().includes(pf)) ||
+            (a.partner_id && String(a.partner_id).toLowerCase().includes(pf)) ||
+            (a.employee_id && String(a.employee_id).toLowerCase().includes(pf))
+          );
+        }
+        if (bankFilter !== 'all') {
+          const bf = bankFilter.toLowerCase();
+          list = (Array.isArray(list) ? list : []).filter(a => {
+            const bName = `${a.bank_name || ''} ${a.bank_code || ''} ${a.bank || ''} ${a.product_name || ''}`.toLowerCase();
+            return bName.includes(bf);
+          });
+        }
+        const total = res.data.pagination?.total || list.length;
+        const computedPages = Math.max(1, Math.ceil(total / limit));
+        setApplications(list);
+        setTotalCount(total);
+        setTotalPages(computedPages);
+      }
+    } catch (e) {
+      console.error('Applications load failed:', e);
+      if (e.response?.status === 503) {
+        console.error('Backend service unavailable (503)');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchApplications();
+    return () => {
+      if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer);
+      }
+    };
+  }, [page, limit, statusFilter, commFilter, partnerFilter, processTypeFilter, bankFilter, search]);
+
+  const handleSearchSubmit = (e) => {
+    e.preventDefault();
+    setPage(1);
+    fetchApplications();
+  };
+
+  const handleSearchChange = (value) => {
+    setSearch(value);
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer);
+    }
+    const timer = setTimeout(() => {
+      setPage(1);
+      fetchApplications();
+    }, 500);
+    setSearchDebounceTimer(timer);
+  };
+
+  const clearAllFilters = () => {
+    setSearch('');
+    setSearchField('all');
+    setDateRange('all');
+    setProductFilter('all');
+    setBankFilter('all');
+    setProcessTypeFilter('all');
+    setSourceTypeFilter('all');
+    setPartnerFilter('');
+    setStatusFilter('all');
+    setCommFilter('all');
+    setPage(1);
+  };
+
+  // Open 360° Drawer
+  const handleOpen360Drawer = async (app, tab = 'overview') => {
+    setSelectedApp(app);
+    setActiveDrawerTab(tab);
+    setDetailDrawerOpen(true);
+    setActionMenuAppId(null);
+    setNoteForm({ note: '', visibility: 'public' });
+    
+    try {
+      const [tRes, dRes, fullAppRes] = await Promise.all([
+        api.get(`/applications/${app.id}/timeline`).catch(() => null),
+        api.get(`/applications/${app.id}/documents`).catch(() => null),
+        api.get(`/applications/${app.id}`).catch(() => null)
+      ]);
+      if (tRes?.data?.success) setTimelines(tRes.data.data || []);
+      if (dRes?.data?.success) setDocuments(dRes.data.data || []);
+      if (fullAppRes?.data?.success && fullAppRes.data.data) {
+        const fullApp = fullAppRes.data.data;
+        setSelectedApp(prev => ({ ...prev, ...fullApp, notes_list: fullApp.notes_list || [] }));
+        setNotes(fullApp.notes_list || []);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const openAuditModal = (app, tab = 'qd') => {
+    setVerifyModalApp(app);
+    setVerifyModalTab(tab);
+    setActionMenuAppId(null);
+  };
+
+  const handleClaimRequest = async (app) => {
+    if (!app?.id) return;
+    const confirmMsg = `Do you want to claim Application #${app.app_number || app.id}? Once claimed, it will be assigned to your account and hidden from other Administrative Sales Operators.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setClaimingId(app.id);
+      let res;
+      const targetId = app.id || app.app_number;
+      try {
+        res = await api.post(`/applications/${encodeURIComponent(targetId)}/claim-request`);
+      } catch (firstErr) {
+        if (firstErr?.response?.status === 404) {
+          const fallbackId = (app.app_number && app.app_number !== targetId) ? app.app_number : targetId;
+          try {
+            res = await api.post(`/admin/applications/${encodeURIComponent(fallbackId)}/claim-request`);
+          } catch (secondErr) {
+            if (secondErr?.response?.status === 404) {
+              try {
+                if (app.app_number && app.app_number !== targetId) {
+                  res = await api.post(`/applications/${encodeURIComponent(app.app_number)}/claim-request`);
+                } else {
+                  throw secondErr;
+                }
+              } catch (thirdErr) {
+                if (thirdErr?.response?.status === 404) {
+                  res = await api.put(`/applications/${encodeURIComponent(targetId)}`, {
+                    claim_request: true,
+                    action: 'claim_request',
+                    sales_claimed_by: user?.id,
+                    sales_claimed_by_name: user?.full_name || user?.name || 'Sales Operator',
+                    sales_claimed_by_code: user?.user_code || user?.employee_id || '',
+                    sales_claimed_at: new Date().toISOString()
+                  });
+                } else {
+                  throw thirdErr;
+                }
+              }
+            } else {
+              throw secondErr;
+            }
+          }
+        } else {
+          throw firstErr;
+        }
+      }
+      if (res.data?.success) {
+        alert(res.data?.message || `Application #${app.app_number || app.id} claimed successfully!`);
+        const claimData = res.data?.data || {};
+        setApplications(prev => prev.map(item => item.id === app.id ? {
+          ...item,
+          sales_claimed_by: claimData.sales_claimed_by || user?.id,
+          sales_claimed_by_name: claimData.sales_claimed_by_name || user?.full_name || user?.name || 'Sales Operator',
+          sales_claimed_by_code: claimData.sales_claimed_by_code || user?.user_code || user?.employee_id || '',
+          sales_claimed_at: claimData.sales_claimed_at || new Date().toISOString()
+        } : item));
+      } else {
+        alert(res.data?.message || 'Failed to claim application.');
+      }
+    } catch (err) {
+      console.error('Error claiming application:', err);
+      const errMsg = err?.response?.data?.message || err?.message || 'Failed to claim application.';
+      alert(errMsg);
+      if (err?.response?.status === 409) {
+        const conflictData = err?.response?.data || {};
+        setApplications(prev => prev.map(item => item.id === app.id ? {
+          ...item,
+          sales_claimed_by: conflictData.claimed_by || 'already_claimed',
+          sales_claimed_by_name: conflictData.claimed_by_name || 'Another Operator',
+          sales_claimed_at: conflictData.claimed_at || item.sales_claimed_at
+        } : item));
+        fetchApplications();
+      }
+    } finally {
+      setClaimingId(null);
+    }
+  };
+
+  // Add Remark / Note
+  const handleAddNote = async (e) => {
+    e.preventDefault();
+    if (!noteForm.note.trim() || !selectedApp?.id) return;
+    setPostingNote(true);
+    try {
+      const res = await api.post(`/applications/${selectedApp.id}/notes`, noteForm);
+      if (res.data?.success) {
+        setNoteForm({ note: '', visibility: 'public' });
+        const detailedAppRes = await api.get(`/applications/${selectedApp.id}`);
+        if (detailedAppRes.data?.success) {
+          setNotes(detailedAppRes.data.data.notes_list || []);
+        }
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to add note');
+    } finally {
+      setPostingNote(false);
+    }
+  };
+
+  // Status Action Handlers
+  const handleUpdateStatus = async (appId, newStatus) => {
+    if (!appId) return;
+    setSubmittingOpsAction(true);
+    try {
+      const res = await api.put(`/applications/${appId}/status`, {
+        status: newStatus,
+        remarks: opsRemark || `Status updated to ${newStatus}`
+      });
+      if (res.data?.success || res.status === 200) {
+        alert(`Application status updated to ${newStatus.toUpperCase()}!`);
+        setDetailDrawerOpen(false);
+        setOpsRemark('');
+        fetchApplications();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update application status');
+    } finally {
+      setSubmittingOpsAction(false);
+    }
+  };
+
+  const handleDeleteApplication = async (appId, appNumber) => {
+    setActionMenuAppId(null);
+    if (!window.confirm(`Are you sure you want to delete application #${appNumber || appId}? This action is irreversible.`)) return;
+    try {
+      const res = await api.delete(`/applications/${appId}`);
+      if (res.data?.success) {
+        alert('Application deleted successfully!');
+        if (selectedApp?.id === appId) setDetailDrawerOpen(false);
+        fetchApplications();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to delete application record');
+    }
+  };
+
+  // Select all checkboxes
+  const toggleSelectAll = (e) => {
+    if (e.target.checked) {
+      setSelectedAppIds(applications.map(a => a.id));
+    } else {
+      setSelectedAppIds([]);
+    }
+  };
+
+  const toggleSelectApp = (id) => {
+    setSelectedAppIds(prev => prev.includes(id) ? (Array.isArray(prev) ? prev : []).filter(i => i !== id) : [...prev, id]);
+  };
+
+  // Badge Color & Label Helpers
+  const renderAppStatusBadge = (status) => {
+    const st = (status || 'submitted').toLowerCase();
+    if (st.includes('approved') || st.includes('verified')) {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '6px', fontSize: '11.5px', fontWeight: 700, background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0' }}>
+          <span>🟢</span>
+          <span>{st === 'operational_verified' ? 'Operational Verified' : 'Approved'}</span>
+        </span>
+      );
+    }
+    if (st.includes('review') || st.includes('verification')) {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '6px', fontSize: '11.5px', fontWeight: 700, background: '#FEF3C7', color: '#D97706', border: '1px solid #FDE68A' }}>
+          <span>🟡</span>
+          <span>Under Review</span>
+        </span>
+      );
+    }
+    if (st.includes('reject') || st.includes('decline') || st.includes('cancel')) {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '6px', fontSize: '11.5px', fontWeight: 700, background: '#FEE2E2', color: '#DC2626', border: '1px solid #FECACA' }}>
+          <span>🔴</span>
+          <span>Rejected</span>
+        </span>
+      );
+    }
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '6px', fontSize: '11.5px', fontWeight: 700, background: '#EFF6FF', color: '#2563EB', border: '1px solid #BFDBFE' }}>
+        <span>🟠</span>
+        <span>Details Submitted</span>
+      </span>
+    );
+  };
+
+  const getAgentLabel = (app) => {
+    if (!app) return 'Direct';
+    
+    // Check direct fields on app object
+    const appPName = app.partner_name || app.partner_full_name || (app.partner_first_name ? `${app.partner_first_name} ${app.partner_last_name || ''}`.trim() : null);
+    const appEName = app.employee_name || app.employee_full_name || (app.employee_first_name ? `${app.employee_first_name} ${app.employee_last_name || ''}`.trim() : null);
+
+    const pCode = app.partner_code || app.Partner_code || app.partner_id;
+    const eCode = app.employee_code || app.emp_code || app.employee_id;
+
+    // Search in partnersList
+    let pName = appPName;
+    if (!pName && pCode && partnersList.length > 0) {
+      const matchP = partnersList.find(p => 
+        (p.partner_code && p.partner_code === pCode) || 
+        (p.code && p.code === pCode) || 
+        (p.id && String(p.id) === String(pCode))
+      );
+      if (matchP) {
+        pName = matchP.full_name || matchP.name || matchP.partner_name || (`${matchP.first_name || ''} ${matchP.last_name || ''}`.trim());
+      }
+    }
+
+    // Search in employeesList
+    let eName = appEName;
+    if (!eName && eCode && employeesList.length > 0) {
+      const matchE = employeesList.find(e => 
+        (e.employee_code && e.employee_code === eCode) || 
+        (e.emp_code && e.emp_code === eCode) ||
+        (e.code && e.code === eCode) || 
+        (e.id && String(e.id) === String(eCode))
+      );
+      if (matchE) {
+        eName = matchE.full_name || matchE.name || matchE.employee_name || (`${matchE.first_name || ''} ${matchE.last_name || ''}`.trim());
+      }
+    }
+
+    if (pName && pName.toLowerCase() !== 'partner') {
+      return `${pName} (${pCode || 'PAR'})`;
+    }
+
+    if (eName && eName.toLowerCase() !== 'employee') {
+      return `${eName} (${eCode || 'EMP'})`;
+    }
+
+    if (pCode) return `Partner ${pCode} (${pCode})`;
+    if (eCode) return `Employee ${eCode} (${eCode})`;
+    return 'Direct';
+  };
+
+  const renderProcessBadge = (app) => {
+    const processBy = app?.process_by || app?.source || '';
+    const proc = (processBy || '').toLowerCase();
+    let badgeText = 'Direct Link';
+    let badgeBg = '#F3E8FF';
+    let badgeColor = '#7E22CE';
+    let codeLabel = getAgentLabel(app);
+
+    if (proc.includes('share') || proc.includes('partner_share')) {
+      badgeText = 'Share Link';
+      badgeBg = '#E0F2FE';
+      badgeColor = '#0369A1';
+    } else if (proc.includes('punch') || proc.includes('manual')) {
+      badgeText = 'Punch Only';
+      badgeBg = '#CCFBF1';
+      badgeColor = '#0F766E';
+    }
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+        <span style={{ fontSize: '11px', fontWeight: 800, padding: '2px 6px', borderRadius: '4px', background: badgeBg, color: badgeColor, width: 'fit-content' }}>
+          {badgeText}
+        </span>
+        <span style={{ fontSize: '11px', fontWeight: 700, color: C.textMid }}>{codeLabel}</span>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ fontFamily: 'Inter, sans-serif', paddingBottom: '140px' }}>
+      
+      {/* ── 1. PAGE HEADER ── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '20px' }}>
+        <div>
+          <h2 style={{ fontSize: '24px', fontWeight: 900, color: C.text, margin: 0, letterSpacing: '-0.02em' }}>
+            Applications Tracking
+          </h2>
+          <p style={{ fontSize: '13px', color: C.textLight, margin: '4px 0 0 0' }}>
+            Monitor, verify and manage application processing across all channels.
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button 
+            onClick={() => navigate('/super-admin/leads')}
+            style={{
+              padding: '9px 16px', borderRadius: '10px', background: C.teal, color: '#ffffff',
+              fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+            }}
+          >
+            <MdAdd size={18} />
+            <span>Apply Lead</span>
+          </button>
+
+          <button 
+            onClick={() => setIsExportModalOpen(true)}
+            style={{
+              padding: '9px 16px', borderRadius: '10px', background: C.card, color: C.text,
+              border: `1px solid ${C.border}`, fontSize: '13px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+            }}
+          >
+            <MdDownload size={18} />
+            <span>Export CSV</span>
+          </button>
+
+          {/* Filter button given to the right side of Export CSV */}
+          <button
+            type="button"
+            onClick={() => setIsFilterOpen(!isFilterOpen)}
+            style={{
+              padding: '9px 16px', borderRadius: '10px',
+              background: isFilterOpen ? `${C.teal}15` : C.card,
+              border: `1px solid ${isFilterOpen ? C.teal : C.border}`,
+              color: isFilterOpen ? C.teal : C.text, fontSize: '13px', fontWeight: 800,
+              display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              boxShadow: isFilterOpen ? `0 2px 8px ${C.teal}25` : 'none'
+            }}
+          >
+            <MdFilterList size={18} />
+            <span>Filter</span>
+            {isFilterOpen ? '▲' : '▼'}
+          </button>
+        </div>
+      </div>
+
+      {/* ── 2. TOP KPI SUMMARY CARDS ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+        
+        {/* Total Applications */}
+        <div style={{ background: C.card, borderRadius: '14px', padding: '14px 16px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyBetween: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: C.textLight }}>Total Applications</span>
+            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(99, 102, 241, 0.1)', color: '#6366F1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <FaFileAlt size={16} />
+            </div>
+          </div>
+          <div style={{ marginTop: '10px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+            <span style={{ fontSize: '24px', fontWeight: 900, color: C.text }}>{kpis.total.toLocaleString()}</span>
+            <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 700 }}>+12% vs last wk</span>
+          </div>
+        </div>
+
+        {/* Pending Review */}
+        <div style={{ background: C.card, borderRadius: '14px', padding: '14px 16px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyBetween: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: C.textLight }}>Pending Review</span>
+            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <MdHourglassEmpty size={18} />
+            </div>
+          </div>
+          <div style={{ marginTop: '10px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+            <span style={{ fontSize: '24px', fontWeight: 900, color: C.text }}>{kpis.pending}</span>
+            <span style={{ fontSize: '11px', color: '#EF4444', fontWeight: 700 }}>Requires action</span>
+          </div>
+        </div>
+
+        {/* Operational Verified */}
+        <div style={{ background: C.card, borderRadius: '14px', padding: '14px 16px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyBetween: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: C.textLight }}>Operational Verified</span>
+            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(139, 92, 246, 0.1)', color: '#8B5CF6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <ShieldCheck size={18} />
+            </div>
+          </div>
+          <div style={{ marginTop: '10px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+            <span style={{ fontSize: '24px', fontWeight: 900, color: C.text }}>{kpis.operationalVerified}</span>
+            <span style={{ fontSize: '11px', color: '#8B5CF6', fontWeight: 700 }}>Ops verified</span>
+          </div>
+        </div>
+
+        {/* Approved */}
+        <div style={{ background: C.card, borderRadius: '14px', padding: '14px 16px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyBetween: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: C.textLight }}>Approved</span>
+            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.1)', color: '#10B981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <MdCheckCircle size={18} />
+            </div>
+          </div>
+          <div style={{ marginTop: '10px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+            <span style={{ fontSize: '24px', fontWeight: 900, color: C.text }}>{kpis.approved}</span>
+            <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 700 }}>Payout ready</span>
+          </div>
+        </div>
+
+        {/* Rejected */}
+        <div style={{ background: C.card, borderRadius: '14px', padding: '14px 16px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyBetween: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: C.textLight }}>Rejected</span>
+            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <MdCancel size={18} />
+            </div>
+          </div>
+          <div style={{ marginTop: '10px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+            <span style={{ fontSize: '24px', fontWeight: 900, color: C.text }}>{kpis.rejected}</span>
+            <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 700 }}>Declined</span>
+          </div>
+        </div>
+
+      </div>
+
+      {/* ── TODAY'S ACTIVITY STATS BAR ── */}
+      <div style={{ background: C.card, borderRadius: '12px', padding: '10px 16px', marginBottom: '20px', border: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+        <span style={{ fontSize: '12.5px', fontWeight: 800, color: C.text }}>Today's Activity</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '12px', color: C.textMid }}>New Leads: <strong style={{ color: C.text }}>{todayStats.newLeads}</strong></span>
+          <span style={{ fontSize: '12px', color: C.textMid }}>Operational Verified: <strong style={{ color: '#8B5CF6' }}>{todayStats.operationalVerified}</strong></span>
+          <span style={{ fontSize: '12px', color: C.textMid }}>Approved: <strong style={{ color: '#10B981' }}>{todayStats.approved}</strong></span>
+          <span style={{ fontSize: '12px', color: C.textMid }}>Rejected: <strong style={{ color: '#EF4444' }}>{todayStats.rejected}</strong></span>
+        </div>
+      </div>
+
+      {/* ── 3. SEARCH & EXPANDABLE 2-LEVEL FILTER AREA ── */}
+      <div style={{ background: C.card, borderRadius: '16px', padding: '16px', border: `1px solid ${C.border}`, marginBottom: '20px' }}>
+        <form onSubmit={handleSearchSubmit}>
+          
+          {/* Row 1: Search Bar + Filter Toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <select
+              value={searchField}
+              onChange={(e) => setSearchField(e.target.value)}
+              style={{
+                height: '42px', padding: '0 12px', borderRadius: '10px',
+                background: C.bgSecondary, border: `1px solid ${C.border}`,
+                color: C.text, fontSize: '12.5px', fontWeight: 700, cursor: 'pointer'
+              }}
+            >
+              <option value="all">Search All Fields</option>
+              <option value="bank_app_no">Bank Application Number</option>
+              <option value="app_number">Application ID</option>
+              <option value="name">Customer Name</option>
+              <option value="mobile">Mobile Number</option>
+              <option value="pan">PAN Card</option>
+            </select>
+
+            {/* Search Input with Inside Arrow Button */}
+            <div style={{ flex: 1, minWidth: '220px', position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <input
+                style={{
+                  ...S.input,
+                  paddingLeft: '38px',
+                  paddingRight: search ? '76px' : '46px',
+                  height: '42px',
+                  fontSize: '13.5px',
+                  borderRadius: '10px',
+                  width: '100%'
+                }}
+                placeholder={searchField === 'bank_app_no' ? "Search by bank application number..." : searchField === 'name' ? "Search by customer name..." : searchField === 'mobile' ? "Search by mobile number..." : searchField === 'app_number' ? "Search by application ID..." : searchField === 'pan' ? "Search by PAN card..." : "Search by bank application number, customer name, mobile, application ID, PAN..."}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <MdSearch style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: C.textLight, fontSize: '20px', pointerEvents: 'none' }} />
+              
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => { setSearch(''); fetchApplications(); }}
+                  style={{ position: 'absolute', right: '42px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: C.textLight, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                  title="Clear search"
+                >
+                  <MdClose size={18} />
+                </button>
+              )}
+
+              {/* Inside Arrow Search Button */}
+              <button
+                type="submit"
+                aria-label="Submit Search"
+                title="Search"
+                style={{
+                  position: 'absolute',
+                  right: '5px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '8px',
+                  background: C.teal,
+                  color: '#ffffff',
+                  border: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  boxShadow: '0 2px 6px rgba(13, 148, 136, 0.25)'
+                }}
+              >
+                <Icons.arrowRight size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* Row 2: Expandable Filter Drawer */}
+          {isFilterOpen && (
+            <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: `1px solid ${C.border}`, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+              
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Date Range</label>
+                <select style={{ ...S.input, height: '36px', fontSize: '12.5px' }} value={dateRange} onChange={e => setDateRange(e.target.value)}>
+                  <option value="all">All Time</option>
+                  <option value="today">Today</option>
+                  <option value="yesterday">Yesterday</option>
+                  <option value="last_7_days">Last 7 Days</option>
+                  <option value="last_30_days">Last 30 Days</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Bank Partner</label>
+                <select 
+                  style={{ ...S.input, height: '36px', fontSize: '12.5px' }} 
+                  value={bankFilter} 
+                  onChange={e => { setBankFilter(e.target.value); setPage(1); }}
+                >
+                  <option value="all">All Banks</option>
+                  {banksList.length > 0 ? (
+                    banksList.map(b => (
+                      <option key={b.id} value={b.short_code ? b.short_code.toLowerCase() : b.id}>
+                        {b.name} {b.short_code ? `(${b.short_code})` : ''}
+                      </option>
+                    ))
+                  ) : (
+                    <>
+                      <option value="hdfc">HDFC Bank</option>
+                      <option value="sbi">State Bank of India (SBI)</option>
+                      <option value="axis">Axis Bank</option>
+                      <option value="icici">ICICI Bank</option>
+                      <option value="idfc">IDFC First Bank</option>
+                      <option value="kotak">Kotak Mahindra Bank</option>
+                    </>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Process Type</label>
+                <select style={{ ...S.input, height: '36px', fontSize: '12.5px' }} value={processTypeFilter} onChange={e => setProcessTypeFilter(e.target.value)}>
+                  <option value="all">All Process Types</option>
+                  <option value="direct_link">Direct Link</option>
+                  <option value="share_link">Share Link</option>
+                  <option value="punch_only">Punch Only</option>
+                  <option value="physical_process">Physical Process</option>
+                  <option value="co_browsing">Co-Browsing (HDFC)</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Source Type</label>
+                <select 
+                  style={{ ...S.input, height: '36px', fontSize: '12.5px' }} 
+                  value={sourceTypeFilter} 
+                  onChange={e => {
+                    const val = e.target.value;
+                    setSourceTypeFilter(val);
+                    if (val === 'partner') setPartnerFilter('ALL_PARTNERS');
+                    else if (val === 'employee') setPartnerFilter('ALL_EMPLOYEES');
+                    else if (val === 'all') setPartnerFilter('');
+                  }}
+                >
+                  <option value="all">All Sources (Partners &amp; Employees &amp; Direct)</option>
+                  <option value="partner">All Partners Only</option>
+                  <option value="employee">All Employees Only</option>
+                  <option value="customer">Customer Only</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Partner / Employee Agent</label>
+                <select
+                  style={{ ...S.input, height: '36px', fontSize: '12.5px' }}
+                  value={partnerFilter}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setPartnerFilter(val);
+                    if (val === 'ALL_PARTNERS') setSourceTypeFilter('partner');
+                    else if (val === 'ALL_EMPLOYEES') setSourceTypeFilter('employee');
+                  }}
+                >
+                  <option value="">All Partners &amp; Employees</option>
+                  <option value="ALL_PARTNERS">All Partners Only</option>
+                  <option value="ALL_EMPLOYEES">All Employees Only</option>
+                  
+                  {partnersList.length > 0 && (
+                    <optgroup label="── PARTNERS ──">
+                      {partnersList.map((p, idx) => {
+                        const code = p.partner_code || p.code || p.referral_code || p.id;
+                        const firstName = p.first_name || '';
+                        const lastName = p.last_name || '';
+                        const combined = `${firstName} ${lastName}`.trim();
+                        const name = p.full_name || p.name || p.partner_name || (combined.length > 0 ? combined : 'Partner');
+                        return (
+                          <option key={`p_${p.id || code || idx}`} value={code}>
+                            {name} ({code})
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                  )}
+
+                  {employeesList.length > 0 && (
+                    <optgroup label="── EMPLOYEES ──">
+                      {employeesList.map((e, idx) => {
+                        const code = e.employee_code || e.emp_code || e.code || e.id;
+                        const firstName = e.first_name || '';
+                        const lastName = e.last_name || '';
+                        const combined = `${firstName} ${lastName}`.trim();
+                        const name = e.full_name || e.name || e.employee_name || (combined.length > 0 ? combined : 'Employee');
+                        return (
+                          <option key={`e_${e.id || code || idx}`} value={code}>
+                            {name} ({code})
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Application Status</label>
+                <select style={{ ...S.input, height: '36px', fontSize: '12.5px' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+                  <option value="all">All Statuses</option>
+                  <option value="submitted">Details Submitted</option>
+                  <option value="under_review">Under Review</option>
+                  <option value="operational_verified">Operational Verified</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, display: 'block', marginBottom: '4px' }}>Commission Status</label>
+                <select style={{ ...S.input, height: '36px', fontSize: '12.5px' }} value={commFilter} onChange={e => setCommFilter(e.target.value)}>
+                  <option value="all">All Commission States</option>
+                  <option value="pending">Pending</option>
+                  <option value="released">Released</option>
+                  <option value="on_hold">On Hold</option>
+                </select>
+              </div>
+
+              <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+                <button type="button" onClick={clearAllFilters} style={{ padding: '6px 14px', borderRadius: '8px', background: 'transparent', border: `1px solid ${C.border}`, color: C.text, fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}>
+                  Clear Filters
+                </button>
+                <button type="submit" style={{ padding: '6px 18px', borderRadius: '8px', background: C.teal, color: '#fff', fontSize: '12px', fontWeight: 800, border: 'none', cursor: 'pointer' }}>
+                  Apply Filters
+                </button>
+              </div>
+
+            </div>
+          )}
+
+        </form>
+      </div>
+
+      {/* ── BULK ACTION BAR ── */}
+      {selectedAppIds.length > 0 && (
+        <div style={{ background: '#312E81', color: '#fff', padding: '10px 16px', borderRadius: '12px', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+          <span style={{ fontSize: '13px', fontWeight: 800 }}>{selectedAppIds.length} Application(s) Selected</span>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={() => setIsExportModalOpen(true)} style={{ padding: '6px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.15)', color: '#fff', fontSize: '12px', fontWeight: 700, border: 'none', cursor: 'pointer' }}>
+              Export Selected
+            </button>
+            <button onClick={() => setSelectedAppIds([])} style={{ padding: '6px 12px', borderRadius: '8px', background: 'transparent', color: '#fff', fontSize: '12px', fontWeight: 600, border: '1px solid rgba(255,255,255,0.3)', cursor: 'pointer' }}>
+              Deselect All
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── 4. APPLICATIONS MAIN TABLE ── */}
+      <div style={{ background: C.card, borderRadius: '16px', border: `1px solid ${C.border}`, overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}>
+        
+        {loading ? (
+          <div style={{ padding: '60px 20px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            <LoadingLogo message="Loading applications..." />
+          </div>
+        ) : applications.length === 0 ? (
+          <div style={{ padding: '40px', textAlign: 'center', color: C.textLight }}>
+            No applications found matching search criteria.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ background: C.bgSecondary, borderBottom: `1px solid ${C.border}`, textAlign: 'left', color: C.textLight, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  <th style={{ padding: '14px 16px', width: '40px' }}>
+                    <input type="checkbox" onChange={toggleSelectAll} checked={selectedAppIds.length === applications.length && applications.length > 0} />
+                  </th>
+                  <th style={{ padding: '14px 16px' }}>App ID &amp; Date</th>
+                  {isRemarkOperatorUser ? (
+                    <>
+                      <th style={{ padding: '14px 16px' }}>PAN Number</th>
+                      <th style={{ padding: '14px 16px' }}>Bank</th>
+                    </>
+                  ) : !isPanCheckerUser && (
+                    <>
+                      <th style={{ padding: '14px 16px' }}>Customer</th>
+                      <th style={{ padding: '14px 16px' }}>Source &amp; Process</th>
+                      <th style={{ padding: '14px 16px' }}>Product &amp; Bank</th>
+                      <th style={{ padding: '14px 16px' }}>Status &amp; Commission</th>
+                    </>
+                  )}
+                  <th style={{ padding: '14px 16px', textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody style={{ color: C.text }}>
+                {applications.map((app) => {
+                  const custName = app.customer_name || app.full_name || 'Customer';
+                  const initials = getInitials(custName);
+                  const isMenuOpen = actionMenuAppId === app.id;
+
+                  return (
+                    <tr key={app.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                      
+                      {/* Checkbox */}
+                      <td style={{ padding: '14px 16px' }}>
+                        <input type="checkbox" checked={selectedAppIds.includes(app.id)} onChange={() => toggleSelectApp(app.id)} />
+                      </td>
+
+                      {/* App ID & Date */}
+                      <td style={{ padding: '14px 16px' }}>
+                        <div style={{ fontWeight: 800, color: C.text, fontFamily: 'monospace', fontSize: '12px' }}>
+                          {app.app_number || `APP${app.id}`}
+                        </div>
+                        {(app.bank_application_number || app.bank_ref_number) && (
+                          <div style={{ fontSize: '11px', color: C.teal, fontWeight: 700, marginTop: '2px', fontFamily: 'monospace' }}>
+                            Bank No: {app.bank_application_number || app.bank_ref_number}
+                          </div>
+                        )}
+                        <div style={{ fontSize: '11px', color: C.textLight, marginTop: '2px' }}>
+                          {app.created_at ? new Date(app.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A'}
+                        </div>
+                        {app.sales_claimed_by && (
+                          <div style={{ marginTop: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 6px', borderRadius: '4px', background: app.sales_claimed_by === user?.id ? '#DCFCE7' : '#E0F2FE', color: app.sales_claimed_by === user?.id ? '#166534' : '#0369A1', fontSize: '10.5px', fontWeight: 800 }}>
+                            <span>{app.sales_claimed_by === user?.id ? '⚡ Claimed by You' : `👤 Claimed: ${app.sales_claimed_by_name || 'Operator'}`}</span>
+                          </div>
+                        )}
+                        {app.assigned_to_name && (
+                          <div style={{ marginTop: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 6px', borderRadius: '4px', background: '#FEF3C7', color: '#92400E', fontSize: '10.5px', fontWeight: 800, border: '1px solid #FDE68A' }}>
+                            <span>🔄 Assigned: {app.assigned_to_name} {app.assigned_to_code ? `(${app.assigned_to_code})` : ''} {app.assigned_by_name ? `by ${app.assigned_by_name}` : ''}</span>
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Remark Operator simplified view */}
+                      {isRemarkOperatorUser ? (
+                        <>
+                          <td style={{ padding: '14px 16px', fontFamily: 'monospace', fontWeight: 800 }}>
+                            {app.pan_number || app.pan || 'N/A'}
+                          </td>
+                          <td style={{ padding: '14px 16px', fontWeight: 700 }}>
+                            {app.bank_name || 'Bank Partner'}
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          {/* Customer Avatar & Metadata */}
+                          {!isPanCheckerUser && (
+                            <td style={{ padding: '14px 16px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)', color: '#fff', fontWeight: 900, fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  {initials}
+                                </div>
+                                <div>
+                                  <div style={{ fontWeight: 800, color: C.text }}>{custName}</div>
+                                  <div style={{ fontSize: '11px', color: C.textLight }}>{app.customer_mobile || app.mobile || 'N/A'} • {app.city || 'N/A'}</div>
+                                </div>
+                              </div>
+                            </td>
+                          )}
+
+                          {/* Source & Process */}
+                          {!isPanCheckerUser && (
+                            <td style={{ padding: '14px 16px' }}>
+                              {renderProcessBadge(app)}
+                            </td>
+                          )}
+
+                          {/* Product & Bank */}
+                          {!isPanCheckerUser && (
+                            <td style={{ padding: '14px 16px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                <span style={{ fontWeight: 800, color: C.text }}>{app.bank_name || 'Bank Partner'}</span>
+                                {String(app.category || '').toLowerCase() === 'loc_eoc' || String(app.sub_category || '').toLowerCase() === 'loc' || String(app.sub_category || '').toLowerCase() === 'eoc' ? (
+                                  <span style={{ fontSize: '10px', fontWeight: 800, background: '#ECFDF5', color: '#047857', border: '1px solid #A7F3D0', padding: '1px 6px', borderRadius: '4px' }}>
+                                    LOC/EOC
+                                  </span>
+                                ) : (
+                                  <span style={{ fontSize: '10px', fontWeight: 800, background: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE', padding: '1px 6px', borderRadius: '4px' }}>
+                                    {app.category && app.category !== 'credit_card' ? app.category.toUpperCase().replace('_', ' ') : 'Credit Card'}
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: '11px', color: C.textLight }}>{app.product_name || 'Financial Product'}</div>
+                            </td>
+                          )}
+
+                          {/* Separated Application Status & Commission Status */}
+                          {!isPanCheckerUser && (
+                            <td style={{ padding: '14px 16px' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <div>{renderAppStatusBadge(app.status)}</div>
+                                <div style={{ fontSize: '11px', color: C.textLight, fontWeight: 700 }}>
+                                  Commission: <span style={{ color: app.commission_released ? '#059669' : C.textMid }}>₹{app.commission_amount || '0.00'} ({app.commission_released ? 'Released' : 'Pending'})</span>
+                                </div>
+                              </div>
+                            </td>
+                          )}
+                        </>
+                      )}
+
+                      {/* Actions: PAN Check / Remark Review OR Review Button + 3-Dots Menu */}
+                      <td style={{ padding: '14px 16px', textAlign: 'right', position: 'relative' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px' }}>
+                          {isSalesExecUser ? (
+                            <>
+                              {!app.sales_claimed_by ? (
+                                <button
+                                  onClick={() => handleClaimRequest(app)}
+                                  disabled={claimingId === app.id}
+                                  style={{ background: "#0284c7", border: "none", color: "#ffffff", padding: "6px 12px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 800, cursor: claimingId === app.id ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: "5px", boxShadow: "0 2px 6px rgba(2, 132, 199, 0.35)", whiteSpace: "nowrap" }}
+                                  title="Claim this application to work on it exclusively"
+                                >
+                                  {claimingId === app.id ? (
+                                    <>
+                                      <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Claiming...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Zap size={13} fill="#ffffff" /> Claim Request
+                                    </>
+                                  )}
+                                </button>
+                              ) : app.sales_claimed_by === user?.id ? (
+                                <span
+                                  style={{ background: "#16a34a15", border: "1px solid #16a34a40", color: "#16a34a", padding: "5px 9px", borderRadius: "6px", fontSize: "11px", fontWeight: 800, display: "inline-flex", alignItems: "center", gap: "4px", whiteSpace: "nowrap" }}
+                                  title={`Claimed by you on ${app.sales_claimed_at ? new Date(app.sales_claimed_at).toLocaleString() : ''}`}
+                                >
+                                  <CheckCircle2 size={12} /> Claimed by You
+                                </span>
+                              ) : (
+                                <span
+                                  style={{ background: "#64748b15", border: "1px solid #64748b40", color: "#64748b", padding: "5px 9px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: "4px", whiteSpace: "nowrap" }}
+                                >
+                                  <UserCheck size={12} /> Claimed
+                                </span>
+                              )}
+                              <button
+                                onClick={() => handleOpen360Drawer(app, 'overview')}
+                                style={{ padding: '6px 12px', borderRadius: '8px', background: C.teal, color: '#fff', fontSize: '12px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
+                              >
+                                Review
+                              </button>
+                              <button
+                                onClick={() => setAssignModalApp(app)}
+                                style={{ padding: '6px 12px', borderRadius: '8px', background: '#8b5cf615', border: '1px solid #8b5cf640', color: '#8b5cf6', fontSize: '12px', fontWeight: 800, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                title="Assign this application to another Administrative Sales Executive"
+                              >
+                                <UserPlus size={13} /> Assign
+                              </button>
+                              <button
+                                onClick={() => setActionMenuAppId(isMenuOpen ? null : app.id)}
+                                style={{ width: '32px', height: '32px', borderRadius: '8px', background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                              >
+                                <MdMoreVert size={18} />
+                              </button>
+                            </>
+                          ) : isPanCheckerUser || isRemarkOperatorUser || isFinalStatusOperatorUser || isQuerableOperatorUser ? (
+                            <button
+                              onClick={() => {
+                                setVerifyModalApp(app);
+                                setVerifyModalTab(isFinalStatusOperatorUser ? 'final' : (isRemarkOperatorUser || isQuerableOperatorUser) ? 'remark' : 'qd');
+                              }}
+                              style={{ padding: '6px 12px', borderRadius: '8px', background: '#2563eb', color: '#fff', fontSize: '12px', fontWeight: 800, border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              <ShieldCheck size={14} /> Review
+                            </button>
+                          ) : (
+                            <>
+                              {app.sales_claimed_by && (
+                                <span
+                                  style={{ background: "#0284c715", border: "1px solid #0284c740", color: "#0284c7", padding: "4px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: "4px", whiteSpace: "nowrap" }}
+                                  title={`Claimed by ${app.sales_claimed_by_name || 'Sales Operator'} (${app.sales_claimed_by_code || ''})`}
+                                >
+                                  <UserCheck size={12} /> {app.sales_claimed_by_name ? app.sales_claimed_by_name.split(' ')[0] : 'Claimed'}
+                                </span>
+                              )}
+                              <button
+                                onClick={() => handleOpen360Drawer(app, 'overview')}
+                                style={{ padding: '6px 12px', borderRadius: '8px', background: C.teal, color: '#fff', fontSize: '12px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
+                              >
+                                Review
+                              </button>
+
+                              <button
+                                onClick={() => setActionMenuAppId(isMenuOpen ? null : app.id)}
+                                style={{ width: '32px', height: '32px', borderRadius: '8px', background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                              >
+                                <MdMoreVert size={18} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Action Menu Dropdown */}
+                        {!isPanCheckerUser && isMenuOpen && (
+                          <div style={{ position: 'absolute', top: '48px', right: '16px', width: '180px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.18)', padding: '6px', zIndex: 100, textAlign: 'left' }}>
+                            <button onClick={() => handleOpen360Drawer(app, 'overview')} style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: 'none', background: 'transparent', color: C.text, fontSize: '12px', fontWeight: 700, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <MdVisibility /> View 360° Details
+                            </button>
+                            <button onClick={() => handleOpen360Drawer(app, 'timeline')} style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: 'none', background: 'transparent', color: C.text, fontSize: '12px', fontWeight: 700, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <MdHistory /> View Timeline
+                            </button>
+                            <button onClick={() => setVerifyModalApp(app)} style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: 'none', background: 'transparent', color: C.text, fontSize: '12px', fontWeight: 700, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <FaFileAlt /> Verify Documents
+                            </button>
+                            <button onClick={() => { setWhatsAppData({ recipientMobile: app.customer_mobile || app.mobile, recipientName: app.customer_name || app.full_name, applicationId: app.app_number || app.id, customerId: app.customer_id }); setActionMenuAppId(null); }} style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: 'none', background: 'transparent', color: '#059669', fontSize: '12px', fontWeight: 700, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <FaWhatsapp size={14} color="#059669" /> Send WhatsApp
+                            </button>
+                            <button onClick={() => handleDeleteApplication(app.id, app.app_number)} style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: 'none', background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', fontSize: '12px', fontWeight: 700, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                              <MdDelete /> Delete Record
+                            </button>
+                          </div>
+                        )}
+                      </td>
+
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* ── 5. PAGINATION INFORMATION & PAGE SIZE SELECTOR ── */}
+        <div style={{ padding: '14px 20px', background: C.bgSecondary, borderTop: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', position: 'relative', zIndex: 20, marginBottom: '16px' }}>
+          
+          <div style={{ fontSize: '12.5px', color: C.textLight }}>
+            Showing <strong>{(page - 1) * limit + 1}–{Math.min(page * limit, totalCount)}</strong> of <strong>{totalCount}</strong> applications
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            
+            {/* Items Per Page Select */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '12px', color: C.textLight }}>Per page:</span>
+              <select
+                value={limit}
+                onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }}
+                style={{ ...S.input, height: '32px', padding: '2px 8px', fontSize: '12px' }}
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </div>
+
+            {/* Page Navigation Buttons */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <button
+                disabled={page <= 1}
+                onClick={() => setPage(prev => Math.max(prev - 1, 1))}
+                style={{ width: '32px', height: '32px', borderRadius: '6px', border: `1px solid ${C.border}`, background: C.card, color: C.text, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: page <= 1 ? 'not-allowed' : 'pointer', opacity: page <= 1 ? 0.5 : 1 }}
+              >
+                <MdChevronLeft size={20} />
+              </button>
+
+              <span style={{ fontSize: '12px', fontWeight: 800, color: C.text, padding: '0 8px' }}>
+                Page {page} of {totalPages}
+              </span>
+
+              <button
+                disabled={page >= totalPages}
+                onClick={() => setPage(prev => Math.min(prev + 1, totalPages))}
+                style={{ width: '32px', height: '32px', borderRadius: '6px', border: `1px solid ${C.border}`, background: C.card, color: C.text, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: page >= totalPages ? 'not-allowed' : 'pointer', opacity: page >= totalPages ? 0.5 : 1 }}
+              >
+                <MdChevronRight size={20} />
+              </button>
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+      {/* ── 360° APPLICATION DETAILS CENTERED MODAL ── */}
+      {detailDrawerOpen && selectedApp && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(15, 23, 42, 0.7)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isMobile ? '8px' : '16px' }}>
+          
+          <div style={{ width: '100%', maxWidth: '820px', maxHeight: isMobile ? '94vh' : '90vh', background: C.card, borderRadius: isMobile ? '16px' : '20px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.4)', overflow: 'hidden' }}>
+            
+            {/* Drawer Header */}
+            <div style={{ padding: '16px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: C.bgSecondary }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)', color: '#fff', fontWeight: 900, fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {getInitials(selectedApp.customer_name || selectedApp.full_name)}
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 900, color: C.text }}>
+                    {selectedApp.customer_name || selectedApp.full_name || 'Customer Details'}
+                  </h3>
+                  <span style={{ fontSize: '11px', fontFamily: 'monospace', color: C.teal, fontWeight: 700 }}>
+                    {selectedApp.app_number || `APP${selectedApp.id}`}
+                  </span>
+                </div>
+              </div>
+
+              <button onClick={() => setDetailDrawerOpen(false)} style={{ background: 'none', border: 'none', color: C.text, fontSize: '22px', cursor: 'pointer' }}>
+                <MdClose />
+              </button>
+            </div>
+
+            {/* Drawer Tab Header */}
+            <div style={{ display: 'flex', borderBottom: `1px solid ${C.border}`, background: C.card }}>
+              {['overview', 'timeline', 'documents'].map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setActiveDrawerTab(t)}
+                  style={{
+                    flex: 1, padding: '10px 0', fontSize: '12px', fontWeight: 800, textTransform: 'capitalize',
+                    border: 'none', background: 'transparent', cursor: 'pointer',
+                    color: activeDrawerTab === t ? C.teal : C.textLight,
+                    borderBottom: activeDrawerTab === t ? `2px solid ${C.teal}` : 'none'
+                  }}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+
+            {/* Drawer Body Content */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+              
+              {/* Tab 1: Overview */}
+              {activeDrawerTab === 'overview' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  
+                  {/* Customer Info Card */}
+                  <div style={{ background: C.bgSecondary, padding: '14px', borderRadius: '12px', border: `1px solid ${C.border}` }}>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '12px', fontWeight: 800, color: C.textLight, textTransform: 'uppercase' }}>Customer Profile</h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(1, 1fr)' : 'repeat(2, 1fr)', gap: '10px', fontSize: '12.5px' }}>
+                      <div><span style={{ color: C.textLight }}>Phone:</span> <strong style={{ color: C.text }}>{selectedApp.customer_mobile || selectedApp.mobile || 'N/A'}</strong></div>
+                      <div><span style={{ color: C.textLight }}>City:</span> <strong style={{ color: C.text }}>{selectedApp.city || 'N/A'}</strong></div>
+                      <div><span style={{ color: C.textLight }}>PAN:</span> <strong style={{ color: C.text }}>{selectedApp.pan_number || selectedApp.pan || 'N/A'}</strong></div>
+                      <div><span style={{ color: C.textLight }}>Salary:</span> <strong style={{ color: C.text }}>₹{selectedApp.monthly_salary || 'N/A'}</strong></div>
+                    </div>
+                  </div>
+
+                  {/* Product & Attribution Card */}
+                  <div style={{ background: C.bgSecondary, padding: '14px', borderRadius: '12px', border: `1px solid ${C.border}` }}>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '12px', fontWeight: 800, color: C.textLight, textTransform: 'uppercase' }}>Product &amp; Source Attribution</h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(1, 1fr)' : 'repeat(2, 1fr)', gap: '10px', fontSize: '12.5px' }}>
+                      <div><span style={{ color: C.textLight }}>Bank:</span> <strong style={{ color: C.text }}>{selectedApp.bank_name || 'Bank Partner'}</strong></div>
+                      <div><span style={{ color: C.textLight }}>Product:</span> <strong style={{ color: C.text }}>{selectedApp.product_name || 'Financial Product'}</strong></div>
+                      <div><span style={{ color: C.textLight }}>Process:</span> <strong style={{ color: C.text }}>{selectedApp.process_by || 'Direct Link'}</strong></div>
+                      <div><span style={{ color: C.textLight }}>Assigned Agent:</span> <strong style={{ color: C.teal }}>{getAgentLabel(selectedApp)}</strong></div>
+                    </div>
+                  </div>
+
+                  {/* Employee Assignment Details (if assigned) */}
+                  {(selectedApp.assigned_to_name || selectedApp.assigned_to_code) && (
+                    <div style={{ background: C.bgSecondary, padding: '14px', borderRadius: '12px', border: `1px solid ${C.border}` }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                        <h4 style={{ margin: 0, fontSize: '12px', fontWeight: 800, color: C.teal, textTransform: 'uppercase' }}>
+                          Employee Assignment Details
+                        </h4>
+                        <span style={{ fontSize: '10.5px', fontWeight: 800, padding: '2px 8px', borderRadius: '4px', background: '#FEF3C7', color: '#92400E' }}>
+                          Assigned Lead
+                        </span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(1, 1fr)' : 'repeat(2, 1fr)', gap: '10px', fontSize: '12.5px' }}>
+                        <div>
+                          <span style={{ color: C.textLight }}>Assigned To:</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            {selectedApp.assigned_to_name} {selectedApp.assigned_to_code ? `(${selectedApp.assigned_to_code})` : ''}
+                          </strong>
+                        </div>
+                        <div>
+                          <span style={{ color: C.textLight }}>Assigned By:</span>{' '}
+                          <strong style={{ color: C.text }}>
+                            {selectedApp.assigned_by_name || 'Staff'} {selectedApp.assigned_by_code ? `(${selectedApp.assigned_by_code})` : ''}
+                          </strong>
+                        </div>
+                        {selectedApp.assigned_at && (
+                          <div>
+                            <span style={{ color: C.textLight }}>Assigned Date:</span>{' '}
+                            <strong style={{ color: C.text }}>
+                              {new Date(selectedApp.assigned_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </strong>
+                          </div>
+                        )}
+                        {selectedApp.assignment_notes && (
+                          <div style={{ gridColumn: isMobile ? '1' : 'span 2' }}>
+                            <span style={{ color: C.textLight }}>Handover Remarks:</span>{' '}
+                            <strong style={{ color: C.text }}>{selectedApp.assignment_notes}</strong>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Status & Commission Card */}
+                  <div style={{ background: C.bgSecondary, padding: '14px', borderRadius: '12px', border: `1px solid ${C.border}` }}>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '12px', fontWeight: 800, color: C.textLight, textTransform: 'uppercase' }}>Status &amp; Ledger</h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '12px', color: C.textLight }}>Application Status:</span>
+                        {renderAppStatusBadge(selectedApp.status)}
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '12px', color: C.textLight }}>Commission Amount:</span>
+                        <strong style={{ color: '#059669' }}>₹{selectedApp.commission_amount || '0.00'}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+              )}
+
+              {/* Tab 2: Visual Application Timeline */}
+              {activeDrawerTab === 'timeline' && (
+                <div style={{ padding: '10px 0' }}>
+                  <h4 style={{ margin: '0 0 16px 0', fontSize: '13px', fontWeight: 800, color: C.text }}>
+                    Lifecycle Timeline ({timelines.length > 0 ? timelines.length : (selectedApp?.update_count || 1)} Updates Logged)
+                  </h4>
+                  {timelines.length === 0 ? (
+                    <div style={{ color: C.textLight, fontSize: '12px', textAlign: 'center', padding: '20px' }}>
+                      No timeline events recorded yet.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', borderLeft: `2px solid ${C.teal}`, paddingLeft: '16px', marginLeft: '8px' }}>
+                      {timelines.map((evt, idx) => (
+                        <div key={evt.id || idx} style={{ position: 'relative' }}>
+                          <div style={{ position: 'absolute', left: '-23px', top: '2px', width: '12px', height: '12px', borderRadius: '50%', background: idx === 0 ? C.teal : '#94A3B8' }} />
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ fontSize: '13px', fontWeight: 800, color: C.text }}>
+                              {evt.title || evt.event_type || 'Application Updated'}
+                            </div>
+                            <div style={{ fontSize: '11px', color: C.textLight, fontWeight: 600 }}>
+                              📅 {new Date(evt.performed_at || evt.created_at || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} 🕒 {new Date(evt.performed_at || evt.created_at || Date.now()).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: '12px', color: C.textMid, marginTop: '2px' }}>
+                            {evt.description || evt.remarks || evt.activity || 'Application status or details modified.'}
+                          </div>
+                          {evt.performed_by_name && (
+                            <div style={{ fontSize: '11px', color: C.teal, fontWeight: 700, marginTop: '2px' }}>
+                              Actor: {evt.performed_by_name}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 3: Documents Audit */}
+              {activeDrawerTab === 'documents' && (
+                <div>
+                  <h4 style={{ margin: '0 0 12px 0', fontSize: '13px', fontWeight: 800, color: C.text }}>Document Checklists</h4>
+                  <button
+                    onClick={() => setVerifyModalApp(selectedApp)}
+                    style={{ width: '100%', padding: '12px', borderRadius: '10px', background: C.teal, color: '#fff', fontSize: '13px', fontWeight: 800, border: 'none', cursor: 'pointer' }}
+                  >
+                    Open Document Verification Audit Modal
+                  </button>
+                </div>
+              )}
+
+            </div>
+
+            {/* ── MODAL BOTTOM ACTIONS (PROCESS-AWARE - MAX 3 BUTTONS PER ROW) ── */}
+            <div style={{ padding: '16px', borderTop: `1px solid ${C.border}`, background: C.bgSecondary }}>
+              {(() => {
+                const pStr = String(selectedApp.process_type || selectedApp.process_by || '').toLowerCase();
+                const isDigital = pStr.includes('linked_share') || pStr.includes('direct') || pStr.includes('share') || pStr.includes('link');
+
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)', gap: '8px' }}>
+                    {/* Button 1: Remark (Digital) / Verify QD Form (Physical) */}
+                    <button
+                      onClick={() => openAuditModal(selectedApp, isDigital ? 'remark' : 'qd')}
+                      style={{ padding: '8px 4px', borderRadius: '8px', background: C.card, border: `1px solid ${C.border}`, color: C.text, fontSize: '11px', fontWeight: 800, cursor: 'pointer', textAlign: 'center' }}
+                    >
+                      {isDigital ? 'Remark' : 'Verify QD Form'}
+                    </button>
+
+                    {/* Button 2: Ops Verify (Physical) / Bank Final Status (Digital) */}
+                    {isDigital ? (
+                      !isSalesExecUser && (
+                        <button
+                          onClick={() => openAuditModal(selectedApp, 'final')}
+                          style={{ padding: '8px 4px', borderRadius: '8px', background: C.card, border: `1px solid ${C.border}`, color: C.text, fontSize: '11px', fontWeight: 800, cursor: 'pointer', textAlign: 'center' }}
+                        >
+                          Bank Final Status
+                        </button>
+                      )
+                    ) : (
+                      <button
+                        onClick={() => handleUpdateStatus(selectedApp.id, 'operational_verified')}
+                        style={{ padding: '8px 4px', borderRadius: '8px', background: '#0D9488', color: '#fff', fontSize: '11px', fontWeight: 800, border: 'none', cursor: 'pointer', textAlign: 'center' }}
+                      >
+                        Ops Verify
+                      </button>
+                    )}
+
+                    {/* Button 3: Approve App */}
+                    <button
+                      onClick={() => handleUpdateStatus(selectedApp.id, 'approved')}
+                      style={{ padding: '8px 4px', borderRadius: '8px', background: '#059669', color: '#fff', fontSize: '11px', fontWeight: 800, border: 'none', cursor: 'pointer', textAlign: 'center' }}
+                    >
+                      Approve App
+                    </button>
+
+                    {/* Button 4: Reject App */}
+                    <button
+                      onClick={() => handleUpdateStatus(selectedApp.id, 'rejected')}
+                      style={{ padding: '8px 4px', borderRadius: '8px', background: '#DC2626', color: '#fff', fontSize: '11px', fontWeight: 800, border: 'none', cursor: 'pointer', textAlign: 'center' }}
+                    >
+                      Reject App
+                    </button>
+
+                    {/* Button 5: Bank Final Status (Physical Only) */}
+                    {!isDigital && !isSalesExecUser && (
+                      <button
+                        onClick={() => openAuditModal(selectedApp, 'final')}
+                        style={{ padding: '8px 4px', borderRadius: '8px', background: C.card, border: `1px solid ${C.border}`, color: C.text, fontSize: '11px', fontWeight: 800, cursor: 'pointer', textAlign: 'center' }}
+                      >
+                        Bank Final Status
+                      </button>
+                    )}
+
+                    {/* Button 6: Delete Record */}
+                    <button
+                      onClick={() => handleDeleteApplication(selectedApp.id, selectedApp.app_number)}
+                      style={{ padding: '8px 4px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', color: '#DC2626', border: '1px solid rgba(239,68,68,0.3)', fontSize: '11px', fontWeight: 800, cursor: 'pointer', textAlign: 'center' }}
+                    >
+                      Delete Record
+                    </button>
+                  </div>
+                );
+              })()}
+            </div>
+
+          </div>
+
+        </div>
+      )}
+
+      {/* DOCUMENT VERIFICATION MODAL */}
+      {verifyModalApp && (
+        <AdminDocumentVerificationModal
+          application={verifyModalApp}
+          app={verifyModalApp}
+          initialTab={verifyModalTab}
+          onClose={() => setVerifyModalApp(null)}
+          onRefresh={fetchApplications}
+        />
+      )}
+
+      {/* ASSIGN SALES EXECUTIVE MODAL */}
+      {assignModalApp && (
+        <AssignSalesExecutiveModal
+          application={assignModalApp}
+          onClose={() => setAssignModalApp(null)}
+          onSuccess={() => {
+            setAssignModalApp(null);
+            fetchApplications();
+          }}
+        />
+      )}
+
+      {/* EXPORT APPLICATIONS MODAL */}
+      {isExportModalOpen && (
+        <ExportApplicationsModal
+          isOpen={isExportModalOpen}
+          onClose={() => setIsExportModalOpen(false)}
+          defaultApplications={applications}
+          initialBank={bankFilter}
+          banksList={banksList}
+        />
+      )}
+
+      {/* SEND WHATSAPP MODAL */}
+      {whatsAppData && (
+        <SendWhatsAppModal
+          isOpen={Boolean(whatsAppData)}
+          onClose={() => setWhatsAppData(null)}
+          recipientMobile={whatsAppData.recipientMobile}
+          recipientName={whatsAppData.recipientName}
+          applicationId={whatsAppData.applicationId}
+          customerId={whatsAppData.customerId}
+          onSuccess={() => setWhatsAppData(null)}
+        />
+      )}
+
+    </div>
+  );
+}

@@ -1,0 +1,42 @@
+/** PostgreSQL user_role enum values — source of truth for RBAC */
+const ROLES = {
+  SUPER_ADMIN: 'SUPER_ADMIN',
+  ADMIN: 'ADMIN',
+  EMPLOYEE: 'EMPLOYEE',
+  PARTNER: 'PARTNER',
+  TEAM_MEMBER: 'TEAM_MEMBER',
+};
+
+const normalizeRole = (role) => String(role || '').trim().toUpperCase();
+
+const isRole = (role, ...allowed) => {
+  const normalized = normalizeRole(role);
+  return allowed.map(normalizeRole).includes(normalized);
+};
+
+const DESIGNATIONS = {
+  OPERATIONAL_HEAD: 'Operational Head',
+  ADMINISTRATIVE_OPERATOR: 'Administrative Operator',
+  ADMINISTRATIVE_SALES_EXECUTIVE: 'Administrative Sales Executive',
+  PAN_CHECKER: 'PAN Checker',
+  REMARK_OPERATOR: 'Remark Operator',
+  QD_OPERATOR: 'QD Operator',
+  FINAL_STATUS_OPERATOR: 'Final Status Operator',
+  QUERABLE_OPERATOR: 'Querable Operator',
+  PHYSICAL_CURABLE: 'Physical Curable',
+  DIGITAL_CURABLE: 'Digital Curable',
+  EMAIL_CURABLE: 'Email Curable',
+  PHYSICAL_CURABLE_OPERATOR: 'Physical Curable Operator',
+  DIGITAL_CURABLE_OPERATOR: 'Digital Curable Operator',
+  EMAIL_CURABLE_OPERATOR: 'Email Curable Operator',
+  SUPER_ADMIN: 'Super Admin',
+};
+
+module.exports = {
+  ...ROLES,
+  ROLES,
+  DESIGNATIONS,
+  normalizeRole,
+  isRole,
+};
+
