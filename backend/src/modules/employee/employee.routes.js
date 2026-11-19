@@ -297,35 +297,55 @@ async function resolveEmployee(req, res, next) {
     let rows = [];
 
     // 1. Primary & Authoritative: Match by authenticated user_id
-    if (req.user.id) {
+    if (req.user?.id) {
       const { rows: matched } = await query(`SELECT * FROM employees WHERE user_id = $1 LIMIT 1`, [req.user.id]);
       if (matched.length > 0) rows = matched;
     }
 
-    // 2. Fallback: If req.user specifies employee_id / emp_code (e.g. CAND10001) only when user_id not yet linked
+    // 2. Fallback: If req.user specifies employee_id / emp_code / employeeCode
     if (rows.length === 0) {
-      const reqEmpCode = req.user.employee_id || req.user.emp_code || req.user.employeeCode;
-      if (reqEmpCode && typeof reqEmpCode === 'string' && !reqEmpCode.includes('-')) {
-        const { rows: matched } = await query(`SELECT * FROM employees WHERE employee_id = $1 LIMIT 1`, [reqEmpCode.trim()]);
-        if (matched.length > 0) rows = matched;
+      const reqEmpCode = req.user?.employee_id || req.user?.emp_code || req.user?.employeeCode;
+      if (reqEmpCode && typeof reqEmpCode === 'string' && reqEmpCode.trim()) {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(reqEmpCode.trim());
+        if (isUuid) {
+          const { rows: matched } = await query(`SELECT * FROM employees WHERE id = $1::uuid OR user_id = $1::uuid LIMIT 1`, [reqEmpCode.trim()]);
+          if (matched.length > 0) rows = matched;
+        } else {
+          const { rows: matched } = await query(`SELECT * FROM employees WHERE LOWER(TRIM(employee_id)) = LOWER(TRIM($1)) LIMIT 1`, [reqEmpCode.trim()]);
+          if (matched.length > 0) rows = matched;
+        }
       }
     }
 
-    // 3. Fallback: Match by mobile / email
-    if (rows.length === 0 && (req.user.mobile || req.user.email)) {
+    // 3. Fallback: Match by normalized 10-digit mobile or case-insensitive email
+    if (rows.length === 0 && (req.user?.mobile || req.user?.email)) {
+      const rawMobile = req.user.mobile || '';
+      const cleanMobile = rawMobile ? String(rawMobile).replace(/\D/g, '').slice(-10) : '';
+      const email = (req.user.email || '').trim().toLowerCase();
+
       const { rows: matched } = await query(
-        `SELECT * FROM employees WHERE mobile_number = $1 OR (email_id IS NOT NULL AND email_id != '' AND LOWER(email_id) = LOWER($2)) LIMIT 1`, 
-        [req.user.mobile || '', req.user.email || '']
+        `SELECT * FROM employees 
+         WHERE (LENGTH($1) = 10 AND RIGHT(REGEXP_REPLACE(mobile_number, '\\D', '', 'g'), 10) = $1)
+            OR (LENGTH($2) > 0 AND email_id IS NOT NULL AND LOWER(TRIM(email_id)) = $2)
+         ORDER BY created_at DESC LIMIT 1`, 
+        [cleanMobile, email]
       );
       if (matched.length > 0) rows = matched;
     }
 
     if (rows.length === 0) {
       // Auto-create employee record if user registered via candidate portal
+      const rawMobile = req.user?.mobile || '';
+      const cleanMobile = rawMobile ? String(rawMobile).replace(/\D/g, '').slice(-10) : '';
+      const email = (req.user?.email || '').trim().toLowerCase();
+
       const candRes = await query(
-        `SELECT * FROM employee_candidates WHERE mobile_number = $1 OR (email_id IS NOT NULL AND email_id != '' AND LOWER(email_id) = LOWER($2)) ORDER BY created_at DESC LIMIT 1`,
-        [req.user.mobile, req.user.email]
-      );
+        `SELECT * FROM employee_candidates 
+         WHERE (LENGTH($1) = 10 AND RIGHT(REGEXP_REPLACE(mobile_number, '\\D', '', 'g'), 10) = $1)
+            OR (LENGTH($2) > 0 AND email_id IS NOT NULL AND LOWER(TRIM(email_id)) = $2)
+         ORDER BY created_at DESC LIMIT 1`,
+        [cleanMobile, email]
+      ).catch(() => ({ rows: [] }));
       
       const cand = candRes.rows[0] || {};
       let empCode = cand.reference_code || cand.employee_id || '';
@@ -333,6 +353,9 @@ async function resolveEmployee(req, res, next) {
         const seqRes = await query(`SELECT nextval('candidate_reference_seq') AS seq`).catch(() => ({ rows: [] }));
         empCode = seqRes.rows[0]?.seq ? `CAND${seqRes.rows[0].seq}` : `CAND${Math.floor(10000 + Math.random() * 90000)}`;
       }
+
+      const effectiveMobile = rawMobile || cand.mobile_number || (cleanMobile ? cleanMobile : `emp_${Date.now()}`);
+      const effectiveEmail = email || cand.email_id || `employee_${empCode.toLowerCase()}@internal.local`;
 
       const createRes = await query(
         `INSERT INTO employees (
@@ -345,23 +368,26 @@ async function resolveEmployee(req, res, next) {
           'ONBOARDING', 'PENDING'
         ) ON CONFLICT (mobile_number) DO UPDATE SET user_id = EXCLUDED.user_id RETURNING *`,
         [
-          empCode, req.user.id, cand.id || null, req.user.full_name || cand.full_name || 'Employee',
-          req.user.mobile || cand.mobile_number, req.user.email || cand.email_id || null,
+          empCode, req.user?.id || null, cand.id || null, req.user?.full_name || cand.full_name || 'Employee',
+          effectiveMobile, effectiveEmail,
           cand.target_role || 'TC'
         ]
-      );
+      ).catch(e => {
+        logger.warn('[EMPLOYEE ROUTE] Auto-create employee fallback notice:', e.message);
+        return { rows: [] };
+      });
       rows = createRes.rows;
     }
 
     if (rows.length > 0) {
       req.employee = rows[0];
       // Ensure user_id is linked to employee record
-      if (!req.employee.user_id && req.user.id) {
+      if (!req.employee.user_id && req.user?.id) {
         await query(`UPDATE employees SET user_id = $1 WHERE id = $2`, [req.user.id, req.employee.id]).catch(() => {});
         req.employee.user_id = req.user.id;
       }
       // Ensure users table employee_id is strictly in sync with the employee's true code
-      if (req.user.id && req.employee.employee_id && req.user.employee_id !== req.employee.employee_id) {
+      if (req.user?.id && req.employee.employee_id && req.user.employee_id !== req.employee.employee_id) {
         await query(`UPDATE users SET employee_id = $1 WHERE id = $2`, [req.employee.employee_id, req.user.id]).catch(() => {});
         req.user.employee_id = req.employee.employee_id;
       }

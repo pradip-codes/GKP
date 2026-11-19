@@ -197,11 +197,12 @@ export default function AttendanceGate({ children }) {
   };
 
   const isEmployee = (user?.role || '').toUpperCase() === 'EMPLOYEE' ||
-    (user?.designation && !['SUPER_ADMIN', 'ADMIN'].includes((user?.role || '').toUpperCase()));
+    (user?.designation && !['SUPER_ADMIN', 'ADMIN', 'HR', 'PARTNER', 'AGENT'].includes((user?.role || '').toUpperCase()));
 
   const fetchStatus = useCallback(async () => {
     // If not an employee or no user logged in, bypass gate
-    if (!user || ((user.role || '').toUpperCase() === 'SUPER_ADMIN' || (user.role || '').toUpperCase() === 'ADMIN')) {
+    const userRole = (user?.role || '').toUpperCase();
+    if (!user || ['SUPER_ADMIN', 'ADMIN', 'HR', 'PARTNER', 'AGENT'].includes(userRole)) {
       setDayState('UNLOCKED');
       return;
     }
@@ -216,6 +217,11 @@ export default function AttendanceGate({ children }) {
       // If 403 DAY_LOCKED, error object may carry the state
       if (err.response?.data?.code === 'DAY_LOCKED' && err.response?.data?.state) {
         setDayState(err.response.data.state);
+      } else if (err.response?.status === 404) {
+        // If employee profile record not found (e.g. newly registered candidate or onboarding profile),
+        // bypass gate so candidate can access onboarding/joining form or profile without error loop
+        console.warn('[ATTENDANCE GATE] Employee record not found (404), bypassing gate for onboarding.');
+        setDayState('UNLOCKED');
       } else {
         setErrorMessage(err.response?.data?.message || err.message || 'Unable to check daily attendance status.');
         setDayState('ERROR');
