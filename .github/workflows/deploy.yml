@@ -1,0 +1,104 @@
+name: Deploy via SSM (No Instance Replacement)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-south-1
+  ASG_NAME: gharkapaisa-asg
+
+jobs:
+  deploy:
+    name: Deploy to Running Instances
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Get Instance IDs from Auto Scaling Group
+        id: get-instances
+        run: |
+          INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names $ASG_NAME \
+            --region $AWS_REGION \
+            --query 'AutoScalingGroups[0].Instances[?HealthStatus==`Healthy`].InstanceId' \
+            --output text | tr '\t' ',')
+          
+          echo "Found instances: $INSTANCE_IDS"
+          echo "INSTANCE_IDS=$INSTANCE_IDS" >> $GITHUB_ENV
+      
+      - name: Deploy to Instances via SSM
+        run: |
+          echo "Deploying to instances: $INSTANCE_IDS"
+          
+          COMMAND_ID=$(aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --instance-ids $(echo $INSTANCE_IDS | tr ',' ' ') \
+            --parameters 'commands=[
+              "cd /home/ubuntu/GKP",
+              "sudo -u ubuntu git fetch origin main",
+              "sudo -u ubuntu git reset --hard origin/main",
+              "cd backend",
+              "sudo -u ubuntu npm install --prefer-offline --no-audit",
+              "sudo -u ubuntu node src/database/migrations/migrate_bulk_sms.js",
+              "sudo -u ubuntu pm2 reload all --update-env || sudo -u ubuntu pm2 restart all --update-env",
+              "sudo -u ubuntu pm2 save"
+            ]' \
+            --region $AWS_REGION \
+            --query 'Command.CommandId' \
+            --output text)
+          
+          echo "Command ID: $COMMAND_ID"
+          echo "COMMAND_ID=$COMMAND_ID" >> $GITHUB_ENV
+      
+      - name: Wait for Command Completion
+        run: |
+          echo "Waiting for deployment to complete..."
+          sleep 10
+          
+          for INSTANCE_ID in $(echo $INSTANCE_IDS | tr ',' ' '); do
+            echo "Checking status for instance: $INSTANCE_ID"
+            
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id $COMMAND_ID \
+              --instance-id $INSTANCE_ID \
+              --region $AWS_REGION \
+              --query 'Status' \
+              --output text)
+            
+            echo "  Status: $STATUS"
+            
+            if [ "$STATUS" != "Success" ]; then
+              echo "❌ Deployment failed on instance $INSTANCE_ID"
+              
+              aws ssm get-command-invocation \
+                --command-id $COMMAND_ID \
+                --instance-id $INSTANCE_ID \
+                --region $AWS_REGION \
+                --query 'StandardErrorContent' \
+                --output text
+              
+              exit 1
+            fi
+          done
+          
+          echo "✅ Deployment completed successfully on all instances!"
+      
+      - name: Deployment Summary
+        if: success()
+        run: |
+          echo "🚀 Deployment completed successfully!"
+          echo "Repository: github.com/pradip-codes/GKP.git"
+          echo "Branch: main"
+          echo "Instances updated: $INSTANCE_IDS"
