@@ -378,6 +378,9 @@ async function runTests() {
   assert.strictEqual(whSummary.timezone, 'Asia/Kolkata');
   assert(whSummary.schedule_str && whSummary.schedule_str.length > 0);
   assert(whSummary.live_state && whSummary.live_label);
+  assert.strictEqual(whSummary.schedule, `${whSummary.schedule_str} IST`);
+  assert.strictEqual(whSummary.currentStatusTag, whSummary.live_label);
+  assert.strictEqual(whSummary.isShiftActive, ['within_hours', 'unrestricted'].includes(whSummary.live_state));
   console.log(`✓ PASS: Working hours resolved (${whSummary.schedule_str}, ${whSummary.live_label}, ${whSummary.timezone}).`);
 
   // ── 8. Scheduled Status Changes ───────────────────────────────────────────

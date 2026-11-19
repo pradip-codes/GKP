@@ -10,8 +10,10 @@ import {
   Alert,
   RefreshControl,
   Modal,
+  FlatList,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useTheme } from '../../../contexts/ThemeContext';
 import { colors } from '../../../theme/colors';
 import { typography } from '../../../theme/typography';
 import { spacing } from '../../../theme/spacing';
@@ -28,11 +30,14 @@ import {
 } from '../../../services/super-admin.service';
 
 export default function SuperAdminPartnersScreen() {
+  const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilter, setSelectedFilter] = useState('ALL');
+  const [kycFilter, setKycFilter] = useState('ALL');
   const [partners, setPartners] = useState<any[]>([]);
+  const [selectedPartnerIds, setSelectedPartnerIds] = useState<string[]>([]);
 
   // Status Action Modal
   const [statusModalVisible, setStatusModalVisible] = useState(false);
@@ -72,12 +77,49 @@ export default function SuperAdminPartnersScreen() {
     loadPartners();
   };
 
+  const handleBulkAction = async (action: string) => {
+    if (selectedPartnerIds.length === 0) {
+      return Alert.alert('Info', 'Please select partners first');
+    }
+    Alert.alert(
+      'Confirm Action',
+      `Apply ${action} to ${selectedPartnerIds.length} selected partners?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          onPress: async () => {
+            try {
+              for (const partnerId of selectedPartnerIds) {
+                if (action === 'approve_kyc') {
+                  await approvePartnerKYC(partnerId);
+                } else if (action === 'reject_kyc') {
+                  await rejectPartnerKYC(partnerId, 'Bulk rejection by admin');
+                } else if (action === 'activate') {
+                  await updatePartnerStatus(partnerId, 'active');
+                } else if (action === 'suspend') {
+                  await updatePartnerStatus(partnerId, 'suspended');
+                }
+              }
+              Alert.alert('Success', 'Bulk action completed');
+              setSelectedPartnerIds([]);
+              loadPartners();
+            } catch (err: any) {
+              Alert.alert('Error', err.message || 'Bulk action failed');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleStatusChange = async (newStatus: string) => {
     if (!selectedPartner) return;
     try {
       setUpdatingStatus(true);
       await updatePartnerStatus(selectedPartner.id || selectedPartner.user_id, newStatus);
       setStatusModalVisible(false);
+      setSelectedPartner(null);
       Alert.alert('Success', `Partner status updated to ${newStatus}`);
       loadPartners();
     } catch (err: any) {

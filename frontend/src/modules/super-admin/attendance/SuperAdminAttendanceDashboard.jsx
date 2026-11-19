@@ -7,13 +7,14 @@ import {
   FaClock, FaUserTimes, FaExclamationTriangle, FaInfoCircle, 
   FaSync, FaCheckCircle, FaTimesCircle, FaChevronLeft, FaChevronRight,
   FaShieldAlt, FaDesktop, FaMapMarkerAlt, FaEye, FaUserClock, FaBuilding,
-  FaFileDownload, FaFileCsv, FaFileExcel, FaRedo, FaPlus, FaTrash, FaEdit, FaMapPin
+  FaFileDownload, FaFileCsv, FaFileExcel, FaRedo, FaPlus, FaTrash, FaEdit, FaMapPin,
+  FaFileAlt, FaTasks, FaCheck, FaTimes, FaSun, FaBolt, FaHistory, FaChevronDown, FaChevronUp
 } from 'react-icons/fa';
 import api from '../../../services/api';
 
 export default function SuperAdminAttendanceDashboard() {
   const { C, isDark } = useTheme();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const urlTab = searchParams.get('tab');
   const urlStart = searchParams.get('startDate') || searchParams.get('start_date');
   const urlEnd = searchParams.get('endDate') || searchParams.get('end_date');
@@ -71,6 +72,193 @@ export default function SuperAdminAttendanceDashboard() {
   const [savingBuilding, setSavingBuilding] = useState(false);
   const [buildingActionMsg, setBuildingActionMsg] = useState(null);
 
+  // Super Admin Re-Attendance State
+  const [reAttendanceModalOpen, setReAttendanceModalOpen] = useState(false);
+  const [reAttendanceTarget, setReAttendanceTarget] = useState(null);
+  const [reAttendanceMode, setReAttendanceMode] = useState('RESET_CHECKOUT');
+  const [reAttendanceLoading, setReAttendanceLoading] = useState(false);
+  const [reAttendanceMsg, setReAttendanceMsg] = useState(null);
+
+  // Super Admin Manual Attendance & Verification Exemption State
+  const [manualModalOpen, setManualModalOpen] = useState(false);
+  const [manualTarget, setManualTarget] = useState(null);
+  const [manualTab, setManualTab] = useState('manual'); // 'manual' | 'exemption'
+  const [manualForm, setManualForm] = useState({
+    date: new Date().toISOString().split('T')[0],
+    status: 'PRESENT',
+    attendanceType: 'FULL_TIME',
+    checkInTime: '09:30',
+    checkOutTime: '',
+    remarks: 'Manual attendance marked by Super Admin',
+  });
+  const [exemptionForm, setExemptionForm] = useState({
+    bypassLocation: true,
+    bypassFace: false,
+    duration: 'today',
+    startDate: new Date().toISOString().split('T')[0],
+    endDate: new Date().toISOString().split('T')[0],
+    reason: 'Super Admin location exemption approved'
+  });
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [manualMsg, setManualMsg] = useState(null);
+
+  const handleOpenManualModal = async (row) => {
+    const targetRow = row || (records && records.length > 0 ? records[0] : null);
+    setManualTarget(targetRow);
+    setManualTab('manual');
+    setManualMsg(null);
+    const rowDate = targetRow?.date || targetRow?.attendance_date || selectedDate || new Date().toISOString().split('T')[0];
+    setManualForm({
+      date: rowDate,
+      status: (targetRow?.status || targetRow?.attendance_status || 'PRESENT') === 'NOT_MARKED' ? 'PRESENT' : (targetRow?.status || targetRow?.attendance_status || 'PRESENT'),
+      attendanceType: targetRow?.attendance_type || 'FULL_TIME',
+      checkInTime: targetRow?.check_in_time ? new Date(targetRow.check_in_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }) : '09:30',
+      checkOutTime: targetRow?.check_out_time ? new Date(targetRow.check_out_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }) : '',
+      remarks: 'Manual attendance marked by Super Admin',
+    });
+    setExemptionForm({
+      bypassLocation: true,
+      bypassFace: false,
+      duration: 'today',
+      startDate: rowDate,
+      endDate: rowDate,
+      reason: 'Super Admin location exemption approved'
+    });
+    setManualModalOpen(true);
+
+    if (targetRow?.employee_id) {
+      try {
+        const res = await api.get(`/attendance/admin/employee/${targetRow.employee_id}/exemption`);
+        if (res.data?.success && res.data?.data?.hasBypass) {
+          const ex = res.data.data;
+          setExemptionForm(prev => ({
+            ...prev,
+            bypassLocation: ex.bypassLocation,
+            bypassFace: ex.bypassFace,
+            startDate: ex.startDate ? ex.startDate.split('T')[0] : prev.startDate,
+            endDate: ex.endDate ? ex.endDate.split('T')[0] : prev.endDate,
+            reason: ex.reason || prev.reason
+          }));
+        }
+      } catch {
+        // Exemption record might not exist yet, which is expected
+      }
+    }
+  };
+
+  const handleSubmitManualAttendance = async () => {
+    if (!manualTarget?.employee_id || manualSubmitting) return;
+    setManualSubmitting(true);
+    setManualMsg(null);
+    try {
+      const res = await api.post('/attendance/admin/manual-mark', {
+        employeeId: manualTarget.employee_id,
+        date: manualForm.date,
+        status: manualForm.status,
+        attendanceType: manualForm.attendanceType,
+        checkInTime: manualForm.checkInTime,
+        checkOutTime: manualForm.checkOutTime || null,
+        remarks: manualForm.remarks
+      });
+      setManualMsg({ type: 'success', text: res.data?.message || 'Manual attendance marked successfully!' });
+      setTimeout(() => {
+        setManualModalOpen(false);
+        if (activeTab === 'today') fetchTodayAttendance();
+        else if (activeTab === 'history') fetchHistoryAttendance();
+        else if (activeTab === 'reports') fetchReportsAttendance();
+      }, 1200);
+    } catch (err) {
+      setManualMsg({
+        type: 'error',
+        text: err.response?.data?.message || err.message || 'Failed to mark manual attendance'
+      });
+    } finally {
+      setManualSubmitting(false);
+    }
+  };
+
+  const handleSubmitExemption = async () => {
+    if (!manualTarget?.employee_id || manualSubmitting) return;
+    setManualSubmitting(true);
+    setManualMsg(null);
+
+    let calculatedEnd = exemptionForm.endDate;
+    const startObj = new Date(exemptionForm.startDate);
+    if (exemptionForm.duration === 'today') {
+      calculatedEnd = exemptionForm.startDate;
+    } else if (exemptionForm.duration === '7days') {
+      const endD = new Date(startObj);
+      endD.setDate(endD.getDate() + 7);
+      calculatedEnd = endD.toISOString().split('T')[0];
+    } else if (exemptionForm.duration === '30days') {
+      const endD = new Date(startObj);
+      endD.setDate(endD.getDate() + 30);
+      calculatedEnd = endD.toISOString().split('T')[0];
+    } else if (exemptionForm.duration === 'permanent') {
+      const endD = new Date(startObj);
+      endD.setFullYear(endD.getFullYear() + 2);
+      calculatedEnd = endD.toISOString().split('T')[0];
+    }
+
+    try {
+      const res = await api.post(`/attendance/admin/employee/${manualTarget.employee_id}/exemption`, {
+        bypassLocation: exemptionForm.bypassLocation,
+        bypassFace: exemptionForm.bypassFace,
+        startDate: exemptionForm.startDate,
+        endDate: calculatedEnd,
+        bypassReason: exemptionForm.reason
+      });
+      setManualMsg({
+        type: 'success',
+        text: res.data?.message || 'Verification exemption access granted successfully!'
+      });
+      setTimeout(() => {
+        setManualModalOpen(false);
+        if (activeTab === 'today') fetchTodayAttendance();
+        else if (activeTab === 'history') fetchHistoryAttendance();
+      }, 1200);
+    } catch (err) {
+      setManualMsg({
+        type: 'error',
+        text: err.response?.data?.message || err.message || 'Failed to set verification exemption'
+      });
+    } finally {
+      setManualSubmitting(false);
+    }
+  };
+
+  const handleOpenReAttendanceModal = (row) => {
+    setReAttendanceTarget(row);
+    setReAttendanceMode('RESET_CHECKOUT');
+    setReAttendanceMsg(null);
+    setReAttendanceModalOpen(true);
+  };
+
+  const handleConfirmReAttendance = async () => {
+    if (!reAttendanceTarget || reAttendanceLoading) return;
+    setReAttendanceLoading(true);
+    setReAttendanceMsg(null);
+    try {
+      const res = await api.post('/attendance/admin/re-attendance', {
+        employeeId: reAttendanceTarget.employee_id,
+        date: selectedDate,
+        mode: reAttendanceMode
+      });
+      setReAttendanceMsg({ type: 'success', text: res.data?.message || 'Re-attendance granted successfully!' });
+      setTimeout(() => {
+        setReAttendanceModalOpen(false);
+        fetchTodayAttendance();
+      }, 1200);
+    } catch (err) {
+      setReAttendanceMsg({
+        type: 'error',
+        text: err.response?.data?.message || err.message || 'Failed to grant re-attendance'
+      });
+    } finally {
+      setReAttendanceLoading(false);
+    }
+  };
+
   const [todayData, setTodayData] = useState({
     date: '',
     summary: {
@@ -118,10 +306,12 @@ export default function SuperAdminAttendanceDashboard() {
     data: [],
   });
 
-  // Modal State for Detailed Employee Attendance
+  // Modal State for Detailed Employee Attendance & Daily Work Report
   const [selectedEmpDetail, setSelectedEmpDetail] = useState(null);
   const [empModalData, setEmpModalData] = useState(null);
   const [loadingModal, setLoadingModal] = useState(false);
+  const [modalSelectedDate, setModalSelectedDate] = useState('');
+  const [showMonthlyLog, setShowMonthlyLog] = useState(false);
 
   // Debounce search term
   useEffect(() => {
@@ -227,6 +417,7 @@ export default function SuperAdminAttendanceDashboard() {
 
   // Trigger API calls on tab/filter change
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
     if (activeTab === 'today') {
       fetchTodayAttendance();
     } else if (activeTab === 'history') {
@@ -236,6 +427,7 @@ export default function SuperAdminAttendanceDashboard() {
     } else if (activeTab === 'buildings') {
       fetchBuildings();
     }
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [activeTab, fetchTodayAttendance, fetchHistoryAttendance, fetchReportsAttendance, fetchBuildings]);
 
   // Building Geofence CRUD Handlers
@@ -245,8 +437,8 @@ export default function SuperAdminAttendanceDashboard() {
       name: '',
       code: '',
       address: '',
-      tolerance_meters: 35,
-      polygon_coordinates: '18.619358, 73.874924\n18.619565, 73.874942\n18.619585, 73.874550\n18.619377, 73.874543',
+      tolerance_meters: 10,
+      polygon_coordinates: '18.619827, 73.874738\n18.619801, 73.874805\n18.619737, 73.874833\n18.619673, 73.874805\n18.619647, 73.874738\n18.619673, 73.874671\n18.619737, 73.874643\n18.619801, 73.874671',
       is_active: true
     });
     setBuildingActionMsg(null);
@@ -393,13 +585,17 @@ export default function SuperAdminAttendanceDashboard() {
     setPage(1);
   };
 
-  // Handle Employee Detail View
-  const handleOpenEmpDetail = async (record) => {
+  // Handle Employee Detail View / Daily Work Report
+  const handleOpenEmpDetail = async (record, dateOverride) => {
     setSelectedEmpDetail(record);
+    const targetDate = dateOverride || record.date || record.attendance_date || selectedDate;
+    setModalSelectedDate(targetDate);
     setLoadingModal(true);
     try {
       const empId = record.employee_code || record.employee_id || record.employee_uuid;
-      const res = await api.get(`/attendance/admin/employee/${empId}`);
+      const res = await api.get(`/attendance/admin/employee/${empId}`, {
+        params: { date: targetDate }
+      });
       if (res.data?.success) {
         setEmpModalData(res.data.data);
       }
@@ -408,6 +604,12 @@ export default function SuperAdminAttendanceDashboard() {
     } finally {
       setLoadingModal(false);
     }
+  };
+
+  const handleModalDateChange = (newDate) => {
+    if (!newDate || !selectedEmpDetail) return;
+    setModalSelectedDate(newDate);
+    handleOpenEmpDetail(selectedEmpDetail, newDate);
   };
 
   // Helper formatting time strings
@@ -421,7 +623,7 @@ export default function SuperAdminAttendanceDashboard() {
         minute: '2-digit',
         hour12: true,
       });
-    } catch (e) {
+    } catch {
       return '-';
     }
   };
@@ -435,7 +637,7 @@ export default function SuperAdminAttendanceDashboard() {
         return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
       }
       return dateStr;
-    } catch (e) {
+    } catch {
       return dateStr;
     }
   };
@@ -443,12 +645,24 @@ export default function SuperAdminAttendanceDashboard() {
   // Status Badge Rendering
   const renderStatusBadge = (status) => {
     const s = String(status || 'NOT_MARKED').toUpperCase();
-    let bg = C.border;
-    let color = C.text;
-    let icon = null;
+    let bg;
+    let color;
+    let icon;
     let label = s.replace('_', ' ');
 
     switch (s) {
+      case 'PART_TIME':
+        bg = 'rgba(124, 58, 237, 0.15)';
+        color = '#7C3AED';
+        icon = <FaClock size={11} />;
+        label = 'Part-Time';
+        break;
+      case 'FULL_TIME':
+        bg = 'rgba(16, 185, 129, 0.15)';
+        color = '#10B981';
+        icon = <FaCheckCircle size={11} />;
+        label = 'Full-Time';
+        break;
       case 'PRESENT':
         bg = 'rgba(16, 185, 129, 0.15)';
         color = '#10B981';
@@ -663,6 +877,28 @@ export default function SuperAdminAttendanceDashboard() {
             }}
           >
             <FaBuilding /> Office Buildings & Geofences
+          </button>
+
+          <button
+            onClick={() => handleOpenManualModal(null)}
+            title="Mark Attendance Manually & Configure Verification Exemption"
+            style={{
+              padding: '9px 16px',
+              borderRadius: '10px',
+              border: 'none',
+              background: '#10B981',
+              color: '#FFFFFF',
+              fontSize: '13px',
+              fontWeight: 800,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: '0 2px 8px rgba(16, 185, 129, 0.25)',
+              transition: 'all 0.2s'
+            }}
+          >
+            <FaUserCheck size={13} /> Mark Attendance Manually
           </button>
 
           <button
@@ -1302,6 +1538,8 @@ export default function SuperAdminAttendanceDashboard() {
             >
               <option value="ALL">All Statuses</option>
               <option value="PRESENT">Present</option>
+              <option value="FULL_TIME">Full-Time (Before 7 PM)</option>
+              <option value="PART_TIME">Part-Time (7 PM & After)</option>
               <option value="LATE">Late</option>
               <option value="HALF_DAY">Half Day</option>
               <option value="LEAVE">Leave</option>
@@ -1703,20 +1941,42 @@ export default function SuperAdminAttendanceDashboard() {
 
                     {/* Status Badge */}
                     <td style={{ padding: '14px 16px' }}>
-                      {renderStatusBadge(row.status || row.attendance_status)}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                        {renderStatusBadge(row.status || row.attendance_status)}
+                        {row.attendance_type === 'PART_TIME' && (row.status !== 'PART_TIME' && row.attendance_status !== 'PART_TIME') && (
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '3px',
+                            padding: '2px 6px', borderRadius: '4px',
+                            background: 'rgba(124, 58, 237, 0.12)', color: '#7C3AED',
+                            fontSize: '10.5px', fontWeight: 800
+                          }}>
+                            <FaClock size={9} /> Part-Time
+                          </span>
+                        )}
+                        {row.is_re_attendance && (
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '3px',
+                            padding: '2px 6px', borderRadius: '4px',
+                            background: 'rgba(13, 148, 136, 0.12)', color: C.teal,
+                            fontSize: '10.5px', fontWeight: 800
+                          }}>
+                            <FaRedo size={9} /> Re-Attended
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     {/* Actions */}
-                    <td style={{ padding: '14px 16px', textAlign: 'right' }}>
+                    <td style={{ padding: '14px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                       <button
                         onClick={() => handleOpenEmpDetail(row)}
-                        title="View Full Attendance Details"
+                        title="View Daily Work Report"
                         style={{
                           padding: '6px 12px',
                           borderRadius: '8px',
-                          border: `1px solid ${C.border}`,
-                          background: C.inputBg,
-                          color: C.text,
+                          border: `1px solid ${C.teal}40`,
+                          background: `${C.teal}12`,
+                          color: C.teal,
                           fontSize: '12px',
                           fontWeight: 700,
                           cursor: 'pointer',
@@ -1726,7 +1986,49 @@ export default function SuperAdminAttendanceDashboard() {
                           transition: 'all 0.2s'
                         }}
                       >
-                        <FaEye size={12} color={C.teal} /> View
+                        <FaFileAlt size={12} color={C.teal} /> Report
+                      </button>
+                      <button
+                        onClick={() => handleOpenReAttendanceModal(row)}
+                        title="Grant Re-Attendance (Reopen Day or Fresh Reset)"
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          border: `1px solid rgba(13, 148, 136, 0.4)`,
+                          background: 'rgba(13, 148, 136, 0.1)',
+                          color: C.teal,
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          transition: 'all 0.2s',
+                          marginLeft: '6px'
+                        }}
+                      >
+                        <FaRedo size={11} /> Re-Attendance
+                      </button>
+                      <button
+                        onClick={() => handleOpenManualModal(row)}
+                        title="Mark Attendance Manually & Configure Verification Exemption (Location / Face)"
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          border: '1.5px solid rgba(16, 185, 129, 0.4)',
+                          background: 'rgba(16, 185, 129, 0.12)',
+                          color: '#10B981',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          transition: 'all 0.2s',
+                          marginLeft: '6px'
+                        }}
+                      >
+                        <FaUserCheck size={11} color="#10B981" /> Manual / Exemption
                       </button>
                     </td>
                   </tr>
@@ -1797,7 +2099,7 @@ export default function SuperAdminAttendanceDashboard() {
       </>
       )}
 
-      {/* ── EMPLOYEE DETAILED ATTENDANCE MODAL ── */}
+      {/* ── EMPLOYEE DAILY WORK REPORT MODAL ── */}
       {selectedEmpDetail && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 9999,
@@ -1807,117 +2109,642 @@ export default function SuperAdminAttendanceDashboard() {
         }}>
           <div style={{
             background: C.card, border: `1px solid ${C.border}`,
-            borderRadius: '20px', width: '100%', maxWidth: '720px',
-            maxHeight: '90vh', overflowY: 'auto', padding: '24px',
+            borderRadius: '20px', width: '100%', maxWidth: '860px',
+            maxHeight: '92vh', overflowY: 'auto', padding: '24px',
             boxShadow: '0 20px 40px rgba(0,0,0,0.25)',
-            display: 'flex', flexDirection: 'column', gap: '20px'
+            display: 'flex', flexDirection: 'column', gap: '18px'
           }}>
             {/* Modal Header */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${C.border}`, paddingBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${C.border}`, paddingBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
               <div>
-                <h2 style={{ fontSize: '18px', fontWeight: 900, color: C.text, margin: 0 }}>
-                  Employee Attendance Details
-                </h2>
-                <span style={{ fontSize: '12.5px', color: C.teal, fontWeight: 700 }}>
-                  {(selectedEmpDetail.employee_name || selectedEmpDetail.full_name)} ({(selectedEmpDetail.employee_code || selectedEmpDetail.employee_id)})
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <FaFileAlt color={C.teal} size={18} />
+                  <h2 style={{ fontSize: '18px', fontWeight: 900, color: C.text, margin: 0 }}>
+                    Employee Daily Work Report
+                  </h2>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '13.5px', fontWeight: 800, color: C.text }}>
+                    {empModalData?.employee?.full_name || selectedEmpDetail.employee_name || selectedEmpDetail.full_name}
+                  </span>
+                  <span style={{ fontSize: '12px', color: C.teal, fontWeight: 800, background: `${C.teal}15`, padding: '2px 8px', borderRadius: '6px' }}>
+                    {empModalData?.employee?.employee_id || selectedEmpDetail.employee_code || selectedEmpDetail.employee_id}
+                  </span>
+                  <span style={{ fontSize: '12px', color: C.textLight }}>
+                    • {empModalData?.employee?.department || selectedEmpDetail.department || 'General'}
+                  </span>
+                  <span style={{ fontSize: '12px', color: C.textLight }}>
+                    • {empModalData?.employee?.designation || selectedEmpDetail.designation || 'Employee'}
+                  </span>
+                </div>
               </div>
-              <button
-                onClick={() => { setSelectedEmpDetail(null); setEmpModalData(null); }}
-                style={{
-                  background: 'none', border: 'none', color: C.textLight,
-                  fontSize: '20px', cursor: 'pointer', fontWeight: 900
-                }}
-              >
-                ✕
-              </button>
+
+              {/* Historical Date Selector & Close Button */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  background: C.inputBg, border: `1px solid ${C.border}`,
+                  borderRadius: '10px', padding: '6px 12px'
+                }}>
+                  <FaCalendarAlt size={12} color={C.teal} />
+                  <span style={{ fontSize: '11px', fontWeight: 800, color: C.textLight, textTransform: 'uppercase' }}>Date:</span>
+                  <input
+                    type="date"
+                    value={modalSelectedDate}
+                    onChange={(e) => handleModalDateChange(e.target.value)}
+                    title="Select date to view historical daily work report"
+                    style={{
+                      border: 'none', background: 'transparent',
+                      color: C.text, fontSize: '12.5px', fontWeight: 700,
+                      outline: 'none', cursor: 'pointer'
+                    }}
+                  />
+                </div>
+                <button
+                  onClick={() => { setSelectedEmpDetail(null); setEmpModalData(null); }}
+                  style={{
+                    background: 'none', border: 'none', color: C.textLight,
+                    fontSize: '20px', cursor: 'pointer', fontWeight: 900,
+                    padding: '4px 8px'
+                  }}
+                  title="Close"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             {loadingModal ? (
-              <div style={{ padding: '40px', textAlign: 'center' }}>
-                <LoadingLogo message="Loading employee monthly records..." />
+              <div style={{ padding: '60px 20px', textAlign: 'center' }}>
+                <LoadingLogo message="Loading employee daily work report..." />
               </div>
             ) : empModalData ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                
-                {/* Employee Profile Header Card */}
-                <div style={{
-                  background: C.inputBg, borderRadius: '12px', padding: '16px',
-                  display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: '12px'
-                }}>
-                  <div>
-                    <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>DESIGNATION</span>
-                    <span style={{ fontSize: '13px', fontWeight: 700, color: C.text }}>{empModalData.employee.designation || '-'}</span>
-                  </div>
-                  <div>
-                    <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>DEPARTMENT</span>
-                    <span style={{ fontSize: '13px', fontWeight: 700, color: C.text }}>{empModalData.employee.department || '-'}</span>
-                  </div>
-                  <div>
-                    <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>LOCATION</span>
-                    <span style={{ fontSize: '13px', fontWeight: 700, color: C.text }}>{empModalData.employee.work_location || 'Head Office'}</span>
-                  </div>
-                </div>
+              (() => {
+                const daily = empModalData.daily_report || {};
+                const morningTasks = daily.tasks?.morning_commitments || [];
+                const extraTasks = daily.tasks?.extra_tasks || [];
+                const carryForwardTasks = daily.tasks?.carry_forward_tasks || [];
 
-                {/* Monthly Summary Box */}
-                <div style={{
-                  background: `${C.teal}10`, border: `1px solid ${C.teal}30`, borderRadius: '12px', padding: '16px',
-                  display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: '12px'
-                }}>
-                  <div>
-                    <span style={{ fontSize: '11px', color: C.teal, fontWeight: 800, display: 'block' }}>DAYS PRESENT</span>
-                    <span style={{ fontSize: '18px', fontWeight: 900, color: C.text }}>{empModalData.summary.totalPresent}</span>
-                  </div>
-                  <div>
-                    <span style={{ fontSize: '11px', color: '#F59E0B', fontWeight: 800, display: 'block' }}>LATE DAYS</span>
-                    <span style={{ fontSize: '18px', fontWeight: 900, color: C.text }}>{empModalData.summary.totalLate}</span>
-                  </div>
-                  <div>
-                    <span style={{ fontSize: '11px', color: '#8B5CF6', fontWeight: 800, display: 'block' }}>LEAVES</span>
-                    <span style={{ fontSize: '18px', fontWeight: 900, color: C.text }}>{empModalData.summary.totalLeave}</span>
-                  </div>
-                  <div>
-                    <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, display: 'block' }}>TOTAL WORKING TIME</span>
-                    <span style={{ fontSize: '16px', fontWeight: 900, color: C.teal }}>{empModalData.summary.totalWorkingHoursFormatted}</span>
-                  </div>
-                </div>
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
 
-                {/* Monthly Logs Table */}
-                <div style={{ marginTop: '8px' }}>
-                  <h3 style={{ fontSize: '14px', fontWeight: 800, color: C.text, marginBottom: '10px' }}>
-                    Recent Attendance Log
-                  </h3>
-                  {empModalData.records.length === 0 ? (
-                    <p style={{ fontSize: '13px', color: C.textLight }}>No attendance records found for this month.</p>
-                  ) : (
-                    <div style={{ overflowX: 'auto', maxHeight: '280px' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
-                        <thead>
-                          <tr style={{ background: C.inputBg, borderBottom: `1px solid ${C.border}` }}>
-                            <th style={{ padding: '8px 10px', color: C.textLight }}>Date</th>
-                            <th style={{ padding: '8px 10px', color: C.textLight }}>Check-In</th>
-                            <th style={{ padding: '8px 10px', color: C.textLight }}>Check-Out</th>
-                            <th style={{ padding: '8px 10px', color: C.textLight }}>Verification Reference</th>
-                            <th style={{ padding: '8px 10px', color: C.textLight }}>Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {empModalData.records.map((r) => (
-                            <tr key={r.attendance_id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                              <td style={{ padding: '8px 10px', fontWeight: 700, color: C.text }}>{formatDateReadable(r.attendance_date)}</td>
-                              <td style={{ padding: '8px 10px', color: C.text }}>{formatTime(r.check_in_time)}</td>
-                              <td style={{ padding: '8px 10px', color: C.text }}>{formatTime(r.check_out_time)}</td>
-                              <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: C.textLight }}>{r.verification_reference || '-'}</td>
-                              <td style={{ padding: '8px 10px' }}>{renderStatusBadge(r.attendance_status)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    {/* ── ATTENDANCE & VERIFICATION OVERVIEW ── */}
+                    <div style={{
+                      background: C.inputBg, border: `1px solid ${C.border}`,
+                      borderRadius: '14px', padding: '16px',
+                      display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: '14px'
+                    }}>
+                      {/* Column 1: Time & Hours */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div>
+                          <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>ATTENDANCE DATE</span>
+                          <span style={{ fontSize: '13.5px', fontWeight: 800, color: C.text }}>
+                            {formatDateReadable(daily.attendance_date || modalSelectedDate)}
+                          </span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                          <div>
+                            <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>CHECK-IN</span>
+                            <span style={{ fontSize: '13px', fontWeight: 700, color: daily.check_in_time ? C.text : C.textLight }}>
+                              {formatTime(daily.check_in_time)}
+                            </span>
+                            {daily.source && (
+                              <span style={{ fontSize: '10px', color: C.teal, display: 'block' }}>via {daily.source}</span>
+                            )}
+                          </div>
+                          <div>
+                            <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>CHECK-OUT</span>
+                            <span style={{ fontSize: '13px', fontWeight: 700, color: daily.check_out_time ? C.text : C.textLight }}>
+                              {formatTime(daily.check_out_time)}
+                            </span>
+                          </div>
+                        </div>
+                        <div>
+                          <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>WORKING DURATION</span>
+                          <span style={{ fontSize: '13.5px', fontWeight: 800, color: C.teal }}>
+                            {daily.total_working_duration || '-'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Column 2: Attendance & EOD Submission Status */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div>
+                          <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>ATTENDANCE STATUS</span>
+                          <div style={{ marginTop: '3px' }}>
+                            {renderStatusBadge(daily.attendance_status)}
+                          </div>
+                        </div>
+                        <div>
+                          <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>ATTENDANCE TYPE</span>
+                          <span style={{ fontSize: '12.5px', fontWeight: 800, color: daily.attendance_type === 'PART_TIME' ? '#7C3AED' : '#10B981' }}>
+                            {daily.attendance_type === 'PART_TIME' ? 'Part-Time' : 'Full-Time'}
+                          </span>
+                        </div>
+                        <div>
+                          <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>END-OF-DAY SUBMISSION</span>
+                          <div style={{ marginTop: '3px' }}>
+                            {daily.end_of_day_submission_status === 'COMPLETED' ? (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                padding: '3px 10px', borderRadius: '12px',
+                                background: 'rgba(16, 185, 129, 0.15)', color: '#10B981',
+                                fontSize: '11.5px', fontWeight: 800
+                              }}>
+                                <FaCheckCircle size={10} /> Completed
+                              </span>
+                            ) : daily.end_of_day_submission_status === 'PENDING' ? (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                padding: '3px 10px', borderRadius: '12px',
+                                background: 'rgba(245, 158, 11, 0.15)', color: '#F59E0B',
+                                fontSize: '11.5px', fontWeight: 800
+                              }}>
+                                <FaClock size={10} /> Pending / Incomplete
+                              </span>
+                            ) : (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                padding: '3px 10px', borderRadius: '12px',
+                                background: 'rgba(148, 163, 184, 0.15)', color: C.textLight,
+                                fontSize: '11.5px', fontWeight: 800
+                              }}>
+                                <FaTimesCircle size={10} /> Not Marked
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Column 3: Biometric & Location Verification */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div>
+                          <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>FACE VERIFICATION</span>
+                          <div style={{ marginTop: '3px' }}>
+                            {(daily.face_verification_status === 'PASSED' || daily.face_verification_status === 'VERIFIED') ? (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                padding: '3px 10px', borderRadius: '12px',
+                                background: 'rgba(16, 185, 129, 0.15)', color: '#10B981',
+                                fontSize: '11.5px', fontWeight: 800
+                              }}>
+                                <FaShieldAlt size={10} /> PASSED
+                              </span>
+                            ) : (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                padding: '3px 10px', borderRadius: '12px',
+                                background: 'rgba(148, 163, 184, 0.15)', color: C.textLight,
+                                fontSize: '11.5px', fontWeight: 800
+                              }}>
+                                {daily.face_verification_status || 'NOT VERIFIED'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>LOCATION VERIFICATION</span>
+                          <div style={{ marginTop: '3px' }}>
+                            {(daily.location_verification_status && (daily.location_verification_status.includes('MATCHED') || daily.location_verification_status === 'PASSED')) ? (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                padding: '3px 10px', borderRadius: '12px',
+                                background: 'rgba(13, 148, 136, 0.15)', color: C.teal,
+                                fontSize: '11.5px', fontWeight: 800
+                              }}>
+                                <FaMapMarkerAlt size={10} /> {daily.location_verification_status}
+                              </span>
+                            ) : (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                padding: '3px 10px', borderRadius: '12px',
+                                background: 'rgba(148, 163, 184, 0.15)', color: C.textLight,
+                                fontSize: '11.5px', fontWeight: 800
+                              }}>
+                                {daily.location_verification_status || 'NOT VERIFIED'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>OFFICE ENVIRONMENT</span>
+                          <span style={{ fontSize: '12.5px', fontWeight: 700, color: C.textMid, display: 'inline-flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
+                            <FaBuilding size={11} color={C.teal} /> {daily.office_environment || 'Main Office'}
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                  )}
-                </div>
 
-              </div>
+                    {/* ── KPI METRICS SUMMARY GRID ── */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(6, 1fr)',
+                      gap: '10px'
+                    }}>
+                      <div style={{ background: C.inputBg, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '12px 14px' }}>
+                        <span style={{ fontSize: '11px', color: C.textLight, fontWeight: 800, display: 'block' }}>TOTAL TASKS</span>
+                        <div style={{ fontSize: '20px', fontWeight: 900, color: C.text, marginTop: '2px' }}>
+                          {daily.total_tasks || 0}
+                        </div>
+                      </div>
+
+                      <div style={{ background: 'rgba(16, 185, 129, 0.08)', border: `1px solid rgba(16, 185, 129, 0.25)`, borderRadius: '12px', padding: '12px 14px' }}>
+                        <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 800, display: 'block' }}>COMPLETED</span>
+                        <div style={{ fontSize: '20px', fontWeight: 900, color: '#10B981', marginTop: '2px' }}>
+                          {daily.completed_tasks || 0}
+                        </div>
+                      </div>
+
+                      <div style={{ background: 'rgba(245, 158, 11, 0.08)', border: `1px solid rgba(245, 158, 11, 0.25)`, borderRadius: '12px', padding: '12px 14px' }}>
+                        <span style={{ fontSize: '11px', color: '#F59E0B', fontWeight: 800, display: 'block' }}>PENDING</span>
+                        <div style={{ fontSize: '20px', fontWeight: 900, color: '#F59E0B', marginTop: '2px' }}>
+                          {daily.pending_tasks || 0}
+                        </div>
+                      </div>
+
+                      <div style={{ background: 'rgba(139, 92, 246, 0.08)', border: `1px solid rgba(139, 92, 246, 0.25)`, borderRadius: '12px', padding: '12px 14px' }}>
+                        <span style={{ fontSize: '11px', color: '#8B5CF6', fontWeight: 800, display: 'block' }}>EXTRA TASKS</span>
+                        <div style={{ fontSize: '20px', fontWeight: 900, color: '#8B5CF6', marginTop: '2px' }}>
+                          {daily.extra_tasks || 0}
+                        </div>
+                      </div>
+
+                      <div style={{ background: 'rgba(236, 72, 153, 0.08)', border: `1px solid rgba(236, 72, 153, 0.25)`, borderRadius: '12px', padding: '12px 14px' }}>
+                        <span style={{ fontSize: '11px', color: '#EC4899', fontWeight: 800, display: 'block' }}>CARRY-FORWARD</span>
+                        <div style={{ fontSize: '20px', fontWeight: 900, color: '#EC4899', marginTop: '2px' }}>
+                          {daily.carry_forward_tasks || 0}
+                        </div>
+                      </div>
+
+                      <div style={{ background: `${C.teal}12`, border: `1px solid ${C.teal}35`, borderRadius: '12px', padding: '12px 14px' }}>
+                        <span style={{ fontSize: '11px', color: C.teal, fontWeight: 800, display: 'block' }}>COMPLETION %</span>
+                        <div style={{ fontSize: '20px', fontWeight: 900, color: C.teal, marginTop: '2px' }}>
+                          {daily.task_completion_percentage || 0}%
+                        </div>
+                        <div style={{ width: '100%', height: '4px', background: `${C.teal}25`, borderRadius: '2px', marginTop: '6px', overflow: 'hidden' }}>
+                          <div style={{ width: `${Math.min(100, Math.max(0, daily.task_completion_percentage || 0))}%`, height: '100%', background: C.teal, borderRadius: '2px' }} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ── INDIVIDUAL TASK DETAILS (3 DISTINCT SECTIONS) ── */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <h3 style={{ fontSize: '15px', fontWeight: 900, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <FaTasks color={C.teal} size={14} /> Individual Task Breakdown
+                        </h3>
+                        <span style={{ fontSize: '12px', color: C.textLight }}>
+                          {daily.total_tasks || 0} total tasks recorded on {formatDateReadable(modalSelectedDate)}
+                        </span>
+                      </div>
+
+                      {/* Section 1: Morning Commitments */}
+                      <div style={{
+                        background: C.card, border: `1px solid ${C.border}`,
+                        borderRadius: '12px', overflow: 'hidden'
+                      }}>
+                        <div style={{
+                          padding: '10px 16px', background: isDark ? 'rgba(255,255,255,0.03)' : '#F9FAFB',
+                          borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <FaSun size={13} color="#F59E0B" />
+                            <span style={{ fontSize: '13px', fontWeight: 800, color: C.text }}>
+                              Morning Commitments
+                            </span>
+                            <span style={{ fontSize: '11px', color: C.textLight }}>
+                              (Tasks committed at morning check-in)
+                            </span>
+                          </div>
+                          <span style={{
+                            padding: '2px 8px', borderRadius: '10px',
+                            background: 'rgba(59, 130, 246, 0.1)', color: '#3B82F6',
+                            fontSize: '11px', fontWeight: 800
+                          }}>
+                            {morningTasks.length} {morningTasks.length === 1 ? 'task' : 'tasks'}
+                          </span>
+                        </div>
+
+                        {morningTasks.length === 0 ? (
+                          <div style={{ padding: '16px', textAlign: 'center', color: C.textLight, fontSize: '12.5px' }}>
+                            No morning commitments recorded for this day.
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            {morningTasks.map((t, idx) => (
+                              <div
+                                key={t.id || idx}
+                                style={{
+                                  padding: '12px 16px',
+                                  borderBottom: idx === morningTasks.length - 1 ? 'none' : `1px solid ${C.border}`,
+                                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px'
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+                                  <div style={{
+                                    width: '8px', height: '8px', borderRadius: '50%',
+                                    background: t.status === 'COMPLETED' ? '#10B981' : '#F59E0B',
+                                    flexShrink: 0
+                                  }} />
+                                  <span style={{ fontSize: '13px', fontWeight: 600, color: C.text, lineHeight: '1.4' }}>
+                                    {t.title}
+                                  </span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                                  <span style={{
+                                    padding: '2px 8px', borderRadius: '4px',
+                                    background: 'rgba(59, 130, 246, 0.1)', color: '#3B82F6',
+                                    fontSize: '10.5px', fontWeight: 800
+                                  }}>
+                                    STANDARD
+                                  </span>
+                                  {t.status === 'COMPLETED' ? (
+                                    <span style={{
+                                      padding: '3px 10px', borderRadius: '12px',
+                                      background: 'rgba(16, 185, 129, 0.12)', color: '#10B981',
+                                      fontSize: '11px', fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                    }}>
+                                      <FaCheckCircle size={10} /> COMPLETED
+                                    </span>
+                                  ) : (
+                                    <span style={{
+                                      padding: '3px 10px', borderRadius: '12px',
+                                      background: 'rgba(245, 158, 11, 0.12)', color: '#F59E0B',
+                                      fontSize: '11px', fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                    }}>
+                                      <FaClock size={10} /> PENDING
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Section 2: Extra Tasks */}
+                      <div style={{
+                        background: C.card, border: `1px solid ${C.border}`,
+                        borderRadius: '12px', overflow: 'hidden'
+                      }}>
+                        <div style={{
+                          padding: '10px 16px', background: isDark ? 'rgba(255,255,255,0.03)' : '#F9FAFB',
+                          borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <FaBolt size={13} color="#8B5CF6" />
+                            <span style={{ fontSize: '13px', fontWeight: 800, color: C.text }}>
+                              Extra Tasks
+                            </span>
+                            <span style={{ fontSize: '11px', color: C.textLight }}>
+                              (Added during End-of-Day Review)
+                            </span>
+                          </div>
+                          <span style={{
+                            padding: '2px 8px', borderRadius: '10px',
+                            background: 'rgba(139, 92, 246, 0.15)', color: '#8B5CF6',
+                            fontSize: '11px', fontWeight: 800
+                          }}>
+                            {extraTasks.length} {extraTasks.length === 1 ? 'task' : 'tasks'}
+                          </span>
+                        </div>
+
+                        {extraTasks.length === 0 ? (
+                          <div style={{ padding: '16px', textAlign: 'center', color: C.textLight, fontSize: '12.5px' }}>
+                            No extra tasks added for this day.
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            {extraTasks.map((t, idx) => (
+                              <div
+                                key={t.id || idx}
+                                style={{
+                                  padding: '12px 16px',
+                                  borderBottom: idx === extraTasks.length - 1 ? 'none' : `1px solid ${C.border}`,
+                                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px'
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+                                  <div style={{
+                                    width: '8px', height: '8px', borderRadius: '50%',
+                                    background: t.status === 'COMPLETED' ? '#10B981' : '#F59E0B',
+                                    flexShrink: 0
+                                  }} />
+                                  <span style={{ fontSize: '13px', fontWeight: 600, color: C.text, lineHeight: '1.4' }}>
+                                    {t.title}
+                                  </span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                                  <span style={{
+                                    padding: '2px 8px', borderRadius: '4px',
+                                    background: 'rgba(139, 92, 246, 0.15)', color: '#8B5CF6',
+                                    fontSize: '10.5px', fontWeight: 800
+                                  }}>
+                                    EXTRA
+                                  </span>
+                                  {t.status === 'COMPLETED' ? (
+                                    <span style={{
+                                      padding: '3px 10px', borderRadius: '12px',
+                                      background: 'rgba(16, 185, 129, 0.12)', color: '#10B981',
+                                      fontSize: '11px', fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                    }}>
+                                      <FaCheckCircle size={10} /> COMPLETED
+                                    </span>
+                                  ) : (
+                                    <span style={{
+                                      padding: '3px 10px', borderRadius: '12px',
+                                      background: 'rgba(245, 158, 11, 0.12)', color: '#F59E0B',
+                                      fontSize: '11px', fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                    }}>
+                                      <FaClock size={10} /> PENDING
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Section 3: Carry-Forward Tasks */}
+                      <div style={{
+                        background: C.card, border: `1px solid ${C.border}`,
+                        borderRadius: '12px', overflow: 'hidden'
+                      }}>
+                        <div style={{
+                          padding: '10px 16px', background: isDark ? 'rgba(255,255,255,0.03)' : '#F9FAFB',
+                          borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <FaHistory size={13} color="#EC4899" />
+                            <span style={{ fontSize: '13px', fontWeight: 800, color: C.text }}>
+                              Carry-Forward Tasks
+                            </span>
+                            <span style={{ fontSize: '11px', color: C.textLight }}>
+                              (Tasks carried forward from previous days)
+                            </span>
+                          </div>
+                          <span style={{
+                            padding: '2px 8px', borderRadius: '10px',
+                            background: 'rgba(236, 72, 153, 0.15)', color: '#EC4899',
+                            fontSize: '11px', fontWeight: 800
+                          }}>
+                            {carryForwardTasks.length} {carryForwardTasks.length === 1 ? 'task' : 'tasks'}
+                          </span>
+                        </div>
+
+                        {carryForwardTasks.length === 0 ? (
+                          <div style={{ padding: '16px', textAlign: 'center', color: C.textLight, fontSize: '12.5px' }}>
+                            No carry-forward tasks for this day.
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            {carryForwardTasks.map((t, idx) => (
+                              <div
+                                key={t.id || idx}
+                                style={{
+                                  padding: '12px 16px',
+                                  borderBottom: idx === carryForwardTasks.length - 1 ? 'none' : `1px solid ${C.border}`,
+                                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px'
+                                }}
+                              >
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <div style={{
+                                      width: '8px', height: '8px', borderRadius: '50%',
+                                      background: t.status === 'COMPLETED' ? '#10B981' : '#F59E0B',
+                                      flexShrink: 0
+                                    }} />
+                                    <span style={{ fontSize: '13px', fontWeight: 600, color: C.text, lineHeight: '1.4' }}>
+                                      {t.title}
+                                    </span>
+                                  </div>
+                                  {t.carried_from_date && (
+                                    <span style={{ fontSize: '11px', color: C.textLight, marginLeft: '18px' }}>
+                                      Carried from {formatDateReadable(t.carried_from_date)}
+                                      {t.carry_count > 1 ? ` (${t.carry_count}x)` : ''}
+                                    </span>
+                                  )}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                                  <span style={{
+                                    padding: '2px 8px', borderRadius: '4px',
+                                    background: 'rgba(236, 72, 153, 0.15)', color: '#EC4899',
+                                    fontSize: '10.5px', fontWeight: 800
+                                  }}>
+                                    CARRY_OVER
+                                  </span>
+                                  {t.status === 'COMPLETED' ? (
+                                    <span style={{
+                                      padding: '3px 10px', borderRadius: '12px',
+                                      background: 'rgba(16, 185, 129, 0.12)', color: '#10B981',
+                                      fontSize: '11px', fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                    }}>
+                                      <FaCheckCircle size={10} /> COMPLETED
+                                    </span>
+                                  ) : (
+                                    <span style={{
+                                      padding: '3px 10px', borderRadius: '12px',
+                                      background: 'rgba(245, 158, 11, 0.12)', color: '#F59E0B',
+                                      fontSize: '11px', fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: '4px'
+                                    }}>
+                                      <FaClock size={10} /> PENDING
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* ── COLLAPSIBLE MONTHLY ATTENDANCE LOG ── */}
+                    <div style={{
+                      borderTop: `1px solid ${C.border}`, paddingTop: '14px', marginTop: '4px'
+                    }}>
+                      <button
+                        onClick={() => setShowMonthlyLog(!showMonthlyLog)}
+                        style={{
+                          width: '100%', padding: '10px 14px', borderRadius: '10px',
+                          border: `1px solid ${C.border}`, background: C.inputBg,
+                          color: C.text, fontSize: '13px', fontWeight: 800,
+                          cursor: 'pointer', display: 'flex', alignItems: 'center',
+                          justifyContent: 'space-between', transition: 'all 0.2s'
+                        }}
+                      >
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <FaCalendarAlt size={13} color={C.teal} />
+                          Monthly Attendance History ({empModalData.summary?.totalMarkedDays || 0} days recorded)
+                        </span>
+                        {showMonthlyLog ? <FaChevronUp size={12} /> : <FaChevronDown size={12} />}
+                      </button>
+
+                      {showMonthlyLog && (
+                        <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                          {/* Monthly Summary Box */}
+                          <div style={{
+                            background: `${C.teal}10`, border: `1px solid ${C.teal}30`, borderRadius: '12px', padding: '14px',
+                            display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: '12px'
+                          }}>
+                            <div>
+                              <span style={{ fontSize: '11px', color: C.teal, fontWeight: 800, display: 'block' }}>DAYS PRESENT</span>
+                              <span style={{ fontSize: '18px', fontWeight: 900, color: C.text }}>{empModalData.summary.totalPresent}</span>
+                            </div>
+                            <div>
+                              <span style={{ fontSize: '11px', color: '#F59E0B', fontWeight: 800, display: 'block' }}>LATE DAYS</span>
+                              <span style={{ fontSize: '18px', fontWeight: 900, color: C.text }}>{empModalData.summary.totalLate}</span>
+                            </div>
+                            <div>
+                              <span style={{ fontSize: '11px', color: '#8B5CF6', fontWeight: 800, display: 'block' }}>LEAVES</span>
+                              <span style={{ fontSize: '18px', fontWeight: 900, color: C.text }}>{empModalData.summary.totalLeave}</span>
+                            </div>
+                            <div>
+                              <span style={{ fontSize: '11px', color: C.textMid, fontWeight: 800, display: 'block' }}>TOTAL WORKING TIME</span>
+                              <span style={{ fontSize: '16px', fontWeight: 900, color: C.teal }}>{empModalData.summary.totalWorkingHoursFormatted}</span>
+                            </div>
+                          </div>
+
+                          {/* Monthly Logs Table */}
+                          {empModalData.records.length === 0 ? (
+                            <p style={{ fontSize: '13px', color: C.textLight, textAlign: 'center', padding: '12px' }}>
+                              No attendance records found for this month.
+                            </p>
+                          ) : (
+                            <div style={{ overflowX: 'auto', maxHeight: '240px', border: `1px solid ${C.border}`, borderRadius: '10px' }}>
+                              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
+                                <thead>
+                                  <tr style={{ background: C.inputBg, borderBottom: `1px solid ${C.border}` }}>
+                                    <th style={{ padding: '8px 10px', color: C.textLight }}>Date</th>
+                                    <th style={{ padding: '8px 10px', color: C.textLight }}>Check-In</th>
+                                    <th style={{ padding: '8px 10px', color: C.textLight }}>Check-Out</th>
+                                    <th style={{ padding: '8px 10px', color: C.textLight }}>Verification Reference</th>
+                                    <th style={{ padding: '8px 10px', color: C.textLight }}>Status</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {empModalData.records.map((r) => (
+                                    <tr key={r.attendance_id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                                      <td style={{ padding: '8px 10px', fontWeight: 700, color: C.text }}>{formatDateReadable(r.attendance_date)}</td>
+                                      <td style={{ padding: '8px 10px', color: C.text }}>{formatTime(r.check_in_time)}</td>
+                                      <td style={{ padding: '8px 10px', color: C.text }}>{formatTime(r.check_out_time)}</td>
+                                      <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: C.textLight }}>{r.verification_reference || '-'}</td>
+                                      <td style={{ padding: '8px 10px' }}>{renderStatusBadge(r.attendance_status)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
+                );
+              })()
             ) : null}
 
             {/* Modal Footer */}
@@ -1925,7 +2752,7 @@ export default function SuperAdminAttendanceDashboard() {
               <button
                 onClick={() => { setSelectedEmpDetail(null); setEmpModalData(null); }}
                 style={{
-                  padding: '8px 18px', borderRadius: '8px', border: `1px solid ${C.border}`,
+                  padding: '8px 20px', borderRadius: '8px', border: `1px solid ${C.border}`,
                   background: C.inputBg, color: C.text, fontSize: '13px', fontWeight: 800, cursor: 'pointer'
                 }}
               >
@@ -2066,7 +2893,7 @@ export default function SuperAdminAttendanceDashboard() {
                 <textarea
                   rows={5}
                   required
-                  placeholder={`18.619358, 73.874924\n18.619565, 73.874942\n18.619585, 73.874550\n18.619377, 73.874543`}
+                  placeholder={`18.619827, 73.874738\n18.619801, 73.874805\n18.619737, 73.874833\n18.619673, 73.874805\n18.619647, 73.874738\n18.619673, 73.874671\n18.619737, 73.874643\n18.619801, 73.874671`}
                   value={buildingForm.polygon_coordinates}
                   onChange={(e) => setBuildingForm({ ...buildingForm, polygon_coordinates: e.target.value })}
                   style={{
@@ -2076,7 +2903,7 @@ export default function SuperAdminAttendanceDashboard() {
                   }}
                 />
                 <span style={{ fontSize: '11.5px', color: C.textLight, display: 'block', marginTop: '4px' }}>
-                  Example format: <code>18.619358, 73.874924</code> (Point 1), <code>18.619565, 73.874942</code> (Point 2), etc.
+                  Example format: <code>18.619737, 73.874738</code> (Center), 10m radius perimeter points, etc.
                 </span>
               </div>
 
@@ -2119,6 +2946,572 @@ export default function SuperAdminAttendanceDashboard() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── SUPER ADMIN RE-ATTENDANCE MODAL ── */}
+      {reAttendanceModalOpen && reAttendanceTarget && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            background: C.card, border: `1px solid ${C.border}`,
+            borderRadius: '20px', width: '100%', maxWidth: '520px',
+            padding: '24px', boxShadow: '0 20px 40px rgba(0,0,0,0.25)',
+            display: 'flex', flexDirection: 'column', gap: '18px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${C.border}`, paddingBottom: '14px' }}>
+              <div>
+                <h2 style={{ fontSize: '18px', fontWeight: 900, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <FaRedo color={C.teal} size={16} /> Grant Re-Attendance
+                </h2>
+                <span style={{ fontSize: '12.5px', color: C.textLight }}>
+                  Unlock employee day or allow fresh biometric attendance check-in
+                </span>
+              </div>
+              <button
+                onClick={() => setReAttendanceModalOpen(false)}
+                style={{ background: 'none', border: 'none', color: C.textLight, fontSize: '20px', cursor: 'pointer', fontWeight: 900 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Target Employee Info */}
+            <div style={{
+              background: C.inputBg, border: `1px solid ${C.border}`,
+              borderRadius: '12px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '6px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13.5px', fontWeight: 800, color: C.text }}>
+                <span>{reAttendanceTarget.full_name}</span>
+                <span style={{ color: C.teal }}>{reAttendanceTarget.employee_code}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', color: C.textLight }}>
+                <span>Designation: {reAttendanceTarget.designation || 'Employee'}</span>
+                <span>Date: {selectedDate}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', color: C.textLight }}>
+                <span>Status: {reAttendanceTarget.status || reAttendanceTarget.attendance_status || 'NOT_MARKED'}</span>
+                <span>{reAttendanceTarget.attendance_type === 'PART_TIME' ? 'Part-Time' : 'Full-Time'}</span>
+              </div>
+            </div>
+
+            {/* Mode Selection */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <label style={{ fontSize: '13px', fontWeight: 800, color: C.text }}>Select Re-Attendance Action:</label>
+              
+              <label style={{
+                display: 'flex', alignItems: 'flex-start', gap: '10px',
+                padding: '12px 14px', borderRadius: '10px',
+                border: `1.5px solid ${reAttendanceMode === 'RESET_CHECKOUT' ? C.teal : C.border}`,
+                background: reAttendanceMode === 'RESET_CHECKOUT' ? 'rgba(13, 148, 136, 0.08)' : C.inputBg,
+                cursor: 'pointer'
+              }}>
+                <input
+                  type="radio"
+                  name="reAttendanceMode"
+                  value="RESET_CHECKOUT"
+                  checked={reAttendanceMode === 'RESET_CHECKOUT'}
+                  onChange={() => setReAttendanceMode('RESET_CHECKOUT')}
+                  style={{ marginTop: '3px' }}
+                />
+                <div>
+                  <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text }}>Reopen Work Day (Clear Check-Out)</div>
+                  <div style={{ fontSize: '12px', color: C.textLight, marginTop: '2px' }}>
+                    Clears accidental check-out so the employee’s panel unlocks back to active working state.
+                  </div>
+                </div>
+              </label>
+
+              <label style={{
+                display: 'flex', alignItems: 'flex-start', gap: '10px',
+                padding: '12px 14px', borderRadius: '10px',
+                border: `1.5px solid ${reAttendanceMode === 'FULL_RESET' ? C.teal : C.border}`,
+                background: reAttendanceMode === 'FULL_RESET' ? 'rgba(13, 148, 136, 0.08)' : C.inputBg,
+                cursor: 'pointer'
+              }}>
+                <input
+                  type="radio"
+                  name="reAttendanceMode"
+                  value="FULL_RESET"
+                  checked={reAttendanceMode === 'FULL_RESET'}
+                  onChange={() => setReAttendanceMode('FULL_RESET')}
+                  style={{ marginTop: '3px' }}
+                />
+                <div>
+                  <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text }}>Full Reset (Allow Fresh Check-In)</div>
+                  <div style={{ fontSize: '12px', color: C.textLight, marginTop: '2px' }}>
+                    Resets attendance so the employee can perform biometric face/location check-in again.
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            {reAttendanceMsg && (
+              <div style={{
+                padding: '10px 14px', borderRadius: '8px',
+                background: reAttendanceMsg.type === 'error' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+                border: `1px solid ${reAttendanceMsg.type === 'error' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(16, 185, 129, 0.3)'}`,
+                color: reAttendanceMsg.type === 'error' ? '#EF4444' : '#10B981',
+                fontSize: '13px', fontWeight: 700
+              }}>
+                {reAttendanceMsg.text}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
+              <button
+                type="button"
+                onClick={() => setReAttendanceModalOpen(false)}
+                style={{
+                  padding: '9px 16px', borderRadius: '8px',
+                  border: `1px solid ${C.border}`, background: C.inputBg, color: C.textLight,
+                  fontSize: '13px', fontWeight: 700, cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReAttendance}
+                disabled={reAttendanceLoading}
+                style={{
+                  padding: '9px 20px', borderRadius: '8px',
+                  border: 'none', background: C.teal, color: '#FFFFFF',
+                  fontSize: '13px', fontWeight: 800, cursor: reAttendanceLoading ? 'not-allowed' : 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  opacity: reAttendanceLoading ? 0.7 : 1
+                }}
+              >
+                <FaRedo size={12} /> {reAttendanceLoading ? 'Granting...' : 'Confirm Re-Attendance'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MANUAL ATTENDANCE & VERIFICATION EXEMPTION MODAL ── */}
+      {manualModalOpen && (
+        <div style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(0, 0, 0, 0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 9999, padding: '16px'
+        }}>
+          <div style={{
+            background: C.card,
+            borderRadius: '16px',
+            border: `1px solid ${C.border}`,
+            boxShadow: '0 20px 45px rgba(0,0,0,0.3)',
+            width: '100%', maxWidth: '580px',
+            maxHeight: '90vh', overflowY: 'auto',
+            padding: '24px',
+            display: 'flex', flexDirection: 'column', gap: '18px'
+          }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{
+                  width: '36px', height: '36px', borderRadius: '10px',
+                  background: 'rgba(16, 185, 129, 0.15)', color: '#10B981',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontWeight: 900
+                }}>
+                  <FaUserCheck size={18} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 900, color: C.text }}>
+                    Attendance Control & Verification Exemption
+                  </h3>
+                  <p style={{ margin: '2px 0 0', fontSize: '12px', color: C.textLight }}>
+                    Mark attendance manually or configure per-account location & face exemptions
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setManualModalOpen(false)}
+                style={{
+                  background: 'none', border: 'none', color: C.textLight,
+                  fontSize: '18px', cursor: 'pointer', padding: '4px'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Employee Target Banner / Selector */}
+            <div style={{
+              padding: '12px 14px', borderRadius: '12px',
+              background: C.inputBg, border: `1px solid ${C.border}`,
+              display: 'flex', flexDirection: 'column', gap: '8px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '11.5px', fontWeight: 800, color: C.teal, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Target Employee
+                </span>
+                <span style={{ fontSize: '12px', color: C.textLight, fontWeight: 600 }}>
+                  Date: {manualForm.date}
+                </span>
+              </div>
+              {records && records.length > 1 && !manualTarget?.attendance_id ? (
+                <select
+                  value={manualTarget?.employee_id || ''}
+                  onChange={(e) => {
+                    const sel = records.find(r => r.employee_id === e.target.value);
+                    if (sel) handleOpenManualModal(sel);
+                  }}
+                  style={{
+                    padding: '8px 12px', borderRadius: '8px',
+                    border: `1px solid ${C.border}`, background: C.card, color: C.text,
+                    fontSize: '13px', fontWeight: 700, width: '100%'
+                  }}
+                >
+                  {records.map(r => (
+                    <option key={r.employee_id} value={r.employee_id}>
+                      {r.employee_name || r.full_name} ({r.employee_code || r.employee_id}) — {r.designation || 'Staff'}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: '14.5px', fontWeight: 900, color: C.text }}>
+                      {manualTarget?.employee_name || manualTarget?.full_name || 'Selected Employee'}
+                    </div>
+                    <div style={{ fontSize: '12px', color: C.textLight }}>
+                      {manualTarget?.employee_code || manualTarget?.employee_id} • {manualTarget?.designation || 'Employee'} ({manualTarget?.department || 'General'})
+                    </div>
+                  </div>
+                  <div style={{
+                    padding: '3px 8px', borderRadius: '6px',
+                    background: `${C.teal}15`, color: C.teal,
+                    fontSize: '11px', fontWeight: 800
+                  }}>
+                    {manualTarget?.attendance_status || manualTarget?.status || 'Active'}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Sub-Tabs: Manual Attendance vs Verification Access */}
+            <div style={{
+              display: 'flex', gap: '6px',
+              padding: '4px', borderRadius: '10px',
+              background: C.inputBg, border: `1px solid ${C.border}`
+            }}>
+              <button
+                type="button"
+                onClick={() => setManualTab('manual')}
+                style={{
+                  flex: 1, padding: '8px 12px', borderRadius: '8px', border: 'none',
+                  background: manualTab === 'manual' ? C.card : 'transparent',
+                  color: manualTab === 'manual' ? C.teal : C.textLight,
+                  fontWeight: 800, fontSize: '12.5px', cursor: 'pointer',
+                  boxShadow: manualTab === 'manual' ? '0 2px 6px rgba(0,0,0,0.08)' : 'none',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                  transition: 'all 0.2s'
+                }}
+              >
+                <FaUserCheck size={13} /> Mark Attendance Manually
+              </button>
+              <button
+                type="button"
+                onClick={() => setManualTab('exemption')}
+                style={{
+                  flex: 1, padding: '8px 12px', borderRadius: '8px', border: 'none',
+                  background: manualTab === 'exemption' ? C.card : 'transparent',
+                  color: manualTab === 'exemption' ? '#10B981' : C.textLight,
+                  fontWeight: 800, fontSize: '12.5px', cursor: 'pointer',
+                  boxShadow: manualTab === 'exemption' ? '0 2px 6px rgba(0,0,0,0.08)' : 'none',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                  transition: 'all 0.2s'
+                }}
+              >
+                <FaShieldAlt size={13} /> Verification Access (Exemptions)
+              </button>
+            </div>
+
+            {/* TAB 1: MARK ATTENDANCE MANUALLY */}
+            {manualTab === 'manual' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '4px' }}>
+                      Attendance Status:
+                    </label>
+                    <select
+                      value={manualForm.status}
+                      onChange={(e) => setManualForm({ ...manualForm, status: e.target.value })}
+                      style={{
+                        width: '100%', padding: '9px 12px', borderRadius: '8px',
+                        border: `1px solid ${C.border}`, background: C.inputBg, color: C.text,
+                        fontSize: '13px', fontWeight: 700
+                      }}
+                    >
+                      <option value="PRESENT">PRESENT (Full Day)</option>
+                      <option value="HALF_DAY">HALF_DAY (Half Day)</option>
+                      <option value="LATE">LATE (Late Mark)</option>
+                      <option value="PART_TIME">PART_TIME (Evening Shift)</option>
+                      <option value="LEAVE">LEAVE (Approved Leave)</option>
+                      <option value="ABSENT">ABSENT (Absent)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '4px' }}>
+                      Shift Type:
+                    </label>
+                    <select
+                      value={manualForm.attendanceType}
+                      onChange={(e) => setManualForm({ ...manualForm, attendanceType: e.target.value })}
+                      style={{
+                        width: '100%', padding: '9px 12px', borderRadius: '8px',
+                        border: `1px solid ${C.border}`, background: C.inputBg, color: C.text,
+                        fontSize: '13px', fontWeight: 700
+                      }}
+                    >
+                      <option value="FULL_TIME">Full-Time (Standard Shift)</option>
+                      <option value="PART_TIME">Part-Time (Evening Shift)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '4px' }}>
+                      Check-In Time:
+                    </label>
+                    <input
+                      type="time"
+                      value={manualForm.checkInTime}
+                      onChange={(e) => setManualForm({ ...manualForm, checkInTime: e.target.value })}
+                      style={{
+                        width: '100%', padding: '9px 12px', borderRadius: '8px',
+                        border: `1px solid ${C.border}`, background: C.inputBg, color: C.text,
+                        fontSize: '13px', fontWeight: 700
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '4px' }}>
+                      Check-Out Time (Optional):
+                    </label>
+                    <input
+                      type="time"
+                      value={manualForm.checkOutTime}
+                      onChange={(e) => setManualForm({ ...manualForm, checkOutTime: e.target.value })}
+                      placeholder="e.g. 18:30"
+                      style={{
+                        width: '100%', padding: '9px 12px', borderRadius: '8px',
+                        border: `1px solid ${C.border}`, background: C.inputBg, color: C.text,
+                        fontSize: '13px', fontWeight: 700
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '4px' }}>
+                    Admin Remarks / Justification:
+                  </label>
+                  <input
+                    type="text"
+                    value={manualForm.remarks}
+                    onChange={(e) => setManualForm({ ...manualForm, remarks: e.target.value })}
+                    placeholder="Reason for manual marking"
+                    style={{
+                      width: '100%', padding: '9px 12px', borderRadius: '8px',
+                      border: `1px solid ${C.border}`, background: C.inputBg, color: C.text,
+                      fontSize: '13px', fontWeight: 600
+                    }}
+                  />
+                </div>
+
+                <div style={{
+                  padding: '10px 14px', borderRadius: '8px',
+                  background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)',
+                  fontSize: '12px', color: '#10B981', fontWeight: 600
+                }}>
+                  ✓ Marking attendance will record this employee as verified with <code style={{ fontWeight: 800 }}>SUPER_ADMIN_MANUAL</code> authority.
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: VERIFICATION EXEMPTIONS (PER-ACCOUNT) */}
+            {manualTab === 'exemption' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{
+                  padding: '12px 14px', borderRadius: '10px',
+                  background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)',
+                  fontSize: '12.5px', color: '#3B82F6', fontWeight: 600, lineHeight: 1.5
+                }}>
+                  ℹ️ <strong>Per-Account Exemption:</strong> Select which verification is <u>NOT required</u> for this specific account. <strong>All other employees will remain strictly verified</strong> as usual.
+                </div>
+
+                {/* Exemption Checkboxes */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <label style={{
+                    display: 'flex', alignItems: 'flex-start', gap: '12px',
+                    padding: '14px', borderRadius: '10px',
+                    border: `1.5px solid ${exemptionForm.bypassLocation ? '#10B981' : C.border}`,
+                    background: exemptionForm.bypassLocation ? 'rgba(16, 185, 129, 0.08)' : C.inputBg,
+                    cursor: 'pointer'
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={exemptionForm.bypassLocation}
+                      onChange={(e) => setExemptionForm({ ...exemptionForm, bypassLocation: e.target.checked })}
+                      style={{ marginTop: '3px', width: '16px', height: '16px', accentColor: '#10B981' }}
+                    />
+                    <div>
+                      <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        📍 Location / Office Geofence NOT Required
+                      </div>
+                      <div style={{ fontSize: '12px', color: C.textLight, marginTop: '3px', lineHeight: 1.4 }}>
+                        When enabled, <strong>only this account</strong> is exempt from office building geofence checks. The employee can mark attendance from field/home/remote locations.
+                      </div>
+                    </div>
+                  </label>
+
+                  <label style={{
+                    display: 'flex', alignItems: 'flex-start', gap: '12px',
+                    padding: '14px', borderRadius: '10px',
+                    border: `1.5px solid ${exemptionForm.bypassFace ? '#10B981' : C.border}`,
+                    background: exemptionForm.bypassFace ? 'rgba(16, 185, 129, 0.08)' : C.inputBg,
+                    cursor: 'pointer'
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={exemptionForm.bypassFace}
+                      onChange={(e) => setExemptionForm({ ...exemptionForm, bypassFace: e.target.checked })}
+                      style={{ marginTop: '3px', width: '16px', height: '16px', accentColor: '#10B981' }}
+                    />
+                    <div>
+                      <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        👤 Face / Biometric Matching NOT Required
+                      </div>
+                      <div style={{ fontSize: '12px', color: C.textLight, marginTop: '3px', lineHeight: 1.4 }}>
+                        When enabled, <strong>only this account</strong> is exempt from camera facial recognition and KYC template matching.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Duration */}
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '6px' }}>
+                    Exemption Duration:
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+                    {[
+                      { key: 'today', label: 'Today Only' },
+                      { key: '7days', label: '7 Days' },
+                      { key: '30days', label: '30 Days' },
+                      { key: 'permanent', label: 'Permanent' }
+                    ].map(p => (
+                      <button
+                        key={p.key}
+                        type="button"
+                        onClick={() => setExemptionForm({ ...exemptionForm, duration: p.key })}
+                        style={{
+                          padding: '8px 10px', borderRadius: '8px',
+                          border: `1px solid ${exemptionForm.duration === p.key ? '#10B981' : C.border}`,
+                          background: exemptionForm.duration === p.key ? 'rgba(16, 185, 129, 0.15)' : C.inputBg,
+                          color: exemptionForm.duration === p.key ? '#10B981' : C.text,
+                          fontSize: '12px', fontWeight: 800, cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '4px' }}>
+                    Reason / Approval Note:
+                  </label>
+                  <input
+                    type="text"
+                    value={exemptionForm.reason}
+                    onChange={(e) => setExemptionForm({ ...exemptionForm, reason: e.target.value })}
+                    placeholder="e.g. Field executive / remote client site approval"
+                    style={{
+                      width: '100%', padding: '9px 12px', borderRadius: '8px',
+                      border: `1px solid ${C.border}`, background: C.inputBg, color: C.text,
+                      fontSize: '13px', fontWeight: 600
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {manualMsg && (
+              <div style={{
+                padding: '10px 14px', borderRadius: '8px',
+                background: manualMsg.type === 'error' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+                border: `1px solid ${manualMsg.type === 'error' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(16, 185, 129, 0.3)'}`,
+                color: manualMsg.type === 'error' ? '#EF4444' : '#10B981',
+                fontSize: '13px', fontWeight: 700
+              }}>
+                {manualMsg.text}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
+              <button
+                type="button"
+                onClick={() => setManualModalOpen(false)}
+                style={{
+                  padding: '9px 16px', borderRadius: '8px',
+                  border: `1px solid ${C.border}`, background: C.inputBg, color: C.textLight,
+                  fontSize: '13px', fontWeight: 700, cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              {manualTab === 'manual' ? (
+                <button
+                  type="button"
+                  onClick={handleSubmitManualAttendance}
+                  disabled={manualSubmitting}
+                  style={{
+                    padding: '9px 20px', borderRadius: '8px',
+                    border: 'none', background: '#10B981', color: '#FFFFFF',
+                    fontSize: '13px', fontWeight: 800, cursor: manualSubmitting ? 'not-allowed' : 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    opacity: manualSubmitting ? 0.7 : 1,
+                    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)'
+                  }}
+                >
+                  <FaUserCheck size={12} /> {manualSubmitting ? 'Saving...' : 'Mark Attendance Now'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSubmitExemption}
+                  disabled={manualSubmitting}
+                  style={{
+                    padding: '9px 20px', borderRadius: '8px',
+                    border: 'none', background: '#10B981', color: '#FFFFFF',
+                    fontSize: '13px', fontWeight: 800, cursor: manualSubmitting ? 'not-allowed' : 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    opacity: manualSubmitting ? 0.7 : 1,
+                    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)'
+                  }}
+                >
+                  <FaShieldAlt size={12} /> {manualSubmitting ? 'Granting...' : 'Grant Verification Exemption'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

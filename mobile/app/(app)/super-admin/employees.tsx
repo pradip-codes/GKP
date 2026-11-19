@@ -12,9 +12,11 @@ import {
   Modal,
   Image,
   Linking,
+  FlatList,
 } from 'react-native';
 import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { useTheme } from '../../../contexts/ThemeContext';
 import { colors } from '../../../theme/colors';
 import { typography } from '../../../theme/typography';
 import { spacing } from '../../../theme/spacing';
@@ -69,7 +71,14 @@ const HIERARCHY_LEVELS = [
   { key: 'TC', label: 'TC / Telecaller', short: 'TC', color: '#059669', bg: '#ECFDF5' },
 ];
 
+const dashboardTabs = [
+  { id: 'employees', label: 'Employees', icon: '👥' },
+  { id: 'hierarchy', label: 'Hierarchy', icon: '🏗️' },
+  { id: 'candidates', label: 'Candidates', icon: '📋' },
+];
+
 export default function SuperAdminEmployeesScreen() {
+  const { colors } = useTheme();
   const [activeTab, setActiveTab] = useState<'employees' | 'hierarchy' | 'candidates'>('employees');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -77,6 +86,7 @@ export default function SuperAdminEmployeesScreen() {
   const [selectedDesignation, setSelectedDesignation] = useState('ALL');
   const [actionRequiredFilter, setActionRequiredFilter] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
 
   const [stats, setStats] = useState<any>(null);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -1822,6 +1832,38 @@ export default function SuperAdminEmployeesScreen() {
         </View>
       </View>
 
+      {/* Tab Navigation */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.tabScroll}
+      >
+        {dashboardTabs.map((tab) => (
+          <TouchableOpacity
+            key={tab.id}
+            style={[
+              styles.tabButton,
+              {
+                backgroundColor: activeTab === tab.id ? colors.primary : colors.card,
+                borderColor: activeTab === tab.id ? colors.primary : colors.border,
+              },
+            ]}
+            onPress={() => setActiveTab(tab.id as any)}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 16 }}>{tab.icon}</Text>
+            <Text
+              style={[
+                styles.tabButtonText,
+                { color: activeTab === tab.id ? '#FFF' : colors.text },
+              ]}
+            >
+              {tab.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
       {/* KPI Cards */}
       <View style={styles.kpiContainer}>
         <View style={styles.kpiCard}>
@@ -3064,6 +3106,24 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg,
+  },
+  tabScroll: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+  },
+  tabButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  tabButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   header: {
     backgroundColor: '#0F172A',

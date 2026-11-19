@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  ActivityIndicator,
   Alert,
   Modal,
   TextInput,
@@ -20,7 +19,7 @@ import { spacing } from '../../../theme/spacing';
 import { Card } from '../../../components/Card';
 import { Button } from '../../../components/Button';
 import { Icon } from '../../../components/Icon';
-import { ThemeToggle } from '../../../components/ThemeToggle';
+import { LoadingState } from '../../../components/LoadingState';
 import {
   fetchSuperAdminDashboard,
   fetchBusinessStats,
@@ -52,9 +51,10 @@ interface AdminUser {
 
 export default function SuperAdminDashboardScreen() {
   const { user } = useAuth();
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState('overview');
   const [metrics, setMetrics] = useState<any>(null);
   const [businessStats, setBusinessStats] = useState<any>(null);
   const [admins, setAdmins] = useState<AdminUser[]>([]);
@@ -226,22 +226,28 @@ export default function SuperAdminDashboardScreen() {
     { label: 'Total Banks', value: businessStats?.banks?.total_banks || 0, icon: 'shield', color: '#3B82F6', path: '/super-admin/banks' },
   ];
 
+  const dashboardTabs = [
+    { id: 'overview', label: 'Overview', icon: '📊' },
+    { id: 'customers', label: 'Customers', icon: '👥' },
+    { id: 'partners', label: 'Partners', icon: '🤝' },
+    { id: 'team', label: 'Team', icon: '👔' },
+    { id: 'applications', label: 'Applications', icon: '📋' },
+    { id: 'admins', label: 'Admins', icon: '👨‍💼' },
+    { id: 'financials', label: 'Financials', icon: '💰' },
+  ];
+
   if (loading) {
-    return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.loadingText}>Loading Super Admin Dashboard...</Text>
-      </View>
-    );
+    return <LoadingState message="Loading Super Admin Dashboard..." />;
   }
 
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: colors.bg }]}
+      contentContainerStyle={styles.content}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />}
     >
       {/* Header */}
-      <View style={[styles.header, { backgroundColor: isDark ? colors.card : colors.primaryDark }]}>
+      <View style={[styles.header, { backgroundColor: colors.sidebar }]}>
         <View style={styles.headerLeft}>
           <Text style={styles.roleBadge}>SUPER ADMIN</Text>
           <Text style={styles.headerTitle}>Dashboard</Text>
@@ -261,15 +267,49 @@ export default function SuperAdminDashboardScreen() {
         </View>
       )}
 
+      {/* Tab Navigation */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.tabScroll}
+      >
+        {dashboardTabs.map((tab) => (
+          <TouchableOpacity
+            key={tab.id}
+            style={[
+              styles.tabButton,
+              {
+                backgroundColor: activeTab === tab.id ? colors.primary : colors.card,
+                borderColor: activeTab === tab.id ? colors.primary : colors.border,
+              },
+            ]}
+            onPress={() => setActiveTab(tab.id)}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 16 }}>{tab.icon}</Text>
+            <Text
+              style={[
+                styles.tabButtonText,
+                { color: activeTab === tab.id ? '#FFF' : colors.text },
+              ]}
+            >
+              {tab.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
       {/* Stats Grid */}
       <View style={styles.statsGrid}>
         {statCards.map((stat, index) => (
           <TouchableOpacity
             key={index}
-            style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border, borderLeftColor: stat.color }]}
+            style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}
             onPress={() => router.push(stat.path as any)}
           >
-            <Text style={styles.statIcon}>{stat.icon}</Text>
+            <View style={[styles.statIconWrap, { backgroundColor: `${stat.color}1A` }]}>
+              <Icon name={stat.icon} size={19} color={stat.color} />
+            </View>
             <Text style={[styles.statValue, { color: stat.color }]}>{stat.value}</Text>
             <Text style={[styles.statLabel, { color: colors.textLight }]}>{stat.label}</Text>
           </TouchableOpacity>
@@ -279,7 +319,7 @@ export default function SuperAdminDashboardScreen() {
       {/* Admin Management Section */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Admin Management</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Admin Management</Text>
           <Button
             title="Add Admin"
             onPress={() => setShowCreateModal(true)}
@@ -334,7 +374,7 @@ export default function SuperAdminDashboardScreen() {
       {/* Create Admin Modal */}
       <Modal visible={showCreateModal} transparent animationType="fade">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Create New Admin</Text>
               <TouchableOpacity onPress={() => setShowCreateModal(false)}>
@@ -412,7 +452,7 @@ export default function SuperAdminDashboardScreen() {
       {/* Edit Admin Modal */}
       <Modal visible={showEditModal} transparent animationType="fade">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Edit Admin</Text>
               <TouchableOpacity onPress={() => setShowEditModal(false)}>
@@ -482,24 +522,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg,
   },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.md,
-  },
-  loadingText: {
-    fontSize: 14,
-    color: colors.textMid,
-    marginTop: spacing.sm,
+  content: {
+    paddingBottom: spacing.xl,
   },
   header: {
-    backgroundColor: '#0F172A',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xl,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    borderBottomLeftRadius: 22,
+    borderBottomRightRadius: 22,
   },
   headerLeft: {
     flex: 1,
@@ -539,6 +572,24 @@ const styles = StyleSheet.create({
     marginLeft: spacing.xs,
     flex: 1,
   },
+  tabScroll: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+  },
+  tabButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  tabButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -547,18 +598,16 @@ const styles = StyleSheet.create({
   },
   statCard: {
     width: '48%',
-    backgroundColor: '#fff',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: spacing.md,
-    borderLeftWidth: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    borderWidth: 1,
   },
-  statIcon: {
-    fontSize: 24,
+  statIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: spacing.xs,
   },
   statValue: {

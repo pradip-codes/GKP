@@ -20,6 +20,9 @@ import { ApplicationItem } from '../../types';
 import {
   fetchKycApplications,
   fetchGeneralApplicationsQueue,
+  fetchPhysicalCurableApplications,
+  fetchDigitalCurableApplications,
+  fetchEmailCurableApplications,
   verifyKycApplication,
   rejectKycApplication,
   requestInfoKycApplication,
@@ -49,7 +52,11 @@ export default function OperationalQueueScreen() {
     desigUpper.includes('PAN') ? 'PAN' :
     desigUpper.includes('QD') ? 'QD' :
     desigUpper.includes('REMARK') ? 'REMARK' :
-    desigUpper.includes('FINAL') ? 'FINAL' : 'ALL'
+    desigUpper.includes('FINAL') ? 'FINAL' :
+    desigUpper.includes('QUERABLE') || desigUpper.includes('QUERYABLE') ? 'QUERABLE' :
+    desigUpper.includes('PHYSICAL_CURABLE') ? 'PHYSICAL' :
+    desigUpper.includes('DIGITAL_CURABLE') ? 'DIGITAL' :
+    desigUpper.includes('EMAIL_CURABLE') ? 'EMAIL' : 'ALL'
   );
   const [activeQueueTab, setActiveQueueTab] = useState<string>(initialMode);
 
@@ -122,6 +129,27 @@ export default function OperationalQueueScreen() {
       if (activeQueueTab === 'KYC' || desigUpper.includes('KYC')) {
         result = await fetchKycApplications(params);
         setKycStats(result.stats);
+      } else if (activeQueueTab === 'QUERABLE' || desigUpper.includes('QUERABLE') || desigUpper.includes('QUERYABLE')) {
+        // Querable Operator sees rejected applications
+        result = await fetchGeneralApplicationsQueue({
+          ...params,
+          status: 'rejected',
+        });
+      } else if (activeQueueTab === 'PHYSICAL' || desigUpper.includes('PHYSICAL_CURABLE')) {
+        result = await fetchGeneralApplicationsQueue({
+          ...params,
+          curing_designation: 'PHYSICAL_CURABLE',
+        });
+      } else if (activeQueueTab === 'DIGITAL' || desigUpper.includes('DIGITAL_CURABLE')) {
+        result = await fetchGeneralApplicationsQueue({
+          ...params,
+          curing_designation: 'DIGITAL_CURABLE',
+        });
+      } else if (activeQueueTab === 'EMAIL' || desigUpper.includes('EMAIL_CURABLE')) {
+        result = await fetchGeneralApplicationsQueue({
+          ...params,
+          curing_designation: 'EMAIL_CURABLE',
+        });
       } else {
         // Fetch general queue filtered for PAN, QD, REMARK, FINAL, or ALL
         let statusFilter = activeFilters.status;
@@ -300,6 +328,10 @@ export default function OperationalQueueScreen() {
     if (desigUpper.includes('QD')) return 'QD Operator Verification Queue';
     if (desigUpper.includes('REMARK')) return 'Remark Operator Desk';
     if (desigUpper.includes('FINAL')) return 'Final Status Approval Desk';
+    if (desigUpper.includes('QUERABLE') || desigUpper.includes('QUERYABLE')) return 'Querable Operator Queue';
+    if (desigUpper.includes('PHYSICAL_CURABLE')) return 'Physical Curable Operator Queue';
+    if (desigUpper.includes('DIGITAL_CURABLE')) return 'Digital Curable Operator Queue';
+    if (desigUpper.includes('EMAIL_CURABLE')) return 'Email Curable Operator Queue';
     return 'Operational Applications Hub';
   };
 
@@ -321,7 +353,7 @@ export default function OperationalQueueScreen() {
       {/* Admin Queue Selector Bar */}
       {(isSuperAdmin || roleUpper === 'ADMIN') && (
         <View style={styles.adminBar}>
-          {['ALL', 'KYC', 'PAN', 'QD', 'REMARK', 'FINAL'].map(q => (
+          {['ALL', 'KYC', 'PAN', 'QD', 'REMARK', 'FINAL', 'QUERABLE', 'PHYSICAL', 'DIGITAL', 'EMAIL'].map(q => (
             <TouchableOpacity
               key={q}
               style={[styles.adminTab, activeQueueTab === q && styles.adminTabActive]}

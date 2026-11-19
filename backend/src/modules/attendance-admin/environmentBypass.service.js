@@ -13,11 +13,29 @@ const ensureBypassTableExists = async () => {
         bypass_reason TEXT NOT NULL,
         start_date DATE NOT NULL,
         end_date DATE NOT NULL,
+        bypass_start_date DATE,
+        bypass_end_date DATE,
+        bypass_location BOOLEAN DEFAULT TRUE,
+        bypass_face BOOLEAN DEFAULT FALSE,
+        bypass_type VARCHAR(50) DEFAULT 'LOCATION',
+        status VARCHAR(20) DEFAULT 'APPROVED',
+        approved_at TIMESTAMPTZ DEFAULT NOW(),
         is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await query(`
+      ALTER TABLE environment_bypass_approvals
+        ADD COLUMN IF NOT EXISTS bypass_start_date DATE,
+        ADD COLUMN IF NOT EXISTS bypass_end_date DATE,
+        ADD COLUMN IF NOT EXISTS bypass_location BOOLEAN DEFAULT TRUE,
+        ADD COLUMN IF NOT EXISTS bypass_face BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS bypass_type VARCHAR(50) DEFAULT 'LOCATION',
+        ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'APPROVED',
+        ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ DEFAULT NOW(),
+        ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+    `).catch(() => {});
     return true;
   } catch (err) {
     logger.warn('environment_bypass_approvals table check/create warning:', err.message);
@@ -26,14 +44,17 @@ const ensureBypassTableExists = async () => {
 };
 
 /**
- * 1. Create Controlled Environment Bypass Approval
- * Strictly enforces that Super Admin / Admin cannot approve an environment bypass for themselves.
+ * 1. Create Controlled Environment / Verification Bypass Approval
+ * Strictly enforces that Super Admin / Admin cannot approve an exemption for themselves.
  */
 const createEnvironmentBypass = async ({
   employeeId,
   bypassReason,
   startDate,
   endDate,
+  bypassLocation = true,
+  bypassFace = false,
+  bypassType,
   reqUser
 }) => {
   await ensureBypassTableExists();
@@ -44,27 +65,21 @@ const createEnvironmentBypass = async ({
     throw error;
   }
 
-  if (!bypassReason || !String(bypassReason).trim()) {
-    const error = new Error('Mandatory bypass_reason is required');
-    error.statusCode = 400;
-    throw error;
-  }
+  const reason = (bypassReason && String(bypassReason).trim()) ? String(bypassReason).trim() : 'Super Admin verification exemption';
 
-  if (!startDate || !endDate) {
-    const error = new Error('start_date and end_date are required');
-    error.statusCode = 400;
-    throw error;
-  }
+  const todayStr = new Date().toISOString().split('T')[0];
+  const sDate = startDate || todayStr;
+  const eDate = endDate || sDate;
 
-  const startD = new Date(startDate);
-  const endD = new Date(endDate);
+  const startD = new Date(sDate);
+  const endD = new Date(eDate);
   if (isNaN(startD.getTime()) || isNaN(endD.getTime()) || endD < startD) {
     const error = new Error('Invalid start_date or end_date range');
     error.statusCode = 400;
     throw error;
   }
 
-  const adminUserId = reqUser.id;
+  const adminUserId = reqUser?.id || reqUser?.userId;
 
   // 1. Resolve Target Employee
   const { rows: [targetEmp] } = await query(
@@ -79,41 +94,65 @@ const createEnvironmentBypass = async ({
   }
 
   // 2. Resolve Admin's Employee Profile (if any)
-  const { rows: [adminEmp] } = await query(
-    `SELECT id FROM employees WHERE user_id = $1 LIMIT 1`,
-    [adminUserId]
-  );
+  let adminEmp = null;
+  if (adminUserId) {
+    const { rows: [aEmp] } = await query(
+      `SELECT id FROM employees WHERE user_id = $1 LIMIT 1`,
+      [adminUserId]
+    );
+    adminEmp = aEmp;
+  }
 
   // 3. STRICT NON-SELF-APPROVAL ENFORCEMENT
-  // Compare admin's user ID with target employee's user ID AND admin's employee profile ID with target employee profile ID
-  const isSelfUserMatch = targetEmp.user_id && String(targetEmp.user_id) === String(adminUserId);
+  const isSelfUserMatch = adminUserId && targetEmp.user_id && String(targetEmp.user_id) === String(adminUserId);
   const isSelfEmployeeMatch = adminEmp && String(adminEmp.id) === String(targetEmp.id);
 
   if (isSelfUserMatch || isSelfEmployeeMatch) {
-    const error = new Error('Self-approval violation: Administrators are strictly forbidden from approving an environment bypass for themselves.');
+    const error = new Error('Self-approval violation: Administrators are strictly forbidden from approving an exemption for themselves.');
     error.statusCode = 403;
     throw error;
   }
 
+  // Determine bypass flags
+  const locBypass = Boolean(bypassLocation);
+  const faceBypass = Boolean(bypassFace);
+  let resolvedType = bypassType;
+  if (!resolvedType) {
+    if (locBypass && faceBypass) resolvedType = 'BOTH';
+    else if (faceBypass) resolvedType = 'FACE';
+    else resolvedType = 'LOCATION';
+  }
+
+  // Deactivate prior active bypass for this employee so only the latest is active
+  await query(
+    `UPDATE environment_bypass_approvals 
+     SET is_active = FALSE, updated_at = NOW() 
+     WHERE employee_id = $1 AND is_active = TRUE`,
+    [targetEmp.id]
+  );
+
   // 4. Create Bypass Record
   const { rows: [bypass] } = await query(
     `INSERT INTO environment_bypass_approvals 
-     (employee_id, approved_by, bypass_reason, start_date, end_date, is_active, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, TRUE, NOW(), NOW())
+     (employee_id, approved_by, bypass_reason, start_date, end_date, bypass_start_date, bypass_end_date, bypass_location, bypass_face, bypass_type, is_active, status, approved_at, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $4, $5, $6, $7, $8, TRUE, 'APPROVED', NOW(), NOW(), NOW())
      RETURNING *`,
-    [targetEmp.id, adminUserId, String(bypassReason).trim(), startDate, endDate]
+    [targetEmp.id, adminUserId, reason, sDate, eDate, locBypass, faceBypass, resolvedType]
   );
 
   await logAction(reqUser, 'ATTENDANCE_ENVIRONMENT_BYPASS_CREATED', targetEmp.id, {
     bypass_id: bypass.id,
     employee_code: targetEmp.employee_code,
     approved_by_user_id: adminUserId,
-    reason: bypassReason,
-    start_date: startDate,
-    end_date: endDate
+    reason: reason,
+    start_date: sDate,
+    end_date: eDate,
+    bypass_location: locBypass,
+    bypass_face: faceBypass,
+    bypass_type: resolvedType
   });
 
-  logger.info(`[ENVIRONMENT BYPASS] Admin ${adminUserId} created bypass for employee ${targetEmp.id} (${startDate} to ${endDate})`);
+  logger.info(`[VERIFICATION EXEMPTION] Admin ${adminUserId} created ${resolvedType} exemption for employee ${targetEmp.id} (${sDate} to ${eDate}) - Location: ${locBypass}, Face: ${faceBypass}`);
 
   return bypass;
 };
@@ -130,12 +169,33 @@ const getEnvironmentBypassStatus = async (employeeId) => {
     `SELECT b.*, u.full_name AS approver_name
      FROM environment_bypass_approvals b
      LEFT JOIN users u ON u.id = b.approved_by
-     WHERE b.employee_id = $1
+     WHERE (b.employee_id = $1::uuid OR b.employee_id IN (SELECT id FROM employees WHERE employee_id = $1::text))
        AND b.is_active = TRUE
        AND (NOW() AT TIME ZONE 'Asia/Kolkata')::DATE BETWEEN b.start_date AND b.end_date
      ORDER BY b.created_at DESC LIMIT 1`,
     [employeeId]
   );
+
+  if (activeBypass) {
+    return {
+      hasBypass: true,
+      bypassLocation: activeBypass.bypass_location !== false,
+      bypassFace: Boolean(activeBypass.bypass_face),
+      bypassType: activeBypass.bypass_type || (activeBypass.bypass_face ? 'BOTH' : 'LOCATION'),
+      startDate: activeBypass.start_date,
+      endDate: activeBypass.end_date,
+      reason: activeBypass.bypass_reason,
+      bypassRecord: activeBypass
+    };
+  }
+
+  return { 
+    hasBypass: false,
+    bypassLocation: false,
+    bypassFace: false,
+    bypassType: null
+  };
+};
 
   if (activeBypass) {
     return {

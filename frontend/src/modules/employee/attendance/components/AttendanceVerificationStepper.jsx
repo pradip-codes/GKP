@@ -22,7 +22,7 @@ export default function AttendanceVerificationStepper({
     },
     {
       icon: <CheckCircle2 size={20} style={{ color: '#6D3DF5' }} />,
-      title: isCheckIn ? 'Mark your attendance' : 'Record check-out',
+      title: isCheckIn ? 'Mark your attendance' : (actionType === 'VERIFY_CHECK_OUT' ? 'Verify for check-out' : 'Record check-out'),
       desc: 'Quick and secure'
     }
   ];

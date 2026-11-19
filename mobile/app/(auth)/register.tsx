@@ -8,14 +8,15 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
+  Image,
+  SafeAreaView,
+  KeyboardAvoidingView,
+  Platform,
+  Modal,
 } from 'react-native';
 import { router } from 'expo-router';
-import { colors } from '../../theme/colors';
-import { typography } from '../../theme/typography';
-import { spacing } from '../../theme/spacing';
-import { Card } from '../../components/Card';
+import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
-import { Button } from '../../components/Button';
 import { registerUser } from '../../services/auth.service';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -25,12 +26,37 @@ const COMPANY_TYPES = [
   { label: 'Individual', value: 'individual' },
   { label: 'Proprietorship', value: 'proprietorship' },
   { label: 'Partnership', value: 'partnership' },
-  { label: 'Private Limited Company', value: 'pvt_ltd' },
+  { label: 'Pvt. Ltd.', value: 'pvt_ltd' },
+];
+
+const INDIAN_BANKS = [
+  'State Bank of India',
+  'HDFC Bank',
+  'ICICI Bank',
+  'Axis Bank',
+  'Kotak Mahindra Bank',
+  'Punjab National Bank',
+  'Bank of Baroda',
+  'IDFC First Bank',
+  'Yes Bank',
+  'Federal Bank',
+  'RBL Bank',
+  'IndusInd Bank',
+  'Union Bank of India',
+  'Canara Bank',
+  'Bank of India',
+  'Central Bank of India',
+  'Indian Bank',
+  'UCO Bank',
+  'Bank of Maharashtra',
+  'Punjab & Sind Bank',
 ];
 
 export default function RegisterScreen() {
   const { loginSession } = useAuth();
+  const { colors, isDark } = useTheme();
 
+  const [showWelcome, setShowWelcome] = useState(true);
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -54,6 +80,7 @@ export default function RegisterScreen() {
     // Step 2: Bank
     bankName: '',
     accountNumber: '',
+    confirmAccountNumber: '',
     ifsc: '',
     accountHolderName: '',
     // Step 3: KYC
@@ -65,20 +92,25 @@ export default function RegisterScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [successData, setSuccessData] = useState<any>(null);
+  const [bankDropdownVisible, setBankDropdownVisible] = useState(false);
+  const [otpMode, setOtpMode] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [otpTimer, setOtpTimer] = useState(0);
 
   const updateField = (field: string, val: any) => {
     setForm((prev) => ({ ...prev, [field]: val }));
     setErrorMsg(null);
   };
 
-  // Validation per step
+  // Step Validation
   const validateStep = (stepIdx: number): boolean => {
     if (stepIdx === 0) {
       if (!form.firstName.trim()) {
-        setErrorMsg('First name is required');
+        setErrorMsg('Please enter your first name');
         return false;
       }
-      if (!form.mobile.trim() || form.mobile.trim().length < 10) {
+      if (!form.mobile.trim() || form.mobile.trim().length !== 10) {
         setErrorMsg('Please enter a valid 10-digit mobile number');
         return false;
       }
@@ -87,7 +119,7 @@ export default function RegisterScreen() {
         return false;
       }
       if (!form.password || form.password.length < 6) {
-        setErrorMsg('Password must be at least 6 characters long');
+        setErrorMsg('Password must be at least 6 characters');
         return false;
       }
       if (form.password !== form.confirmPassword) {
@@ -100,33 +132,37 @@ export default function RegisterScreen() {
         return false;
       }
       if (!form.currentAddress.trim()) {
-        setErrorMsg('Current address is required');
+        setErrorMsg('Please enter your current address');
         return false;
       }
-      if (!form.pincode.trim() || form.pincode.trim().length < 6) {
-        setErrorMsg('Please enter a valid 6-digit pincode');
+      if (!form.pincode.trim() || form.pincode.trim().length !== 6) {
+        setErrorMsg('Please enter a valid 6-digit PIN code');
         return false;
       }
     } else if (stepIdx === 2) {
       if (!form.bankName.trim()) {
-        setErrorMsg('Bank name is required');
+        setErrorMsg('Please enter your bank name');
         return false;
       }
       if (!form.accountNumber.trim()) {
-        setErrorMsg('Account number is required');
+        setErrorMsg('Please enter your bank account number');
+        return false;
+      }
+      if (form.confirmAccountNumber && form.accountNumber !== form.confirmAccountNumber) {
+        setErrorMsg('Account numbers do not match');
         return false;
       }
       if (!form.ifsc.trim() || form.ifsc.trim().length < 4) {
-        setErrorMsg('Valid IFSC code is required');
+        setErrorMsg('Please enter a valid IFSC code');
         return false;
       }
     } else if (stepIdx === 3) {
-      if (!form.pan.trim() || form.pan.trim().length < 10) {
+      if (!form.pan.trim() || form.pan.trim().length !== 10) {
         setErrorMsg('Please enter a valid 10-character PAN number');
         return false;
       }
       if (!form.termsAgreed) {
-        setErrorMsg('You must agree to the Terms and Conditions');
+        setErrorMsg('You must agree to the Terms & Conditions to proceed');
         return false;
       }
     }
@@ -149,7 +185,7 @@ export default function RegisterScreen() {
     if (currentStep > 0) {
       setCurrentStep((prev) => prev - 1);
     } else {
-      router.back();
+      router.replace('/(auth)/login');
     }
   };
 
@@ -196,674 +232,1045 @@ export default function RegisterScreen() {
     }
   };
 
-  // Render Success Screen
+  // ── WELCOME SCREEN ──
+  if (showWelcome) {
+    return (
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+        <ScrollView contentContainerStyle={styles.welcomeScroll}>
+          <Image
+            source={require('../../assets/images/offerbanner.png')}
+            style={styles.welcomeBg}
+            resizeMode="cover"
+          />
+          <View style={styles.welcomeOverlay}>
+            <Image
+              source={require('../../assets/images/logo.png')}
+              style={styles.welcomeLogo}
+              resizeMode="contain"
+            />
+            <Text style={[styles.welcomeTitle, { color: colors.text }]}>
+              Welcome to GharKaPaisa
+            </Text>
+            <Text style={[styles.welcomeSubtitle, { color: colors.textMid }]}>
+              Your journey to financial success starts here. Register as a partner and start earning commissions today.
+            </Text>
+
+            <TouchableOpacity
+              style={[styles.welcomePrimaryBtn, { backgroundColor: colors.primary }]}
+              onPress={() => setShowWelcome(false)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.welcomePrimaryBtnText}>Get Started</Text>
+              <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '800' }}> →</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => router.replace('/(auth)/login')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.welcomeLoginLink, { color: colors.primary }]}>
+                Already have an account? Sign In
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  // ── SUCCESS CONFIRMATION SCREEN ──
   if (successData) {
     return (
-      <ScrollView contentContainerStyle={styles.successContainer}>
-        <View style={styles.successCard}>
-          <View style={styles.successIconWrap}>
-            <Icon name="check-circle" size={48} color="#10B981" />
-          </View>
-          <Text style={styles.successTitle}>Welcome to GharKaPaisa!</Text>
-          <Text style={styles.successSubtitle}>
-            Your partner account has been created successfully.
-          </Text>
-
-          {successData.partner_code && (
-            <View style={styles.codeBox}>
-              <Text style={styles.codeBoxLabel}>YOUR PARTNER CODE</Text>
-              <Text style={styles.codeBoxValue}>{successData.partner_code}</Text>
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+        <ScrollView contentContainerStyle={styles.successScroll}>
+          <View style={[styles.successCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.successIconCircle}>
+              <Text style={{ fontSize: 40 }}>🎉</Text>
             </View>
-          )}
+            <Text style={[styles.successTitle, { color: colors.text }]}>Welcome to GharKaPaisa!</Text>
+            <Text style={[styles.successSubtitle, { color: colors.textMid }]}>
+              Your partner account has been created successfully. Start earning commissions today!
+            </Text>
 
-          <Button
-            title="Go to Partner Dashboard"
-            onPress={() => router.replace('/(app)/partner-dashboard')}
-            style={{ marginTop: spacing.lg, width: '100%' }}
-          />
-        </View>
-      </ScrollView>
+            {successData.partner_code && (
+              <View style={[styles.codeBox, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
+                <Text style={[styles.codeBoxLabel, { color: colors.textLight }]}>YOUR PARTNER CODE</Text>
+                <Text style={[styles.codeBoxValue, { color: colors.primary }]}>{successData.partner_code}</Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={[styles.primaryActionBtn, { backgroundColor: colors.primary }]}
+              onPress={() => router.replace('/(app)/partner-dashboard')}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.primaryActionBtnText}>Go to Partner Dashboard</Text>
+              <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '800' }}> →</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
     );
   }
 
   return (
-    <ScrollView
-      contentContainerStyle={styles.container}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-    >
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={handlePrev}>
-          <Icon name="chevron-left" size={24} color="#fff" />
-        </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerSubtitle}>PARTNER ONBOARDING</Text>
-          <Text style={styles.headerTitle}>Create Partner Account</Text>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+      >
+        {/* ── TOP NAV BAR ── */}
+        <View style={[styles.navBar, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+          <TouchableOpacity
+            style={[styles.backNavBtn, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}
+            onPress={handlePrev}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 13, color: colors.text }}>{currentStep === 0 ? '← Sign In' : '← Back'}</Text>
+          </TouchableOpacity>
+
+          <Image
+            source={require('../../assets/images/logo.png')}
+            style={styles.headerLogo}
+            resizeMode="contain"
+          />
+
+          <TouchableOpacity
+            onPress={() => router.replace('/(auth)/login')}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.signInLink, { color: colors.primary }]}>Sign In</Text>
+          </TouchableOpacity>
         </View>
-      </View>
 
-      {/* Step Indicator */}
-      <View style={styles.stepIndicatorRow}>
-        {STEPS.map((stepName, idx) => (
-          <View key={stepName} style={styles.stepItem}>
-            <View
-              style={[
-                styles.stepDot,
-                idx === currentStep && styles.activeStepDot,
-                idx < currentStep && styles.completedStepDot,
-              ]}
-            >
-              {idx < currentStep ? (
-                <Icon name="check" size={12} color="#fff" />
-              ) : (
-                <Text
-                  style={[
-                    styles.stepDotText,
-                    idx === currentStep && styles.activeStepDotText,
-                  ]}
-                >
-                  {idx + 1}
-                </Text>
-              )}
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* ── HEADER CARD & STEP TIMELINE ── */}
+          <View style={[styles.formCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.badgeRow}>
+              <View style={styles.partnerBadge}>
+                <Text style={styles.partnerBadgeText}>Partner Program 🚀</Text>
+              </View>
             </View>
-            <Text
-              style={[
-                styles.stepNameText,
-                idx === currentStep && styles.activeStepNameText,
-              ]}
-            >
-              {stepName}
+
+            <Text style={[styles.mainTitle, { color: colors.text }]}>Register as Partner / DSA</Text>
+            <Text style={[styles.mainSubtitle, { color: colors.textMid }]}>
+              Earn top commissions, track leads in real-time, and expand your financial business
             </Text>
-          </View>
-        ))}
-      </View>
 
-      {/* Main Card */}
-      <Card style={styles.card}>
-        {/* Error Box */}
-        {errorMsg && (
-          <View style={styles.errorBox}>
-            <Icon name="alert-circle" size={16} color="#EF4444" />
-            <Text style={styles.errorText}>{errorMsg}</Text>
-          </View>
-        )}
+            {/* 4-Step Progress Indicator */}
+            <View style={styles.stepProgressRow}>
+              {STEPS.map((stepLabel, idx) => {
+                const isActive = idx === currentStep;
+                const isCompleted = idx < currentStep;
 
-        {/* STEP 0: Personal Details */}
-        {currentStep === 0 && (
-          <View style={styles.formSection}>
-            <Text style={styles.sectionTitle}>1. Personal Information</Text>
+                return (
+                  <React.Fragment key={stepLabel}>
+                    <View style={styles.stepIndicatorNode}>
+                      <View
+                        style={[
+                          styles.stepCircle,
+                          {
+                            backgroundColor: isActive
+                              ? colors.primary
+                              : isCompleted
+                              ? '#10B981'
+                              : colors.bgSecondary,
+                            borderColor: isActive
+                              ? colors.primary
+                              : isCompleted
+                              ? '#10B981'
+                              : colors.border,
+                          },
+                        ]}
+                      >
+                        {isCompleted ? (
+                          <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '900' }}>✓</Text>
+                        ) : (
+                          <Text
+                            style={[
+                              styles.stepNumberText,
+                              { color: isActive ? '#FFF' : colors.textLight },
+                            ]}
+                          >
+                            {idx + 1}
+                          </Text>
+                        )}
+                      </View>
+                      <Text
+                        style={[
+                          styles.stepNodeLabel,
+                          {
+                            color: isActive
+                              ? colors.primary
+                              : isCompleted
+                              ? colors.text
+                              : colors.textLight,
+                            fontWeight: isActive ? '800' : '600',
+                          },
+                        ]}
+                      >
+                        {stepLabel}
+                      </Text>
+                    </View>
 
-            <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabel}>First Name *</Text>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="e.g. Rahul"
-                  placeholderTextColor={colors.textLight}
-                  value={form.firstName}
-                  onChangeText={(t) => updateField('firstName', t)}
-                />
+                    {idx < STEPS.length - 1 && (
+                      <View
+                        style={[
+                          styles.stepLine,
+                          {
+                            backgroundColor: isCompleted ? '#10B981' : colors.border,
+                          },
+                        ]}
+                      />
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </View>
+
+            {/* Error Banner */}
+            {errorMsg && (
+              <View style={styles.errorBanner}>
+                <Text style={{ fontSize: 14 }}>⚠️</Text>
+                <Text style={styles.errorBannerText}>{errorMsg}</Text>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabel}>Last Name</Text>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="e.g. Sharma"
-                  placeholderTextColor={colors.textLight}
-                  value={form.lastName}
-                  onChangeText={(t) => updateField('lastName', t)}
-                />
-              </View>
-            </View>
-
-            <Text style={styles.inputLabel}>Mobile Number (10-digit) *</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="9876543210"
-              placeholderTextColor={colors.textLight}
-              value={form.mobile}
-              onChangeText={(t) => updateField('mobile', t)}
-              keyboardType="phone-pad"
-              maxLength={10}
-            />
-
-            <Text style={styles.inputLabel}>Email Address *</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="rahul@example.com"
-              placeholderTextColor={colors.textLight}
-              value={form.email}
-              onChangeText={(t) => updateField('email', t)}
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
-
-            <Text style={styles.inputLabel}>Password (Min. 6 chars) *</Text>
-            <View style={styles.passwordWrap}>
-              <TextInput
-                style={[styles.textInput, { flex: 1, borderWidth: 0 }]}
-                placeholder="Create password"
-                placeholderTextColor={colors.textLight}
-                value={form.password}
-                onChangeText={(t) => updateField('password', t)}
-                secureTextEntry={!showPassword}
-              />
-              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={{ padding: 8 }}>
-                <Icon name={showPassword ? 'eye-off' : 'eye'} size={18} color={colors.textLight} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.inputLabel}>Confirm Password *</Text>
-            <View style={styles.passwordWrap}>
-              <TextInput
-                style={[styles.textInput, { flex: 1, borderWidth: 0 }]}
-                placeholder="Confirm password"
-                placeholderTextColor={colors.textLight}
-                value={form.confirmPassword}
-                onChangeText={(t) => updateField('confirmPassword', t)}
-                secureTextEntry={!showConfirmPassword}
-              />
-              <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={{ padding: 8 }}>
-                <Icon name={showConfirmPassword ? 'eye-off' : 'eye'} size={18} color={colors.textLight} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.inputLabel}>Referral / Sponsor Code (Optional)</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="e.g. GKP1002"
-              placeholderTextColor={colors.textLight}
-              value={form.referralCode}
-              onChangeText={(t) => updateField('referralCode', t)}
-              autoCapitalize="characters"
-            />
-          </View>
-        )}
-
-        {/* STEP 1: Business Details */}
-        {currentStep === 1 && (
-          <View style={styles.formSection}>
-            <Text style={styles.sectionTitle}>2. Business & Address</Text>
-
-            <Text style={styles.inputLabel}>Entity Type</Text>
-            <View style={styles.companyTypeRow}>
-              {COMPANY_TYPES.map((type) => (
-                <TouchableOpacity
-                  key={type.value}
-                  style={[
-                    styles.typePill,
-                    form.companyType === type.value && styles.activeTypePill,
-                  ]}
-                  onPress={() => updateField('companyType', type.value)}
-                >
-                  <Text
-                    style={[
-                      styles.typePillText,
-                      form.companyType === type.value && styles.activeTypePillText,
-                    ]}
-                  >
-                    {type.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {form.companyType !== 'individual' && (
-              <>
-                <Text style={styles.inputLabel}>Business / Enterprise Name *</Text>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="e.g. Sharma Financial Advisory"
-                  placeholderTextColor={colors.textLight}
-                  value={form.companyName}
-                  onChangeText={(t) => updateField('companyName', t)}
-                />
-              </>
             )}
 
-            <Text style={styles.inputLabel}>Current Address *</Text>
-            <TextInput
-              style={[styles.textInput, { height: 70, textAlignVertical: 'top' }]}
-              placeholder="Flat/House, Street, Area"
-              placeholderTextColor={colors.textLight}
-              value={form.currentAddress}
-              onChangeText={(t) => updateField('currentAddress', t)}
-              multiline
-              numberOfLines={3}
-            />
+            {/* ── STEP 0: Personal Details ── */}
+            {currentStep === 0 && (
+              <View style={styles.stepForm}>
+                <Text style={[styles.stepSectionHeading, { color: colors.text }]}>1. Personal Information</Text>
 
-            <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabel}>Pincode *</Text>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="411001"
-                  placeholderTextColor={colors.textLight}
-                  value={form.pincode}
-                  onChangeText={(t) => updateField('pincode', t)}
-                  keyboardType="numeric"
-                  maxLength={6}
-                />
+                <View style={styles.twoColRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.fieldLabel, { color: colors.text }]}>First Name *</Text>
+                    <TextInput
+                      style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                      placeholder="e.g. Rahul"
+                      placeholderTextColor={colors.textLight}
+                      value={form.firstName}
+                      onChangeText={(t) => updateField('firstName', t)}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.fieldLabel, { color: colors.text }]}>Last Name</Text>
+                    <TextInput
+                      style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                      placeholder="e.g. Sharma"
+                      placeholderTextColor={colors.textLight}
+                      value={form.lastName}
+                      onChangeText={(t) => updateField('lastName', t)}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Mobile Number *</Text>
+                  <View style={[styles.inputWithPrefix, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
+                    <Text style={[styles.prefixText, { color: colors.textMid }]}>+91</Text>
+                    <TextInput
+                      style={[styles.textInputInPrefix, { color: colors.text }]}
+                      placeholder="9876543210"
+                      placeholderTextColor={colors.textLight}
+                      value={form.mobile}
+                      onChangeText={(t) => updateField('mobile', t)}
+                      keyboardType="number-pad"
+                      maxLength={10}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Email Address *</Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                    placeholder="name@example.com"
+                    placeholderTextColor={colors.textLight}
+                    value={form.email}
+                    onChangeText={(t) => updateField('email', t)}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                  />
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Password (Min. 6 chars) *</Text>
+                  <View style={[styles.passwordWrap, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
+                    <TextInput
+                      style={[styles.passwordInput, { color: colors.text }]}
+                      placeholder="Create password"
+                      placeholderTextColor={colors.textLight}
+                      value={form.password}
+                      onChangeText={(t) => updateField('password', t)}
+                      secureTextEntry={!showPassword}
+                    />
+                    <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={{ padding: 6 }}>
+                      <Text style={{ fontSize: 14 }}>{showPassword ? '👁️' : '🙈'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Confirm Password *</Text>
+                  <View style={[styles.passwordWrap, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
+                    <TextInput
+                      style={[styles.passwordInput, { color: colors.text }]}
+                      placeholder="Confirm password"
+                      placeholderTextColor={colors.textLight}
+                      value={form.confirmPassword}
+                      onChangeText={(t) => updateField('confirmPassword', t)}
+                      secureTextEntry={!showConfirmPassword}
+                    />
+                    <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={{ padding: 6 }}>
+                      <Text style={{ fontSize: 14 }}>{showConfirmPassword ? '👁️' : '🙈'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Referral Code (Optional)</Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                    placeholder="e.g. GKP1234"
+                    placeholderTextColor={colors.textLight}
+                    value={form.referralCode}
+                    onChangeText={(t) => updateField('referralCode', t)}
+                    autoCapitalize="characters"
+                  />
+                </View>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.inputLabel}>City</Text>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Pune"
-                  placeholderTextColor={colors.textLight}
-                  value={form.city}
-                  onChangeText={(t) => updateField('city', t)}
-                />
+            )}
+
+            {/* ── STEP 1: Business Details ── */}
+            {currentStep === 1 && (
+              <View style={styles.stepForm}>
+                <Text style={[styles.stepSectionHeading, { color: colors.text }]}>2. Business & Location</Text>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Entity / Company Type</Text>
+                  <View style={styles.pillsRow}>
+                    {COMPANY_TYPES.map((type) => {
+                      const selected = form.companyType === type.value;
+                      return (
+                        <TouchableOpacity
+                          key={type.value}
+                          style={[
+                            styles.companyPill,
+                            {
+                              backgroundColor: selected ? `${colors.primary}15` : colors.bgSecondary,
+                              borderColor: selected ? colors.primary : colors.border,
+                            },
+                          ]}
+                          onPress={() => updateField('companyType', type.value)}
+                        >
+                          <Text
+                            style={[
+                              styles.companyPillText,
+                              { color: selected ? colors.primary : colors.text, fontWeight: selected ? '800' : '600' },
+                            ]}
+                          >
+                            {type.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Company / Agency Name</Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                    placeholder={form.companyType === 'individual' ? 'Optional for individuals' : 'e.g. Acme Financial Services'}
+                    placeholderTextColor={colors.textLight}
+                    value={form.companyName}
+                    onChangeText={(t) => updateField('companyName', t)}
+                  />
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Office / Current Address *</Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text, height: 70 }]}
+                    placeholder="Enter complete current or business address"
+                    placeholderTextColor={colors.textLight}
+                    value={form.currentAddress}
+                    onChangeText={(t) => updateField('currentAddress', t)}
+                    multiline
+                  />
+                </View>
+
+                <View style={styles.twoColRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.fieldLabel, { color: colors.text }]}>PIN Code *</Text>
+                    <TextInput
+                      style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                      placeholder="e.g. 400001"
+                      placeholderTextColor={colors.textLight}
+                      value={form.pincode}
+                      onChangeText={(t) => updateField('pincode', t)}
+                      keyboardType="number-pad"
+                      maxLength={6}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.fieldLabel, { color: colors.text }]}>City</Text>
+                    <TextInput
+                      style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                      placeholder="e.g. Mumbai"
+                      placeholderTextColor={colors.textLight}
+                      value={form.city}
+                      onChangeText={(t) => updateField('city', t)}
+                    />
+                  </View>
+                </View>
               </View>
+            )}
+
+            {/* ── STEP 2: Bank Details ── */}
+            {currentStep === 2 && (
+              <View style={styles.stepForm}>
+                <Text style={[styles.stepSectionHeading, { color: colors.text }]}>3. Payout & Bank Account</Text>
+                <Text style={[styles.stepSubDesc, { color: colors.textMid }]}>
+                  Your commissions will be directly deposited into this verified bank account.
+                </Text>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Bank Name *</Text>
+                  <TouchableOpacity
+                    style={[styles.dropdownTrigger, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}
+                    onPress={() => setBankDropdownVisible(true)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.dropdownText, { color: form.bankName ? colors.text : colors.textLight }]}>
+                      {form.bankName || 'Select your bank'}
+                    </Text>
+                    <Text style={{ fontSize: 14, color: colors.textLight }}>▼</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Account Number *</Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                    placeholder="Enter bank account number"
+                    placeholderTextColor={colors.textLight}
+                    value={form.accountNumber}
+                    onChangeText={(t) => updateField('accountNumber', t)}
+                    keyboardType="number-pad"
+                  />
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Confirm Account Number</Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                    placeholder="Re-enter bank account number"
+                    placeholderTextColor={colors.textLight}
+                    value={form.confirmAccountNumber}
+                    onChangeText={(t) => updateField('confirmAccountNumber', t)}
+                    keyboardType="number-pad"
+                  />
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>IFSC Code *</Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                    placeholder="e.g. SBIN0001234"
+                    placeholderTextColor={colors.textLight}
+                    value={form.ifsc}
+                    onChangeText={(t) => updateField('ifsc', t)}
+                    autoCapitalize="characters"
+                  />
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Account Holder Name</Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                    placeholder="As printed on bank passbook/cheque"
+                    placeholderTextColor={colors.textLight}
+                    value={form.accountHolderName}
+                    onChangeText={(t) => updateField('accountHolderName', t)}
+                  />
+                </View>
+              </View>
+            )}
+
+            {/* ── STEP 3: KYC Details ── */}
+            {currentStep === 3 && (
+              <View style={styles.stepForm}>
+                <Text style={[styles.stepSectionHeading, { color: colors.text }]}>4. Identity & Verification</Text>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>PAN Card Number *</Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                    placeholder="e.g. ABCDE1234F"
+                    placeholderTextColor={colors.textLight}
+                    value={form.pan}
+                    onChangeText={(t) => updateField('pan', t.toUpperCase())}
+                    autoCapitalize="characters"
+                    maxLength={10}
+                  />
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Aadhaar Card Number</Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                    placeholder="12-digit Aadhaar number"
+                    placeholderTextColor={colors.textLight}
+                    value={form.aadhaar}
+                    onChangeText={(t) => updateField('aadhaar', t)}
+                    keyboardType="number-pad"
+                    maxLength={12}
+                  />
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Team Code (Optional)</Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                    placeholder="Enter team code if you have one"
+                    placeholderTextColor={colors.textLight}
+                    value={form.referralCode}
+                    onChangeText={(t) => updateField('referralCode', t)}
+                    autoCapitalize="characters"
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={styles.termsRow}
+                  onPress={() => updateField('termsAgreed', !form.termsAgreed)}
+                  activeOpacity={0.8}
+                >
+                  <View
+                    style={[
+                      styles.checkbox,
+                      {
+                        backgroundColor: form.termsAgreed ? colors.primary : colors.bgSecondary,
+                        borderColor: form.termsAgreed ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    {form.termsAgreed && <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '900' }}>✓</Text>}
+                  </View>
+                  <Text style={[styles.termsText, { color: colors.textMid }]}>
+                    I confirm that the details provided are accurate and I agree to the{' '}
+                    <Text style={{ color: colors.primary, fontWeight: '700' }}>Terms & Conditions</Text> and{' '}
+                    <Text style={{ color: colors.primary, fontWeight: '700' }}>Privacy Policy</Text>.
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* ── BOTTOM ACTIONS ROW ── */}
+            <View style={styles.actionsRow}>
+              {currentStep > 0 && (
+                <TouchableOpacity
+                  style={[styles.prevBtn, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}
+                  onPress={handlePrev}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.prevBtnText, { color: colors.text }]}>Back</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={[styles.nextBtn, { backgroundColor: colors.primary }]}
+                onPress={handleNext}
+                disabled={loading}
+                activeOpacity={0.85}
+              >
+                {loading ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <>
+                    <Text style={styles.nextBtnText}>
+                      {currentStep === STEPS.length - 1 ? 'Submit Registration' : 'Continue'}
+                    </Text>
+                    <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '800' }}> →</Text>
+                  </>
+                )}
+              </TouchableOpacity>
             </View>
           </View>
-        )}
+        </ScrollView>
 
-        {/* STEP 2: Bank Details */}
-        {currentStep === 2 && (
-          <View style={styles.formSection}>
-            <Text style={styles.sectionTitle}>3. Payout Bank Details</Text>
-            <Text style={styles.sectionSubtitle}>
-              Commissions and earnings will be directly disbursed to this bank account.
-            </Text>
-
-            <Text style={styles.inputLabel}>Bank Name *</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="e.g. HDFC Bank, ICICI Bank, SBI"
-              placeholderTextColor={colors.textLight}
-              value={form.bankName}
-              onChangeText={(t) => updateField('bankName', t)}
-            />
-
-            <Text style={styles.inputLabel}>Account Number *</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="Enter bank account number"
-              placeholderTextColor={colors.textLight}
-              value={form.accountNumber}
-              onChangeText={(t) => updateField('accountNumber', t)}
-              keyboardType="number-pad"
-            />
-
-            <Text style={styles.inputLabel}>IFSC Code *</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="e.g. HDFC0001234"
-              placeholderTextColor={colors.textLight}
-              value={form.ifsc}
-              onChangeText={(t) => updateField('ifsc', t)}
-              autoCapitalize="characters"
-            />
-
-            <Text style={styles.inputLabel}>Account Holder Name</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="Name as printed on passbook"
-              placeholderTextColor={colors.textLight}
-              value={form.accountHolderName}
-              onChangeText={(t) => updateField('accountHolderName', t)}
-            />
-          </View>
-        )}
-
-        {/* STEP 3: KYC & Agreement */}
-        {currentStep === 3 && (
-          <View style={styles.formSection}>
-            <Text style={styles.sectionTitle}>4. KYC Identification</Text>
-
-            <Text style={styles.inputLabel}>PAN Card Number *</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="ABCDE1234F"
-              placeholderTextColor={colors.textLight}
-              value={form.pan}
-              onChangeText={(t) => updateField('pan', t)}
-              autoCapitalize="characters"
-              maxLength={10}
-            />
-
-            <Text style={styles.inputLabel}>Aadhaar Number (Optional)</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="12-digit Aadhaar Number"
-              placeholderTextColor={colors.textLight}
-              value={form.aadhaar}
-              onChangeText={(t) => updateField('aadhaar', t)}
-              keyboardType="number-pad"
-              maxLength={12}
-            />
-
-            <TouchableOpacity
-              style={styles.termsRow}
-              onPress={() => updateField('termsAgreed', !form.termsAgreed)}
-            >
-              <View
-                style={[
-                  styles.checkbox,
-                  form.termsAgreed && styles.checkboxChecked,
-                ]}
-              >
-                {form.termsAgreed && <Icon name="check" size={12} color="#fff" />}
-              </View>
-              <Text style={styles.termsText}>
-                I accept the GharKaPaisa Partner Agreement, Terms of Service, and Commission Guidelines.
-              </Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Navigation Buttons */}
-        <View style={styles.actionBtnRow}>
-          {currentStep > 0 && (
-            <TouchableOpacity style={styles.secondaryBtn} onPress={handlePrev}>
-              <Text style={styles.secondaryBtnText}>Back</Text>
-            </TouchableOpacity>
-          )}
-
-          <Button
-            title={currentStep === STEPS.length - 1 ? 'Complete Registration' : 'Continue'}
-            onPress={handleNext}
-            loading={loading}
-            style={{ flex: 1 }}
-          />
-        </View>
-
-        {/* Already have an account link */}
-        <TouchableOpacity
-          style={styles.loginLink}
-          onPress={() => router.replace('/(auth)/login' as any)}
+        {/* ── BANK SELECTION MODAL ── */}
+        <Modal
+          visible={bankDropdownVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setBankDropdownVisible(false)}
         >
-          <Text style={styles.loginLinkText}>
-            Already registered? <Text style={{ color: colors.primaryLight, fontWeight: '700' }}>Sign In</Text>
-          </Text>
-        </TouchableOpacity>
-      </Card>
-    </ScrollView>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.bankModalBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <View style={styles.modalHeader}>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Select Bank</Text>
+                <TouchableOpacity onPress={() => setBankDropdownVisible(false)}>
+                  <Text style={{ fontSize: 20, color: colors.text }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={styles.bankList} showsVerticalScrollIndicator={false}>
+                {INDIAN_BANKS.map((bank) => (
+                  <TouchableOpacity
+                    key={bank}
+                    style={[
+                      styles.bankOption,
+                      { backgroundColor: colors.bgSecondary, borderColor: colors.border },
+                      form.bankName === bank && { backgroundColor: `${colors.primary}15`, borderColor: colors.primary },
+                    ]}
+                    onPress={() => {
+                      updateField('bankName', bank);
+                      setBankDropdownVisible(false);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.bankOptionText, { color: colors.text }]}>{bank}</Text>
+                    {form.bankName === bank && <Text style={{ color: colors.primary, fontSize: 16 }}>✓</Text>}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    padding: spacing.md,
-    backgroundColor: colors.bg,
+  safeArea: {
+    flex: 1,
   },
-  header: {
+  welcomeScroll: {
+    flexGrow: 1,
+  },
+  welcomeBg: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
+  },
+  welcomeOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  welcomeLogo: {
+    width: 180,
+    height: 50,
+    marginBottom: 24,
+  },
+  welcomeTitle: {
+    fontSize: 28,
+    fontWeight: '900',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  welcomeSubtitle: {
+    fontSize: 15,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 32,
+  },
+  welcomePrimaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: spacing.xl,
-    paddingBottom: spacing.md,
+    justifyContent: 'center',
+    width: '100%',
+    height: 52,
+    borderRadius: 14,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 4,
   },
-  backBtn: {
-    marginRight: spacing.sm,
-    padding: 4,
-  },
-  headerSubtitle: {
-    fontSize: 10,
+  welcomePrimaryBtnText: {
+    color: '#FFF',
+    fontSize: 16,
     fontWeight: '800',
-    color: colors.textMid,
-    letterSpacing: 1.5,
   },
-  headerTitle: {
+  welcomeLoginLink: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  navBar: {
+    height: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+  },
+  backNavBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  headerLogo: {
+    width: 130,
+    height: 36,
+  },
+  signInLink: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 40,
+  },
+  formCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 3,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    marginBottom: 8,
+  },
+  partnerBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+  },
+  partnerBadgeText: {
+    color: '#166534',
+    fontSize: 11.5,
+    fontWeight: '800',
+  },
+  mainTitle: {
     fontSize: 22,
     fontWeight: '800',
-    color: colors.text,
+    letterSpacing: -0.4,
+    marginBottom: 4,
   },
-  stepIndicatorRow: {
+  mainSubtitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
+    marginBottom: 20,
+  },
+  stepProgressRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    marginVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
+    marginBottom: 24,
+    paddingHorizontal: 4,
   },
-  stepItem: {
+  stepIndicatorNode: {
     alignItems: 'center',
     gap: 4,
   },
-  stepDot: {
+  stepCircle: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: colors.bgTertiary,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  activeStepDot: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  completedStepDot: {
-    backgroundColor: colors.success,
-    borderColor: colors.success,
-  },
-  stepDotText: {
+  stepNumberText: {
     fontSize: 12,
-    fontWeight: '700',
-    color: colors.textMid,
+    fontWeight: '800',
   },
-  activeStepDotText: {
-    color: '#fff',
+  stepNodeLabel: {
+    fontSize: 10.5,
   },
-  stepNameText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: colors.textMid,
+  stepLine: {
+    flex: 1,
+    height: 2,
+    marginHorizontal: 4,
+    marginBottom: 16,
   },
-  activeStepNameText: {
-    color: colors.text,
-    fontWeight: '700',
-  },
-  card: {
-    padding: spacing.lg,
-    borderRadius: 20,
-    backgroundColor: colors.bgSecondary,
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  errorBox: {
+  errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.errorSoft,
+    gap: 8,
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FCA5A5',
     borderWidth: 1,
-    borderColor: colors.error,
-    padding: spacing.sm,
-    borderRadius: 8,
-    marginBottom: spacing.md,
-    gap: spacing.xs,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 16,
   },
-  errorText: {
+  errorBannerText: {
     flex: 1,
-    fontSize: 12,
-    color: colors.error,
+    color: '#991B1B',
+    fontSize: 12.5,
     fontWeight: '600',
   },
-  formSection: {
-    gap: spacing.xs,
+  stepForm: {
+    gap: 14,
   },
-  sectionTitle: {
-    fontSize: 16,
+  stepSectionHeading: {
+    fontSize: 15,
     fontWeight: '800',
-    color: colors.text,
     marginBottom: 4,
   },
-  sectionSubtitle: {
-    fontSize: 11,
-    color: colors.textMid,
-    marginBottom: spacing.sm,
-  },
-  inputLabel: {
+  stepSubDesc: {
     fontSize: 12,
+    lineHeight: 16,
+    marginTop: -4,
+    marginBottom: 6,
+  },
+  twoColRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  fieldGroup: {
+    gap: 6,
+  },
+  fieldLabel: {
+    fontSize: 12.5,
     fontWeight: '700',
-    color: colors.text,
-    marginTop: spacing.xs,
-    marginBottom: 2,
   },
   textInput: {
-    backgroundColor: colors.inputBg,
     borderWidth: 1,
-    borderColor: colors.inputBorder,
     borderRadius: 10,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    fontSize: 13,
-    color: colors.text,
-    marginBottom: 4,
+    paddingHorizontal: 12,
+    height: 44,
+    fontSize: 13.5,
+    fontWeight: '500',
+  },
+  inputWithPrefix: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  prefixText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    marginRight: 6,
+  },
+  textInputInPrefix: {
+    flex: 1,
+    fontSize: 13.5,
+    fontWeight: '500',
   },
   passwordWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.inputBg,
     borderWidth: 1,
-    borderColor: colors.inputBorder,
     borderRadius: 10,
-    paddingRight: 4,
-    marginBottom: 4,
+    paddingHorizontal: 12,
+    height: 44,
   },
-  companyTypeRow: {
+  passwordInput: {
+    flex: 1,
+    fontSize: 13.5,
+    fontWeight: '500',
+  },
+  pillsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: spacing.xs,
-    marginBottom: spacing.xs,
+    gap: 8,
   },
-  typePill: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: colors.bgTertiary,
+  companyPill: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
   },
-  activeTypePill: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  typePillText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.textMid,
-  },
-  activeTypePillText: {
-    color: '#fff',
-    fontWeight: '700',
+  companyPillText: {
+    fontSize: 12,
   },
   termsRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginTop: spacing.md,
-    gap: spacing.sm,
+    gap: 10,
+    marginTop: 6,
   },
   checkbox: {
     width: 20,
     height: 20,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.inputBg,
+    borderRadius: 5,
+    borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 2,
   },
-  checkboxChecked: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
   termsText: {
     flex: 1,
     fontSize: 12,
-    color: colors.textMid,
-    lineHeight: 16,
+    lineHeight: 17,
   },
-  actionBtnRow: {
+  actionsRow: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.lg,
+    gap: 10,
+    marginTop: 24,
   },
-  secondaryBtn: {
-    paddingHorizontal: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: colors.bgTertiary,
-    borderRadius: 10,
+  prevBtn: {
     borderWidth: 1,
-    borderColor: colors.border,
-  },
-  secondaryBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textMid,
-  },
-  loginLink: {
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
     alignItems: 'center',
-    marginTop: spacing.md,
-    paddingVertical: 4,
-  },
-  loginLinkText: {
-    fontSize: 12,
-    color: colors.textMid,
-  },
-  successContainer: {
-    flexGrow: 1,
-    padding: spacing.lg,
     justifyContent: 'center',
-    backgroundColor: colors.bg,
+  },
+  prevBtnText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+  },
+  nextBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    paddingVertical: 12,
+    shadowColor: '#1B74BB',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  nextBtnText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  successScroll: {
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexGrow: 1,
   },
   successCard: {
-    padding: spacing.xl,
-    borderRadius: 20,
-    backgroundColor: colors.bgSecondary,
+    width: '100%',
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: colors.border,
+    padding: 24,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
   },
-  successIconWrap: {
-    marginBottom: spacing.md,
+  successIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
   },
   successTitle: {
     fontSize: 22,
-    fontWeight: '900',
-    color: colors.text,
+    fontWeight: '800',
     textAlign: 'center',
+    marginBottom: 6,
   },
   successSubtitle: {
-    fontSize: 13,
-    color: colors.textMid,
-    marginTop: spacing.xs,
+    fontSize: 13.5,
     textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: 20,
   },
   codeBox: {
-    backgroundColor: colors.bgTertiary,
-    borderRadius: 12,
-    padding: spacing.md,
-    alignItems: 'center',
-    marginTop: spacing.lg,
     width: '100%',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.border,
+    padding: 16,
+    alignItems: 'center',
+    marginBottom: 20,
   },
   codeBoxLabel: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '800',
-    color: colors.primary,
-    letterSpacing: 1,
+    letterSpacing: 0.5,
+    marginBottom: 4,
   },
   codeBoxValue: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '900',
-    color: colors.text,
-    marginTop: 4,
-    letterSpacing: 2,
+    letterSpacing: 1,
+  },
+  primaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    height: 48,
+    borderRadius: 12,
+  },
+  primaryActionBtnText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  dropdownTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  dropdownText: {
+    fontSize: 13.5,
+    fontWeight: '500',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  bankModalBox: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderWidth: 1,
+    maxHeight: '70%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  bankList: {
+    padding: 12,
+  },
+  bankOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 8,
+  },
+  bankOptionText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

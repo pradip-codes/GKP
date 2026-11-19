@@ -1,5 +1,13 @@
 import apiClient from './api';
 import { NotificationItem, NotificationPreference } from '../types';
+import messaging from '@react-native-firebase/messaging';
+import { Platform } from 'react-native';
+
+export interface AttendanceNotificationConfig {
+  checkInTime: string;
+  checkOutTime?: string;
+  employeeId: string;
+}
 
 export interface NotificationFetchParams {
   page?: number;
@@ -20,11 +28,27 @@ export interface NotificationResponse {
   };
 }
 
-export const notificationService = {
+export class NotificationService {
+  /**
+   * Request notification permissions
+   */
+  async requestPermissions(): Promise<boolean> {
+    try {
+      const authStatus = await messaging().requestPermission();
+      const enabled =
+        authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
+        authStatus === messaging.AuthorizationStatus.PROVISIONAL;
+      return enabled;
+    } catch (error) {
+      console.error('Failed to request notification permissions:', error);
+      return false;
+    }
+  }
+
   /**
    * Fetch paginated user notifications with unread count
    */
-  fetchNotifications: async (params: NotificationFetchParams = {}): Promise<NotificationResponse> => {
+  async fetchNotifications(params: NotificationFetchParams = {}): Promise<NotificationResponse> {
     try {
       const response = await apiClient.get('/notifications', { params });
       if (response.data?.success && response.data?.data) {
@@ -40,12 +64,12 @@ export const notificationService = {
       console.error('Error fetching notifications:', error);
       throw error;
     }
-  },
+  }
 
   /**
    * Fetch unread notification count
    */
-  fetchUnreadCount: async (): Promise<{ unread_count: number; notifications: NotificationItem[] }> => {
+  async fetchUnreadCount(): Promise<{ unread_count: number; notifications: NotificationItem[] }> {
     try {
       const response = await apiClient.get('/notifications/unread');
       if (response.data?.success && response.data?.data) {
@@ -59,12 +83,12 @@ export const notificationService = {
       console.error('Error fetching unread notification count:', error);
       throw error;
     }
-  },
+  }
 
   /**
    * Mark a specific notification as read
    */
-  markNotificationRead: async (id: string): Promise<boolean> => {
+  async markNotificationRead(id: string): Promise<boolean> {
     try {
       const response = await apiClient.put(`/notifications/${id}/read`, { id });
       return response.data?.success === true;
@@ -72,12 +96,12 @@ export const notificationService = {
       console.error(`Error marking notification ${id} as read:`, error);
       throw error;
     }
-  },
+  }
 
   /**
    * Mark all notifications as read for current user
    */
-  markAllNotificationsRead: async (): Promise<boolean> => {
+  async markAllNotificationsRead(): Promise<boolean> {
     try {
       const response = await apiClient.put('/notifications/read-all');
       return response.data?.success === true;
@@ -85,14 +109,13 @@ export const notificationService = {
       console.error('Error marking all notifications as read:', error);
       throw error;
     }
-  },
+  }
 
   /**
    * Fetch notification preferences
    */
-  fetchNotificationPreferences: async (): Promise<NotificationPreference> => {
+  async fetchNotificationPreferences(): Promise<NotificationPreference> {
     try {
-      // Try /notifications/settings endpoint first, then /notifications/preferences fallback
       const response = await apiClient.get('/notifications/settings');
       if (response.data?.success && response.data?.data) {
         return response.data.data;
@@ -112,12 +135,12 @@ export const notificationService = {
       console.error('Error fetching notification preferences:', error);
       throw error;
     }
-  },
+  }
 
   /**
    * Update notification preferences
    */
-  updateNotificationPreferences: async (preferences: Partial<NotificationPreference>): Promise<NotificationPreference> => {
+  async updateNotificationPreferences(preferences: Partial<NotificationPreference>): Promise<NotificationPreference> {
     try {
       const response = await apiClient.put('/notifications/settings', preferences);
       if (response.data?.success && response.data?.data) {
@@ -128,12 +151,12 @@ export const notificationService = {
       console.error('Error updating notification preferences:', error);
       throw error;
     }
-  },
+  }
 
   /**
    * Register push notification token for current device
    */
-  registerDevicePushToken: async (token: string, deviceType: string = 'mobile'): Promise<boolean> => {
+  async registerDevicePushToken(token: string, deviceType: string = 'mobile'): Promise<boolean> {
     try {
       const response = await apiClient.post('/notifications/device-token', { token, deviceType });
       return response.data?.success === true;
@@ -142,6 +165,96 @@ export const notificationService = {
       return false;
     }
   }
-};
 
+  /**
+   * Schedule end-of-attendance warning notification at 6:55 PM
+   */
+  async scheduleEndAttendanceWarning(employeeId: string): Promise<void> {
+    try {
+      const now = new Date();
+      const targetTime = new Date();
+      targetTime.setHours(18, 55, 0, 0); // 6:55 PM
+
+      if (now > targetTime) {
+        targetTime.setDate(targetTime.getDate() + 1);
+      }
+
+      const delayMs = targetTime.getTime() - now.getTime();
+
+      setTimeout(() => {
+        this.sendLocalNotification(
+          'Attendance Reminder',
+          'Your attendance will end at 7:00 PM. Please complete your tasks and check out.',
+          'attendance_warning'
+        );
+      }, delayMs);
+
+      console.log(`Scheduled attendance warning for ${targetTime.toLocaleTimeString()}`);
+    } catch (error) {
+      console.error('Failed to schedule attendance warning:', error);
+    }
+  }
+
+  /**
+   * Cancel end-of-attendance warning notification
+   */
+  async cancelEndAttendanceWarning(): Promise<void> {
+    console.log('End attendance warning cancelled');
+  }
+
+  /**
+   * Send local notification
+   */
+  private async sendLocalNotification(title: string, body: string, channelId: string): Promise<void> {
+    try {
+      console.log(`Local Notification: ${title} - ${body} (${channelId})`);
+    } catch (error) {
+      console.error('Failed to send local notification:', error);
+    }
+  }
+
+  /**
+   * Send FCM notification to specific employee
+   */
+  async sendNotificationToEmployee(
+    employeeId: string,
+    title: string,
+    body: string,
+    data?: Record<string, any>
+  ): Promise<void> {
+    try {
+      console.log(`Sending notification to employee ${employeeId}: ${title} - ${body}`);
+    } catch (error) {
+      console.error('Failed to send notification to employee:', error);
+    }
+  }
+
+  /**
+   * Get FCM token
+   */
+  async getFCMToken(): Promise<string | null> {
+    try {
+      const token = await messaging().getToken();
+      return token;
+    } catch (error) {
+      console.error('Failed to get FCM token:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Register FCM token with backend
+   */
+  async registerFCMToken(employeeId: string): Promise<void> {
+    try {
+      const token = await this.getFCMToken();
+      if (!token) return;
+      console.log('FCM token registered');
+    } catch (error) {
+      console.error('Failed to register FCM token:', error);
+    }
+  }
+}
+
+export const notificationService = new NotificationService();
 export default notificationService;

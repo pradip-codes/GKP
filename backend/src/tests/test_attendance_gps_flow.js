@@ -237,9 +237,9 @@ async function runTestSuite() {
   // TEST 7: GPS accuracy exactly 50m
   // Expected: Continue (backend uses <= 50m).
   const t7Acq = simulateGpsAcquisition({
-    readings: [{ latitude: 18.61947, longitude: 73.87473, accuracy: 50 }]
+    readings: [{ latitude: 18.6194950, longitude: 73.8748080, accuracy: 50 }]
   });
-  const t7Geo = await verifyLocationInBuilding(18.61947, 73.87473, 50);
+  const t7Geo = await verifyLocationInBuilding(18.6194950, 73.8748080, 50);
   if (t7Acq.success && t7Acq.accuracy === 50 && t7Geo.matched && t7Geo.allowed) {
     console.log('✅ TEST 7 PASSED: GPS accuracy exactly 50m accepted by acquisition and backend geofence');
     passedTests++;
@@ -250,10 +250,10 @@ async function runTestSuite() {
   // TEST 8: GPS accuracy 51m
   // Expected: Reject as LOW_ACCURACY.
   const t8Acq = simulateGpsAcquisition({
-    readings: [{ latitude: 18.61947, longitude: 73.87473, accuracy: 51 }],
+    readings: [{ latitude: 18.6194950, longitude: 73.8748080, accuracy: 51 }],
     boundedTimeoutTriggered: true
   });
-  const t8Geo = await verifyLocationInBuilding(18.61947, 73.87473, 51);
+  const t8Geo = await verifyLocationInBuilding(18.6194950, 73.8748080, 51);
   if (!t8Acq.success && t8Acq.error === 'LOW_ACCURACY' && !t8Geo.matched && t8Geo.reason === 'LOW_ACCURACY') {
     console.log('✅ TEST 8 PASSED: GPS accuracy 51m (>50m) rejected as LOW_ACCURACY on both frontend and backend');
     passedTests++;
@@ -261,9 +261,9 @@ async function runTestSuite() {
     console.error('❌ TEST 8 FAILED:', { acq: t8Acq, geo: t8Geo });
   }
 
-  // TEST 9: Fresh accurate GPS but coordinates outside polygon
+  // TEST 9: Fresh accurate GPS but coordinates outside polygon (e.g., > 10m away)
   // Expected: Backend rejects as outside building / LOCATION_MISMATCH.
-  const outsidePoint = [18.63, 73.88]; // Outside Main Office Building (Pune)
+  const outsidePoint = [18.63, 73.88]; // Outside Office Location (Pune)
   const t9Geo = await verifyLocationInBuilding(outsidePoint[0], outsidePoint[1], 10);
   if (!t9Geo.matched && (t9Geo.status === 'LOCATION_MISMATCH' || t9Geo.reason === 'OUTSIDE_BUILDING')) {
     console.log('✅ TEST 9 PASSED: Fresh accurate GPS (10m) outside polygon rejected as outside building / LOCATION_MISMATCH');
@@ -272,9 +272,9 @@ async function runTestSuite() {
     console.error('❌ TEST 9 FAILED:', t9Geo);
   }
 
-  // TEST 10: Fresh accurate GPS inside exact polygon
+  // TEST 10: Fresh accurate GPS inside the exact building polygon
   // Expected: Normal attendance flow continues with building match.
-  const insidePoint = [18.61947, 73.87473]; // Inside Main Office Building (Pune) polygon
+  const insidePoint = [18.6194950, 73.8748080]; // Inside the Pune main office building polygon
   const t10Geo = await verifyLocationInBuilding(insidePoint[0], insidePoint[1], 12);
   if (t10Geo.matched && t10Geo.allowed && t10Geo.building?.name === 'Main Office Building (Pune)') {
     console.log('✅ TEST 10 PASSED: Fresh accurate GPS inside exact polygon matched building and continued flow');

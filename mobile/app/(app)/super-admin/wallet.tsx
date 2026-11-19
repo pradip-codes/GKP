@@ -10,8 +10,10 @@ import {
   RefreshControl,
   Modal,
   TextInput,
+  FlatList,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useTheme } from '../../../contexts/ThemeContext';
 import { colors } from '../../../theme/colors';
 import { typography } from '../../../theme/typography';
 import { spacing } from '../../../theme/spacing';
@@ -26,8 +28,10 @@ import {
 } from '../../../services/super-admin.service';
 
 export default function SuperAdminWalletScreen() {
+  const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<'overview' | 'withdrawals' | 'ledger'>('overview');
   const [statusFilter, setStatusFilter] = useState<'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL'>('PENDING');
 
   const [overview, setOverview] = useState<any>(null);
@@ -39,6 +43,12 @@ export default function SuperAdminWalletScreen() {
   const [selectedWithdrawal, setSelectedWithdrawal] = useState<any>(null);
   const [noteOrReason, setNoteOrReason] = useState('');
   const [processing, setProcessing] = useState(false);
+
+  const walletTabs = [
+    { id: 'overview', label: 'Overview', icon: '📊' },
+    { id: 'withdrawals', label: 'Withdrawals', icon: '💳' },
+    { id: 'ledger', label: 'Ledger', icon: '📜' },
+  ];
 
   const loadWalletData = useCallback(async () => {
     try {
@@ -123,6 +133,38 @@ export default function SuperAdminWalletScreen() {
           <Text style={styles.headerTitle}>Wallet & Settlements</Text>
         </View>
       </View>
+
+      {/* Tab Navigation */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.tabScroll}
+      >
+        {walletTabs.map((tab) => (
+          <TouchableOpacity
+            key={tab.id}
+            style={[
+              styles.tabButton,
+              {
+                backgroundColor: activeTab === tab.id ? colors.primary : colors.card,
+                borderColor: activeTab === tab.id ? colors.primary : colors.border,
+              },
+            ]}
+            onPress={() => setActiveTab(tab.id as any)}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 16 }}>{tab.icon}</Text>
+            <Text
+              style={[
+                styles.tabButtonText,
+                { color: activeTab === tab.id ? '#FFF' : colors.text },
+              ]}
+            >
+              {tab.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       {/* Financial KPI Banner */}
       <View style={styles.overviewContainer}>
@@ -624,5 +666,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#fff',
+  },
+  tabScroll: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    gap: 8,
+  },
+  tabButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  tabButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

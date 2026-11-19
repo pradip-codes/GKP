@@ -10,8 +10,10 @@ import {
   TextInput,
   Modal,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTheme } from '../../../contexts/ThemeContext';
 import { colors } from '../../../theme/colors';
 import { typography } from '../../../theme/typography';
 import { spacing } from '../../../theme/spacing';
@@ -30,12 +32,23 @@ export default function SuperAdminApplicationsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [activeTab, setActiveTab] = useState('applications'); // applications | bulk_actions
   
   // Action state
   const [selectedApp, setSelectedApp] = useState<any>(null);
   const [actionType, setActionType] = useState<'APPROVE' | 'REJECT' | 'DETAILS' | null>(null);
   const [actionReason, setActionReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  
+  // Advanced filters
+  const [filterModalVisible, setFilterModalVisible] = useState(false);
+  const [productFilter, setProductFilter] = useState('all');
+  const [bankFilter, setBankFilter] = useState('all');
+  const [processTypeFilter, setProcessTypeFilter] = useState('all');
+  const [dateRange, setDateRange] = useState('all');
+  
+  // Bulk selection
+  const [selectedAppIds, setSelectedAppIds] = useState<string[]>([]);
 
   const statuses = ['ALL', 'SUBMITTED', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'DISBURSED'];
 
@@ -118,13 +131,30 @@ export default function SuperAdminApplicationsScreen() {
   const renderAppCard = ({ item }: { item: any }) => {
     const sBadge = getStatusBadge(item.status);
     const appId = item.application_no || item.id || item._id;
+    const isSelected = selectedAppIds.includes(appId);
 
     return (
       <Card style={styles.appCard}>
         <View style={styles.cardHeader}>
-          <View>
-            <Text style={styles.appNumber}>APP #{String(appId).slice(-8)}</Text>
-            <Text style={styles.customerName}>{item.customer_name || item.fullName || 'Applicant'}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity onPress={() => {
+              if (isSelected) {
+                setSelectedAppIds(selectedAppIds.filter(id => id !== appId));
+              } else {
+                setSelectedAppIds([...selectedAppIds, appId]);
+              }
+            }}>
+              <View style={[styles.checkbox, { 
+                backgroundColor: isSelected ? colors.primary : colors.bgSecondary,
+                borderColor: isSelected ? colors.primary : colors.border 
+              }]}>
+                {isSelected && <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '900' }}>✓</Text>}
+              </View>
+            </TouchableOpacity>
+            <View>
+              <Text style={styles.appNumber}>APP #{String(appId).slice(-8)}</Text>
+              <Text style={styles.customerName}>{item.customer_name || item.fullName || 'Applicant'}</Text>
+            </View>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: sBadge.bg }]}>
             <Text style={[styles.statusText, { color: sBadge.text }]}>
@@ -207,6 +237,26 @@ export default function SuperAdminApplicationsScreen() {
           <Text style={styles.headerTitle}>Applications Control</Text>
           <Text style={styles.headerSubtitle}>Super admin loan & credit card review</Text>
         </View>
+      </View>
+
+      {/* Tab Navigation */}
+      <View style={styles.tabRow}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'applications' && styles.activeTab]}
+          onPress={() => setActiveTab('applications')}
+        >
+          <Text style={[styles.tabText, activeTab === 'applications' && styles.activeTabText]}>
+            Applications
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'bulk_actions' && styles.activeTab]}
+          onPress={() => setActiveTab('bulk_actions')}
+        >
+          <Text style={[styles.tabText, activeTab === 'bulk_actions' && styles.activeTabText]}>
+            Bulk Actions {selectedAppIds.length > 0 && `(${selectedAppIds.length})`}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Search & Status Filters */}
@@ -651,5 +701,87 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#fff',
+  },
+  tabRow: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  activeTab: {
+    borderBottomWidth: 2,
+    borderBottomColor: '#2563EB',
+  },
+  tabText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  activeTabText: {
+    color: '#2563EB',
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterModalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '80%',
+  },
+  filterLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  filterOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  filterOption: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  filterOptionActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  filterOptionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  filterOptionTextActive: {
+    color: '#fff',
+  },
+  applyFilterBtn: {
+    backgroundColor: '#2563EB',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  applyFilterBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

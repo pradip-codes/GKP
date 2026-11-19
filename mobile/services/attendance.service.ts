@@ -86,6 +86,14 @@ export interface AttendanceResponse {
   status?: string;
 }
 
+export interface AttendanceTask {
+  id: string;
+  task: string;
+  status: 'PENDING' | 'COMPLETED';
+  created_at: string;
+  completed_at?: string;
+}
+
 // ============================================================================
 // ATTENDANCE ENDPOINTS
 // ============================================================================
@@ -333,5 +341,41 @@ export const executeCheckOut = async (verificationSessionId: string): Promise<At
     return response.data?.data !== undefined ? response.data.data : response.data;
   } catch (error: any) {
     throw error.response?.data || { success: false, message: 'Failed to mark check-out' };
+  }
+};
+
+/**
+ * Save Today's Tasks
+ */
+export const saveTodayTasks = async (tasks: AttendanceTask[]): Promise<{ success: boolean; message?: string }> => {
+  try {
+    const response = await apiClient.post('/attendance/tasks', { tasks });
+    return response.data?.data !== undefined ? response.data.data : response.data;
+  } catch (error: any) {
+    throw error.response?.data || { success: false, message: 'Failed to save tasks' };
+  }
+};
+
+/**
+ * Fetch Today's Tasks
+ */
+export const getTodayTasks = async (): Promise<{ tasks: AttendanceTask[] }> => {
+  try {
+    const response = await apiClient.get('/attendance/tasks/today');
+    return response.data?.data !== undefined ? response.data.data : response.data;
+  } catch (error: any) {
+    throw error.response?.data || { success: false, message: 'Failed to fetch tasks' };
+  }
+};
+
+/**
+ * Mark Task as Complete
+ */
+export const markTaskComplete = async (taskId: string): Promise<{ success: boolean; message?: string }> => {
+  try {
+    const response = await apiClient.patch(`/attendance/tasks/${taskId}`, { status: 'COMPLETED' });
+    return response.data?.data !== undefined ? response.data.data : response.data;
+  } catch (error: any) {
+    throw error.response?.data || { success: false, message: 'Failed to mark task complete' };
   }
 };

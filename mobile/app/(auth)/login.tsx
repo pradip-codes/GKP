@@ -9,16 +9,14 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  Image,
+  SafeAreaView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { router } from 'expo-router';
-import { colors } from '../../theme/colors';
 import { useTheme } from '../../contexts/ThemeContext';
-import { typography } from '../../theme/typography';
-import { spacing } from '../../theme/spacing';
-import { Card } from '../../components/Card';
 import { Icon } from '../../components/Icon';
-import { Button } from '../../components/Button';
-import { ThemeToggle } from '../../components/ThemeToggle';
 import {
   sendOtp,
   loginWithOtp,
@@ -58,6 +56,11 @@ export default function LoginScreen() {
   const [biometricName, setBiometricName] = useState('Fingerprint / Face ID');
   const [hasSavedBiometric, setHasSavedBiometric] = useState(false);
 
+  // Forgot Password Modal State
+  const [forgotModalVisible, setForgotModalVisible] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+
   useEffect(() => {
     const initBiometrics = async () => {
       try {
@@ -74,35 +77,6 @@ export default function LoginScreen() {
     initBiometrics();
   }, []);
 
-  const handleBiometricLogin = async () => {
-    setErrorMsg(null);
-    setLoading(true);
-    try {
-      const authRes = await authenticateWithBiometrics(`Verify identity to sign in with ${biometricName}`);
-      if (!authRes.success) {
-        setErrorMsg(authRes.error || 'Biometric authentication was cancelled.');
-        setLoading(false);
-        return;
-      }
-      const saved = await getBiometricSession();
-      if (saved?.token && saved?.user) {
-        await loginSession(saved.user, saved.token);
-        resolveRoleRedirect(saved.user);
-      } else {
-        setErrorMsg('No saved credentials for biometric login. Please sign in with password.');
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Biometric login failed.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Forgot Password Modal State
-  const [forgotModalVisible, setForgotModalVisible] = useState(false);
-  const [forgotEmail, setForgotEmail] = useState('');
-  const [forgotLoading, setForgotLoading] = useState(false);
-
   // Countdown timer for OTP
   useEffect(() => {
     let interval: any;
@@ -112,19 +86,19 @@ export default function LoginScreen() {
     return () => clearInterval(interval);
   }, [timer]);
 
-  // Route resolver based on role
   const resolveRoleRedirect = (user: any) => {
     const role = (user?.role || '').toUpperCase();
     if (role === 'SUPER_ADMIN') {
       router.replace('/(app)/super-admin/dashboard');
-    } else if (role === 'PARTNER' || role === 'TEAM_MEMBER') {
-      router.replace('/(app)/partner-dashboard');
+    } else if (role === 'ADMIN' || role === 'HR') {
+      router.replace('/(app)/admin-dashboard');
+    } else if (role === 'EMPLOYEE') {
+      router.replace('/(app)/employee-dashboard');
     } else {
-      router.replace('/(app)/dashboard');
+      router.replace('/(app)/partner-dashboard');
     }
   };
 
-  // Handle Password Login
   const handlePasswordLogin = async () => {
     if (!identity.trim()) {
       setErrorMsg('Please enter your email or mobile number');
@@ -147,7 +121,7 @@ export default function LoginScreen() {
         }
         resolveRoleRedirect(res.user);
       } else {
-        setErrorMsg(res?.message || 'Invalid credentials');
+        setErrorMsg(res?.message || 'Invalid email/mobile or password');
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Login failed. Please check your credentials.');
@@ -156,7 +130,6 @@ export default function LoginScreen() {
     }
   };
 
-  // Handle Send OTP
   const handleSendOtp = async () => {
     if (!identity.trim()) {
       setErrorMsg('Please enter your email or mobile number to receive OTP');
@@ -181,7 +154,6 @@ export default function LoginScreen() {
     }
   };
 
-  // Handle Verify OTP Login
   const handleOtpLogin = async () => {
     if (!otp.trim() || otp.trim().length < 6) {
       setErrorMsg('Please enter the 6-digit verification code');
@@ -209,7 +181,30 @@ export default function LoginScreen() {
     }
   };
 
-  // Handle Forgot Password Request
+  const handleBiometricLogin = async () => {
+    setErrorMsg(null);
+    setLoading(true);
+    try {
+      const authRes = await authenticateWithBiometrics(`Verify identity to sign in with ${biometricName}`);
+      if (!authRes.success) {
+        setErrorMsg(authRes.error || 'Biometric authentication was cancelled.');
+        setLoading(false);
+        return;
+      }
+      const saved = await getBiometricSession();
+      if (saved?.token && saved?.user) {
+        await loginSession(saved.user, saved.token);
+        resolveRoleRedirect(saved.user);
+      } else {
+        setErrorMsg('No saved credentials for biometric login. Please sign in with password.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Biometric login failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleForgotPassword = async () => {
     if (!forgotEmail.trim()) {
       Alert.alert('Required', 'Please enter your registered email address');
@@ -228,570 +223,697 @@ export default function LoginScreen() {
     }
   };
 
+  const isMobileNumber = /^[6-9]\d{9}$/.test(identity.trim());
+
   return (
-    <ScrollView
-      contentContainerStyle={[styles.container, { backgroundColor: colors.bg }]}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-    >
-      {/* Brand Header */}
-      <View style={styles.header}>
-        <View style={[styles.logoBadge, { backgroundColor: colors.primary }]}>
-          <Text style={styles.logoBadgeText}>GKP</Text>
-        </View>
-        <Text style={[styles.brandTitle, { color: colors.text }]}>GharKaPaisa</Text>
-        <Text style={[styles.brandSubtitle, { color: colors.textMid }]}>Financial Partner & Employee Network</Text>
-      </View>
-
-      {/* Main Login Card */}
-      <Card style={styles.card}>
-        {/* Method Switcher Tabs */}
-        <View style={styles.modeTabs}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+      >
+        {/* ── TOP NAV BAR ── */}
+        <View style={[styles.navBar, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
           <TouchableOpacity
-            style={[styles.modeTab, loginMode === 'password' && styles.activeModeTab]}
-            onPress={() => {
-              setLoginMode('password');
-              setErrorMsg(null);
-            }}
+            style={[styles.homeBackBtn, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}
+            onPress={() => router.replace('/(auth)/home')}
+            activeOpacity={0.7}
           >
-            <Icon
-              name="lock"
-              size={14}
-              color={loginMode === 'password' ? colors.primary : colors.textLight}
-            />
-            <Text
-              style={[styles.modeTabText, loginMode === 'password' && styles.activeModeTabText]}
-            >
-              Password
-            </Text>
+            <Text style={{ fontSize: 13, color: colors.text }}>← Home</Text>
           </TouchableOpacity>
 
+          <Image
+            source={require('../../assets/images/logo.png')}
+            style={styles.headerLogo}
+            resizeMode="contain"
+          />
+
           <TouchableOpacity
-            style={[styles.modeTab, loginMode === 'otp' && styles.activeModeTab]}
-            onPress={() => {
-              setLoginMode('otp');
-              setErrorMsg(null);
-            }}
+            style={[styles.langBtn, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}
+            onPress={() => router.push('/(public)/language-settings')}
+            activeOpacity={0.7}
           >
-            <Icon
-              name="smartphone"
-              size={14}
-              color={loginMode === 'otp' ? colors.primary : colors.textLight}
-            />
-            <Text style={[styles.modeTabText, loginMode === 'otp' && styles.activeModeTabText]}>
-              Instant OTP
-            </Text>
+            <Text style={{ fontSize: 16 }}>🌐</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Error Alert Box */}
-        {errorMsg && (
-          <View style={styles.errorBox}>
-            <Icon name="alert-circle" size={16} color="#EF4444" />
-            <Text style={styles.errorText}>{errorMsg}</Text>
-          </View>
-        )}
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* ── HERO / WELCOME CARD ── */}
+          <View style={[styles.loginCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            {/* Welcome Badge */}
+            <View style={styles.welcomeBadge}>
+              <Text style={styles.welcomeBadgeText}>Welcome Back! 👋</Text>
+            </View>
 
-        {/* Form Inputs */}
-        <View style={styles.formContainer}>
-          <Text style={styles.inputLabel}>Registered Email or Mobile</Text>
-          <View style={styles.inputWrap}>
-            <Icon name="mail" size={18} color={colors.textLight} />
-            <TextInput
-              style={styles.textInput}
-              placeholder="e.g. partner@gharkapaisa.in or 9876543210"
-              placeholderTextColor={colors.textLight}
-              value={identity}
-              onChangeText={(text) => {
-                setIdentity(text);
-                setErrorMsg(null);
-                setOtpSent(false);
-              }}
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
-          </View>
+            {/* Headline */}
+            <Text style={[styles.loginTitle, { color: colors.text }]}>
+              Login to Your{' '}
+              <Text style={{ color: colors.primary }}>Account</Text>
+            </Text>
 
-          {/* Password Mode Fields */}
-          {loginMode === 'password' ? (
-            <>
-              <View style={styles.labelRow}>
-                <Text style={styles.inputLabel}>Password</Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    setForgotEmail(identity.includes('@') ? identity : '');
-                    setForgotModalVisible(true);
-                  }}
-                >
-                  <Text style={styles.forgotText}>Forgot password?</Text>
-                </TouchableOpacity>
-              </View>
+            <Text style={[styles.loginSubtitle, { color: colors.textMid }]}>
+              Access your dashboard and manage your financial journey seamlessly
+            </Text>
 
-              <View style={styles.inputWrap}>
-                <Icon name="lock" size={18} color={colors.textLight} />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Enter your account password"
-                  placeholderTextColor={colors.textLight}
-                  value={password}
-                  onChangeText={(text) => {
-                    setPassword(text);
-                    setErrorMsg(null);
-                  }}
-                  secureTextEntry={!showPassword}
+            {/* ── TABS SWITCHER: Password vs OTP ── */}
+            <View style={[styles.tabContainer, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
+              <TouchableOpacity
+                style={[
+                  styles.tabBtn,
+                  loginMode === 'password' && [styles.activeTabBtn, { backgroundColor: colors.card, borderColor: colors.border }],
+                ]}
+                onPress={() => {
+                  setLoginMode('password');
+                  setErrorMsg(null);
+                }}
+                activeOpacity={0.8}
+              >
+                <Icon
+                  name="lock"
+                  size={14}
+                  color={loginMode === 'password' ? colors.primary : colors.textLight}
                 />
-                <TouchableOpacity
-                  style={styles.eyeBtn}
-                  onPress={() => setShowPassword(!showPassword)}
+                <Text
+                  style={[
+                    styles.tabBtnText,
+                    { color: loginMode === 'password' ? colors.primary : colors.textLight },
+                  ]}
                 >
-                  <Icon
-                    name={showPassword ? 'eye-off' : 'eye'}
-                    size={18}
-                    color={colors.textLight}
-                  />
-                </TouchableOpacity>
-              </View>
+                  Password
+                </Text>
+              </TouchableOpacity>
 
-              <Button
-                title="Sign In"
-                onPress={handlePasswordLogin}
-                loading={loading}
-                style={{ marginTop: spacing.md }}
-              />
-            </>
-          ) : (
-            /* OTP Mode Fields */
-            <>
-              {!otpSent ? (
-                <Button
-                  title="Send Verification Code"
-                  onPress={handleSendOtp}
-                  loading={loading}
-                  style={{ marginTop: spacing.md }}
+              <TouchableOpacity
+                style={[
+                  styles.tabBtn,
+                  loginMode === 'otp' && [styles.activeTabBtn, { backgroundColor: colors.card, borderColor: colors.border }],
+                ]}
+                onPress={() => {
+                  setLoginMode('otp');
+                  setErrorMsg(null);
+                }}
+                activeOpacity={0.8}
+              >
+                <Icon
+                  name="device"
+                  size={14}
+                  color={loginMode === 'otp' ? colors.primary : colors.textLight}
                 />
-              ) : (
-                <>
-                  <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>
-                    6-Digit OTP Code
-                  </Text>
-                  <View style={styles.inputWrap}>
-                    <Icon name="shield" size={18} color={colors.textLight} />
+                <Text
+                  style={[
+                    styles.tabBtnText,
+                    { color: loginMode === 'otp' ? colors.primary : colors.textLight },
+                  ]}
+                >
+                  Instant OTP
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Error Message Box */}
+            {errorMsg && (
+              <View style={styles.errorBox}>
+                <Text style={{ fontSize: 14 }}>⚠️</Text>
+                <Text style={styles.errorText}>{errorMsg}</Text>
+              </View>
+            )}
+
+            {/* ── FORM FIELDS ── */}
+            <View style={styles.formArea}>
+              {/* Email / Mobile Input */}
+              {!(loginMode === 'otp' && otpSent) && (
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Email or Mobile Number</Text>
+                  <View style={[styles.inputWrapper, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
+                    <Text style={{ fontSize: 16, marginRight: 8 }}>{isMobileNumber ? '📞' : '✉️'}</Text>
                     <TextInput
-                      style={styles.textInput}
-                      placeholder="123456"
+                      style={[styles.textInput, { color: colors.text }]}
+                      placeholder="Enter registered email or mobile"
                       placeholderTextColor={colors.textLight}
-                      value={otp}
-                      onChangeText={(text) => {
-                        setOtp(text);
+                      value={identity}
+                      onChangeText={(t) => {
+                        setIdentity(t);
                         setErrorMsg(null);
                       }}
-                      keyboardType="number-pad"
-                      maxLength={6}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
                     />
                   </View>
+                </View>
+              )}
 
-                  <View style={styles.otpInfoRow}>
-                    <Text style={styles.otpSentTo}>
-                      Sent to: <Text style={{ color: colors.text }}>{maskedIdentity}</Text>
-                    </Text>
-                    {timer > 0 ? (
-                      <Text style={styles.timerText}>Resend in {timer}s</Text>
-                    ) : (
-                      <TouchableOpacity onPress={handleSendOtp} disabled={loading}>
-                        <Text style={styles.resendText}>Resend OTP</Text>
+              {/* Password Mode Fields */}
+              {loginMode === 'password' && (
+                <>
+                  <View style={styles.inputGroup}>
+                    <View style={styles.labelRow}>
+                      <Text style={[styles.fieldLabel, { color: colors.text }]}>Password</Text>
+                      <TouchableOpacity onPress={() => setForgotModalVisible(true)}>
+                        <Text style={[styles.forgotLink, { color: colors.primary }]}>Forgot Password?</Text>
                       </TouchableOpacity>
-                    )}
+                    </View>
+
+                    <View style={[styles.inputWrapper, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
+                      <Text style={{ fontSize: 16, marginRight: 8 }}>🔒</Text>
+                      <TextInput
+                        style={[styles.textInput, { color: colors.text }]}
+                        placeholder="Enter your account password"
+                        placeholderTextColor={colors.textLight}
+                        value={password}
+                        onChangeText={(t) => {
+                          setPassword(t);
+                          setErrorMsg(null);
+                        }}
+                        secureTextEntry={!showPassword}
+                        autoCapitalize="none"
+                      />
+                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+                        <Text style={{ fontSize: 15 }}>{showPassword ? '👁️' : '🙈'}</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
 
-                  <Button
-                    title="Verify & Sign In"
-                    onPress={handleOtpLogin}
-                    loading={loading}
-                    style={{ marginTop: spacing.md }}
-                  />
-
+                  {/* Primary Sign In Button */}
                   <TouchableOpacity
-                    style={styles.changeIdentityBtn}
-                    onPress={() => setOtpSent(false)}
+                    style={[styles.submitBtn, { backgroundColor: colors.primary }]}
+                    onPress={handlePasswordLogin}
+                    disabled={loading}
+                    activeOpacity={0.85}
                   >
-                    <Text style={styles.changeIdentityText}>Change Email / Mobile</Text>
+                    {loading ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <>
+                        <Text style={styles.submitBtnText}>Sign In to Account</Text>
+                        <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '800' }}> →</Text>
+                      </>
+                    )}
                   </TouchableOpacity>
+
+                  {/* Biometric Quick Login Button */}
+                  {biometricAvailable && hasSavedBiometric && (
+                    <TouchableOpacity
+                      style={[styles.biometricBtn, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}
+                      onPress={handleBiometricLogin}
+                      disabled={loading}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 18 }}>👆</Text>
+                      <Text style={[styles.biometricBtnText, { color: colors.text }]}>
+                        Sign In with {biometricName}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </>
               )}
-            </>
-          )}
-        </View>
 
-        {/* Biometric Quick Sign-In Option */}
-        {hasSavedBiometric && biometricAvailable && (
-          <TouchableOpacity
-            style={[styles.biometricBtn, { borderColor: colors.primary, backgroundColor: isDark ? '#003828' : '#ECFDF5' }]}
-            onPress={handleBiometricLogin}
-            disabled={loading}
-            activeOpacity={0.8}
-          >
-            <Icon name="shield" size={20} color={colors.primary} />
-            <Text style={[styles.biometricBtnText, { color: colors.primary }]}>
-              Fast Sign In with {biometricName}
-            </Text>
-          </TouchableOpacity>
-        )}
+              {/* OTP Mode Fields */}
+              {loginMode === 'otp' && (
+                <>
+                  {!otpSent ? (
+                    <TouchableOpacity
+                      style={[styles.submitBtn, { backgroundColor: colors.primary, marginTop: 12 }]}
+                      onPress={handleSendOtp}
+                      disabled={loading}
+                      activeOpacity={0.85}
+                    >
+                      {loading ? (
+                        <ActivityIndicator size="small" color="#FFF" />
+                      ) : (
+                        <>
+                          <Text style={styles.submitBtnText}>Send Verification OTP</Text>
+                          <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '800' }}> →</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  ) : (
+                    <>
+                      <View style={[styles.otpInfoBox, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.otpSentLabel, { color: colors.textLight }]}>OTP Sent To</Text>
+                          <Text style={[styles.otpSentTarget, { color: colors.text }]}>{maskedIdentity}</Text>
+                        </View>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setOtpSent(false);
+                            setOtp('');
+                          }}
+                        >
+                          <Text style={[styles.editLink, { color: colors.primary }]}>Change</Text>
+                        </TouchableOpacity>
+                      </View>
 
-        {/* Divider */}
-        <View style={styles.dividerRow}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>OR</Text>
-          <View style={styles.dividerLine} />
-        </View>
+                      <View style={styles.inputGroup}>
+                        <Text style={[styles.fieldLabel, { color: colors.text }]}>6-Digit Verification Code</Text>
+                        <View style={[styles.inputWrapper, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
+                          <Text style={{ fontSize: 16, marginRight: 8 }}>🔑</Text>
+                          <TextInput
+                            style={[styles.textInput, { color: colors.text, letterSpacing: 4, fontWeight: '800' }]}
+                            placeholder="• • • • • •"
+                            placeholderTextColor={colors.textLight}
+                            value={otp}
+                            onChangeText={(t) => {
+                              setOtp(t);
+                              setErrorMsg(null);
+                            }}
+                            keyboardType="number-pad"
+                            maxLength={6}
+                          />
+                        </View>
+                      </View>
 
-        {/* Register CTA */}
-        <TouchableOpacity
-          style={styles.registerBtn}
-          onPress={() => router.push('/(auth)/register' as any)}
-        >
-          <Text style={styles.registerPrompt}>Don't have an account?</Text>
-          <Text style={styles.registerAction}>Register as Partner</Text>
-        </TouchableOpacity>
-      </Card>
+                      {/* Resend Timer */}
+                      <View style={styles.resendRow}>
+                        {timer > 0 ? (
+                          <Text style={[styles.timerText, { color: colors.textLight }]}>
+                            Resend code in {timer}s
+                          </Text>
+                        ) : (
+                          <TouchableOpacity onPress={handleSendOtp} disabled={loading}>
+                            <Text style={[styles.resendLink, { color: colors.primary }]}>
+                              Resend Verification OTP
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
 
-      {/* Footer Info */}
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>Secure 256-Bit SSL Encrypted Authentication</Text>
-        <Text style={styles.footerVersion}>GharKaPaisa v2.4.0</Text>
-      </View>
+                      {/* Verify & Login Button */}
+                      <TouchableOpacity
+                        style={[styles.submitBtn, { backgroundColor: colors.primary }]}
+                        onPress={handleOtpLogin}
+                        disabled={loading}
+                        activeOpacity={0.85}
+                      >
+                        {loading ? (
+                          <ActivityIndicator size="small" color="#FFF" />
+                        ) : (
+                          <>
+                            <Text style={styles.submitBtnText}>Verify & Sign In</Text>
+                            <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '800' }}> →</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </>
+                  )}
+                </>
+              )}
+            </View>
 
-      {/* Forgot Password Modal */}
-      <Modal visible={forgotModalVisible} transparent animationType="fade">
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Reset Password</Text>
-            <Text style={styles.modalSub}>
-              Enter your registered email address and we'll send a password reset link.
-            </Text>
-
-            <Text style={styles.inputLabel}>Registered Email</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={forgotEmail}
-              onChangeText={setForgotEmail}
-              placeholder="e.g. partner@gharkapaisa.in"
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={styles.modalCancelBtn}
-                onPress={() => setForgotModalVisible(false)}
-                disabled={forgotLoading}
-              >
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.modalConfirmBtn}
-                onPress={handleForgotPassword}
-                disabled={forgotLoading}
-              >
-                {forgotLoading ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.modalConfirmText}>Send Reset Link</Text>
-                )}
+            {/* ── REGISTER PROMPT LINK ── */}
+            <View style={styles.signUpPromptRow}>
+              <Text style={[styles.promptText, { color: colors.textMid }]}>
+                Don't have an account?{' '}
+              </Text>
+              <TouchableOpacity onPress={() => router.push('/(auth)/register')}>
+                <Text style={[styles.signUpLink, { color: colors.primary }]}>Sign Up as Partner</Text>
               </TouchableOpacity>
             </View>
           </View>
-        </View>
-      </Modal>
-    </ScrollView>
+
+          {/* Trust Guarantees */}
+          <View style={styles.trustRow}>
+            <Text style={{ fontSize: 14 }}>🛡️</Text>
+            <Text style={[styles.trustText, { color: colors.textLight }]}>
+              Bank-Grade 256-bit SSL Encrypted & Protected
+            </Text>
+          </View>
+
+          {/* Chatbot Floating Button */}
+          <TouchableOpacity
+            style={[styles.chatbotFab, { backgroundColor: colors.primary }]}
+            onPress={() => router.push('/(public)/chatbot')}
+            activeOpacity={0.85}
+          >
+            <Text style={{ fontSize: 20 }}>🤖</Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        {/* ── FORGOT PASSWORD MODAL ── */}
+        <Modal
+          visible={forgotModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setForgotModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Reset Password</Text>
+              <Text style={[styles.modalSubtitle, { color: colors.textMid }]}>
+                Enter your registered email address to receive password reset instructions.
+              </Text>
+
+              <TextInput
+                style={[styles.modalInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
+                placeholder="Enter your email"
+                placeholderTextColor={colors.textLight}
+                value={forgotEmail}
+                onChangeText={setForgotEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={[styles.modalCancelBtn, { borderColor: colors.border }]}
+                  onPress={() => setForgotModalVisible(false)}
+                >
+                  <Text style={[styles.modalCancelText, { color: colors.textMid }]}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalSendBtn, { backgroundColor: colors.primary }]}
+                  onPress={handleForgotPassword}
+                  disabled={forgotLoading}
+                >
+                  {forgotLoading ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Text style={styles.modalSendText}>Send Link</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    padding: spacing.lg,
-    justifyContent: 'center',
-    backgroundColor: colors.bg,
+  safeArea: {
+    flex: 1,
   },
-  header: {
-    alignItems: 'center',
-    marginBottom: spacing.xl,
-  },
-  logoBadge: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  logoBadgeText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
-  brandTitle: {
-    fontSize: 26,
-    fontWeight: '900',
-    color: colors.text,
-    letterSpacing: 0.5,
-  },
-  brandSubtitle: {
-    fontSize: 12,
-    color: colors.textMid,
-    marginTop: 4,
-  },
-  card: {
-    padding: spacing.lg,
-    borderRadius: 20,
-    backgroundColor: colors.bgSecondary,
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  modeTabs: {
+  navBar: {
+    height: 56,
     flexDirection: 'row',
-    backgroundColor: colors.bgTertiary,
-    borderRadius: 10,
-    padding: 4,
-    marginBottom: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
   },
-  modeTab: {
+  homeBackBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  headerLogo: {
+    width: 130,
+    height: 36,
+  },
+  langBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 40,
+  },
+  loginCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 3,
+  },
+  welcomeBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#DCFCE7',
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    marginBottom: 10,
+  },
+  welcomeBadgeText: {
+    color: '#166534',
+    fontSize: 11.5,
+    fontWeight: '800',
+  },
+  loginTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    marginBottom: 4,
+  },
+  loginSubtitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
+    marginBottom: 18,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 4,
+    marginBottom: 16,
+  },
+  tabBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    borderRadius: 8,
     gap: 6,
+    paddingVertical: 9,
+    borderRadius: 9,
   },
-  activeModeTab: {
-    backgroundColor: colors.bgSecondary,
+  activeTabBtn: {
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 1,
   },
-  modeTabText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textMid,
-  },
-  activeModeTabText: {
-    color: colors.text,
+  tabBtnText: {
+    fontSize: 12.5,
     fontWeight: '700',
   },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.errorSoft,
+    gap: 8,
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FCA5A5',
     borderWidth: 1,
-    borderColor: colors.error,
-    padding: spacing.sm,
-    borderRadius: 8,
-    marginBottom: spacing.md,
-    gap: spacing.xs,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 14,
   },
   errorText: {
     flex: 1,
-    fontSize: 12,
-    color: colors.error,
+    color: '#991B1B',
+    fontSize: 12.5,
     fontWeight: '600',
   },
-  formContainer: {
-    gap: spacing.xs,
+  formArea: {
+    gap: 14,
+  },
+  inputGroup: {
+    gap: 6,
   },
   labelRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: spacing.sm,
   },
-  inputLabel: {
+  fieldLabel: {
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  forgotLink: {
     fontSize: 12,
     fontWeight: '700',
-    color: colors.text,
-    marginBottom: 4,
   },
-  forgotText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.primary,
-  },
-  inputWrap: {
+  inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.inputBg,
-    borderRadius: 10,
     borderWidth: 1,
-    borderColor: colors.inputBorder,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    gap: spacing.sm,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 48,
   },
   textInput: {
     flex: 1,
-    fontSize: 13,
-    color: colors.text,
-    padding: 0,
+    fontSize: 14,
+    fontWeight: '500',
   },
   eyeBtn: {
     padding: 4,
   },
-  otpInfoRow: {
+  submitBtn: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: spacing.xs,
+    justifyContent: 'center',
+    height: 48,
+    borderRadius: 12,
+    marginTop: 6,
+    shadowColor: '#1B74BB',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 3,
   },
-  otpSentTo: {
-    fontSize: 11,
-    color: colors.textMid,
-  },
-  timerText: {
-    fontSize: 11,
-    color: colors.textMid,
-    fontWeight: '600',
-  },
-  resendText: {
-    fontSize: 11,
-    color: colors.primary,
-    fontWeight: '700',
-  },
-  changeIdentityBtn: {
-    alignItems: 'center',
-    marginTop: spacing.sm,
-    paddingVertical: 4,
-  },
-  changeIdentityText: {
-    fontSize: 12,
-    color: colors.textMid,
-    fontWeight: '600',
+  submitBtnText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '800',
   },
   biometricBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.sm + 2,
-    paddingHorizontal: spacing.md,
+    gap: 8,
+    height: 44,
     borderRadius: 12,
-    borderWidth: 1.5,
-    marginTop: spacing.md,
+    borderWidth: 1,
   },
   biometricBtnText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
-  dividerRow: {
+  otpInfoBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: spacing.md,
-    gap: spacing.sm,
+    justifyContent: 'space-between',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
   },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dividerText: {
+  otpSentLabel: {
     fontSize: 11,
-    fontWeight: '700',
-    color: colors.textMid,
-  },
-  registerBtn: {
-    alignItems: 'center',
-    paddingVertical: spacing.xs,
-  },
-  registerPrompt: {
-    fontSize: 12,
-    color: colors.textMid,
-  },
-  registerAction: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: colors.primary,
-    marginTop: 2,
-  },
-  footer: {
-    marginTop: spacing.xl,
-    alignItems: 'center',
-    gap: 4,
-  },
-  footerText: {
-    fontSize: 11,
-    color: colors.textMid,
-  },
-  footerVersion: {
-    fontSize: 10,
-    color: colors.textLight,
     fontWeight: '600',
   },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'center',
-    padding: spacing.lg,
+  otpSentTarget: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    marginTop: 2,
   },
-  modalCard: {
-    backgroundColor: colors.bgSecondary,
-    borderRadius: 16,
-    padding: spacing.lg,
+  editLink: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  resendRow: {
+    alignItems: 'center',
+    marginTop: -4,
+  },
+  timerText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  resendLink: {
+    fontSize: 12.5,
+    fontWeight: '800',
+  },
+  signUpPromptRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  promptText: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  signUpLink: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  trustRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 20,
+  },
+  trustText: {
+    fontSize: 11.5,
+    fontWeight: '500',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalBox: {
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: colors.border,
+    padding: 20,
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: colors.text,
+    marginBottom: 6,
   },
-  modalSub: {
-    fontSize: 12,
-    color: colors.textMid,
-    marginTop: 4,
-    marginBottom: spacing.md,
+  modalSubtitle: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 14,
   },
   modalInput: {
-    backgroundColor: colors.inputBg,
+    height: 46,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: colors.inputBorder,
-    borderRadius: 8,
-    padding: 10,
-    fontSize: 13,
-    marginBottom: spacing.md,
-    color: colors.text,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    marginBottom: 16,
   },
   modalActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    gap: spacing.sm,
+    gap: 10,
   },
   modalCancelBtn: {
-    paddingVertical: 10,
+    paddingVertical: 9,
     paddingHorizontal: 16,
     borderRadius: 8,
+    borderWidth: 1,
   },
   modalCancelText: {
     fontSize: 13,
     fontWeight: '700',
-    color: colors.textMid,
   },
-  modalConfirmBtn: {
-    backgroundColor: colors.primary,
-    paddingVertical: 10,
+  modalSendBtn: {
+    paddingVertical: 9,
     paddingHorizontal: 18,
     borderRadius: 8,
   },
-  modalConfirmText: {
+  modalSendText: {
+    color: '#FFF',
     fontSize: 13,
-    fontWeight: '700',
-    color: '#fff',
+    fontWeight: '800',
+  },
+  chatbotFab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 16,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 4,
   },
 });

@@ -12,6 +12,7 @@ import api from '../../services/api';
 import { getApiV1Url } from '../../config/api';
 import LoadingLogo from '../../components/Loader/LoadingLogo';
 import { useLocalStorageCache } from '../../hooks/useLocalStorageCache';
+import { useAttendanceGate } from './attendance/AttendanceGate';
 
 // Static Banner Image Assets
 import offerBanner from '../home/components/banner/offerbanner.webp';
@@ -56,6 +57,7 @@ const resolveBannerImage = (url) => {
 export default function EmployeeDashboardRedesigned() {
   const { C, isDark } = useTheme();
   const navigate = useNavigate();
+  const { openCheckOutReview } = useAttendanceGate() || {};
 
   const [employee, setEmployee] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -481,6 +483,39 @@ export default function EmployeeDashboardRedesigned() {
             gap: '12px',
             flexWrap: 'wrap'
           }}>
+            {openCheckOutReview && (
+              <button
+                type="button"
+                onClick={openCheckOutReview}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: 'linear-gradient(135deg, #008A60 0%, #065F46 100%)',
+                  border: 'none',
+                  padding: '8px 16px',
+                  borderRadius: '10px',
+                  fontSize: '13px',
+                  fontWeight: 800,
+                  color: '#FFFFFF',
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(0, 138, 96, 0.25)',
+                  transition: 'all 0.2s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 138, 96, 0.35)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'none';
+                  e.currentTarget.style.boxShadow = '0 2px 8px rgba(0, 138, 96, 0.25)';
+                }}
+              >
+                <FaCalendarCheck />
+                <span>Check-Out</span>
+              </button>
+            )}
+
             <div style={{ 
               display: 'flex', 
               alignItems: 'center', 

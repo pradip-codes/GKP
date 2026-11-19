@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../../services/api';
 import { useTheme, makeS } from '../../../contexts/ThemeContext';
@@ -27,8 +27,7 @@ export default function ManageWallet() {
   const [activeTab, setActiveTab] = useState(() => searchParams.get('tab') || 'commissions');
   const [commissionSubTab, setCommissionSubTab] = useState('pending'); // 'pending' | 'approved'
   const [withdrawalSubTab, setWithdrawalSubTab] = useState('pending'); // 'pending' | 'approved'
-  const [withdrawalSubFilter, setWithdrawalSubFilter] = useState('all');
-  const [nowTime, setNowTime] = useState(Date.now());
+  const [nowTime, setNowTime] = useState(() => Date.now());
 
   useEffect(() => {
     const timer = setInterval(() => setNowTime(Date.now()), 1000);
@@ -56,10 +55,11 @@ export default function ManageWallet() {
 
   useEffect(() => {
     const tabFromUrl = searchParams.get('tab');
-    if (tabFromUrl) {
-      setActiveTab(tabFromUrl);
+    if (tabFromUrl && tabFromUrl !== activeTab) {
+      const timer = setTimeout(() => setActiveTab(tabFromUrl), 0);
+      return () => clearTimeout(timer);
     }
-  }, [searchParams]);
+  }, [searchParams, activeTab]);
 
   // Filters State
   const [filters, setFilters] = useState({
@@ -87,7 +87,7 @@ export default function ManageWallet() {
   const [selectedIncentives, setSelectedIncentives] = useState([]);
   const [reconciliation, setReconciliation] = useState(null);
   const [razorpayBalance, setRazorpayBalance] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [_loading, setLoading] = useState(true);
   const [toastNotification, setToastNotification] = useState(null);
 
   const showToast = (message, type = 'success') => {
@@ -117,7 +117,7 @@ export default function ManageWallet() {
   const [fundForm, setFundForm] = useState({ amount: '', payment_method: 'bank_transfer', notes: '', reference_number: '' });
   const [actionLoading, setActionLoading] = useState(false);
 
-  const fetchAllDashboardData = async () => {
+  const fetchAllDashboardData = useCallback(async () => {
     setLoading(true);
     try {
       const queryParams = { 
@@ -198,7 +198,7 @@ export default function ManageWallet() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters.fromDate, filters.toDate, filters.role, filters.userSearch]);
 
   const handleReleaseIncentivePayout = async (incentiveId) => {
     setActionLoading(true);
@@ -268,16 +268,21 @@ export default function ManageWallet() {
   };
 
   useEffect(() => {
-    fetchAllDashboardData();
+    const timer = setTimeout(() => {
+      fetchAllDashboardData();
+    }, 0);
     // Real-time polling every 30 seconds for live updates
-    const timer = setInterval(() => {
+    const interval = setInterval(() => {
       fetchAllDashboardData();
     }, 30000);
-    return () => clearInterval(timer);
-  }, [filters.fromDate, filters.toDate]);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
+  }, [fetchAllDashboardData]);
 
   const exportCSVReport = (tab) => {
-    let dataToExport = [];
+    let dataToExport;
     const activeTabName = tab || activeTab || 'wallet';
     const filename = `wallet_${activeTabName}_report_${new Date().toISOString().split('T')[0]}.csv`;
 
@@ -2673,7 +2678,7 @@ export default function ManageWallet() {
                               <span style={{ background: badge.bg, color: badge.color, padding: '4px 12px', borderRadius: '12px', fontWeight: 800, fontSize: '11.5px' }}>{badge.label}</span>
                             </td>
                             <td style={{ padding: '14px 10px', textAlign: 'center' }}>
-                              <button onClick={() => alert(`Reviewing Add Funds Request ${f.id}`)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 800, color: C.teal, cursor: 'pointer' }}>Review Request</button>
+                              <button onClick={() => handleReconcileFundRequest(f.id, 'confirm')} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 800, color: C.teal, cursor: 'pointer' }}>Confirm Fund</button>
                             </td>
                           </tr>
                         );
@@ -2724,7 +2729,7 @@ export default function ManageWallet() {
                             </td>
                             <td style={{ padding: '14px 10px', textAlign: 'right', fontWeight: 900, color: C.green, fontSize: '15px' }}>+₹{amt.toLocaleString('en-IN')}</td>
                             <td style={{ padding: '14px 10px', textAlign: 'center' }}>
-                              <button onClick={async () => { alert(`Commission ${c.id} Approved & Released!`); fetchAllDashboardData(); }} style={{ background: C.green, border: 'none', color: '#FFF', borderRadius: '8px', padding: '6px 14px', fontSize: '12px', fontWeight: 800, cursor: 'pointer' }}>Approve Commission</button>
+                              <button onClick={() => handleApproveCommission(c.id)} style={{ background: C.green, border: 'none', color: '#FFF', borderRadius: '8px', padding: '6px 14px', fontSize: '12px', fontWeight: 800, cursor: 'pointer' }}>Approve Commission</button>
                             </td>
                           </tr>
                         );
@@ -2871,7 +2876,7 @@ export default function ManageWallet() {
                       System Balance: ₹{(reconciliation?.system_closing || 0).toLocaleString('en-IN')} | Difference: ₹{(reconciliation?.difference || 0).toLocaleString('en-IN')} | Last Checked: {reconciliation?.last_reconciled || 'Just now'}
                     </p>
                   </div>
-                  <button onClick={() => alert('Reconciliation check executed successfully! 0 discrepancy found.')} style={{ background: C.teal, color: '#FFF', border: 'none', padding: '10px 18px', borderRadius: '10px', fontWeight: 800, fontSize: '13px', cursor: 'pointer' }}>Run Full Reconciliation Audit</button>
+                  <button onClick={handleReconcileNow} style={{ background: C.teal, color: '#FFF', border: 'none', padding: '10px 18px', borderRadius: '10px', fontWeight: 800, fontSize: '13px', cursor: 'pointer' }}>Run Full Reconciliation Audit</button>
                 </div>
               </div>
             </div>

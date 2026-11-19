@@ -89,23 +89,34 @@ const isReadOnlyQuery = (sqlText) => {
 
 // Helper: run a query with transient connection failure retry logic
 const query = async (text, params, retries = 2) => {
-  const start = Date.now();
+  const queueStart = Date.now();
   const currentPool = getActivePool();
 
   if (currentPool.waitingCount > 0) {
     logger.warn(`Database connection pool contention: Total=${currentPool.totalCount}/${currentPool.options.max}, Idle=${currentPool.idleCount}, Waiting=${currentPool.waitingCount}`);
   }
 
+  let client;
   try {
-    const res = await currentPool.query(text, params);
-    const duration = Date.now() - start;
-    if (duration > 1500) {
-      logger.warn(`Slow database query detected (${duration}ms)`, { query: typeof text === 'string' ? text.substring(0, 300) : 'object' });
+    client = await currentPool.connect();
+    const waitDuration = Date.now() - queueStart;
+    const queryStart = Date.now();
+    const res = await client.query(text, params);
+    const queryDuration = Date.now() - queryStart;
+    client.release();
+    client = null;
+
+    if (queryDuration > 1500 || waitDuration > 1500) {
+      logger.warn(`Database query latency: Query=${queryDuration}ms, PoolWait=${waitDuration}ms (Total=${waitDuration + queryDuration}ms)`, { query: typeof text === 'string' ? text.substring(0, 300) : 'object' });
     } else {
-      logger.debug(`Query executed in ${duration}ms`, { query: text });
+      logger.debug(`Query executed in ${queryDuration}ms (PoolWait: ${waitDuration}ms)`, { query: text });
     }
     return res;
   } catch (err) {
+    if (client) {
+      try { client.release(); } catch (_) {}
+      client = null;
+    }
     const isPoolEnded = err.message && err.message.includes('Cannot use a pool after calling end');
     if (isPoolEnded) {
       logger.warn('Pool ended error detected. Re-creating database pool and retrying query...');

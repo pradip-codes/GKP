@@ -60,10 +60,13 @@ const errorHandler = (err, req, res, next) => {
 
   // Multer errors
   if (err.code === 'LIMIT_FILE_SIZE') {
-    return error(res, 'File size exceeds 5MB limit', 413);
+    return error(res, 'File size exceeds limit', 413);
   }
   if (err.code === 'LIMIT_UNEXPECTED_FILE') {
     return error(res, 'Unexpected file field', 400);
+  }
+  if (err.message && (err.message.startsWith('Invalid file type') || err.message.startsWith('Forbidden file type') || err.message.includes('files are allowed'))) {
+    return error(res, err.message, 400);
   }
 
   // PostgreSQL errors

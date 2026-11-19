@@ -1273,7 +1273,7 @@ export default function SuperAdminDashboard() {
   };
 
   const getAccountLifecycleStatus = (admin) => {
-    if (admin.account_status) return admin.account_status;
+    if (admin.account_status) return String(admin.account_status).toUpperCase();
     if (admin.activation_scheduled_at || admin.deactivation_scheduled_at || admin.scheduled_status_action) {
       return 'SCHEDULED';
     }

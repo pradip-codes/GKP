@@ -11,10 +11,12 @@ import AttendanceHistoryView from './components/AttendanceHistoryView';
 import AttendanceSummaryView from './components/AttendanceSummaryView';
 import AttendanceVerificationModal from './AttendanceVerificationModal';
 import FaceVerificationModal from '../profile/FaceVerificationModal';
+import { useAttendanceGate } from './AttendanceGate';
 
 export default function EmployeeAttendance() {
   const user = useAuthStore((state) => state.user);
   const navigate = useNavigate();
+  const { openCheckOutReview } = useAttendanceGate() || {};
 
   // Active view: 'DASHBOARD' | 'HISTORY' | 'SUMMARY'
   const [activeView, setActiveView] = useState('DASHBOARD');
@@ -145,11 +147,16 @@ export default function EmployeeAttendance() {
 
     if (!isCheckedIn) {
       setActionType('CHECK_IN');
+      setIsModalOpen(true);
     } else {
-      setActionType('CHECK_OUT');
+      if (openCheckOutReview) {
+        openCheckOutReview();
+      } else {
+        setActionType('CHECK_OUT');
+        setIsModalOpen(true);
+      }
     }
-    setIsModalOpen(true);
-  }, [isCheckedIn, isFaceEnrolled, navigate]);
+  }, [isCheckedIn, isFaceEnrolled, navigate, openCheckOutReview]);
 
   const handleVerificationSuccess = useCallback(() => {
     // Clear cache when attendance is marked (check-in/check-out)

@@ -94,24 +94,30 @@ async function getWorkingHoursSummary(user) {
       policy_id: policy.policyId,
       policy_name: policy.policyName || 'Standard Operating Schedule',
       schedule_str: scheduleStr,
+      schedule: `${scheduleStr} IST`,
       start_time: policy.startTime || '09:30 AM',
       end_time: policy.endTime || '08:00 PM',
       timezone: 'Asia/Kolkata',
       is_exempt: isExempt,
       live_state: liveState,
-      live_label: liveLabel
+      live_label: liveLabel,
+      isShiftActive: liveState === 'within_hours' || liveState === 'unrestricted',
+      currentStatusTag: liveLabel
     };
   } catch (err) {
     logger.warn('Working hours summary error:', err.message);
     return {
       policy_name: 'Standard Operating Schedule',
       schedule_str: '09:30 AM - 08:00 PM',
+      schedule: '09:30 AM - 08:00 PM IST',
       start_time: '09:30 AM',
       end_time: '08:00 PM',
       timezone: 'Asia/Kolkata',
       is_exempt: String(user.role || '').toUpperCase() === 'SUPER_ADMIN',
       live_state: 'unknown',
-      live_label: 'Working Hours Active'
+      live_label: 'Shift Status Unavailable',
+      isShiftActive: false,
+      currentStatusTag: 'Shift Status Unavailable'
     };
   }
 }

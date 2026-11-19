@@ -12,6 +12,11 @@ router.get('/today', ctrl.getTodayAttendance);
 router.get('/my-attendance', ctrl.getMyAttendance);
 router.get('/my-summary', ctrl.getMySummary);
 
+// Task management routes
+router.post('/tasks', ctrl.saveTasks);
+router.get('/tasks/today', ctrl.getTodayTasks);
+router.patch('/tasks/:taskId', ctrl.updateTaskStatus);
+
 // Biometric Face Enrollment routes & fallbacks
 const attendanceEnrollmentRoute = require('../attendance-enrollment/attendance-enrollment.routes.js');
 const attendanceVerificationRoute = require('../attendance-verification/attendance-verification.routes.js');

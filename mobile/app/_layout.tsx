@@ -1,6 +1,7 @@
 import React from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { Platform, StatusBar as NativeStatusBar } from 'react-native';
 import { AuthProvider } from '../contexts/AuthContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
 import { useDeepLinking } from '../hooks/useDeepLinking';
@@ -15,7 +16,10 @@ function RootNavigation() {
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: colors.bg },
+          contentStyle: {
+            backgroundColor: colors.bg,
+            paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight ?? 0 : 0,
+          },
         }}
       >
         <Stack.Screen name="index" />

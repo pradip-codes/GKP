@@ -14,12 +14,18 @@ async function migrateOfficeBuildingGeofences() {
         name VARCHAR(150) NOT NULL,
         code VARCHAR(50) UNIQUE NOT NULL,
         address TEXT,
+        latitude NUMERIC,
+        longitude NUMERIC,
+        radius_meters INTEGER DEFAULT 10,
         polygon_coordinates JSONB NOT NULL,
-        tolerance_meters INTEGER NOT NULL DEFAULT 35,
+        tolerance_meters INTEGER NOT NULL DEFAULT 10,
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
+      ALTER TABLE office_building_geofences ADD COLUMN IF NOT EXISTS latitude NUMERIC;
+      ALTER TABLE office_building_geofences ADD COLUMN IF NOT EXISTS longitude NUMERIC;
+      ALTER TABLE office_building_geofences ADD COLUMN IF NOT EXISTS radius_meters INTEGER DEFAULT 10;
     `);
 
     // 2. Add indexes
@@ -46,42 +52,82 @@ async function migrateOfficeBuildingGeofences() {
       ADD COLUMN IF NOT EXISTS location_status VARCHAR(40) DEFAULT 'PASSED';
     `);
 
-    // 5. Seed Initial Building Geofence with the user's exact 4 corner coordinates
+    // 5. Remove old main company entry if present
+    await query(`
+      DELETE FROM office_building_geofences 
+      WHERE code = 'MAIN_OFFICE_HQ' 
+         OR (name ILIKE '%Main Office Building (Pune)%' AND code != 'PUNE_OFFICE_10M');
+    `);
+
+    // 6. Seed the Pune main office building polygon
     const defaultCoordinates = [
-      [18.619587, 73.874548],
-      [18.619565, 73.874942],
-      [18.619353, 73.874927],
-      [18.619375, 73.874534]
+      [18.6194840, 73.8747250],
+      [18.6195630, 73.8748690],
+      [18.6194760, 73.8748440],
+      [18.6194570, 73.8747940]
     ];
 
-    const { rows: existing } = await query(
-      `SELECT id FROM office_building_geofences WHERE code = 'MAIN_OFFICE_HQ' LIMIT 1`
+    await query(
+      `INSERT INTO office_building_geofences (name, code, address, latitude, longitude, radius_meters, polygon_coordinates, tolerance_meters, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (code) DO UPDATE SET 
+         name = EXCLUDED.name,
+         address = EXCLUDED.address,
+         latitude = EXCLUDED.latitude,
+         longitude = EXCLUDED.longitude,
+         radius_meters = EXCLUDED.radius_meters,
+         polygon_coordinates = EXCLUDED.polygon_coordinates,
+         tolerance_meters = EXCLUDED.tolerance_meters,
+         is_active = TRUE,
+         updated_at = NOW()`,
+      [
+        'Main Office Building (Pune)',
+        'PUNE_OFFICE_10M',
+        'Main Office Building Premises, Pune',
+        18.6194950,
+        73.8748080,
+        0,
+        JSON.stringify(defaultCoordinates),
+        3,
+        true
+      ]
     );
+    logger.info('[MIGRATION] Seeded Pune main office building polygon.');
 
-    if (existing.length === 0) {
-      await query(
-        `INSERT INTO office_building_geofences (name, code, address, polygon_coordinates, tolerance_meters, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          'Main Office Building (Pune)',
-          'MAIN_OFFICE_HQ',
-          'Primary Office Building Premises',
-          JSON.stringify(defaultCoordinates),
-          35,
-          true
-        ]
-      );
-      logger.info('[MIGRATION] Seeded default Main Office Building with 4-corner coordinates.');
-    } else {
-      // Update coordinates to make sure the latest 4 coordinates are active
-      await query(
-        `UPDATE office_building_geofences 
-         SET polygon_coordinates = $1, tolerance_meters = 35, is_active = TRUE, updated_at = NOW()
-         WHERE code = 'MAIN_OFFICE_HQ'`,
-        [JSON.stringify(defaultCoordinates)]
-      );
-      logger.info('[MIGRATION] Updated Main Office Building coordinates.');
-    }
+    // 7. Seed the Patna branch office building polygon
+    const patnaCoordinates = [
+      [25.6137890, 85.1431130],
+      [25.6137780, 85.1431670],
+      [25.6137460, 85.1431590],
+      [25.6137380, 85.1431460]
+    ];
+
+    await query(
+      `INSERT INTO office_building_geofences (name, code, address, latitude, longitude, radius_meters, polygon_coordinates, tolerance_meters, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (code) DO UPDATE SET 
+         name = EXCLUDED.name,
+         address = EXCLUDED.address,
+         latitude = EXCLUDED.latitude,
+         longitude = EXCLUDED.longitude,
+         radius_meters = EXCLUDED.radius_meters,
+         polygon_coordinates = EXCLUDED.polygon_coordinates,
+         tolerance_meters = EXCLUDED.tolerance_meters,
+         is_active = TRUE,
+         updated_at = NOW()`,
+      [
+        'Patna Branch Office',
+        'PATNA_BRANCH_OFFICE',
+        'Patna Branch Office Building Premises, Bihar',
+        25.6137628,
+        85.1431463,
+        0,
+        JSON.stringify(patnaCoordinates),
+        3,
+        true
+      ]
+    );
+    logger.info('[MIGRATION] Seeded Patna branch office building polygon.');
 
     logger.info('[MIGRATION COMPLETE] Office building geofences table and columns created successfully.');
   } catch (err) {

@@ -100,7 +100,10 @@ export default function ManageCommissions() {
   };
 
   useEffect(() => {
-    fetchData();
+    const timer = setTimeout(() => {
+      fetchData();
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   const handleSaveSplits = async (e) => {
@@ -1221,7 +1224,7 @@ export default function ManageCommissions() {
                 </thead>
                 <tbody>
                   {(() => {
-                    let cardList = [];
+                    let cardList;
                     if (viewCardsRule.isAllCards) {
                       cardList = products;
                     } else if (viewCardsRule.rules_list && viewCardsRule.rules_list.length > 0) {

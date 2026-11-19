@@ -344,9 +344,9 @@ const updateWorkingHours = async (req, res, next) => {
       if (accountStatus) {
         const { activateAccount, deactivateAccount } = require('./accountStatus.service');
         if (accountStatus === 'active') {
-          await activateAccount(userId, req.user.id, { reason: 'Updated via working hours panel' }, req).catch(e => logger.warn(e.message));
+          await activateAccount(userId, req.user.id, { reason: 'Updated via working hours panel' }, req);
         } else if (accountStatus === 'inactive') {
-          await deactivateAccount(userId, req.user.id, { reason: 'Updated via working hours panel' }, req).catch(e => logger.warn(e.message));
+          await deactivateAccount(userId, req.user.id, { reason: 'Updated via working hours panel' }, req);
         }
       }
     } else if (designation) {

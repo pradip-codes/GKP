@@ -22,6 +22,7 @@ export interface FetchQueueParams {
   process_type?: string;
   start_date?: string;
   end_date?: string;
+  curing_designation?: string;
 }
 
 export interface KycStageUpdatePayload {
@@ -133,6 +134,36 @@ export const fetchGeneralApplicationsQueue = async (params: FetchQueueParams = {
   };
 };
 
+/**
+ * Curable Operator Applications
+ */
+export const fetchPhysicalCurableApplications = async (params: FetchQueueParams = {}) => {
+  const res = await apiClient.get('/applications', { params: { ...params, curing_designation: 'PHYSICAL_CURABLE' } });
+  return {
+    success: res.data?.success ?? true,
+    data: (res.data?.data || []) as ApplicationItem[],
+    pagination: res.data?.pagination || { total: 0, page: 1, limit: 15, totalPages: 1 },
+  };
+};
+
+export const fetchDigitalCurableApplications = async (params: FetchQueueParams = {}) => {
+  const res = await apiClient.get('/applications', { params: { ...params, curing_designation: 'DIGITAL_CURABLE' } });
+  return {
+    success: res.data?.success ?? true,
+    data: (res.data?.data || []) as ApplicationItem[],
+    pagination: res.data?.pagination || { total: 0, page: 1, limit: 15, totalPages: 1 },
+  };
+};
+
+export const fetchEmailCurableApplications = async (params: FetchQueueParams = {}) => {
+  const res = await apiClient.get('/applications', { params: { ...params, curing_designation: 'EMAIL_CURABLE' } });
+  return {
+    success: res.data?.success ?? true,
+    data: (res.data?.data || []) as ApplicationItem[],
+    pagination: res.data?.pagination || { total: 0, page: 1, limit: 15, totalPages: 1 },
+  };
+};
+
 export const updateApplicationVerification = async (id: string, payload: VerificationUpdatePayload) => {
   const res = await apiClient.put(`/applications/${id}/verification`, payload);
   return res.data;
@@ -218,7 +249,7 @@ export const hasDesignation = (
 export const getWorkspaceType = (
   role: string | undefined,
   designation: string | undefined
-): 'kyc_operator' | 'pan_checker' | 'qd_operator' | 'remark_operator' | 'final_status' | 'default' => {
+): 'kyc_operator' | 'pan_checker' | 'qd_operator' | 'remark_operator' | 'final_status' | 'querable_operator' | 'physical_curable' | 'digital_curable' | 'email_curable' | 'default' => {
   const normalizedDesignation = normalizeDesignation(designation);
 
   if (hasDesignation(designation, ['KYC_OPERATOR', 'KYC OPERATOR'])) {
@@ -239,6 +270,22 @@ export const getWorkspaceType = (
 
   if (hasDesignation(designation, ['FINAL_STATUS_OPERATOR', 'FINAL STATUS OPERATOR'])) {
     return 'final_status';
+  }
+
+  if (hasDesignation(designation, ['QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR'])) {
+    return 'querable_operator';
+  }
+
+  if (hasDesignation(designation, ['PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL CURABLE OPERATOR'])) {
+    return 'physical_curable';
+  }
+
+  if (hasDesignation(designation, ['DIGITAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR'])) {
+    return 'digital_curable';
+  }
+
+  if (hasDesignation(designation, ['EMAIL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR'])) {
+    return 'email_curable';
   }
 
   return 'default';

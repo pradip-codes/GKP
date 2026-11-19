@@ -12,20 +12,7 @@ async function migrate() {
   try {
     logger.info('Adding matched_building columns to attendance_verification_sessions...');
 
-    // Check if columns already exist
-    const { rows: [columnCheck] } = await query(`
-      SELECT column_name 
-      FROM information_schema.columns 
-      WHERE table_name = 'attendance_verification_sessions' 
-      AND column_name = 'matched_building_id'
-    `);
-
-    if (columnCheck) {
-      logger.info('matched_building_id column already exists, skipping migration');
-      return;
-    }
-
-    // Add the columns
+    // Add every column independently; a partially applied migration must not skip missing columns.
     await query(`
       ALTER TABLE attendance_verification_sessions
       ADD COLUMN IF NOT EXISTS location_lat NUMERIC,

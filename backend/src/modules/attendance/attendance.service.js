@@ -1,6 +1,8 @@
 const { query, getClient } = require('../../config/database');
 const logger = require('../../config/logger');
 const { logAction } = require('../admin/audit.service');
+const penaltyService = require('./attendance-penalty.service');
+const { evaluateAttendanceType } = require('../employee/employee-commitments.service');
 
 const isValidUuid = (str) => typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 
@@ -397,16 +399,19 @@ const checkIn = async ({ verificationSessionId, reqUser, source = 'WEB' }) => {
 
     let record;
     const refId = `VER-${session.id.substring(0, 8).toUpperCase()}`;
+    const { attendanceType, status: resolvedStatus } = evaluateAttendanceType(new Date());
 
     if (!existing) {
       const { rows: [newRec] } = await client.query(
         `INSERT INTO employee_attendance 
-         (employee_id, attendance_date, check_in_time, status, verification_status, verification_session_id, verification_reference, source, liveness_status, face_status, environment_status, matched_environment_code, created_at, updated_at)
-         VALUES ($1, $2, NOW(), 'PRESENT', 'VERIFIED', $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+         (employee_id, attendance_date, check_in_time, check_in, status, attendance_type, verification_status, verification_session_id, verification_reference, source, liveness_status, face_status, environment_status, matched_environment_code, created_at, updated_at)
+         VALUES ($1, $2, NOW(), NOW(), $3, $4, 'VERIFIED', $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
          RETURNING *`,
         [
           authEmpId,
           todayDate,
+          resolvedStatus,
+          attendanceType,
           session.id,
           refId,
           source,
@@ -420,10 +425,12 @@ const checkIn = async ({ verificationSessionId, reqUser, source = 'WEB' }) => {
     } else {
       const { rows: [updRec] } = await client.query(
         `UPDATE employee_attendance 
-         SET check_in_time = NOW(), status = 'PRESENT', verification_status = 'VERIFIED', verification_session_id = $1, verification_reference = $2, source = $3, liveness_status = $4, face_status = $5, environment_status = $6, matched_environment_code = $7, updated_at = NOW()
-         WHERE id = $8
+         SET check_in_time = NOW(), check_in = NOW(), status = $1, attendance_type = $2, verification_status = 'VERIFIED', verification_session_id = $3, verification_reference = $4, source = $5, liveness_status = $6, face_status = $7, environment_status = $8, matched_environment_code = $9, updated_at = NOW()
+         WHERE id = $10
          RETURNING *`,
         [
+          resolvedStatus,
+          attendanceType,
           session.id,
           refId,
           source,
@@ -602,6 +609,20 @@ const checkOut = async ({ verificationSessionId, reqUser, source = 'WEB' }) => {
     });
 
     logger.info(`[ATTENDANCE] Check-out successful for employee ${authEmpId} on ${todayDate}`);
+
+    // Process late attendance penalty if check-out is after 7 PM
+    try {
+      await penaltyService.processAttendancePenalty(
+        updated.id,
+        updated.check_out_time,
+        authEmpId,
+        reqUser
+      );
+    } catch (penaltyError) {
+      logger.error('Error processing attendance penalty:', penaltyError);
+      // Don't fail the check-out if penalty processing fails
+    }
+
     return updated;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -1052,12 +1073,137 @@ const getMySummary = async ({ reqUser, month, year }) => {
   };
 };
 
+/**
+ * Save today's tasks for an employee
+ */
+const saveTasks = async ({ reqUser, tasks }) => {
+  const employeeId = await resolveEmployeeId(reqUser);
+  if (!employeeId) {
+    throw new Error('Employee not found');
+  }
+
+  const todayDate = await getKolkataDateString();
+
+  // Check if attendance exists for today
+  const { rows: [attendance] } = await query(
+    `SELECT id FROM attendance WHERE employee_id = $1 AND attendance_date = $2`,
+    [employeeId, todayDate]
+  );
+
+  if (!attendance) {
+    throw new Error('No attendance record found for today');
+  }
+
+  // Delete existing tasks for today
+  await query(
+    `DELETE FROM attendance_tasks WHERE attendance_id = $1`,
+    [attendance.id]
+  );
+
+  // Insert new tasks
+  for (const task of tasks) {
+    await query(
+      `INSERT INTO attendance_tasks (attendance_id, task, status, created_at)
+       VALUES ($1, $2, $3, NOW())`,
+      [attendance.id, task.task, task.status || 'PENDING']
+    );
+  }
+
+  // Log audit
+  await logAction({
+    user_id: reqUser.id,
+    action: 'ATTENDANCE_TASKS_SAVED',
+    details: `Saved ${tasks.length} tasks for attendance ${attendance.id}`,
+    ip_address: req.ip,
+  });
+
+  return { success: true, attendance_id: attendance.id, task_count: tasks.length };
+};
+
+/**
+ * Get today's tasks for an employee
+ */
+const getTodayTasks = async ({ reqUser }) => {
+  const employeeId = await resolveEmployeeId(reqUser);
+  if (!employeeId) {
+    throw new Error('Employee not found');
+  }
+
+  const todayDate = await getKolkataDateString();
+
+  const { rows: [attendance] } = await query(
+    `SELECT id FROM attendance WHERE employee_id = $1 AND attendance_date = $2`,
+    [employeeId, todayDate]
+  );
+
+  if (!attendance) {
+    return { tasks: [] };
+  }
+
+  const { rows: tasks } = await query(
+    `SELECT id, task, status, created_at, completed_at
+     FROM attendance_tasks
+     WHERE attendance_id = $1
+     ORDER BY created_at ASC`,
+    [attendance.id]
+  );
+
+  return { tasks };
+};
+
+/**
+ * Update task status
+ */
+const updateTaskStatus = async ({ reqUser, taskId, status }) => {
+  const employeeId = await resolveEmployeeId(reqUser);
+  if (!employeeId) {
+    throw new Error('Employee not found');
+  }
+
+  const todayDate = await getKolkataDateString();
+
+  // Verify task belongs to employee's today's attendance
+  const { rows: [task] } = await query(
+    `SELECT at.id, at.attendance_id, a.employee_id
+     FROM attendance_tasks at
+     JOIN attendance a ON a.id = at.attendance_id
+     WHERE at.id = $1 AND a.employee_id = $2 AND a.attendance_date = $3`,
+    [taskId, employeeId, todayDate]
+  );
+
+  if (!task) {
+    throw new Error('Task not found or access denied');
+  }
+
+  // Update task status
+  const completedAt = status === 'COMPLETED' ? 'NOW()' : null;
+  await query(
+    `UPDATE attendance_tasks
+     SET status = $1, completed_at = ${completedAt}
+     WHERE id = $2`,
+    [status, taskId]
+  );
+
+  // Log audit
+  await logAction({
+    user_id: reqUser.id,
+    action: 'ATTENDANCE_TASK_STATUS_UPDATED',
+    details: `Updated task ${taskId} status to ${status}`,
+    ip_address: req.ip,
+  });
+
+  return { success: true, task_id: taskId, status };
+};
+
 module.exports = {
   checkIn,
   checkOut,
   getTodayAttendance,
   getMyAttendance,
   getMySummary,
+  saveTasks,
+  getTodayTasks,
+  updateTaskStatus,
   formatHumanDuration,
   resolveEmployeeWorkingHoursContext,
   evaluateAttendanceReminder,

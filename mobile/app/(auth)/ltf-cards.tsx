@@ -6,12 +6,11 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Image,
+  SafeAreaView,
 } from 'react-native';
 import { router } from 'expo-router';
-import { colors } from '../../theme/colors';
-import { spacing } from '../../theme/spacing';
-import { Card } from '../../components/Card';
-import { Button } from '../../components/Button';
+import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
 import apiClient from '../../services/api';
 
@@ -26,7 +25,22 @@ interface CardItem {
   benefits?: string[];
 }
 
+const bankLogos: Record<string, any> = {
+  HDFC: require('../../assets/images/hdfc_bank.webp'),
+  SBI: require('../../assets/images/sbi_card.webp'),
+  ICICI: require('../../assets/images/icici_bank.webp'),
+  Axis: require('../../assets/images/axis_bank.webp'),
+  Kotak: require('../../assets/images/kotak_bank.webp'),
+  IDFC: require('../../assets/images/idfc_first_bank.webp'),
+  'Yes Bank': require('../../assets/images/yes_bank.webp'),
+  BOB: require('../../assets/images/bank_of_baroda.webp'),
+  AU: require('../../assets/images/AU.webp'),
+  Federal: require('../../assets/images/federal_bank.webp'),
+  RBL: require('../../assets/images/rbl_bank.webp'),
+};
+
 export default function LTFCardsScreen() {
+  const { colors, isDark } = useTheme();
   const [cards, setCards] = useState<CardItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,11 +49,11 @@ export default function LTFCardsScreen() {
     try {
       setLoading(true);
       setError(null);
-      const res = await apiClient.get('/products', { 
-        params: { 
+      const res = await apiClient.get('/products', {
+        params: {
           category: 'credit_card',
-          annual_fee: 'Nil' 
-        } 
+          annual_fee: 'Nil',
+        },
       });
       if (res.data?.success && Array.isArray(res.data?.data)) {
         setCards(res.data.data);
@@ -61,247 +75,348 @@ export default function LTFCardsScreen() {
   const handleCardPress = (cardId: string) => {
     router.push({
       pathname: '/(auth)/product-detail',
-      params: { id: cardId }
+      params: { id: cardId },
     });
   };
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.bg }]} showsVerticalScrollIndicator={false}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Icon name="arrow-left" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Lifetime Free Cards</Text>
-        <View style={{ width: 24 }} />
-      </View>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: '#059669' }]}>
+      <ScrollView
+        style={[styles.container, { backgroundColor: colors.bg }]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Hero Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Icon name="arrow-left" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={styles.headerTitle}>Lifetime Free Credit Cards</Text>
+            <Text style={styles.headerSubtitle}>₹0 Joining Fee • ₹0 Annual Fee Forever</Text>
+          </View>
+          <View style={{ width: 22 }} />
+        </View>
 
-      <View style={styles.heroSection}>
-        <Icon name="credit-card" size={48} color={colors.success} />
-        <Text style={styles.heroTitle}>No Annual Fee Cards</Text>
-        <Text style={styles.heroSubtitle}>
-          Enjoy premium credit cards without any annual fees
-        </Text>
-      </View>
-
-      {loading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={colors.success} />
-          <Text style={styles.loadingText}>Loading LTF cards...</Text>
-        </View>
-      ) : error ? (
-        <View style={styles.centerContainer}>
-          <Icon name="alert-circle" size={48} color={colors.error} />
-          <Text style={styles.errorText}>{error}</Text>
-          <Button
-            title="Retry"
-            onPress={loadLTFCards}
-            style={styles.errorButton}
-          />
-        </View>
-      ) : cards.length === 0 ? (
-        <View style={styles.centerContainer}>
-          <Icon name="credit-card" size={48} color={colors.textLight} />
-          <Text style={styles.emptyText}>No LTF cards available</Text>
-        </View>
-      ) : (
-        <View style={styles.cardsList}>
-          {cards.map((card) => (
-            <TouchableOpacity
-              key={card.id}
-              onPress={() => handleCardPress(card.id)}
-              activeOpacity={0.7}
-            >
-              <Card style={styles.cardItem}>
-                <View style={styles.cardHeader}>
-                  <View style={styles.ltfBadge}>
-                    <Icon name="award" size={14} color="#fff" />
-                    <Text style={styles.ltfBadgeText}>LIFETIME FREE</Text>
-                  </View>
-                  <Text style={styles.cardBank}>{card.bank_name}</Text>
-                </View>
-                
-                <Text style={styles.cardName} numberOfLines={2}>{card.name}</Text>
-                <Text style={styles.cardDesc} numberOfLines={3}>
-                  {card.description}
+        {/* Feature Highlight Banner */}
+        <View style={styles.bannerContainer}>
+          <View style={[styles.bannerCard, { backgroundColor: isDark ? colors.card : '#FFFFFF', borderColor: colors.border }]}>
+            <View style={styles.bannerRow}>
+              <View style={styles.badgeCircle}>
+                <Text style={styles.badgeEmoji}>⚡</Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={[styles.bannerHeading, { color: colors.text }]}>No Annual Fees. Forever.</Text>
+                <Text style={[styles.bannerSub, { color: colors.textMid }]}>
+                  Keep credit lines open and enjoy unlimited airport lounge visits, cashback, and fuel surcharge waivers without paying recurring maintenance charges.
                 </Text>
+              </View>
+            </View>
+          </View>
+        </View>
 
-                {card.benefits && card.benefits.length > 0 && (
-                  <View style={styles.benefitsSection}>
-                    {card.benefits.slice(0, 3).map((benefit, idx) => (
-                      <View key={idx} style={styles.benefitItem}>
-                        <Icon name="check" size={12} color={colors.success} />
-                        <Text style={styles.benefitText} numberOfLines={1}>{benefit}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                <View style={styles.cardFooter}>
-                  <Button
-                    title="Apply Now"
-                    onPress={() => handleCardPress(card.id)}
-                    style={styles.applyButton}
-                  />
-                </View>
-              </Card>
+        {/* State rendering */}
+        {loading ? (
+          <View style={styles.centerContainer}>
+            <ActivityIndicator size="large" color="#059669" />
+            <Text style={[styles.loadingText, { color: colors.textMid }]}>Loading zero-fee card options...</Text>
+          </View>
+        ) : error ? (
+          <View style={styles.centerContainer}>
+            <Icon name="alert-circle" size={48} color={colors.error} />
+            <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>
+            <TouchableOpacity onPress={loadLTFCards} style={styles.retryBtn}>
+              <Text style={styles.retryBtnText}>Retry</Text>
             </TouchableOpacity>
-          ))}
-        </View>
-      )}
+          </View>
+        ) : (
+          <View style={styles.cardsList}>
+            {cards.map((card) => {
+              const bankLogo = bankLogos[card.bank_name];
 
-      <Card style={styles.infoCard}>
-        <View style={styles.infoContent}>
-          <Icon name="info-circle" size={20} color={colors.primary} />
-          <Text style={styles.infoText}>
-            Lifetime Free (LTF) cards have no annual fee, making them perfect for users who want to avoid maintenance costs while enjoying premium benefits.
-          </Text>
-        </View>
-      </Card>
-    </ScrollView>
+              return (
+                <TouchableOpacity
+                  key={card.id}
+                  onPress={() => handleCardPress(card.id)}
+                  activeOpacity={0.88}
+                  style={[
+                    styles.cardContainer,
+                    {
+                      backgroundColor: isDark ? colors.card : '#FFFFFF',
+                      borderColor: colors.border,
+                    },
+                  ]}
+                >
+                  <View style={styles.cardTop}>
+                    <View style={styles.bankWrap}>
+                      {bankLogo ? (
+                        <Image source={bankLogo} style={styles.bankLogoImage} resizeMode="contain" />
+                      ) : (
+                        <View style={styles.bankLogoFallback}>
+                          <Text style={styles.bankLogoFallbackText}>
+                            {(card.bank_name || 'GP').slice(0, 2).toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
+                      <Text style={[styles.bankName, { color: colors.textMid }]}>{card.bank_name}</Text>
+                    </View>
+
+                    <View style={styles.ltfPill}>
+                      <Text style={styles.ltfPillText}>₹0 LIFETIME FREE</Text>
+                    </View>
+                  </View>
+
+                  <Text style={[styles.cardTitle, { color: colors.text }]}>{card.name}</Text>
+                  <Text style={[styles.cardDesc, { color: colors.textMid }]} numberOfLines={2}>
+                    {card.description || 'Pre-approved lifetime free credit card with reward points on every transaction.'}
+                  </Text>
+
+                  <View style={styles.perksRow}>
+                    <View style={[styles.perkBox, { backgroundColor: isDark ? '#1F2937' : '#F9FAFB' }]}>
+                      <Text style={[styles.perkLabel, { color: colors.textLight }]}>Joining Fee</Text>
+                      <Text style={[styles.perkVal, { color: '#059669' }]}>Nil (₹0)</Text>
+                    </View>
+                    <View style={[styles.perkBox, { backgroundColor: isDark ? '#1F2937' : '#F9FAFB' }]}>
+                      <Text style={[styles.perkLabel, { color: colors.textLight }]}>Annual Fee</Text>
+                      <Text style={[styles.perkVal, { color: '#059669' }]}>Nil (₹0)</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.cardBottom}>
+                    <TouchableOpacity
+                      onPress={() => handleCardPress(card.id)}
+                      style={styles.detailsBtn}
+                    >
+                      <Text style={[styles.detailsBtnText, { color: colors.textMid }]}>View Details</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => handleCardPress(card.id)}
+                      style={styles.applyBtn}
+                    >
+                      <Text style={styles.applyBtnText}>Apply Free</Text>
+                      <Icon name="arrow-right" size={14} color="#FFFFFF" />
+                    </TouchableOpacity>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+  },
   container: {
     flex: 1,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    backgroundColor: '#059669',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 24,
   },
-  backButton: {
-    padding: spacing.xs,
+  backBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.18)',
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: colors.text,
+    color: '#FFFFFF',
   },
-  heroSection: {
-    padding: spacing.xl,
+  headerSubtitle: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.85)',
+    marginTop: 2,
+  },
+  bannerContainer: {
+    paddingHorizontal: 16,
+    marginTop: -14,
+    marginBottom: 16,
+  },
+  bannerCard: {
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  bannerRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.bgSecondary,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
   },
-  heroTitle: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: colors.text,
-    marginTop: spacing.md,
-  },
-  heroSubtitle: {
-    fontSize: 14,
-    color: colors.textMid,
-    textAlign: 'center',
-    marginTop: spacing.sm,
-  },
-  centerContainer: {
-    flex: 1,
+  badgeCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.xl,
   },
-  loadingText: {
-    fontSize: 14,
-    color: colors.textMid,
-    marginTop: spacing.sm,
+  badgeEmoji: {
+    fontSize: 22,
   },
-  errorText: {
-    fontSize: 16,
-    color: colors.error,
-    textAlign: 'center',
-    marginTop: spacing.md,
+  bannerHeading: {
+    fontSize: 15,
+    fontWeight: '800',
   },
-  errorButton: {
-    marginTop: spacing.md,
-  },
-  emptyText: {
-    fontSize: 16,
-    color: colors.textMid,
-    textAlign: 'center',
-    marginTop: spacing.sm,
+  bannerSub: {
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 3,
   },
   cardsList: {
-    padding: spacing.md,
-    gap: spacing.md,
+    paddingHorizontal: 16,
+    paddingBottom: 32,
+    gap: 14,
   },
-  cardItem: {
-    padding: spacing.md,
+  cardContainer: {
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
   },
-  cardHeader: {
+  cardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  bankWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: spacing.sm,
-    gap: spacing.sm,
+    gap: 8,
   },
-  ltfBadge: {
-    flexDirection: 'row',
+  bankLogoImage: {
+    width: 44,
+    height: 24,
+  },
+  bankLogoFallback: {
+    width: 30,
+    height: 22,
+    borderRadius: 4,
+    backgroundColor: '#059669',
+    justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: colors.success,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    gap: 4,
   },
-  ltfBadgeText: {
+  bankLogoFallbackText: {
+    color: '#FFFFFF',
     fontSize: 10,
     fontWeight: '800',
-    color: '#fff',
   },
-  cardBank: {
+  bankName: {
     fontSize: 12,
-    color: colors.textMid,
+    fontWeight: '700',
   },
-  cardName: {
+  ltfPill: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  ltfPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#166534',
+  },
+  cardTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: colors.text,
-    marginBottom: spacing.xs,
+    lineHeight: 22,
+    marginBottom: 4,
   },
   cardDesc: {
-    fontSize: 14,
-    color: colors.textMid,
-    lineHeight: 20,
-    marginBottom: spacing.md,
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 12,
   },
-  benefitsSection: {
-    marginBottom: spacing.md,
+  perksRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
   },
-  benefitItem: {
+  perkBox: {
+    flex: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  perkLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  perkVal: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  cardBottom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  detailsBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  detailsBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  applyBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 4,
+    backgroundColor: '#059669',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 10,
   },
-  benefitText: {
-    fontSize: 12,
-    color: colors.textMid,
-    flex: 1,
+  applyBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
-  cardFooter: {
-    marginTop: spacing.md,
+  centerContainer: {
+    paddingVertical: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  applyButton: {
-    width: '100%',
+  loadingText: {
+    fontSize: 14,
+    marginTop: 12,
   },
-  infoCard: {
-    margin: spacing.md,
-    padding: spacing.md,
+  errorText: {
+    fontSize: 14,
+    marginTop: 12,
   },
-  infoContent: {
-    flexDirection: 'row',
-    gap: spacing.sm,
+  retryBtn: {
+    marginTop: 14,
+    backgroundColor: '#059669',
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
-  infoText: {
-    flex: 1,
-    fontSize: 12,
-    color: colors.textMid,
-    lineHeight: 16,
+  retryBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
 });

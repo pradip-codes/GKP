@@ -19,10 +19,12 @@ import EmployeeMobileBottomNav from '../components/EmployeeMobileBottomNav';
 import AnnouncementBanner from '../components/AnnouncementBanner';
 import LanguageSwitcher from '../components/LanguageSwitcher/LanguageSwitcher';
 import SEO from '../components/SEO';
+import { useAttendanceGate } from '../modules/employee/attendance/AttendanceGate';
 
 export default function EmployeeLayout() {
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
+  const { dayState, openCheckOutReview } = useAttendanceGate() || {};
 
   const { C, isDark, toggle } = useTheme();
   const navigate = useNavigate();
@@ -349,6 +351,42 @@ export default function EmployeeLayout() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '6px' : '14px', position: 'relative', flexShrink: 0 }}>
+            {dayState === 'UNLOCKED' && openCheckOutReview && (
+              <button
+                type="button"
+                onClick={openCheckOutReview}
+                title="End of Day Check-Out & Task Review"
+                aria-label="Check-Out and Review Tasks"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: 'linear-gradient(135deg, #008A60 0%, #065F46 100%)',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  borderRadius: '10px',
+                  padding: isMobile ? '6px 10px' : '7px 14px',
+                  fontSize: isMobile ? '12px' : '13px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(0, 138, 96, 0.25)',
+                  transition: 'all 0.2s ease',
+                  flexShrink: 0
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 138, 96, 0.35)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'none';
+                  e.currentTarget.style.boxShadow = '0 2px 8px rgba(0, 138, 96, 0.25)';
+                }}
+              >
+                <FaCalendarCheck size={13} />
+                <span>Check-Out</span>
+              </button>
+            )}
+
             <LanguageSwitcher />
 
             {/* Messenger Button */}

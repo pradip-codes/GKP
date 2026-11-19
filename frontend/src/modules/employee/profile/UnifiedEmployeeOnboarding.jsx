@@ -749,12 +749,12 @@ export default function UnifiedEmployeeOnboarding({ initialStep = 1 }) {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '28px' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, marginBottom: '6px' }}>PAN Number *</label>
-                <input type="text" name="pan_number" required value={joiningForm.pan_number} onChange={(e) => setJoiningForm(p => ({ ...p, pan_number: e.target.value.toUpperCase() }))} placeholder="ABCDE1234F" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontWeight: 700, textTransform: 'uppercase' }} />
+                <input type="text" name="pan_number" required maxLength={20} value={joiningForm.pan_number} onChange={(e) => setJoiningForm(p => ({ ...p, pan_number: e.target.value.toUpperCase() }))} placeholder="ABCDE1234F" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontWeight: 700, textTransform: 'uppercase' }} />
               </div>
 
               <div>
                 <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, marginBottom: '6px' }}>Aadhaar Number *</label>
-                <input type="text" name="aadhaar_number" required value={joiningForm.aadhaar_number} onChange={(e) => setJoiningForm(p => ({ ...p, aadhaar_number: e.target.value.replace(/\D/g, '') }))} placeholder="12 Digit Aadhaar" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontWeight: 700 }} />
+                <input type="text" name="aadhaar_number" required maxLength={20} value={joiningForm.aadhaar_number} onChange={(e) => setJoiningForm(p => ({ ...p, aadhaar_number: e.target.value.replace(/\D/g, '') }))} placeholder="12 Digit Aadhaar" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, fontWeight: 700 }} />
               </div>
 
               <div>
@@ -764,7 +764,7 @@ export default function UnifiedEmployeeOnboarding({ initialStep = 1 }) {
 
               <div>
                 <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, marginBottom: '6px' }}>Bank IFSC Code *</label>
-                <input type="text" name="ifsc_code" required value={joiningForm.ifsc_code} onChange={(e) => setJoiningForm(p => ({ ...p, ifsc_code: e.target.value.toUpperCase() }))} style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, textTransform: 'uppercase', fontWeight: 700 }} />
+                <input type="text" name="ifsc_code" required maxLength={20} value={joiningForm.ifsc_code} onChange={(e) => setJoiningForm(p => ({ ...p, ifsc_code: e.target.value.toUpperCase() }))} style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, textTransform: 'uppercase', fontWeight: 700 }} />
               </div>
             </div>
 

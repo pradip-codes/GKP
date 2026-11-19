@@ -269,13 +269,22 @@ export default function SuperAdminAttendanceScreen() {
           <Icon name="arrow-left" size={24} color="#fff" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Attendance Dashboard</Text>
-        <TouchableOpacity
-          onPress={() => router.push('/super-admin/working-hours' as any)}
-          style={{ padding: 4 }}
-          accessibilityLabel="Working Hours Settings"
-        >
-          <Icon name="clock" size={20} color="#38BDF8" />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={() => router.push('/super-admin/working-hours' as any)}
+            style={{ padding: 4 }}
+            accessibilityLabel="Working Hours Settings"
+          >
+            <Icon name="clock" size={20} color="#38BDF8" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => router.push('/super-admin/penalty-settings' as any)}
+            style={{ padding: 4 }}
+            accessibilityLabel="Penalty Settings"
+          >
+            <Icon name="alert-triangle" size={20} color="#F59E0B" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Tabs */}
@@ -483,6 +492,10 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
     color: '#fff',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
   tabsContainer: {
     flexDirection: 'row',

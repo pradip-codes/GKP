@@ -2,6 +2,7 @@ import React, { useEffect, Suspense, lazy } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './ProtectedRoute';
 import RoleRoute from './RoleRoute';
+import AttendanceGate from '../modules/employee/attendance/AttendanceGate';
 import { useAuthStore } from '../app/store/authStore';
 import logo from '../assets/logos/logo.webp';
 import GkpLoader from '../components/Loader/GkpLoader';
@@ -327,7 +328,7 @@ const AppRoutes = () => {
       {/* Employee Protected Routes */}
       <Route element={<ProtectedRoute />}>
         <Route element={<RoleRoute allowedRoles={['EMPLOYEE', 'HR', 'ADMIN', 'SUPER_ADMIN']} />}>
-          <Route element={<EmployeeLayout />}>
+          <Route element={<AttendanceGate><EmployeeLayout /></AttendanceGate>}>
             <Route path="/employee" element={<Navigate to="/employee/dashboard" replace />} />
             <Route path="/employee/dashboard" element={<EmployeeDashboard />} />
             <Route path="/employee/attendance" element={<EmployeeAttendance />} />

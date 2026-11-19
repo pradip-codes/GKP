@@ -247,6 +247,16 @@ export default function ManageApplications() {
     setLoading(true);
     setErr("");
     try {
+      // Determine curing_designation for curable operators
+      let curingDesignation = undefined;
+      if (isPhysicalCurableUser) {
+        curingDesignation = 'PHYSICAL_CURABLE';
+      } else if (isDigitalCurableUser) {
+        curingDesignation = 'DIGITAL_CURABLE';
+      } else if (isEmailCurableUser) {
+        curingDesignation = 'EMAIL_CURABLE';
+      }
+
       const res = await api.get("/applications", {
         signal: controller.signal,
         params: {
@@ -257,6 +267,7 @@ export default function ManageApplications() {
           process_by: processTypeFilter !== 'all' ? processTypeFilter : undefined,
           category: categoryFilter !== 'all' ? categoryFilter : undefined,
           bank_id: bankFilter !== 'all' ? bankFilter : undefined,
+          curing_designation: curingDesignation,
         },
       });
       if (res.data?.success) {
@@ -295,7 +306,7 @@ export default function ManageApplications() {
 
   useEffect(() => {
     fetchApplications();
-  }, [page, limit, status, processTypeFilter, categoryFilter, bankFilter]);
+  }, [page, limit, status, processTypeFilter, categoryFilter, bankFilter, isPhysicalCurableUser, isDigitalCurableUser, isEmailCurableUser]);
 
   useEffect(() => {
     const cat = searchParams.get('category');

@@ -1,20 +1,23 @@
 const { query } = require('../../config/database');
 const logger = require('../../config/logger');
 
-// Default Seed Buildings: Pune Main Office, Jalna Branch Office, and Chhatrapati Sambhajinagar (Aurangabad) Office
+// Default Seed Buildings: Pune Main Office Building, Jalna Branch Office, and Chhatrapati Sambhajinagar (Aurangabad) Office
 const DEFAULT_BUILDINGS = [
   {
     id: '00000000-0000-0000-0000-000000000001',
     name: 'Main Office Building (Pune)',
-    code: 'MAIN_OFFICE_HQ',
-    address: 'Primary Office Building Premises, Pune',
+    code: 'PUNE_OFFICE_10M',
+    address: 'Main Office Building Premises, Pune',
+    latitude: 18.6194950,
+    longitude: 73.8748080,
+    radius_meters: 0,
     polygon_coordinates: [
-      [18.619587, 73.874548],
-      [18.619565, 73.874942],
-      [18.619353, 73.874927],
-      [18.619375, 73.874534]
+      [18.6194840, 73.8747250],
+      [18.6195630, 73.8748690],
+      [18.6194760, 73.8748440],
+      [18.6194570, 73.8747940]
     ],
-    tolerance_meters: 200,
+    tolerance_meters: 3,
     is_active: true
   },
   {
@@ -58,6 +61,23 @@ const DEFAULT_BUILDINGS = [
     ],
     tolerance_meters: 1000,
     is_active: true
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000005',
+    name: 'Patna Branch Office',
+    code: 'PATNA_BRANCH_OFFICE',
+    address: 'Patna Branch Office Building Premises, Bihar',
+    latitude: 25.6137628,
+    longitude: 85.1431463,
+    radius_meters: 0,
+    polygon_coordinates: [
+      [25.6137890, 85.1431130],
+      [25.6137780, 85.1431670],
+      [25.6137460, 85.1431590],
+      [25.6137380, 85.1431460]
+    ],
+    tolerance_meters: 3,
+    is_active: true
   }
 ];
 
@@ -75,23 +95,40 @@ async function ensureGeofenceTableExists() {
         name VARCHAR(150) NOT NULL,
         code VARCHAR(50) UNIQUE NOT NULL,
         address TEXT,
+        latitude NUMERIC,
+        longitude NUMERIC,
+        radius_meters INTEGER DEFAULT 10,
         polygon_coordinates JSONB NOT NULL,
-        tolerance_meters INTEGER NOT NULL DEFAULT 100,
+        tolerance_meters INTEGER NOT NULL DEFAULT 10,
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
+      ALTER TABLE office_building_geofences ADD COLUMN IF NOT EXISTS latitude NUMERIC;
+      ALTER TABLE office_building_geofences ADD COLUMN IF NOT EXISTS longitude NUMERIC;
+      ALTER TABLE office_building_geofences ADD COLUMN IF NOT EXISTS radius_meters INTEGER DEFAULT 10;
       CREATE INDEX IF NOT EXISTS idx_office_buildings_code ON office_building_geofences(code);
       CREATE INDEX IF NOT EXISTS idx_office_buildings_active ON office_building_geofences(is_active);
     `);
 
-    // Ensure default buildings exist in DB and update polygon_coordinates if already present
+    // Remove old main company entry if present so only the exact 10m Pune location remains
+    await query(`
+      DELETE FROM office_building_geofences 
+      WHERE code = 'MAIN_OFFICE_HQ' 
+         OR (name ILIKE '%Main Office Building (Pune)%' AND code != 'PUNE_OFFICE_10M')
+    `);
+
+    // Ensure default buildings exist in DB and update coordinates if already present
     for (const def of DEFAULT_BUILDINGS) {
       await query(
-        `INSERT INTO office_building_geofences (id, name, code, address, polygon_coordinates, tolerance_meters, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+        `INSERT INTO office_building_geofences (id, name, code, address, latitude, longitude, radius_meters, polygon_coordinates, tolerance_meters, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE)
          ON CONFLICT (code) DO UPDATE SET 
            name = EXCLUDED.name,
+           address = EXCLUDED.address,
+           latitude = EXCLUDED.latitude,
+           longitude = EXCLUDED.longitude,
+           radius_meters = EXCLUDED.radius_meters,
            polygon_coordinates = EXCLUDED.polygon_coordinates,
            tolerance_meters = EXCLUDED.tolerance_meters,
            is_active = TRUE,
@@ -101,14 +138,14 @@ async function ensureGeofenceTableExists() {
           def.name,
           def.code,
           def.address,
+          def.latitude || null,
+          def.longitude || null,
+          def.radius_meters !== undefined ? def.radius_meters : 10,
           JSON.stringify(def.polygon_coordinates),
-          def.tolerance_meters
+          def.tolerance_meters !== undefined ? def.tolerance_meters : 10
         ]
       );
     }
-
-    // Ensure all existing DB buildings have at least 150m tolerance to handle indoor GPS drift
-    await query(`UPDATE office_building_geofences SET tolerance_meters = 200 WHERE tolerance_meters < 200`);
 
     tableVerified = true;
   } catch (err) {
@@ -121,7 +158,7 @@ async function ensureGeofenceTableExists() {
  * @param {number} latitude 
  * @param {number} longitude 
  * @param {Array<[number, number]>} polygon Array of [latitude, longitude] pairs
- * @returns {boolean} true if point is strictly inside polygon
+ * @returns {boolean} true if point is inside or on the polygon boundary
  */
 function isPointInPolygon(latitude, longitude, polygon) {
   if (!Array.isArray(polygon) || polygon.length < 3) return false;
@@ -135,6 +172,12 @@ function isPointInPolygon(latitude, longitude, polygon) {
     const yi = Number(polygon[i][0]);
     const xj = Number(polygon[j][1]);
     const yj = Number(polygon[j][0]);
+
+    const crossProduct = (x - xi) * (yj - yi) - (y - yi) * (xj - xi);
+    const onSegment = Math.abs(crossProduct) < 1e-12 &&
+      x >= Math.min(xi, xj) && x <= Math.max(xi, xj) &&
+      y >= Math.min(yi, yj) && y <= Math.max(yi, yj);
+    if (onSegment) return true;
 
     const intersect = ((yi > y) !== (yj > y)) &&
       (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
@@ -203,7 +246,7 @@ async function getActiveBuildings() {
   await ensureGeofenceTableExists();
   try {
     const { rows } = await query(
-      `SELECT id, name, code, address, polygon_coordinates, tolerance_meters, is_active 
+      `SELECT id, name, code, address, latitude, longitude, radius_meters, polygon_coordinates, tolerance_meters, is_active 
        FROM office_building_geofences 
        WHERE is_active = TRUE 
        ORDER BY created_at ASC`
@@ -268,8 +311,8 @@ async function verifyLocationInBuilding(latitude, longitude, accuracy = 0) {
       allowed: true,
       building: {
         id: '00000000-0000-0000-0000-000000000001',
-        name: 'Main Office Building (Pune - Bypass Mode)',
-        code: 'MAIN_OFFICE_HQ',
+        name: 'Office Location (Pune - Bypass Mode)',
+        code: 'PUNE_OFFICE_10M',
         address: 'Bypass Verified Premises'
       },
       isStrictInside: true,
@@ -296,7 +339,7 @@ async function verifyLocationInBuilding(latitude, longitude, accuracy = 0) {
     };
   }
 
-  // 2. Fetch all active office buildings and check exact polygon boundaries
+  // 2. Fetch all active office buildings and check exact polygon boundaries / 10m radius
   const activeBuildings = await getActiveBuildings();
   logger.info(`[BUILDING GEOFENCE] Verifying coordinates (${lat}, ${lng}, accuracy: ${acc}m) against ${activeBuildings.length} active buildings.`);
 
@@ -305,14 +348,51 @@ async function verifyLocationInBuilding(latitude, longitude, accuracy = 0) {
 
   for (const building of activeBuildings) {
     const polygon = building.polygon_coordinates;
-    console.log(`[BUILDING GEOFENCE] Checking Building: "${building.name}" (${building.code}) | 4 Corner Points:`, JSON.stringify(polygon));
-    if (!polygon || polygon.length < 3) continue;
+    const radius = building.radius_meters;
+    const tolerance = building.tolerance_meters;
+    const allowedRadius = Number(
+      radius !== undefined && radius !== null
+        ? radius
+        : tolerance !== undefined && tolerance !== null
+          ? tolerance
+          : 10
+    );
 
-    // Strict EXACT Polygon Test (Point-in-Polygon)
+    let centroidLat = building.latitude !== undefined && building.latitude !== null && !isNaN(Number(building.latitude))
+      ? Number(building.latitude)
+      : null;
+    let centroidLng = building.longitude !== undefined && building.longitude !== null && !isNaN(Number(building.longitude))
+      ? Number(building.longitude)
+      : null;
+
+    if (centroidLat === null || centroidLng === null) {
+      if (Array.isArray(polygon) && polygon.length > 0) {
+        let sumLat = 0, sumLng = 0;
+        for (const pt of polygon) {
+          sumLat += Number(pt[0]);
+          sumLng += Number(pt[1]);
+        }
+        centroidLat = sumLat / polygon.length;
+        centroidLng = sumLng / polygon.length;
+      }
+    }
+
+    const distToCenter = (centroidLat !== null && centroidLng !== null)
+      ? calculateHaversineDistance(lat, lng, centroidLat, centroidLng)
+      : Infinity;
+
+    // Strict validation: point inside the building polygon or within its configured radius.
     const inside = isPointInPolygon(lat, lng, polygon);
-    if (inside) {
-      console.log(`[BUILDING GEOFENCE] ✅ MATCH SUCCESS! Device coordinates (${lat}, ${lng}) fall INSIDE polygon of: "${building.name}"`);
-      logger.info(`[BUILDING GEOFENCE] Point is strictly inside building polygon: "${building.name}" (${building.code})`);
+    const withinRadius = allowedRadius > 0 && distToCenter <= allowedRadius;
+    const boundaryTolerance = Number(building.radius_meters) === 0
+      ? Number(building.tolerance_meters) || 0
+      : 0;
+    const distToPerimeter = distanceToPolygonPerimeter(lat, lng, polygon);
+    const withinBoundaryTolerance = boundaryTolerance > 0 && distToPerimeter <= boundaryTolerance;
+
+    if (inside || withinRadius || withinBoundaryTolerance) {
+      console.log(`[BUILDING GEOFENCE] ✅ MATCH SUCCESS! Device coordinates (${lat}, ${lng}) fall within "${building.name}" (inside: ${inside}, perimeter distance: ${distToPerimeter.toFixed(2)}m, boundary tolerance: ${boundaryTolerance}m)`);
+      logger.info(`[BUILDING GEOFENCE] Point matched building geofence: "${building.name}" (${building.code})`);
       return {
         matched: true,
         allowed: true,
@@ -322,25 +402,17 @@ async function verifyLocationInBuilding(latitude, longitude, accuracy = 0) {
           code: building.code,
           address: building.address
         },
-        isStrictInside: true,
-        distanceMeters: 0,
+        isStrictInside: inside,
+        distanceMeters: Math.round(distToCenter),
         status: 'LOCATION_VERIFIED',
-        message: `Verified inside ${building.name}`
+        message: inside
+          ? `Verified inside ${building.name}`
+          : `Verified within the allowed boundary of ${building.name}`
       };
     }
 
-    // Calculate diagnostic distance only (never used to grant attendance)
-    const distToPerimeter = distanceToPolygonPerimeter(lat, lng, polygon);
-    let centroidLat = 0, centroidLng = 0;
-    for (const pt of polygon) {
-      centroidLat += Number(pt[0]);
-      centroidLng += Number(pt[1]);
-    }
-    centroidLat /= polygon.length;
-    centroidLng /= polygon.length;
-    const distToCentroid = calculateHaversineDistance(lat, lng, centroidLat, centroidLng);
-
-    const minDist = Math.min(distToPerimeter, distToCentroid);
+    // Calculate diagnostic distance only
+    const minDist = Math.min(distToPerimeter, distToCenter);
     if (minDist < minPerimeterDistance) {
       minPerimeterDistance = minDist;
       closestBuilding = building;
@@ -369,7 +441,7 @@ async function getAllBuildings() {
   await ensureGeofenceTableExists();
   try {
     const { rows } = await query(
-      `SELECT id, name, code, address, polygon_coordinates, tolerance_meters, is_active, created_at, updated_at
+      `SELECT id, name, code, address, latitude, longitude, radius_meters, polygon_coordinates, tolerance_meters, is_active, created_at, updated_at
        FROM office_building_geofences 
        ORDER BY created_at ASC`
     );
@@ -390,7 +462,7 @@ async function getAllBuildings() {
 /**
  * Super Admin: Create new building geofence
  */
-async function createBuilding({ name, code, address, polygon_coordinates, tolerance_meters = 35, is_active = true }) {
+async function createBuilding({ name, code, address, latitude, longitude, radius_meters, polygon_coordinates, tolerance_meters = 10, is_active = true }) {
   await ensureGeofenceTableExists();
   if (!name || !polygon_coordinates || !Array.isArray(polygon_coordinates) || polygon_coordinates.length < 3) {
     const error = new Error('Building name and at least 3 corner [lat, lng] coordinates are required.');
@@ -413,15 +485,18 @@ async function createBuilding({ name, code, address, polygon_coordinates, tolera
   }
 
   const { rows: [created] } = await query(
-    `INSERT INTO office_building_geofences (name, code, address, polygon_coordinates, tolerance_meters, is_active)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, name, code, address, polygon_coordinates, tolerance_meters, is_active, created_at, updated_at`,
+    `INSERT INTO office_building_geofences (name, code, address, latitude, longitude, radius_meters, polygon_coordinates, tolerance_meters, is_active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING id, name, code, address, latitude, longitude, radius_meters, polygon_coordinates, tolerance_meters, is_active, created_at, updated_at`,
     [
       name.trim(),
       finalCode,
       address ? address.trim() : null,
+      latitude ? Number(latitude) : null,
+      longitude ? Number(longitude) : null,
+      radius_meters ? parseInt(radius_meters) : (parseInt(tolerance_meters) || 10),
       JSON.stringify(polygon_coordinates),
-      parseInt(tolerance_meters) || 35,
+      parseInt(tolerance_meters) || 10,
       Boolean(is_active)
     ]
   );
@@ -432,7 +507,7 @@ async function createBuilding({ name, code, address, polygon_coordinates, tolera
 /**
  * Super Admin: Update existing building geofence
  */
-async function updateBuilding(id, { name, code, address, polygon_coordinates, tolerance_meters, is_active }) {
+async function updateBuilding(id, { name, code, address, latitude, longitude, radius_meters, polygon_coordinates, tolerance_meters, is_active }) {
   await ensureGeofenceTableExists();
   const { rows: [existing] } = await query(
     `SELECT id FROM office_building_geofences WHERE id = $1 LIMIT 1`,
@@ -441,7 +516,7 @@ async function updateBuilding(id, { name, code, address, polygon_coordinates, to
 
   if (!existing) {
     // If not existing in DB, create new building
-    return createBuilding({ name, code, address, polygon_coordinates, tolerance_meters, is_active });
+    return createBuilding({ name, code, address, latitude, longitude, radius_meters, polygon_coordinates, tolerance_meters, is_active });
   }
 
   const updates = [];
@@ -460,6 +535,18 @@ async function updateBuilding(id, { name, code, address, polygon_coordinates, to
     updates.push(`address = $${idx++}`);
     values.push(address.trim());
   }
+  if (latitude !== undefined) {
+    updates.push(`latitude = $${idx++}`);
+    values.push(latitude ? Number(latitude) : null);
+  }
+  if (longitude !== undefined) {
+    updates.push(`longitude = $${idx++}`);
+    values.push(longitude ? Number(longitude) : null);
+  }
+  if (radius_meters !== undefined) {
+    updates.push(`radius_meters = $${idx++}`);
+    values.push(parseInt(radius_meters) || 10);
+  }
   if (polygon_coordinates !== undefined) {
     if (!Array.isArray(polygon_coordinates) || polygon_coordinates.length < 3) {
       const error = new Error('Polygon must contain at least 3 coordinate pairs.');
@@ -471,7 +558,7 @@ async function updateBuilding(id, { name, code, address, polygon_coordinates, to
   }
   if (tolerance_meters !== undefined) {
     updates.push(`tolerance_meters = $${idx++}`);
-    values.push(parseInt(tolerance_meters) || 35);
+    values.push(parseInt(tolerance_meters) || 10);
   }
   if (is_active !== undefined) {
     updates.push(`is_active = $${idx++}`);
@@ -485,7 +572,7 @@ async function updateBuilding(id, { name, code, address, polygon_coordinates, to
     `UPDATE office_building_geofences 
      SET ${updates.join(', ')} 
      WHERE id = $${idx}
-     RETURNING id, name, code, address, polygon_coordinates, tolerance_meters, is_active, created_at, updated_at`,
+     RETURNING id, name, code, address, latitude, longitude, radius_meters, polygon_coordinates, tolerance_meters, is_active, created_at, updated_at`,
     values
   );
 

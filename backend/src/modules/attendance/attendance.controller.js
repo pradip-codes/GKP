@@ -86,10 +86,58 @@ const getMySummary = async (req, res) => {
   }
 };
 
+// POST /api/v1/attendance/tasks
+const saveTasks = async (req, res) => {
+  try {
+    const { tasks } = req.body;
+    const result = await service.saveTasks({
+      reqUser: req.user,
+      tasks,
+    });
+    return success(res, result, 'Tasks saved successfully');
+  } catch (err) {
+    logger.error('Error saving tasks:', err.message);
+    return error(res, err.message, err.statusCode || 500);
+  }
+};
+
+// GET /api/v1/attendance/tasks/today
+const getTodayTasks = async (req, res) => {
+  try {
+    const result = await service.getTodayTasks({
+      reqUser: req.user,
+    });
+    return success(res, result, 'Today tasks loaded');
+  } catch (err) {
+    logger.error('Error fetching today tasks:', err.message);
+    return error(res, err.message, err.statusCode || 500);
+  }
+};
+
+// PATCH /api/v1/attendance/tasks/:taskId
+const updateTaskStatus = async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { status } = req.body;
+    const result = await service.updateTaskStatus({
+      reqUser: req.user,
+      taskId,
+      status,
+    });
+    return success(res, result, 'Task status updated successfully');
+  } catch (err) {
+    logger.error('Error updating task status:', err.message);
+    return error(res, err.message, err.statusCode || 500);
+  }
+};
+
 module.exports = {
   checkIn,
   checkOut,
   getTodayAttendance,
   getMyAttendance,
   getMySummary,
+  saveTasks,
+  getTodayTasks,
+  updateTaskStatus,
 };

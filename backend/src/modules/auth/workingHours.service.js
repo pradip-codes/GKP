@@ -473,7 +473,7 @@ async function checkUserWorkingHours(user) {
         ? await findNextWorkingDay(user, dateStr) 
         : dateStr;
 
-      const formattedNotice = `Working Hours Over\nYour working hours are from ${baseStartTimeStr} to ${effectiveEndTimeStr}. Login is currently unavailable. Please try again during your working hours.`;
+      const formattedNotice = `Working Hours Over\nYour working hours are from ${baseStartTimeStr} to ${baseEndTimeStr}. Login is currently unavailable. Please try again during your working hours.`;
 
       return {
         allowed: false,
@@ -481,12 +481,12 @@ async function checkUserWorkingHours(user) {
         reason: 'OUTSIDE_WORKING_HOURS',
         working_day: true,
         start_time: baseStartTimeStr,
-        end_time: effectiveEndTimeStr,
+        end_time: baseEndTimeStr,
         startTime: baseStartTimeStr,
         endTime: baseEndTimeStr,
-        effectiveEndTime: effectiveEndTimeStr,
+        effectiveEndTime: baseEndTimeStr,
         next_working_day: nextWorkingDay,
-        isExtended,
+        isExtended: false,
         message: formattedNotice,
         userRole: user.role,
         userDesignation: user.designation
@@ -498,10 +498,10 @@ async function checkUserWorkingHours(user) {
       allowed: true,
       working_day: true,
       start_time: baseStartTimeStr,
-      end_time: effectiveEndTimeStr,
+      end_time: baseEndTimeStr,
       startTime: baseStartTimeStr,
-      endTime: effectiveEndTimeStr,
-      isExtended
+      endTime: baseEndTimeStr,
+      isExtended: false
     };
   } catch (err) {
     logger.error('Working hours evaluation error:', err);

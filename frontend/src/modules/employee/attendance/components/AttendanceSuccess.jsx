@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Check, ArrowRight, Building2, MapPin, User, Clock } from 'lucide-react';
 
 export default function AttendanceSuccess({ verResult, user, onClose }) {
+  const isVerifyCheckOut = verResult?.action === 'VERIFY_CHECK_OUT';
   const isCheckIn = verResult?.action === 'CHECK_IN' || verResult?.action === 'START_WORK';
 
   const rawTimestamp = isCheckIn
@@ -110,7 +111,11 @@ export default function AttendanceSuccess({ verResult, user, onClose }) {
         color: '#111827',
         letterSpacing: '-0.3px'
       }}>
-        Attendance Marked Successfully!
+        {isVerifyCheckOut
+          ? 'Identity & Location Verified!'
+          : isCheckIn
+            ? 'Attendance Marked Successfully!'
+            : 'Check-Out Recorded!'}
       </h2>
 
       <p style={{
@@ -119,7 +124,11 @@ export default function AttendanceSuccess({ verResult, user, onClose }) {
         color: '#64748B',
         fontWeight: 500
       }}>
-        Good morning, <strong style={{ color: '#111827' }}>{employeeName}</strong>
+        {isVerifyCheckOut
+          ? 'Face and office premises confirmed. Ready for End-of-Day Review.'
+          : isCheckIn
+            ? <>Good morning, <strong style={{ color: '#111827' }}>{employeeName}</strong></>
+            : <>Good evening, <strong style={{ color: '#111827' }}>{employeeName}</strong></>}
       </p>
 
       {/* Employee Details Summary Card */}
@@ -148,7 +157,7 @@ export default function AttendanceSuccess({ verResult, user, onClose }) {
             <Clock size={15} style={{ color: '#6D3DF5' }} /> Type
           </span>
           <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#111827' }}>
-            {isCheckIn ? 'Check-In' : 'Check-Out'}
+            {isVerifyCheckOut ? 'Check-Out Verification' : isCheckIn ? 'Check-In' : 'Check-Out'}
           </span>
         </div>
 
@@ -187,7 +196,7 @@ export default function AttendanceSuccess({ verResult, user, onClose }) {
         </div>
       </div>
 
-      {/* Primary Go to Dashboard Button */}
+      {/* Primary Action Button */}
       <button
         type="button"
         onClick={onClose}
@@ -211,7 +220,7 @@ export default function AttendanceSuccess({ verResult, user, onClose }) {
         onMouseOver={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; }}
         onMouseOut={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}
       >
-        Go to Dashboard <ArrowRight size={18} />
+        {isVerifyCheckOut ? 'Proceed to End-of-Day Review' : isCheckIn ? 'Go to Dashboard' : 'Done'} <ArrowRight size={18} />
       </button>
     </motion.div>
   );

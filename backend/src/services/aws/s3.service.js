@@ -34,6 +34,11 @@ const MIME_MAP = {
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
   '.mov': 'video/quicktime',
+  '.txt': 'text/plain',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.3gp': 'video/3gpp',
+  '.mkv': 'video/x-matroska',
 };
 
 // Multer memory storage (file goes to memory, then we push to S3)

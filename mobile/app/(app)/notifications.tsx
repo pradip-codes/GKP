@@ -64,7 +64,7 @@ export default function NotificationsScreen() {
           // Filter out duplicates if any
           setNotifications((prev) => {
             const existingIds = new Set(prev.map((n) => n.id));
-            const newItems = res.notifications.filter((n) => !existingIds.has(n.id));
+            const newItems = res.notifications.filter((n: NotificationItem) => !existingIds.has(n.id));
             return [...prev, ...newItems];
           });
         }

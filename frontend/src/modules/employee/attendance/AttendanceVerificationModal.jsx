@@ -579,6 +579,25 @@ export default function AttendanceVerificationModal({
       await new Promise(r => setTimeout(r, 600));
       setIdentityStage('COMPLETE_ATTENDANCE');
 
+      if (actionType === 'VERIFY_CHECK_OUT') {
+        const finalResult = {
+          sessionId: activeSessionId,
+          timestamp: new Date().toISOString(),
+          status: 'VERIFIED',
+          buildingName: verificationResult?.buildingName,
+          locationStatus: 'INSIDE_BUILDING',
+          action: actionType
+        };
+
+        setVerificationResult(finalResult);
+        setCurrentState('SUCCESS');
+
+        if (onSuccess) {
+          onSuccess(finalResult);
+        }
+        return;
+      }
+
       // Submit attendance check-in / check-out
       let attendanceRes;
       if (actionType === 'CHECK_OUT') {

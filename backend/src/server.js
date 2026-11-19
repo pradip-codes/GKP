@@ -304,6 +304,7 @@ app.use('/api/v1/super-admin/bulk-sms', bulkSmsRoute);
 app.use('/admin/bulk-sms', bulkSmsRoute);
 app.use('/super-admin/bulk-sms', bulkSmsRoute);
 app.use('/api/v1', apiRouter);
+app.use('/api', apiRouter);
 app.use('/team', apiRouter);
 app.use('/messenger', messengerRoute);
 app.use('/api/v1/messenger', messengerRoute);

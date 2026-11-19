@@ -1,4 +1,5 @@
 const attendanceAdminService = require('./attendance-admin.service');
+const attendanceReportsService = require('../attendance-reports/attendance-reports.service');
 const environmentBypassService = require('./environmentBypass.service');
 const logger = require('../../config/logger');
 
@@ -69,66 +70,35 @@ const getAttendanceHistory = async (req, res, next) => {
 
 /**
  * GET /api/v1/attendance/admin/reports/export
- * Exports attendance records as CSV
+ * Exports attendance records and task details as Excel or CSV
  */
 const exportAttendanceReports = async (req, res, next) => {
   try {
+    const format = (req.query.format || 'csv').toLowerCase();
     const startDate = req.query.startDate || req.query.start_date;
     const endDate = req.query.endDate || req.query.end_date;
     const search = req.query.search;
     const status = req.query.status;
     const department = req.query.department;
     const employeeId = req.query.employeeId;
+    const source = req.query.source;
 
-    const data = await attendanceAdminService.getAdminAttendanceHistory({
+    const { buffer, filename, contentType } = await attendanceReportsService.exportAttendanceReports({
+      format,
       startDate,
       endDate,
-      search,
-      status,
-      department,
       employeeId,
-      page: 1,
-      limit: 10000,
+      department,
+      status,
+      source,
+      search,
+      reqUser: req.user,
+      req,
     });
 
-    const records = data?.records || [];
-    const headers = [
-      'Date',
-      'Employee ID',
-      'Name',
-      'Department',
-      'Designation',
-      'Status',
-      'Check In',
-      'Check Out',
-      'Total Hours',
-      'Mode',
-    ];
-
-    const escapeCsv = (val) => {
-      if (val === null || val === undefined) return '';
-      const str = String(val).replace(/"/g, '""');
-      return `"${str}"`;
-    };
-
-    const rows = records.map((r) => [
-      escapeCsv(r.attendance_date),
-      escapeCsv(r.employee_id),
-      escapeCsv(r.full_name),
-      escapeCsv(r.department),
-      escapeCsv(r.designation),
-      escapeCsv(r.status),
-      escapeCsv(r.check_in_time ? new Date(r.check_in_time).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' }) : '-'),
-      escapeCsv(r.check_out_time ? new Date(r.check_out_time).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' }) : '-'),
-      escapeCsv(r.total_hours || '-'),
-      escapeCsv(r.verification_mode || r.source || '-'),
-    ].join(','));
-
-    const csvContent = [headers.join(','), ...rows].join('\r\n');
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="attendance-report-${startDate || 'all'}-to-${endDate || 'today'}.csv"`);
-    res.status(200).send(csvContent);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.status(200).send(buffer);
   } catch (error) {
     logger.error(`[ATTENDANCE-ADMIN] exportAttendanceReports error: ${error.message}`);
     next(error);
@@ -137,14 +107,14 @@ const exportAttendanceReports = async (req, res, next) => {
 
 /**
  * GET /api/v1/attendance/admin/employee/:employeeId
- * Returns detailed attendance & monthly breakdown for a specific employee
+ * Returns detailed attendance, daily work report & monthly breakdown for a specific employee
  */
 const getEmployeeAttendanceDetails = async (req, res, next) => {
   try {
     const { employeeId } = req.params;
-    const { month, year } = req.query;
+    const { month, year, date } = req.query;
 
-    const data = await attendanceAdminService.getEmployeeAttendanceDetails(employeeId, month, year);
+    const data = await attendanceAdminService.getEmployeeAttendanceDetails(employeeId, month, year, date);
 
     res.json({
       success: true,
@@ -326,6 +296,102 @@ const deleteBuilding = async (req, res, next) => {
   }
 };
 
+/**
+ * POST /api/v1/attendance/admin/re-attendance
+ * Super Admin grants re-attendance to an employee
+ */
+const grantReAttendance = async (req, res, next) => {
+  try {
+    const { employeeId, date, mode, reason } = req.body;
+    const result = await attendanceAdminService.grantReAttendance({
+      employeeId,
+      date,
+      mode,
+      reason,
+      adminUser: req.user
+    });
+
+    res.json(result);
+  } catch (error) {
+    logger.error(`[ATTENDANCE-ADMIN] grantReAttendance error: ${error.message}`);
+    next(error);
+  }
+};
+
+/**
+ * POST /api/v1/attendance/admin/manual-mark
+ * Super Admin manually marks attendance for an employee
+ */
+const markManualAttendance = async (req, res, next) => {
+  try {
+    const { employeeId, date, status, attendanceType, checkInTime, checkOutTime, remarks } = req.body;
+    const result = await attendanceAdminService.markManualAttendance({
+      employeeId,
+      date,
+      status,
+      attendanceType,
+      checkInTime,
+      checkOutTime,
+      remarks,
+      adminUser: req.user
+    });
+
+    res.json(result);
+  } catch (error) {
+    logger.error(`[ATTENDANCE-ADMIN] markManualAttendance error: ${error.message}`);
+    next(error);
+  }
+};
+
+/**
+ * GET /api/v1/attendance/admin/employee/:employeeId/exemption
+ * Get active verification exemption configuration for an employee
+ */
+const getEmployeeExemption = async (req, res, next) => {
+  try {
+    const { employeeId } = req.params;
+    const data = await environmentBypassService.getEnvironmentBypassStatus(employeeId);
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    logger.error(`[ATTENDANCE-ADMIN] getEmployeeExemption error: ${error.message}`);
+    next(error);
+  }
+};
+
+/**
+ * POST /api/v1/attendance/admin/employee/:employeeId/exemption
+ * Configure which verification is NOT required (face, location, or both) for a specific employee account
+ */
+const setEmployeeExemption = async (req, res, next) => {
+  try {
+    const { employeeId } = req.params;
+    const { bypassLocation, bypassFace, bypassType, startDate, endDate, bypassReason } = req.body;
+
+    const data = await environmentBypassService.createEnvironmentBypass({
+      employeeId,
+      bypassReason: bypassReason || 'Super Admin verification exemption',
+      startDate,
+      endDate,
+      bypassLocation,
+      bypassFace,
+      bypassType,
+      reqUser: req.user
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Verification exemption access granted successfully',
+      data
+    });
+  } catch (error) {
+    logger.error(`[ATTENDANCE-ADMIN] setEmployeeExemption error: ${error.message}`);
+    next(error);
+  }
+};
+
 module.exports = {
   getTodayAttendance,
   getAttendanceHistory,
@@ -337,5 +403,9 @@ module.exports = {
   listBuildings,
   createBuilding,
   updateBuilding,
-  deleteBuilding
+  deleteBuilding,
+  grantReAttendance,
+  markManualAttendance,
+  getEmployeeExemption,
+  setEmployeeExemption
 };

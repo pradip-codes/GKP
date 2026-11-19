@@ -5061,6 +5061,14 @@ const migrate = async () => {
     logger.error('Matched Building Columns migration error note:', mbErr.message);
   }
 
+  // Attendance Environment Bypass Approvals Migration
+  try {
+    const { migrateAttendanceEnvironmentBypass } = require('./migrate_attendance_environment_bypass');
+    await migrateAttendanceEnvironmentBypass();
+  } catch (envBypassErr) {
+    logger.error('Attendance Environment Bypass migration error note:', envBypassErr.message);
+  }
+
   // LOC/EOC Category Migration
   try {
     const { migrateLocEocCategory } = require('./migrate_loc_eoc_category');

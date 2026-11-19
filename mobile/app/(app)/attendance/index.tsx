@@ -11,7 +11,9 @@ import {
   Alert,
   Platform,
   RefreshControl,
+  TextInput,
 } from 'react-native';
+import apiClient from '../../../services/api';
 import { useAuth } from '../../../contexts/AuthContext';
 import { colors } from '../../../theme/colors';
 import { typography } from '../../../theme/typography';
@@ -28,6 +30,7 @@ import {
   executeCheckOut,
   getEnrollmentStatus,
 } from '../../../services/attendance.service';
+import notificationService from '../../../services/notification.service';
 import { isAttendanceEnabledForEmployee } from '../../../config/attendanceRollout';
 
 interface AttendanceRecord {
@@ -40,6 +43,15 @@ interface AttendanceRecord {
   verification_reference: string;
   source: string;
   working_hours: string;
+  tasks?: AttendanceTask[];
+}
+
+interface AttendanceTask {
+  id: string;
+  task: string;
+  status: 'PENDING' | 'COMPLETED';
+  created_at: string;
+  completed_at?: string;
 }
 
 interface MonthlySummary {
@@ -68,6 +80,14 @@ export default function AttendanceScreen() {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [isFaceEnrolled, setIsFaceEnrolled] = useState<boolean | null>(null);
   const [showEnrollModal, setShowEnrollModal] = useState(false);
+  
+  // Task Management State
+  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [showReportingModal, setShowReportingModal] = useState(false);
+  const [taskInput, setTaskInput] = useState('');
+  const [tasks, setTasks] = useState<AttendanceTask[]>([]);
+  const [reportingTasks, setReportingTasks] = useState<AttendanceTask[]>([]);
+  const [taskLoading, setTaskLoading] = useState(false);
 
   const checkAttendanceAccess = () => {
     return user ? isAttendanceEnabledForEmployee(user) : false;
@@ -165,9 +185,17 @@ export default function AttendanceScreen() {
       if (actionType === 'CHECK_IN') {
         const res = await executeCheckIn(verifiedSessionId);
         Alert.alert('Work Started', res.message || 'Check-in recorded successfully!');
+        // Schedule 6:55 PM warning notification
+        await notificationService.scheduleEndAttendanceWarning(user?.id || '');
+        // Show task modal after check-in
+        setShowTaskModal(true);
       } else {
         const res = await executeCheckOut(verifiedSessionId);
         Alert.alert('Work Ended', res.message || 'Check-out recorded successfully!');
+        // Cancel the scheduled warning notification
+        await notificationService.cancelEndAttendanceWarning();
+        // Show reporting modal after check-out
+        setShowReportingModal(true);
       }
       await loadAllData();
     } catch (err: any) {
@@ -176,6 +204,88 @@ export default function AttendanceScreen() {
       setLoading(false);
     }
   };
+
+  // Task Management Functions
+  const handleAddTask = () => {
+    if (!taskInput.trim()) {
+      Alert.alert('Error', 'Please enter a task');
+      return;
+    }
+    const newTask: AttendanceTask = {
+      id: Date.now().toString(),
+      task: taskInput.trim(),
+      status: 'PENDING',
+      created_at: new Date().toISOString(),
+    };
+    setTasks([...tasks, newTask]);
+    setTaskInput('');
+  };
+
+  const handleRemoveTask = (taskId: string) => {
+    setTasks(tasks.filter(t => t.id !== taskId));
+  };
+
+  const handleSaveTasks = async () => {
+    if (tasks.length === 0) {
+      Alert.alert('Error', 'Please add at least one task');
+      return;
+    }
+    setTaskLoading(true);
+    try {
+      await apiClient.post('/attendance/tasks', { tasks });
+      setShowTaskModal(false);
+      setTasks([]);
+      Alert.alert('Success', 'Tasks saved successfully');
+    } catch (err: any) {
+      Alert.alert('Error', err.response?.data?.message || 'Failed to save tasks');
+    } finally {
+      setTaskLoading(false);
+    }
+  };
+
+  const handleFetchReportingTasks = async () => {
+    setTaskLoading(true);
+    try {
+      const response = await apiClient.get('/attendance/tasks/today');
+      setReportingTasks(response.data?.data?.tasks || []);
+    } catch (err: any) {
+      Alert.alert('Error', err.response?.data?.message || 'Failed to fetch tasks');
+    } finally {
+      setTaskLoading(false);
+    }
+  };
+
+  const handleMarkTaskComplete = async (taskId: string) => {
+    try {
+      await apiClient.patch(`/attendance/tasks/${taskId}`, { status: 'COMPLETED' });
+      setReportingTasks(reportingTasks.map(t => 
+        t.id === taskId ? { ...t, status: 'COMPLETED', completed_at: new Date().toISOString() } : t
+      ));
+    } catch (err: any) {
+      Alert.alert('Error', err.response?.data?.message || 'Failed to mark task complete');
+    }
+  };
+
+  const handleAddReportingTask = () => {
+    if (!taskInput.trim()) {
+      Alert.alert('Error', 'Please enter a task');
+      return;
+    }
+    const newTask: AttendanceTask = {
+      id: Date.now().toString(),
+      task: taskInput.trim(),
+      status: 'PENDING',
+      created_at: new Date().toISOString(),
+    };
+    setReportingTasks([...reportingTasks, newTask]);
+    setTaskInput('');
+  };
+
+  useEffect(() => {
+    if (showReportingModal) {
+      handleFetchReportingTasks();
+    }
+  }, [showReportingModal]);
 
   const formatTime = (timeStr: string) => {
     if (!timeStr) return '--';
@@ -474,6 +584,121 @@ export default function AttendanceScreen() {
         onClose={() => setShowVerificationModal(false)}
         onSuccess={handleVerificationSuccess}
       />
+
+      {/* Task Entry Modal */}
+      <Modal visible={showTaskModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Today's Tasks</Text>
+              <TouchableOpacity onPress={() => setShowTaskModal(false)}>
+                <Icon name="x" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.taskInputContainer}>
+              <TextInput
+                style={styles.taskInput}
+                placeholder="Enter task..."
+                value={taskInput}
+                onChangeText={setTaskInput}
+                onSubmitEditing={handleAddTask}
+              />
+              <TouchableOpacity style={styles.addTaskButton} onPress={handleAddTask}>
+                <Icon name="plus" size={20} color="#fff" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.taskList}>
+              {tasks.length === 0 ? (
+                <Text style={styles.emptyTaskText}>No tasks added yet</Text>
+              ) : (
+                tasks.map((task, index) => (
+                  <View key={task.id} style={styles.taskItem}>
+                    <Text style={styles.taskIndex}>{index + 1}.</Text>
+                    <Text style={styles.taskText}>{task.task}</Text>
+                    <TouchableOpacity onPress={() => handleRemoveTask(task.id)}>
+                      <Icon name="x" size={18} color={colors.error} />
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+
+            <Button
+              title={taskLoading ? 'Saving...' : 'Save Tasks'}
+              onPress={handleSaveTasks}
+              disabled={taskLoading || tasks.length === 0}
+              style={styles.saveButton}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Task Reporting Modal */}
+      <Modal visible={showReportingModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Task Reporting</Text>
+              <TouchableOpacity onPress={() => setShowReportingModal(false)}>
+                <Icon name="x" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.taskInputContainer}>
+              <TextInput
+                style={styles.taskInput}
+                placeholder="Add new task..."
+                value={taskInput}
+                onChangeText={setTaskInput}
+                onSubmitEditing={handleAddReportingTask}
+              />
+              <TouchableOpacity style={styles.addTaskButton} onPress={handleAddReportingTask}>
+                <Icon name="plus" size={20} color="#fff" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.taskList}>
+              {taskLoading ? (
+                <ActivityIndicator size="large" color={colors.primary} />
+              ) : reportingTasks.length === 0 ? (
+                <Text style={styles.emptyTaskText}>No tasks to report</Text>
+              ) : (
+                reportingTasks.map((task) => (
+                  <View key={task.id} style={styles.reportingTaskItem}>
+                    <TouchableOpacity
+                      style={styles.taskCheckbox}
+                      onPress={() => handleMarkTaskComplete(task.id)}
+                    >
+                      <View style={[
+                        styles.checkbox,
+                        task.status === 'COMPLETED' && styles.checkboxChecked
+                      ]}>
+                        {task.status === 'COMPLETED' && (
+                          <Icon name="check" size={14} color="#fff" />
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                    <Text style={[
+                      styles.taskText,
+                      task.status === 'COMPLETED' && styles.taskCompleted
+                    ]}>
+                      {task.task}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+
+            <Button
+              title="Close"
+              onPress={() => setShowReportingModal(false)}
+              style={styles.saveButton}
+            />
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -834,6 +1059,92 @@ const styles = StyleSheet.create({
     fontWeight: typography.weights.semibold,
   },
   verifyButton: {
+    marginTop: spacing.md,
+  },
+  taskInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  taskInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    fontSize: typography.sizes.sm,
+    color: colors.text,
+    marginRight: spacing.sm,
+  },
+  addTaskButton: {
+    backgroundColor: colors.primary,
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  taskList: {
+    maxHeight: 200,
+    marginBottom: spacing.md,
+  },
+  taskItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.bg,
+    borderRadius: 8,
+    marginBottom: spacing.xs,
+  },
+  taskIndex: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+    marginRight: spacing.sm,
+  },
+  taskText: {
+    flex: 1,
+    fontSize: typography.sizes.sm,
+    color: colors.text,
+  },
+  taskCompleted: {
+    textDecorationLine: 'line-through',
+    color: colors.textLight,
+  },
+  emptyTaskText: {
+    fontSize: typography.sizes.sm,
+    color: colors.textLight,
+    textAlign: 'center',
+    paddingVertical: spacing.lg,
+  },
+  reportingTaskItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.bg,
+    borderRadius: 8,
+    marginBottom: spacing.xs,
+  },
+  taskCheckbox: {
+    marginRight: spacing.sm,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: colors.success,
+    borderColor: colors.success,
+  },
+  saveButton: {
     marginTop: spacing.md,
   },
 });

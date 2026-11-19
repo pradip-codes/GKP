@@ -29,13 +29,16 @@ export default function SuperAdminLeadsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [sourceFilter, setSourceFilter] = useState('ALL');
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [newStatus, setNewStatus] = useState('');
   const [statusNotes, setStatusNotes] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
 
   const statuses = ['ALL', 'NEW', 'IN_PROGRESS', 'CONVERTED', 'REJECTED'];
+  const sources = ['ALL', 'PARTNER', 'EMPLOYEE', 'CUSTOMER', 'DIRECT'];
 
   const loadLeads = useCallback(async (isRefresh = false) => {
     try {
@@ -101,19 +104,38 @@ export default function SuperAdminLeadsScreen() {
 
   const renderLeadCard = ({ item }: { item: any }) => {
     const statusTheme = getStatusColor(item.status);
+    const leadId = item.lead_no || item.id || item._id;
+    const isSelected = selectedLeadIds.includes(leadId);
+
     return (
       <Card style={styles.leadCard}>
         <View style={styles.cardHeader}>
-          <View style={styles.customerInfo}>
-            <Text style={styles.customerName}>{item.customer_name || item.name || 'Lead Contact'}</Text>
-            <Text style={styles.contactText}>
-              <Icon name="phone" size={12} color="#64748B" /> {item.mobile || item.phone || 'N/A'}
-            </Text>
-            {item.email ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity onPress={() => {
+              if (isSelected) {
+                setSelectedLeadIds(selectedLeadIds.filter(id => id !== leadId));
+              } else {
+                setSelectedLeadIds([...selectedLeadIds, leadId]);
+              }
+            }}>
+              <View style={[styles.checkbox, { 
+                backgroundColor: isSelected ? '#2563EB' : '#F1F5F9',
+                borderColor: isSelected ? '#2563EB' : '#E2E8F0' 
+              }]}>
+                {isSelected && <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '900' }}>✓</Text>}
+              </View>
+            </TouchableOpacity>
+            <View style={styles.customerInfo}>
+              <Text style={styles.customerName}>{item.customer_name || item.name || 'Lead Contact'}</Text>
               <Text style={styles.contactText}>
-                <Icon name="mail" size={12} color="#64748B" /> {item.email}
+                <Icon name="phone" size={12} color="#64748B" /> {item.mobile || item.phone || 'N/A'}
               </Text>
-            ) : null}
+              {item.email ? (
+                <Text style={styles.contactText}>
+                  <Icon name="mail" size={12} color="#64748B" /> {item.email}
+                </Text>
+              ) : null}
+            </View>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: statusTheme.bg }]}>
             <Text style={[styles.statusText, { color: statusTheme.text }]}>
@@ -191,6 +213,25 @@ export default function SuperAdminLeadsScreen() {
               onPress={() => setStatusFilter(item)}
             >
               <Text style={[styles.filterChipText, statusFilter === item && styles.activeFilterChipText]}>
+                {item}
+              </Text>
+            </TouchableOpacity>
+          )}
+        />
+
+        {/* Source Filter */}
+        <FlatList
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          data={sources}
+          keyExtractor={(item) => item}
+          contentContainerStyle={styles.filterList}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={[styles.filterChip, sourceFilter === item && styles.activeFilterChip]}
+              onPress={() => setSourceFilter(item)}
+            >
+              <Text style={[styles.filterChipText, sourceFilter === item && styles.activeFilterChipText]}>
                 {item}
               </Text>
             </TouchableOpacity>
@@ -564,5 +605,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#fff',
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

@@ -32,8 +32,10 @@ export default function IdentityVerificationProgress({
     },
     {
       num: 4,
-      title: 'Marking attendance',
-      desc: isLocationDone ? (isCheckIn ? 'Recording check-in...' : 'Recording check-out...') : 'Pending',
+      title: actionType === 'VERIFY_CHECK_OUT' ? 'Verification complete' : 'Marking attendance',
+      desc: isLocationDone
+        ? (actionType === 'VERIFY_CHECK_OUT' ? 'Face & location verified' : isCheckIn ? 'Recording check-in...' : 'Recording check-out...')
+        : 'Pending',
       status: isLocationDone ? 'active' : 'pending'
     }
   ];

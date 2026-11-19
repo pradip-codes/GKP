@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const path = require('path');
 const { query, getClient } = require('../../config/database');
 const jwtAuth = require('../../middleware/authentication/jwtAuth.middleware');
 const roleCheck = require('../../middleware/authorization/role.middleware');
@@ -8,19 +9,47 @@ const { uploadToS3 } = require('../../services/aws/s3.service');
 const multer = require('multer');
 
 // Allowed MIME types for file uploads
-const ALLOWED_VIDEO_MIME_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
+const ALLOWED_VIDEO_MIME_TYPES = [
+  'video/mp4', 'video/webm', 'video/quicktime', 'video/3gpp', 'video/3gpp2',
+  'video/x-matroska', 'video/x-msvideo', 'video/avi', 'video/ogg', 'video/x-m4v'
+];
 const ALLOWED_IMAGE_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-const ALLOWED_DOCUMENT_MIME_TYPES = ['application/pdf'];
+const ALLOWED_DOCUMENT_MIME_TYPES = [
+  'application/pdf',
+  'text/plain',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+];
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit for video & KYC uploads
   fileFilter: (req, file, cb) => {
-    const allowedMimeTypes = [...ALLOWED_VIDEO_MIME_TYPES, ...ALLOWED_IMAGE_MIME_TYPES, ...ALLOWED_DOCUMENT_MIME_TYPES];
-    if (allowedMimeTypes.includes(file.mimetype)) {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const allowedExts = [
+      '.mp4', '.webm', '.mov', '.3gp', '.3gpp', '.avi', '.mkv',
+      '.jpg', '.jpeg', '.png', '.webp',
+      '.pdf', '.txt', '.doc', '.docx'
+    ];
+    const allowedMimeTypes = [
+      ...ALLOWED_VIDEO_MIME_TYPES,
+      ...ALLOWED_IMAGE_MIME_TYPES,
+      ...ALLOWED_DOCUMENT_MIME_TYPES,
+      'application/octet-stream'
+    ];
+
+    if (
+      allowedMimeTypes.includes(file.mimetype) ||
+      allowedExts.includes(ext) ||
+      file.mimetype.startsWith('video/') ||
+      file.mimetype.startsWith('image/') ||
+      file.mimetype === 'text/plain'
+    ) {
       cb(null, true);
     } else {
-      cb(new Error(`Invalid file type: ${file.mimetype}. Allowed types: ${allowedMimeTypes.join(', ')}`), false);
+      const err = new Error(`Invalid file type: ${file.mimetype}. Allowed types: ${allowedMimeTypes.join(', ')}`);
+      err.statusCode = 400;
+      cb(err, false);
     }
   }
 });
@@ -347,6 +376,124 @@ async function resolveEmployee(req, res, next) {
 
 router.use(resolveEmployee);
 
+// ── Daily Commitments & Attendance Gated Endpoints ─────────────────────────
+const commitmentsService = require('./employee-commitments.service');
+const requireDayUnlocked = require('../../middleware/attendance/requireDayUnlocked.middleware');
+
+// GET /day-status — Check employee daily status (NOT_CHECKED_IN, NEEDS_COMMITMENTS, UNLOCKED, CHECKED_OUT)
+router.get('/day-status', async (req, res, next) => {
+  try {
+    const result = await commitmentsService.getDayStatus({ reqUser: req.user });
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /attendance/check-in & /check-in — Mark attendance
+const handleCheckIn = async (req, res, next) => {
+  try {
+    const result = await commitmentsService.executeCheckIn({ reqUser: req.user, body: req.body });
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+};
+router.post('/attendance/check-in', handleCheckIn);
+router.post('/check-in', handleCheckIn);
+
+// GET /tasks/today & /tasks — Get today's tasks and carry-over tasks
+const handleGetTasks = async (req, res, next) => {
+  try {
+    const result = await commitmentsService.getTodayTasks({ reqUser: req.user });
+    return res.json({ success: true, data: result, carryOver: result.carryOver, today: result.today });
+  } catch (err) {
+    next(err);
+  }
+};
+router.get('/tasks/today', handleGetTasks);
+router.get('/tasks', handleGetTasks);
+
+// POST /tasks — Add one draft task
+router.post('/tasks', async (req, res, next) => {
+  try {
+    const result = await commitmentsService.addDraftTask({ reqUser: req.user, title: req.body?.title });
+    return res.status(201).json(result);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ success: false, message: err.message });
+  }
+});
+
+// DELETE /tasks/:id — Remove draft task
+router.delete('/tasks/:id', async (req, res, next) => {
+  try {
+    const result = await commitmentsService.deleteDraftTask({ reqUser: req.user, taskId: req.params.id });
+    return res.json(result);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ success: false, message: err.message });
+  }
+});
+
+// POST /tasks/submit & /commitments/submit — Submit commitments and unlock panel
+const handleSubmitCommitments = async (req, res, next) => {
+  try {
+    const result = await commitmentsService.submitCommitments({ reqUser: req.user });
+    return res.json(result);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ success: false, message: err.message });
+  }
+};
+router.post('/tasks/submit', handleSubmitCommitments);
+router.post('/commitments/submit', handleSubmitCommitments);
+
+// POST /tasks/extra & /attendance/tasks/extra — Add extra task during end-of-day review
+const handleCreateExtraTask = async (req, res, next) => {
+  try {
+    const result = await commitmentsService.addExtraTask({
+      reqUser: req.user,
+      title: req.body?.title,
+      isCompleted: req.body?.isCompleted !== false
+    });
+    return res.status(201).json(result);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ success: false, message: err.message });
+  }
+};
+router.post('/tasks/extra', handleCreateExtraTask);
+router.post('/attendance/tasks/extra', handleCreateExtraTask);
+
+// POST /attendance/check-out & /check-out — Submit end-of-day review and check out
+const handleCheckOut = async (req, res, next) => {
+  try {
+    const result = await commitmentsService.executeCheckOut({
+      reqUser: req.user,
+      completedTaskIds: req.body?.completedTaskIds || [],
+      extraTasks: req.body?.extraTasks || [],
+      verificationSessionId: req.body?.verificationSessionId
+    });
+    return res.json(result);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ success: false, message: err.message });
+  }
+};
+router.post('/attendance/check-out', handleCheckOut);
+router.post('/check-out', handleCheckOut);
+
+// POST /attendance/cancel-check-out & /cancel-check-out — Cancel check-out within 10-minute window
+const handleCancelCheckOut = async (req, res, next) => {
+  try {
+    const result = await commitmentsService.cancelCheckOut({ reqUser: req.user });
+    return res.json(result);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ success: false, message: err.message });
+  }
+};
+router.post('/attendance/cancel-check-out', handleCancelCheckOut);
+router.post('/cancel-check-out', handleCancelCheckOut);
+
+// Protect all downstream employee routes with Attendance & Commitments Gate
+router.use(requireDayUnlocked);
+
 // GET /api/v1/employee/onboarding-status — Check onboarding progress
 router.get('/onboarding-status', async (req, res, next) => {
   try {
@@ -577,6 +724,19 @@ router.post('/joining-form', async (req, res, next) => {
       referred_by, recruitment_source, bank_account_holder_name, bank_account_number,
       ifsc_code, pan_number, aadhaar_number, declaration_accepted
     } = req.body;
+
+    const oversizedField = [
+      ['experience_type', experience_type],
+      ['ifsc_code', ifsc_code],
+      ['pan_number', pan_number],
+      ['aadhaar_number', aadhaar_number]
+    ].find(([, value]) => value != null && String(value).length > 20);
+    if (oversizedField) {
+      return res.status(400).json({
+        success: false,
+        message: `${oversizedField[0]} must not exceed 20 characters.`
+      });
+    }
 
     // Invalidate cache when joining form is submitted
     await cache.del(`employee:profile:${empId}`).catch(err => {
