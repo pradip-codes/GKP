@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import { getApiV1Url } from '../../../config/api';
+import { getAccessToken } from '../../../services/api';
 
 export default function FaceVerificationModal({
   isOpen,
@@ -68,23 +69,44 @@ export default function FaceVerificationModal({
     setErrorMsg('');
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
+      const token = getAccessToken() || localStorage.getItem('token') || localStorage.getItem('access_token') || sessionStorage.getItem('token');
       
-      // 1. Create Enrollment Session
-      const sessionUrl = isReEnrollment 
-        ? `${getApiV1Url()}/attendance/enrollment/re-enrollment/session`
-        : `${getApiV1Url()}/attendance/enrollment/session`;
+      // 1. Create Enrollment Session with multi-route fallback
+      const sessionUrls = isReEnrollment
+        ? [
+            `${getApiV1Url()}/attendance/enrollment/re-enrollment/session`,
+            `${getApiV1Url()}/attendance-enrollment/re-enrollment/session`,
+            `${getApiV1Url()}/enrollment/re-enrollment/session`
+          ]
+        : [
+            `${getApiV1Url()}/attendance/enrollment/session`,
+            `${getApiV1Url()}/attendance-enrollment/session`,
+            `${getApiV1Url()}/enrollment/session`
+          ];
 
       const payload = isReEnrollment
         ? { employee_id: employeeId, reason: reEnrollReason || 'Super Admin Re-enrollment' }
         : (employeeId ? { employee_id: employeeId } : {});
 
-      const sessionRes = await axios.post(sessionUrl, payload, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      if (!sessionRes.data?.success || !sessionRes.data?.data?.sessionToken) {
-        throw new Error(sessionRes.data?.message || 'Failed to create enrollment session');
+      let sessionRes = null;
+      let lastErr = null;
+      for (const url of sessionUrls) {
+        try {
+          sessionRes = await axios.post(url, payload, { headers });
+          if (sessionRes?.data?.success) break;
+        } catch (postErr) {
+          lastErr = postErr;
+          if (postErr.response?.status === 404) {
+            continue; // try next fallback alias
+          }
+          throw postErr;
+        }
+      }
+
+      if (!sessionRes?.data?.success || !sessionRes?.data?.data?.sessionToken) {
+        throw lastErr || new Error(sessionRes?.data?.message || 'Failed to create enrollment session');
       }
 
       setSessionToken(sessionRes.data.data.sessionToken);
@@ -183,24 +205,45 @@ export default function FaceVerificationModal({
 
     setStep(4); // Processing step
     try {
-      const token = localStorage.getItem('token');
+      const token = getAccessToken() || localStorage.getItem('token') || localStorage.getItem('access_token') || sessionStorage.getItem('token');
       const formData = new FormData();
       formData.append('session_token', sessionToken);
       formData.append('face_image', capturedBlob, 'kyc_face_reference.jpg');
 
-      const commitUrl = isReEnrollment
-        ? `${getApiV1Url()}/attendance/enrollment/re-enrollment/commit`
-        : `${getApiV1Url()}/attendance/enrollment/commit`;
+      const commitUrls = isReEnrollment
+        ? [
+            `${getApiV1Url()}/attendance/enrollment/re-enrollment/commit`,
+            `${getApiV1Url()}/attendance-enrollment/re-enrollment/commit`,
+            `${getApiV1Url()}/enrollment/re-enrollment/commit`
+          ]
+        : [
+            `${getApiV1Url()}/attendance/enrollment/commit`,
+            `${getApiV1Url()}/attendance-enrollment/commit`,
+            `${getApiV1Url()}/enrollment/commit`
+          ];
 
-      const res = await axios.post(commitUrl, formData, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data'
+      const headers = {
+        'Content-Type': 'multipart/form-data',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      };
+
+      let res = null;
+      let lastErr = null;
+      for (const url of commitUrls) {
+        try {
+          res = await axios.post(url, formData, { headers });
+          if (res?.data?.success) break;
+        } catch (commitErr) {
+          lastErr = commitErr;
+          if (commitErr.response?.status === 404) {
+            continue; // try next fallback alias
+          }
+          throw commitErr;
         }
-      });
+      }
 
-      if (!res.data?.success) {
-        throw new Error(res.data?.message || 'Failed to enroll biometric face reference');
+      if (!res?.data?.success) {
+        throw lastErr || new Error(res?.data?.message || 'Failed to enroll biometric face reference');
       }
 
       setEnrollmentResult(res.data.data);

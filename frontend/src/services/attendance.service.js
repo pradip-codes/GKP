@@ -150,6 +150,54 @@ const attendanceService = {
   },
 
   // Biometric Enrollment Endpoints
+  createEnrollmentSession: async (payload = {}) => {
+    try {
+      const response = await api.post('/attendance/enrollment/session', payload);
+      return response.data;
+    } catch (err) {
+      if (err.response?.status === 404) {
+        try {
+          const fb1 = await api.post('/attendance-enrollment/session', payload);
+          return fb1.data;
+        } catch (e1) {
+          if (e1.response?.status === 404) {
+            const fb2 = await api.post('/enrollment/session', payload);
+            return fb2.data;
+          }
+          throw e1;
+        }
+      }
+      throw err;
+    }
+  },
+
+  commitEnrollment: async (formData) => {
+    try {
+      const response = await api.post('/attendance/enrollment/commit', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      return response.data;
+    } catch (err) {
+      if (err.response?.status === 404) {
+        try {
+          const fb1 = await api.post('/attendance-enrollment/commit', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+          });
+          return fb1.data;
+        } catch (e1) {
+          if (e1.response?.status === 404) {
+            const fb2 = await api.post('/enrollment/commit', formData, {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            return fb2.data;
+          }
+          throw e1;
+        }
+      }
+      throw err;
+    }
+  },
+
   getEnrollmentStatus: async () => {
     const response = await api.get('/attendance/enrollment/status');
     return response.data;

@@ -10,6 +10,7 @@ import {
 } from 'react-icons/fa';
 import axios from 'axios';
 import { getApiV1Url } from '../../../config/api';
+import { getAccessToken } from '../../../services/api';
 
 const SCRIPTS = {
   en: {
@@ -522,33 +523,73 @@ export default function UnifiedEmployeeOnboarding({ initialStep = 1 }) {
 
     setSubmittingFace(true);
     try {
-      // 1. Initiate Enrollment Session
-      const sessionRes = await axios.post(`${getApiV1Url()}/attendance/enrollment/session`, {
-        reason: 'KYC_INITIAL_ENROLLMENT'
-      });
+      const token = getAccessToken() || localStorage.getItem('token') || sessionStorage.getItem('token');
+      const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
-      if (!sessionRes.data?.success || !sessionRes.data?.data?.sessionToken) {
-        throw new Error('Failed to obtain enrollment session token');
+      // 1. Initiate Enrollment Session with multi-route fallback
+      const sessionUrls = [
+        `${getApiV1Url()}/attendance/enrollment/session`,
+        `${getApiV1Url()}/attendance-enrollment/session`,
+        `${getApiV1Url()}/enrollment/session`
+      ];
+
+      let sessionRes = null;
+      let sessionErr = null;
+      for (const url of sessionUrls) {
+        try {
+          sessionRes = await axios.post(url, { reason: 'KYC_INITIAL_ENROLLMENT' }, { headers: authHeaders });
+          if (sessionRes?.data?.success) break;
+        } catch (err404) {
+          sessionErr = err404;
+          if (err404.response?.status === 404) continue;
+          throw err404;
+        }
+      }
+
+      if (!sessionRes?.data?.success || !sessionRes?.data?.data?.sessionToken) {
+        throw sessionErr || new Error('Failed to obtain enrollment session token');
       }
 
       const sessionToken = sessionRes.data.data.sessionToken;
 
-      // 2. Commit Face Biometric Image
+      // 2. Commit Face Biometric Image with multi-route fallback
       const formData = new FormData();
       formData.append('session_token', sessionToken);
       formData.append('face_image', faceCapturedBlob, 'face_enrollment.jpg');
 
-      const commitRes = await axios.post(`${getApiV1Url()}/attendance/enrollment/commit`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      const commitUrls = [
+        `${getApiV1Url()}/attendance/enrollment/commit`,
+        `${getApiV1Url()}/attendance-enrollment/commit`,
+        `${getApiV1Url()}/enrollment/commit`
+      ];
 
-      if (commitRes.data?.success) {
+      let commitRes = null;
+      let commitErr = null;
+      for (const url of commitUrls) {
+        try {
+          commitRes = await axios.post(url, formData, {
+            headers: {
+              'Content-Type': 'multipart/form-data',
+              ...authHeaders
+            }
+          });
+          if (commitRes?.data?.success) break;
+        } catch (err404) {
+          commitErr = err404;
+          if (err404.response?.status === 404) continue;
+          throw err404;
+        }
+      }
+
+      if (commitRes?.data?.success) {
         alert('✓ Step 4: Biometric Face Reference Enrolled & Locked Successfully!');
         setFaceEnrollCompleted(true);
         loadMasterProfile();
+      } else {
+        throw commitErr || new Error('Failed to commit biometric face reference');
       }
     } catch (err) {
-      alert(err.response?.data?.message || 'Biometric face enrollment failed');
+      alert(err.response?.data?.message || err.message || 'Biometric face enrollment failed');
     } finally {
       setSubmittingFace(false);
     }

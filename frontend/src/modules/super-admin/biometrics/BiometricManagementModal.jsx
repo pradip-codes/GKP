@@ -7,6 +7,7 @@ import {
 } from 'react-icons/fa';
 import axios from 'axios';
 import { getApiV1Url } from '../../../config/api';
+import { getAccessToken } from '../../../services/api';
 
 export default function BiometricManagementModal({ isOpen, onClose, employee = null }) {
   const { C } = useTheme();
@@ -150,19 +151,40 @@ export default function BiometricManagementModal({ isOpen, onClose, employee = n
 
     setSubmittingReEnroll(true);
     try {
-      const token = localStorage.getItem('token');
-      const res = await axios.post(`${getApiV1Url()}/attendance/enrollment/re-enrollment/session`, {
+      const token = getAccessToken() || localStorage.getItem('token') || sessionStorage.getItem('token');
+      const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const sessionUrls = [
+        `${getApiV1Url()}/attendance/enrollment/re-enrollment/session`,
+        `${getApiV1Url()}/attendance-enrollment/re-enrollment/session`,
+        `${getApiV1Url()}/enrollment/re-enrollment/session`
+      ];
+
+      const payload = {
         employee_id: selectedEmp.id,
         reason: reEnrollReason.trim(),
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      };
 
-      if (res.data?.success) {
+      let res = null;
+      let lastErr = null;
+      for (const url of sessionUrls) {
+        try {
+          res = await axios.post(url, payload, { headers: authHeaders });
+          if (res?.data?.success) break;
+        } catch (postErr) {
+          lastErr = postErr;
+          if (postErr.response?.status === 404) continue;
+          throw postErr;
+        }
+      }
+
+      if (res?.data?.success) {
         setSessionToken(res.data.data.sessionToken);
+      } else {
+        throw lastErr || new Error('Failed to initiate re-enrollment session');
       }
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to initiate re-enrollment session');
+      alert(err.response?.data?.message || err.message || 'Failed to initiate re-enrollment session');
     } finally {
       setSubmittingReEnroll(false);
     }
@@ -181,28 +203,47 @@ export default function BiometricManagementModal({ isOpen, onClose, employee = n
 
     setSubmittingReEnroll(true);
     try {
-      const token = localStorage.getItem('token');
+      const token = getAccessToken() || localStorage.getItem('token') || sessionStorage.getItem('token');
       const formData = new FormData();
       formData.append('session_token', sessionToken);
       formData.append('face_image', reEnrollFile);
 
-      const res = await axios.post(`${getApiV1Url()}/attendance/enrollment/re-enrollment/commit`, formData, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data',
-        }
-      });
+      const commitUrls = [
+        `${getApiV1Url()}/attendance/enrollment/re-enrollment/commit`,
+        `${getApiV1Url()}/attendance-enrollment/re-enrollment/commit`,
+        `${getApiV1Url()}/enrollment/re-enrollment/commit`
+      ];
 
-      if (res.data?.success) {
+      const headers = {
+        'Content-Type': 'multipart/form-data',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      };
+
+      let res = null;
+      let lastErr = null;
+      for (const url of commitUrls) {
+        try {
+          res = await axios.post(url, formData, { headers });
+          if (res?.data?.success) break;
+        } catch (postErr) {
+          lastErr = postErr;
+          if (postErr.response?.status === 404) continue;
+          throw postErr;
+        }
+      }
+
+      if (res?.data?.success) {
         alert('✓ Biometric face reference re-enrolled successfully!');
         setShowReEnrollModal(false);
         setReEnrollReason('');
         setSessionToken('');
         setReEnrollFile(null);
         fetchEmployeeStatus(selectedEmp.id);
+      } else {
+        throw lastErr || new Error('Re-enrollment commit failed');
       }
     } catch (err) {
-      alert(err.response?.data?.message || 'Re-enrollment commit failed');
+      alert(err.response?.data?.message || err.message || 'Re-enrollment commit failed');
     } finally {
       setSubmittingReEnroll(false);
     }
