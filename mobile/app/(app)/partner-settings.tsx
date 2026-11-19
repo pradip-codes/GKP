@@ -45,7 +45,10 @@ export default function PartnerSettingsScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Icon name="arrow-left" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Partner Settings</Text>
+        <View style={styles.headerTextCol}>
+          <Text style={styles.headerTitle}>Partner Settings</Text>
+          <Text style={styles.headerSubtitle}>Manage your preferences</Text>
+        </View>
         <View style={{ width: 24 }} />
       </View>
 
@@ -54,29 +57,49 @@ export default function PartnerSettingsScreen() {
         <Card style={styles.settingCard}>
           <View style={styles.settingItem}>
             <View style={styles.settingLeft}>
-              <Icon name="bell" size={20} color={colors.text} />
-              <Text style={styles.settingLabel}>Push Notifications</Text>
+              <View style={[styles.settingIconBg, { backgroundColor: '#EEF2FF' }]}>
+                <Icon name="bell" size={16} color="#4F46E5" />
+              </View>
+              <View style={styles.settingTextCol}>
+                <Text style={styles.settingLabel}>Push Notifications</Text>
+                <Text style={styles.settingSublabel}>Receive real-time alerts</Text>
+              </View>
             </View>
             <Switch value={notifications} onValueChange={setNotifications} />
           </View>
           <View style={styles.settingItem}>
             <View style={styles.settingLeft}>
-              <Icon name="mail" size={20} color={colors.text} />
-              <Text style={styles.settingLabel}>Email Alerts</Text>
+              <View style={[styles.settingIconBg, { backgroundColor: '#ECFDF5' }]}>
+                <Icon name="mail" size={16} color="#10B981" />
+              </View>
+              <View style={styles.settingTextCol}>
+                <Text style={styles.settingLabel}>Email Alerts</Text>
+                <Text style={styles.settingSublabel}>Get updates via email</Text>
+              </View>
             </View>
             <Switch value={emailAlerts} onValueChange={setEmailAlerts} />
           </View>
           <View style={styles.settingItem}>
             <View style={styles.settingLeft}>
-              <Icon name="message-square" size={20} color={colors.text} />
-              <Text style={styles.settingLabel}>SMS Alerts</Text>
+              <View style={[styles.settingIconBg, { backgroundColor: '#FEF3C7' }]}>
+                <Icon name="message-square" size={16} color="#D97706" />
+              </View>
+              <View style={styles.settingTextCol}>
+                <Text style={styles.settingLabel}>SMS Alerts</Text>
+                <Text style={styles.settingSublabel}>Get SMS notifications</Text>
+              </View>
             </View>
             <Switch value={smsAlerts} onValueChange={setSmsAlerts} />
           </View>
-          <View style={styles.settingItem}>
+          <View style={[styles.settingItem, { borderBottomWidth: 0 }]}>
             <View style={styles.settingLeft}>
-              <Icon name="volume-2" size={20} color={colors.text} />
-              <Text style={styles.settingLabel}>Sound Effects</Text>
+              <View style={[styles.settingIconBg, { backgroundColor: '#FDF2F8' }]}>
+                <Icon name="volume-2" size={16} color="#DB2777" />
+              </View>
+              <View style={styles.settingTextCol}>
+                <Text style={styles.settingLabel}>Sound Effects</Text>
+                <Text style={styles.settingSublabel}>Play sounds for alerts</Text>
+              </View>
             </View>
             <Switch value={soundEnabled} onValueChange={setSoundEnabled} />
           </View>
@@ -85,8 +108,13 @@ export default function PartnerSettingsScreen() {
         <Text style={styles.sectionTitle}>Account</Text>
         <Card style={styles.settingCard}>
           <TouchableOpacity style={styles.dangerButton} onPress={handleDeleteAccount}>
-            <Icon name="trash-2" size={20} color={colors.error} />
-            <Text style={styles.dangerButtonText}>Delete Account</Text>
+            <View style={[styles.settingIconBg, { backgroundColor: '#FEE2E2' }]}>
+              <Icon name="trash-2" size={16} color="#EF4444" />
+            </View>
+            <View style={styles.settingTextCol}>
+              <Text style={styles.dangerButtonText}>Delete Account</Text>
+              <Text style={styles.dangerSublabel}>Permanently delete your account</Text>
+            </View>
           </TouchableOpacity>
         </Card>
       </View>
@@ -110,10 +138,19 @@ const styles = StyleSheet.create({
   backButton: {
     padding: spacing.xs,
   },
+  headerTextCol: {
+    flex: 1,
+    marginLeft: spacing.xs,
+  },
   headerTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: colors.text,
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: colors.textLight,
+    marginTop: 2,
   },
   content: {
     padding: spacing.md,
@@ -139,23 +176,44 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
+    flex: 1,
+  },
+  settingIconBg: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingTextCol: {
+    flex: 1,
   },
   settingLabel: {
     fontSize: 14,
+    fontWeight: '700',
     color: colors.text,
+  },
+  settingSublabel: {
+    fontSize: 11,
+    color: colors.textLight,
+    marginTop: 2,
   },
   dangerButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     padding: spacing.md,
     backgroundColor: '#FEF2F2',
     borderRadius: 8,
-    gap: spacing.sm,
+    gap: spacing.md,
   },
   dangerButtonText: {
     fontSize: 14,
     fontWeight: '700',
     color: colors.error,
+  },
+  dangerSublabel: {
+    fontSize: 11,
+    color: colors.textLight,
+    marginTop: 2,
   },
 });

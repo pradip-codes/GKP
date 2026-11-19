@@ -289,32 +289,44 @@ export default function EmployeeDashboardScreen() {
         </Card>
       ) : null}
 
-      {/* Applications Performance Grid */}
+      {/* Applications Performance Grid - Website Style */}
       <Text style={styles.sectionTitle}>Application Metrics</Text>
-      <View style={styles.statsGrid}>
-        <Card style={[styles.statCard, { borderLeftColor: colors.primary }]}>
-          <Text style={styles.statLabel}>Total Submitted</Text>
+      <View style={styles.statsRow}>
+        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/(app)/applications')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#EEF2FF' }]}>
+            <Icon name="file-text" size={18} color="#4F46E5" />
+          </View>
           <Text style={styles.statValue}>{totalApps}</Text>
-          <Text style={styles.statSub}>Applications logged</Text>
-        </Card>
+          <Text style={styles.statLabel}>Total Submitted</Text>
+          <Text style={styles.statSublabel}>Applications logged</Text>
+        </TouchableOpacity>
 
-        <Card style={[styles.statCard, { borderLeftColor: colors.success }]}>
+        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/(app)/applications')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#DCFCE7' }]}>
+            <Icon name="check-circle" size={18} color="#059669" />
+          </View>
+          <Text style={[styles.statValue, { color: '#059669' }]}>{approvedApps}</Text>
           <Text style={styles.statLabel}>Approved</Text>
-          <Text style={[styles.statValue, { color: colors.success }]}>{approvedApps}</Text>
-          <Text style={styles.statSub}>Approved & Disbursed</Text>
-        </Card>
+          <Text style={styles.statSublabel}>Approved & Disbursed</Text>
+        </TouchableOpacity>
 
-        <Card style={[styles.statCard, { borderLeftColor: colors.warning }]}>
+        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/(app)/applications')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#FEF3C7' }]}>
+            <Icon name="clock" size={18} color="#D97706" />
+          </View>
+          <Text style={[styles.statValue, { color: '#D97706' }]}>{pendingApps}</Text>
           <Text style={styles.statLabel}>Pending / Review</Text>
-          <Text style={[styles.statValue, { color: colors.warning }]}>{pendingApps}</Text>
-          <Text style={styles.statSub}>In processing queue</Text>
-        </Card>
+          <Text style={styles.statSublabel}>In processing queue</Text>
+        </TouchableOpacity>
 
-        <Card style={[styles.statCard, { borderLeftColor: colors.teal }]}>
+        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/(app)/leads')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#ECFDF5' }]}>
+            <Icon name="users" size={18} color="#10B981" />
+          </View>
+          <Text style={[styles.statValue, { color: '#10B981' }]}>{leadsCount}</Text>
           <Text style={styles.statLabel}>Leads Captured</Text>
-          <Text style={[styles.statValue, { color: colors.teal }]}>{leadsCount}</Text>
-          <Text style={styles.statSub}>Customer leads</Text>
-        </Card>
+          <Text style={styles.statSublabel}>Customer leads</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Performance Conversion Summary */}

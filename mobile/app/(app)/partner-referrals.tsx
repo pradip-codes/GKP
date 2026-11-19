@@ -65,26 +65,32 @@ export default function PartnerReferralsScreen() {
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>My Referrals</Text>
+        <Text style={styles.subtitle}>Invite partners and earn commissions</Text>
       </View>
 
-      <View style={styles.statsContainer}>
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Total Invites</Text>
+      <View style={styles.statsRow}>
+        <View style={styles.statItem}>
           <Text style={styles.statValue}>{totalInvites}</Text>
+          <Text style={styles.statLabel}>Total Invites</Text>
+          <Text style={styles.statSublabel}>All Time</Text>
         </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Registered</Text>
+        <View style={styles.statItem}>
           <Text style={styles.statValue}>{totalRegistered}</Text>
+          <Text style={styles.statLabel}>Registered</Text>
+          <Text style={styles.statSublabel}>Joined</Text>
         </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Conversion Rate</Text>
-          <Text style={styles.statValue}>{conversionRate.toFixed(1)}%</Text>
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: '#10B981' }]}>{conversionRate.toFixed(1)}%</Text>
+          <Text style={styles.statLabel}>Conversion</Text>
+          <Text style={styles.statSublabel}>Rate</Text>
         </View>
       </View>
 
       <View style={styles.referralsContainer}>
         {!info?.referral_link ? (
           <View style={styles.emptyContainer}>
+            <Text style={styles.emptyIcon}>🔒</Text>
+            <Text style={styles.emptyTitle}>KYC Required</Text>
             <Text style={styles.emptyText}>
               Referral link will be available once your KYC is approved.
             </Text>
@@ -92,15 +98,18 @@ export default function PartnerReferralsScreen() {
         ) : (
           <View style={styles.referralCard}>
             <View style={styles.referralHeader}>
+              <View style={styles.referralIconBg}>
+                <Text style={styles.referralIcon}>🎁</Text>
+              </View>
               <View style={styles.referralInfo}>
-                <Text style={styles.referredName}>Your Referral Code</Text>
+                <Text style={styles.referralTitle}>Your Referral Code</Text>
                 <Text style={styles.referralCode}>{info.referral_code}</Text>
               </View>
               <TouchableOpacity
-                style={styles.statusBadge}
+                style={styles.copyBadge}
                 onPress={() => handleCopy(info.referral_code)}
               >
-                <Text style={styles.statusText}>COPY</Text>
+                <Text style={styles.copyBadgeText}>COPY</Text>
               </TouchableOpacity>
             </View>
 
@@ -112,14 +121,27 @@ export default function PartnerReferralsScreen() {
             </View>
 
             {!!info.custom_message && (
-              <Text style={styles.convertedText}>{info.custom_message}</Text>
+              <View style={styles.messageContainer}>
+                <Text style={styles.messageLabel}>Custom Message</Text>
+                <Text style={styles.messageText}>{info.custom_message}</Text>
+              </View>
             )}
 
             <TouchableOpacity
-              style={styles.copyButton}
+              style={styles.primaryButton}
               onPress={() => handleCopy(info.referral_link)}
             >
-              <Text style={styles.copyButtonText}>Copy Referral Link</Text>
+              <Text style={styles.primaryButtonText}>Copy Referral Link</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => {
+                // Share functionality
+                Alert.alert('Share', 'Share functionality coming soon');
+              }}
+            >
+              <Text style={styles.secondaryButtonText}>Share via WhatsApp</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -155,84 +177,109 @@ const styles = StyleSheet.create({
     fontWeight: typography.weights.bold,
     color: colors.text,
   },
-  statsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    padding: 16,
-    gap: 12,
-  },
-  statCard: {
-    width: '48%',
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  statLabel: {
+  subtitle: {
     fontSize: typography.sizes.xs,
     color: colors.textLight,
-    marginBottom: 4,
+    marginTop: 4,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  statItem: {
+    alignItems: 'center',
+    flex: 1,
   },
   statValue: {
-    fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.bold,
+    fontSize: 17,
+    fontWeight: '800',
     color: colors.text,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: colors.text,
+    marginTop: 2,
+  },
+  statSublabel: {
+    fontSize: 9.5,
+    color: colors.textLight,
+    marginTop: 2,
   },
   referralsContainer: {
     padding: 16,
-    gap: 12,
   },
   emptyContainer: {
     padding: 40,
     alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: 12,
+  },
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
+  emptyTitle: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+    marginBottom: 8,
   },
   emptyText: {
-    fontSize: typography.sizes.md,
+    fontSize: typography.sizes.sm,
     color: colors.textLight,
+    textAlign: 'center',
   },
   referralCard: {
     backgroundColor: colors.card,
     borderRadius: 12,
     padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
   },
   referralHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  referralIconBg: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#EEF2FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  referralIcon: {
+    fontSize: 24,
   },
   referralInfo: {
     flex: 1,
+    marginLeft: 12,
   },
-  referredName: {
-    fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.bold,
+  referralTitle: {
+    fontSize: typography.sizes.sm,
+    fontWeight: '700',
     color: colors.text,
-    marginBottom: 4,
   },
   referralCode: {
-    fontSize: typography.sizes.sm,
-    color: colors.textLight,
+    fontSize: typography.sizes.lg,
+    fontWeight: '800',
+    color: colors.primary,
+    marginTop: 2,
   },
-  statusBadge: {
+  copyBadge: {
     backgroundColor: colors.primary,
     paddingHorizontal: 12,
-    paddingVertical: 4,
+    paddingVertical: 6,
     borderRadius: 12,
   },
-  statusText: {
+  copyBadgeText: {
     color: '#FFFFFF',
     fontSize: typography.sizes.xs,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
   },
   linkContainer: {
     backgroundColor: colors.bg,
@@ -250,20 +297,42 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontFamily: 'monospace',
   },
-  convertedText: {
-    fontSize: typography.sizes.xs,
-    color: '#10B981',
+  messageContainer: {
+    backgroundColor: colors.bg,
+    padding: 12,
+    borderRadius: 8,
     marginBottom: 12,
   },
-  copyButton: {
+  messageLabel: {
+    fontSize: typography.sizes.xs,
+    color: colors.textLight,
+    marginBottom: 4,
+  },
+  messageText: {
+    fontSize: typography.sizes.sm,
+    color: colors.text,
+  },
+  primaryButton: {
     backgroundColor: colors.primary,
-    paddingVertical: 12,
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: typography.sizes.sm,
+    fontWeight: '700',
+  },
+  secondaryButton: {
+    backgroundColor: '#25D366',
+    paddingVertical: 14,
     borderRadius: 8,
     alignItems: 'center',
   },
-  copyButtonText: {
+  secondaryButtonText: {
     color: '#FFFFFF',
     fontSize: typography.sizes.sm,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
   },
 });

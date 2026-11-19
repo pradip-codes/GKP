@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, Alert, Clipboard } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, Alert, Clipboard, Modal } from 'react-native';
 import { useRouter } from 'expo-router';
 import apiClient from '../../services/api';
 import { colors } from '../../theme/colors';
@@ -19,6 +19,8 @@ interface ProductLink {
   utm_source?: string;
   utm_medium?: string;
   utm_campaign?: string;
+  utm_term?: string;
+  utm_content?: string;
   priority?: number;
   last_updated_at?: string;
   updated_by?: string;
@@ -29,6 +31,11 @@ export default function ProductLinksScreen() {
   const [loading, setLoading] = useState(true);
   const [links, setLinks] = useState<ProductLink[]>([]);
   const [searchText, setSearchText] = useState('');
+
+  // Edit/Create modal state
+  const [modalVisible, setModalVisible] = useState(false);
+  const [editLink, setEditLink] = useState<ProductLink | null>(null);
+  const [form, setForm] = useState<Partial<ProductLink>>({});
 
   useEffect(() => {
     fetchProductLinks();
@@ -72,6 +79,8 @@ export default function ProductLinksScreen() {
         utm_source: link.utm_source,
         utm_medium: link.utm_medium,
         utm_campaign: link.utm_campaign,
+        utm_term: link.utm_term,
+        utm_content: link.utm_content,
         priority: link.priority,
         reason: 'Tracking toggled from mobile app',
       });
@@ -79,6 +88,40 @@ export default function ProductLinksScreen() {
     } catch (error) {
       console.error('Failed to update link:', error);
       Alert.alert('Error', 'Failed to update tracking status');
+    }
+  };
+
+  const handleEditLink = (link: ProductLink) => {
+    setEditLink(link);
+    setForm(link);
+    setModalVisible(true);
+  };
+
+  const handleCreateLink = () => {
+    setEditLink(null);
+    setForm({
+      is_active: true,
+      tracking_enabled: true,
+      priority: 0,
+      redirect_type: 'new_tab',
+    });
+    setModalVisible(true);
+  };
+
+  const handleSaveLink = async () => {
+    try {
+      if (editLink) {
+        await apiClient.put(`/products/link/${editLink.id}`, form);
+        Alert.alert('Success', 'Link updated successfully');
+      } else {
+        await apiClient.post('/products/link', form);
+        Alert.alert('Success', 'Link created successfully');
+      }
+      setModalVisible(false);
+      fetchProductLinks();
+    } catch (error) {
+      console.error('Failed to save link:', error);
+      Alert.alert('Error', 'Failed to save link');
     }
   };
 
@@ -103,10 +146,6 @@ export default function ProductLinksScreen() {
         },
       ]
     );
-  };
-
-  const handleCreateLink = () => {
-    router.push('/products');
   };
 
   const filteredLinks = links.filter(l =>
@@ -204,6 +243,12 @@ export default function ProductLinksScreen() {
                   <Text style={styles.actionButtonText}>Copy Link</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  style={[styles.actionButton, styles.editButton]}
+                  onPress={() => handleEditLink(link)}
+                >
+                  <Text style={styles.actionButtonText}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
                   style={[styles.actionButton, styles.toggleButton]}
                   onPress={() => handleToggleTracking(link)}
                 >
@@ -223,6 +268,120 @@ export default function ProductLinksScreen() {
           })
         )}
       </View>
+
+      {/* Edit/Create Modal */}
+      <Modal visible={modalVisible} animationType="slide" onRequestClose={() => setModalVisible(false)}>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{editLink ? 'Edit Link' : 'Create Link'}</Text>
+            <TouchableOpacity onPress={() => setModalVisible(false)}>
+              <Text style={styles.closeButton}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalContent}>
+            <View style={styles.formSection}>
+              <Text style={styles.formLabel}>Public URL</Text>
+              <TextInput
+                style={styles.formInput}
+                value={form.public_url}
+                onChangeText={(text) => setForm({ ...form, public_url: text })}
+                placeholderTextColor={colors.textLight}
+              />
+              <Text style={styles.formLabel}>Partner URL</Text>
+              <TextInput
+                style={styles.formInput}
+                value={form.partner_url}
+                onChangeText={(text) => setForm({ ...form, partner_url: text })}
+                placeholderTextColor={colors.textLight}
+              />
+              <Text style={styles.formLabel}>Button Text</Text>
+              <TextInput
+                style={styles.formInput}
+                value={form.button_text}
+                onChangeText={(text) => setForm({ ...form, button_text: text })}
+                placeholderTextColor={colors.textLight}
+              />
+              <Text style={styles.formLabel}>Redirect Type</Text>
+              <TextInput
+                style={styles.formInput}
+                value={form.redirect_type}
+                onChangeText={(text) => setForm({ ...form, redirect_type: text })}
+                placeholderTextColor={colors.textLight}
+              />
+              <Text style={styles.formLabel}>Priority</Text>
+              <TextInput
+                style={styles.formInput}
+                value={String(form.priority || 0)}
+                onChangeText={(text) => setForm({ ...form, priority: parseInt(text) || 0 })}
+                keyboardType="numeric"
+                placeholderTextColor={colors.textLight}
+              />
+              <View style={styles.toggleRow}>
+                <Text style={styles.formLabel}>Tracking Enabled</Text>
+                <TouchableOpacity
+                  style={[styles.toggle, form.tracking_enabled && styles.toggleActive]}
+                  onPress={() => setForm({ ...form, tracking_enabled: !form.tracking_enabled })}
+                >
+                  <Text style={styles.toggleText}>{form.tracking_enabled ? 'ON' : 'OFF'}</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.toggleRow}>
+                <Text style={styles.formLabel}>Active</Text>
+                <TouchableOpacity
+                  style={[styles.toggle, form.is_active && styles.toggleActive]}
+                  onPress={() => setForm({ ...form, is_active: !form.is_active })}
+                >
+                  <Text style={styles.toggleText}>{form.is_active ? 'ON' : 'OFF'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.formSection}>
+              <Text style={styles.sectionTitle}>UTM Parameters</Text>
+              <Text style={styles.formLabel}>UTM Source</Text>
+              <TextInput
+                style={styles.formInput}
+                value={form.utm_source}
+                onChangeText={(text) => setForm({ ...form, utm_source: text })}
+                placeholderTextColor={colors.textLight}
+              />
+              <Text style={styles.formLabel}>UTM Medium</Text>
+              <TextInput
+                style={styles.formInput}
+                value={form.utm_medium}
+                onChangeText={(text) => setForm({ ...form, utm_medium: text })}
+                placeholderTextColor={colors.textLight}
+              />
+              <Text style={styles.formLabel}>UTM Campaign</Text>
+              <TextInput
+                style={styles.formInput}
+                value={form.utm_campaign}
+                onChangeText={(text) => setForm({ ...form, utm_campaign: text })}
+                placeholderTextColor={colors.textLight}
+              />
+              <Text style={styles.formLabel}>UTM Term</Text>
+              <TextInput
+                style={styles.formInput}
+                value={form.utm_term}
+                onChangeText={(text) => setForm({ ...form, utm_term: text })}
+                placeholderTextColor={colors.textLight}
+              />
+              <Text style={styles.formLabel}>UTM Content</Text>
+              <TextInput
+                style={styles.formInput}
+                value={form.utm_content}
+                onChangeText={(text) => setForm({ ...form, utm_content: text })}
+                placeholderTextColor={colors.textLight}
+              />
+            </View>
+
+            <TouchableOpacity style={styles.saveButton} onPress={handleSaveLink}>
+              <Text style={styles.saveButtonText}>Save Link</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -395,5 +554,98 @@ const styles = StyleSheet.create({
   },
   deleteButtonText: {
     color: '#FFFFFF',
+  },
+  editButton: {
+    backgroundColor: '#3B82F6',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  modalTitle: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+  },
+  closeButton: {
+    fontSize: 24,
+    color: colors.text,
+    padding: 8,
+  },
+  modalContent: {
+    flex: 1,
+    padding: 16,
+  },
+  formSection: {
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+    marginBottom: 12,
+  },
+  formLabel: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+    marginBottom: 4,
+  },
+  formInput: {
+    backgroundColor: colors.bg,
+    borderRadius: 8,
+    padding: 12,
+    fontSize: typography.sizes.sm,
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 12,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  toggle: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  toggleActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  toggleText: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+  },
+  saveButton: {
+    backgroundColor: colors.primary,
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  saveButtonText: {
+    color: '#FFFFFF',
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
   },
 });

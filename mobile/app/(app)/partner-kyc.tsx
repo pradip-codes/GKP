@@ -226,11 +226,13 @@ export default function PartnerKycScreen() {
           </View>
         </View>
 
-        {/* Status Card */}
+        {/* Status Card - Website Style */}
         <View style={[styles.statusCard, isApproved ? styles.statusCardApproved : styles.statusCardPending]}>
           <View style={styles.statusRow}>
-            <Icon name={isApproved ? 'check-circle' : 'clock'} size={24} color={isApproved ? '#059669' : '#D97706'} />
-            <View style={{ flex: 1, marginLeft: 10 }}>
+            <View style={[styles.statusIconBg, isApproved ? { backgroundColor: '#DCFCE7' } : { backgroundColor: '#FEF3C7' }]}>
+              <Icon name={isApproved ? 'check-circle' : 'clock'} size={20} color={isApproved ? '#059669' : '#D97706'} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={styles.statusHeading}>KYC Status: {kycStatus}</Text>
               <Text style={styles.statusDescription}>
                 {isApproved
@@ -241,10 +243,10 @@ export default function PartnerKycScreen() {
           </View>
         </View>
 
-        {/* Step 1: PAN Card */}
+        {/* Step 1: PAN Card - Website Style */}
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
-            <View style={styles.stepNum}>
+            <View style={[styles.stepNum, { backgroundColor: colors.primary }]}>
               <Text style={styles.stepNumText}>1</Text>
             </View>
             <Text style={styles.sectionTitle}>PAN Card Verification</Text>
@@ -459,6 +461,13 @@ const styles = StyleSheet.create({
   },
   statusRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusIconBg: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
     alignItems: 'center',
   },
   statusHeading: {

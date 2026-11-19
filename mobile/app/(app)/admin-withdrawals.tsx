@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, Modal, TextInput } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../contexts/ThemeContext';
 import apiClient from '../../services/api';
@@ -24,6 +24,7 @@ interface Withdrawal {
   processed_at?: string;
   rejection_reason?: string;
   admin_note?: string;
+  utr_number?: string;
 }
 
 export default function AdminWithdrawalsScreen() {
@@ -32,6 +33,15 @@ export default function AdminWithdrawalsScreen() {
   const [loading, setLoading] = useState(true);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('pending');
+
+  // Action modal state
+  const [selectedWithdrawal, setSelectedWithdrawal] = useState<Withdrawal | null>(null);
+  const [actionModalVisible, setActionModalVisible] = useState(false);
+  const [actionType, setActionType] = useState<'approve' | 'reject'>('approve');
+  const [utrNumber, setUtrNumber] = useState('');
+  const [adminNote, setAdminNote] = useState('');
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     fetchWithdrawals();
@@ -51,51 +61,80 @@ export default function AdminWithdrawalsScreen() {
     }
   };
 
-  const handleApprove = async (withdrawalId: string) => {
+  const calculateTDS = (amount: number) => {
+    return amount * 0.05; // 5% TDS
+  };
+
+  const calculateNetAmount = (amount: number) => {
+    return amount - calculateTDS(amount);
+  };
+
+  const handleApprove = (withdrawal: Withdrawal) => {
+    setSelectedWithdrawal(withdrawal);
+    setActionType('approve');
+    setUtrNumber('');
+    setAdminNote('');
+    setActionModalVisible(true);
+  };
+
+  const handleReject = (withdrawal: Withdrawal) => {
+    setSelectedWithdrawal(withdrawal);
+    setActionType('reject');
+    setRejectionReason('');
+    setAdminNote('');
+    setActionModalVisible(true);
+  };
+
+  const submitAction = async () => {
+    if (!selectedWithdrawal) return;
+
+    if (actionType === 'reject' && !rejectionReason.trim()) {
+      Alert.alert('Error', 'Rejection reason is required');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      if (actionType === 'approve') {
+        await apiClient.post(`/wallet/admin/withdrawals/${selectedWithdrawal.id}/approve`, {
+          utr_number: utrNumber.trim() || undefined,
+          admin_note: adminNote.trim() || undefined,
+        });
+        Alert.alert('Success', 'Withdrawal approved successfully');
+      } else {
+        await apiClient.post(`/wallet/admin/withdrawals/${selectedWithdrawal.id}/reject`, {
+          rejection_reason: rejectionReason.trim(),
+          admin_note: adminNote.trim() || undefined,
+        });
+        Alert.alert('Success', 'Withdrawal rejected successfully');
+      }
+      setActionModalVisible(false);
+      fetchWithdrawals();
+    } catch (error) {
+      console.error('Failed to process withdrawal:', error);
+      Alert.alert('Error', 'Failed to process withdrawal');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleRetryPayout = async (withdrawalId: string) => {
     Alert.alert(
-      'Confirm Approval',
-      'Are you sure you want to approve this withdrawal?',
+      'Confirm Retry',
+      'Retry payout for this withdrawal?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Approve',
+          text: 'Retry',
           style: 'default',
           onPress: async () => {
             try {
-              await apiClient.post(`/wallet/admin/withdrawals/${withdrawalId}/approve`, {
-                admin_note: 'Approved by admin',
-              });
+              await apiClient.post(`/wallet/withdrawals/${withdrawalId}/retry`);
+              Alert.alert('Success', 'Payout retry submitted');
               fetchWithdrawals();
-              Alert.alert('Success', 'Withdrawal approved successfully');
             } catch (error) {
-              console.error('Failed to approve withdrawal:', error);
-              Alert.alert('Error', 'Failed to approve withdrawal');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleReject = async (withdrawalId: string) => {
-    Alert.alert(
-      'Confirm Rejection',
-      'Are you sure you want to reject this withdrawal?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reject',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await apiClient.post(`/wallet/admin/withdrawals/${withdrawalId}/reject`, {
-                rejection_reason: 'Rejected by admin',
-              });
-              fetchWithdrawals();
-              Alert.alert('Success', 'Withdrawal rejected successfully');
-            } catch (error) {
-              console.error('Failed to reject withdrawal:', error);
-              Alert.alert('Error', 'Failed to reject withdrawal');
+              console.error('Failed to retry payout:', error);
+              Alert.alert('Error', 'Failed to retry payout');
             }
           },
         },
@@ -182,9 +221,17 @@ export default function AdminWithdrawalsScreen() {
               </View>
 
               <View style={styles.amountContainer}>
-                <Text style={styles.amountLabel}>Withdrawal Amount</Text>
+                <Text style={styles.amountLabel}>Gross Amount</Text>
                 <Text style={styles.amountValue}>
                   ₹{Number(withdrawal.amount || 0).toLocaleString('en-IN')}
+                </Text>
+                <Text style={styles.tdsLabel}>TDS (5% Sec 194H)</Text>
+                <Text style={styles.tdsValue}>
+                  ₹{calculateTDS(withdrawal.amount || 0).toFixed(2)}
+                </Text>
+                <Text style={styles.netLabel}>Net Disbursement</Text>
+                <Text style={styles.netValue}>
+                  ₹{calculateNetAmount(withdrawal.amount || 0).toFixed(2)}
                 </Text>
               </View>
 
@@ -217,17 +264,26 @@ export default function AdminWithdrawalsScreen() {
                 <View style={styles.actionsContainer}>
                   <TouchableOpacity
                     style={[styles.actionButton, styles.approveButton]}
-                    onPress={() => handleApprove(withdrawal.id)}
+                    onPress={() => handleApprove(withdrawal)}
                   >
                     <Text style={styles.actionButtonText}>Approve</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.actionButton, styles.rejectButton]}
-                    onPress={() => handleReject(withdrawal.id)}
+                    onPress={() => handleReject(withdrawal)}
                   >
                     <Text style={styles.actionButtonText}>Reject</Text>
                   </TouchableOpacity>
                 </View>
+              )}
+
+              {withdrawal.status === 'rejected' && (
+                <TouchableOpacity
+                  style={styles.retryButton}
+                  onPress={() => handleRetryPayout(withdrawal.id)}
+                >
+                  <Text style={styles.retryButtonText}>Retry Payout</Text>
+                </TouchableOpacity>
               )}
 
               <TouchableOpacity
@@ -240,6 +296,96 @@ export default function AdminWithdrawalsScreen() {
           ))
         )}
       </View>
+
+      {/* Action Modal */}
+      <Modal visible={actionModalVisible} animationType="slide" onRequestClose={() => setActionModalVisible(false)}>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>
+              {actionType === 'approve' ? 'Approve Withdrawal' : 'Reject Withdrawal'}
+            </Text>
+            <TouchableOpacity onPress={() => setActionModalVisible(false)}>
+              <Text style={styles.closeButton}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalContent}>
+            {selectedWithdrawal && (
+              <>
+                <View style={styles.withdrawalSummary}>
+                  <Text style={styles.summaryLabel}>Partner</Text>
+                  <Text style={styles.summaryValue}>
+                    {selectedWithdrawal.first_name} {selectedWithdrawal.last_name}
+                  </Text>
+                  <Text style={styles.summaryLabel}>Amount</Text>
+                  <Text style={styles.summaryValue}>
+                    ₹{Number(selectedWithdrawal.amount || 0).toLocaleString('en-IN')}
+                  </Text>
+                  <Text style={styles.summaryLabel}>TDS (5%)</Text>
+                  <Text style={styles.summaryValue}>
+                    ₹{calculateTDS(selectedWithdrawal.amount || 0).toFixed(2)}
+                  </Text>
+                  <Text style={styles.summaryLabel}>Net Disbursement</Text>
+                  <Text style={styles.summaryValue}>
+                    ₹{calculateNetAmount(selectedWithdrawal.amount || 0).toFixed(2)}
+                  </Text>
+                </View>
+
+                {actionType === 'approve' && (
+                  <View style={styles.formSection}>
+                    <Text style={styles.formLabel}>UTR Number (Optional)</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="Enter UTR number..."
+                      value={utrNumber}
+                      onChangeText={setUtrNumber}
+                      placeholderTextColor={colors.textLight}
+                    />
+                  </View>
+                )}
+
+                {actionType === 'reject' && (
+                  <View style={styles.formSection}>
+                    <Text style={styles.formLabel}>Rejection Reason *</Text>
+                    <TextInput
+                      style={[styles.formInput, styles.textArea]}
+                      placeholder="Enter rejection reason..."
+                      value={rejectionReason}
+                      onChangeText={setRejectionReason}
+                      multiline
+                      numberOfLines={4}
+                      placeholderTextColor={colors.textLight}
+                    />
+                  </View>
+                )}
+
+                <View style={styles.formSection}>
+                  <Text style={styles.formLabel}>Admin Note (Optional)</Text>
+                  <TextInput
+                    style={[styles.formInput, styles.textArea]}
+                    placeholder="Add admin notes..."
+                    value={adminNote}
+                    onChangeText={setAdminNote}
+                    multiline
+                    numberOfLines={3}
+                    placeholderTextColor={colors.textLight}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.submitButton, actionType === 'approve' ? styles.approveSubmitButton : styles.rejectSubmitButton]}
+                  onPress={submitAction}
+                  disabled={submitting}
+                >
+                  <Text style={styles.submitButtonText}>
+                    {submitting ? 'Processing...' : actionType === 'approve' ? 'Approve' : 'Reject'}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -445,5 +591,118 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontSize: typography.sizes.sm,
     fontWeight: typography.weights.semibold,
+  },
+  tdsLabel: {
+    fontSize: typography.sizes.xs,
+    color: colors.textLight,
+    marginTop: 8,
+  },
+  tdsValue: {
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
+    color: '#F59E0B',
+  },
+  netLabel: {
+    fontSize: typography.sizes.xs,
+    color: colors.textLight,
+    marginTop: 8,
+  },
+  netValue: {
+    fontSize: typography.sizes.xl,
+    fontWeight: typography.weights.extrabold,
+    color: '#10B981',
+  },
+  retryButton: {
+    backgroundColor: '#3B82F6',
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  modalTitle: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+  },
+  closeButton: {
+    fontSize: 24,
+    color: colors.text,
+    padding: 8,
+  },
+  modalContent: {
+    flex: 1,
+    padding: 16,
+  },
+  withdrawalSummary: {
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  summaryLabel: {
+    fontSize: typography.sizes.xs,
+    color: colors.textLight,
+    marginTop: 8,
+  },
+  summaryValue: {
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+  },
+  formSection: {
+    marginBottom: 16,
+  },
+  formLabel: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+    marginBottom: 8,
+  },
+  formInput: {
+    backgroundColor: colors.bg,
+    borderRadius: 8,
+    padding: 12,
+    fontSize: typography.sizes.sm,
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  textArea: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  submitButton: {
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  approveSubmitButton: {
+    backgroundColor: '#10B981',
+  },
+  rejectSubmitButton: {
+    backgroundColor: '#EF4444',
+  },
+  submitButtonText: {
+    color: '#FFFFFF',
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
   },
 });

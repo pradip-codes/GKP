@@ -132,19 +132,21 @@ export default function PartnerDashboardScreen() {
         </View>
       ) : null}
 
-      {/* Wallet Balance Summary Card */}
+      {/* Wallet Balance Summary Card - Website Style */}
       <View style={styles.walletCard}>
         <View style={styles.walletHeader}>
           <View style={styles.walletTitleRow}>
-            <Icon name="credit-card" size={18} color="#FFFFFF" />
+            <View style={[styles.iconCircle, { backgroundColor: '#4F46E5' }]}>
+              <Icon name="credit-card" size={16} color="#FFFFFF" />
+            </View>
             <Text style={styles.walletTitle}>Available Balance</Text>
           </View>
           <TouchableOpacity
             style={styles.walletActionBtn}
             onPress={() => router.push('/wallet')}
           >
-            <Text style={styles.walletActionText}>Wallet & Withdraw</Text>
-            <Icon name="chevron-right" size={16} color="#FFFFFF" />
+            <Text style={styles.walletActionText}>View Wallet</Text>
+            <Icon name="chevron-right" size={14} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
 
@@ -154,13 +156,13 @@ export default function PartnerDashboardScreen() {
 
         <View style={styles.walletFooterRow}>
           <View style={styles.walletFooterCol}>
-            <Text style={styles.walletFooterLabel}>Pending Earnings</Text>
+            <Text style={styles.walletFooterLabel}>Pending</Text>
             <Text style={styles.walletFooterValue}>
               ₹{Number(wallet.pending_commission || wallet.pending_balance || 0).toLocaleString('en-IN')}
             </Text>
           </View>
           <View style={styles.walletFooterCol}>
-            <Text style={styles.walletFooterLabel}>Total Paid out</Text>
+            <Text style={styles.walletFooterLabel}>Paid Out</Text>
             <Text style={styles.walletFooterValue}>
               ₹{Number(wallet.total_withdrawn || wallet.total_earnings || 0).toLocaleString('en-IN')}
             </Text>
@@ -204,85 +206,104 @@ export default function PartnerDashboardScreen() {
         </>
       ) : null}
 
-      {/* Quick Action Bar */}
-      <Text style={styles.sectionTitle}>Partner Quick Tools</Text>
-      <View style={styles.quickActionGrid}>
-        <TouchableOpacity style={styles.actionTile} onPress={() => router.push('/add-lead')}>
-          <View style={[styles.actionIconBg, { backgroundColor: '#EEF2FF' }]}>
+      {/* Quick Action Bar - Website Style */}
+      <Text style={styles.sectionTitle}>Quick Access</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickActionsScroll}>
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/add-lead')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#EEF2FF' }]}>
             <Icon name="user-plus" size={20} color="#4F46E5" />
           </View>
-          <Text style={styles.actionTileText}>Punch Lead</Text>
+          <Text style={styles.serviceItemText}>Punch Lead</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionTile} onPress={() => router.push('/products')}>
-          <View style={[styles.actionIconBg, { backgroundColor: '#ECFDF5' }]}>
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/products')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#ECFDF5' }]}>
             <Icon name="link-2" size={20} color="#10B981" />
           </View>
-          <Text style={styles.actionTileText}>Share Products</Text>
+          <Text style={styles.serviceItemText}>Share Products</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionTile} onPress={() => router.push('/travel-utilities' as any)}>
-          <View style={[styles.actionIconBg, { backgroundColor: '#FEF3C7' }]}>
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/travel-utilities' as any)}>
+          <View style={[styles.iconCircle, { backgroundColor: '#FEF3C7' }]}>
             <Icon name="zap" size={20} color="#D97706" />
           </View>
-          <Text style={styles.actionTileText}>Utilities & Travel</Text>
+          <Text style={styles.serviceItemText}>Utilities</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionTile} onPress={() => router.push('/marketing' as any)}>
-          <View style={[styles.actionIconBg, { backgroundColor: '#FDF2F8' }]}>
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/marketing' as any)}>
+          <View style={[styles.iconCircle, { backgroundColor: '#FDF2F8' }]}>
             <Icon name="image" size={20} color="#DB2777" />
           </View>
-          <Text style={styles.actionTileText}>Creatives</Text>
+          <Text style={styles.serviceItemText}>Creatives</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionTile} onPress={() => router.push('/training' as any)}>
-          <View style={[styles.actionIconBg, { backgroundColor: '#F0FDF4' }]}>
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/training' as any)}>
+          <View style={[styles.iconCircle, { backgroundColor: '#F0FDF4' }]}>
             <Icon name="book-open" size={20} color="#16A34A" />
           </View>
-          <Text style={styles.actionTileText}>Training Hub</Text>
+          <Text style={styles.serviceItemText}>Training</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionTile} onPress={() => router.push('/partner-kyc' as any)}>
-          <View style={[styles.actionIconBg, { backgroundColor: '#EFF6FF' }]}>
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/partner-kyc' as any)}>
+          <View style={[styles.iconCircle, { backgroundColor: '#EFF6FF' }]}>
             <Icon name="shield" size={20} color="#2563EB" />
           </View>
-          <Text style={styles.actionTileText}>KYC Centre</Text>
+          <Text style={styles.serviceItemText}>KYC Centre</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionTile} onPress={() => router.push('/team')}>
-          <View style={[styles.actionIconBg, { backgroundColor: '#FAF5FF' }]}>
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/team')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#FAF5FF' }]}>
             <Icon name="users" size={20} color="#7C3AED" />
           </View>
-          <Text style={styles.actionTileText}>My Team</Text>
+          <Text style={styles.serviceItemText}>My Team</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionTile} onPress={() => router.push('/share-tracking' as any)}>
-          <View style={[styles.actionIconBg, { backgroundColor: '#F3E8FF' }]}>
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/share-tracking' as any)}>
+          <View style={[styles.iconCircle, { backgroundColor: '#F3E8FF' }]}>
             <Icon name="activity" size={20} color="#9333EA" />
           </View>
-          <Text style={styles.actionTileText}>Link Tracking</Text>
+          <Text style={styles.serviceItemText}>Tracking</Text>
         </TouchableOpacity>
-      </View>
+      </ScrollView>
 
-      {/* Performance KPIs Grid */}
+      {/* Performance KPIs Grid - Website Style */}
       <Text style={styles.sectionTitle}>Performance Overview</Text>
-      <View style={styles.kpiGrid}>
-        <View style={styles.kpiCard}>
-          <Text style={styles.kpiLabel}>Total Leads</Text>
-          <Text style={styles.kpiValue}>{kpis.total_leads || kpis.leads_count || 0}</Text>
-        </View>
-        <View style={styles.kpiCard}>
-          <Text style={styles.kpiLabel}>Applications</Text>
-          <Text style={styles.kpiValue}>{kpis.total_applications || kpis.applications_count || 0}</Text>
-        </View>
-        <View style={styles.kpiCard}>
-          <Text style={[styles.kpiLabel, { color: '#059669' }]}>Approved</Text>
-          <Text style={[styles.kpiValue, { color: '#059669' }]}>{kpis.approved || kpis.approved_applications || 0}</Text>
-        </View>
-        <View style={styles.kpiCard}>
-          <Text style={[styles.kpiLabel, { color: '#D97706' }]}>Pending</Text>
-          <Text style={[styles.kpiValue, { color: '#D97706' }]}>{kpis.pending || kpis.pending_applications || 0}</Text>
-        </View>
+      <View style={styles.statsRow}>
+        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/applications')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#EEF2FF' }]}>
+            <Icon name="users" size={18} color="#4F46E5" />
+          </View>
+          <Text style={styles.statValue}>{kpis.total_leads || kpis.leads_count || 0}</Text>
+          <Text style={styles.statLabel}>Total Leads</Text>
+          <Text style={styles.statSublabel}>This Month</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/applications')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#ECFDF5' }]}>
+            <Icon name="file-text" size={18} color="#10B981" />
+          </View>
+          <Text style={styles.statValue}>{kpis.total_applications || kpis.applications_count || 0}</Text>
+          <Text style={styles.statLabel}>Applications</Text>
+          <Text style={styles.statSublabel}>This Month</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/applications')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#DCFCE7' }]}>
+            <Icon name="check-circle" size={18} color="#059669" />
+          </View>
+          <Text style={[styles.statValue, { color: '#059669' }]}>{kpis.approved || kpis.approved_applications || 0}</Text>
+          <Text style={styles.statLabel}>Approved</Text>
+          <Text style={styles.statSublabel}>This Month</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/applications')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#FEF3C7' }]}>
+            <Icon name="clock" size={18} color="#D97706" />
+          </View>
+          <Text style={[styles.statValue, { color: '#D97706' }]}>{kpis.pending || kpis.pending_applications || 0}</Text>
+          <Text style={styles.statLabel}>Pending</Text>
+          <Text style={styles.statSublabel}>This Month</Text>
+        </TouchableOpacity>
       </View>
     </ScrollView>
   );
@@ -379,6 +400,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  iconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   walletTitle: {
     color: '#E0E7FF',
     fontSize: typography.sizes.sm,
@@ -467,57 +495,44 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.xs,
     marginTop: 2,
   },
-  quickActionGrid: {
+  quickActionsScroll: {
+    marginBottom: spacing.lg,
+  },
+  serviceItem: {
+    alignItems: 'center',
+    marginRight: spacing.md,
+  },
+  serviceItemText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.text,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: spacing.lg,
   },
-  actionTile: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+  statItem: {
+    alignItems: 'center',
+    flex: 1,
     padding: spacing.sm,
-    alignItems: 'center',
-    width: '23%',
-    borderWidth: 1,
-    borderColor: colors.border,
   },
-  actionIconBg: {
-    width: 42,
-    height: 42,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: spacing.xs,
-  },
-  actionTileText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#1E293B',
-    textAlign: 'center',
-  },
-  kpiGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  kpiCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: spacing.md,
-    width: '48%',
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  kpiLabel: {
-    fontSize: typography.sizes.xs,
-    color: '#64748B',
-    fontWeight: '500',
-  },
-  kpiValue: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#1E293B',
+  statValue: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: colors.text,
     marginTop: 4,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: colors.text,
+    marginTop: 2,
+  },
+  statSublabel: {
+    fontSize: 9.5,
+    color: colors.textLight,
+    marginTop: 2,
   },
 });
