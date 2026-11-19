@@ -112,7 +112,22 @@ const createVerificationSession = async ({ reqUser }) => {
     }
   }
 
-  if (!activeTemplate || !activeTemplate.s3_key) {
+  // Check if employee has active face bypass
+  let hasFaceExemption = false;
+  try {
+    const { rows: bypassRows } = await query(
+      `SELECT id, bypass_type, bypass_face FROM environment_bypass_approvals 
+       WHERE employee_id = $1 AND is_active = TRUE AND start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE 
+       ORDER BY created_at DESC LIMIT 1`,
+      [authEmpId]
+    );
+    if (bypassRows && bypassRows.length > 0) {
+      const b = bypassRows[0];
+      hasFaceExemption = b.bypass_face === true || b.bypass_type === 'FACE' || b.bypass_type === 'BOTH';
+    }
+  } catch (e) {}
+
+  if (!hasFaceExemption && (!activeTemplate || !activeTemplate.s3_key)) {
     const error = new Error('Attendance Biometric Enrollment is required before marking attendance. Please complete your face verification photograph in the employee KYC panel.');
     error.statusCode = 400;
     error.reason = 'BIOMETRIC_ENROLLMENT_REQUIRED';
@@ -190,6 +205,37 @@ const initiateLivenessSession = async ({ sessionId, reqUser }) => {
     error.statusCode = 410;
     error.reason = 'LIVENESS_EXPIRED';
     throw error;
+  }
+
+  // Check if employee has active face bypass
+  let hasFaceExemption = false;
+  try {
+    const { rows: bypassRows } = await query(
+      `SELECT id, bypass_type, bypass_face FROM environment_bypass_approvals 
+       WHERE employee_id = $1 AND is_active = TRUE AND start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE 
+       ORDER BY created_at DESC LIMIT 1`,
+      [authEmpId]
+    );
+    if (bypassRows && bypassRows.length > 0) {
+      const b = bypassRows[0];
+      hasFaceExemption = b.bypass_face === true || b.bypass_type === 'FACE' || b.bypass_type === 'BOTH';
+    }
+  } catch (e) {}
+
+  if (hasFaceExemption) {
+    await query(
+      `UPDATE attendance_verification_sessions 
+       SET liveness_status = 'PASSED', face_status = 'PASSED', updated_at = NOW() 
+       WHERE id = $1`,
+      [sessionId]
+    );
+    return {
+      sessionId: session.id,
+      providerSessionId: `EXEMPT-${session.id.substring(0, 8)}`,
+      region: process.env.AWS_REGION || 'ap-south-1',
+      status: 'BYPASSED',
+      exempt: true
+    };
   }
 
   const livenessRes = await faceLivenessProvider.createLivenessSession({
@@ -641,198 +687,208 @@ const validateLivenessResult = async ({
     confidence: livenessResult.confidence,
   });
 
-  // 2. Authoritative KYC Face Matching using liveness ReferenceImage
-  let activeTemplate = null;
+  // Check if employee has an active DB exemption approval
+  let activeBypass = null;
   try {
-    const { rows } = await query(
-      `SELECT id, version, s3_key FROM employee_biometric_templates WHERE employee_id = $1 AND status = 'ACTIVE' LIMIT 1`,
+    const { rows: bypassRows } = await query(
+      `SELECT id, bypass_type, bypass_location, bypass_face FROM environment_bypass_approvals 
+       WHERE employee_id = $1 AND is_active = TRUE AND start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE 
+       ORDER BY created_at DESC LIMIT 1`,
       [authEmpId]
     );
-    activeTemplate = rows?.[0];
+    if (bypassRows && bypassRows.length > 0) {
+      activeBypass = bypassRows[0];
+    }
   } catch (e) {}
 
-  if (!activeTemplate || !activeTemplate.s3_key) {
+  const hasLocationBypass = activeBypass && (activeBypass.bypass_location !== false || activeBypass.bypass_type === 'LOCATION' || activeBypass.bypass_type === 'BOTH');
+  const hasFaceBypass = activeBypass && (activeBypass.bypass_face === true || activeBypass.bypass_type === 'FACE' || activeBypass.bypass_type === 'BOTH');
+
+  // 2. Authoritative KYC Face Matching using liveness ReferenceImage (Skipped if face is exempt)
+  let faceRes;
+  if (hasFaceBypass) {
+    logger.info(`[ATTENDANCE FACE] Face verification bypassed for employee ${authEmpId} (Active DB Face Exemption)`);
+    faceRes = { matched: true, similarity: 100, matchStatus: 'MATCHED' };
+  } else {
+    let activeTemplate = null;
     try {
-      await query(
-        `UPDATE attendance_verification_sessions 
-         SET face_status = 'REFERENCE_NOT_FOUND', status = 'FAILED', failure_reason = 'BIOMETRIC_REFERENCE_NOT_FOUND', updated_at = NOW() 
-         WHERE id = $1`,
-        [sessionId]
+      const { rows } = await query(
+        `SELECT id, version, s3_key FROM employee_biometric_templates WHERE employee_id = $1 AND status = 'ACTIVE' LIMIT 1`,
+        [authEmpId]
       );
+      activeTemplate = rows?.[0];
     } catch (e) {}
 
-    await logAction(reqUser, 'ATTENDANCE_FACE_MATCH_FAILED', authEmpId, {
-      session_id: sessionId,
-      reason: 'BIOMETRIC_REFERENCE_NOT_FOUND',
-    });
+    if (!activeTemplate || !activeTemplate.s3_key) {
+      try {
+        await query(
+          `UPDATE attendance_verification_sessions 
+           SET face_status = 'REFERENCE_NOT_FOUND', status = 'FAILED', failure_reason = 'BIOMETRIC_REFERENCE_NOT_FOUND', updated_at = NOW() 
+           WHERE id = $1`,
+          [sessionId]
+        );
+      } catch (e) {}
 
-    const errorMsg = 'Attendance Biometric Enrollment is required before marking attendance. Please complete biometric enrollment in the KYC panel.';
-    const error = new Error(errorMsg);
-    error.statusCode = 404;
-    error.reason = 'BIOMETRIC_REFERENCE_NOT_FOUND';
-    error.diagnostic = {
-      endpoint: '/api/v1/attendance/verification/liveness/result',
-      sessionId: sessionId,
-      employeeId: authEmpId,
-      latitude: latitude ?? null,
-      longitude: longitude ?? null,
-      accuracy: accuracy ?? null,
-      livenessStatus: 'PASSED',
-      faceStatus: 'REFERENCE_NOT_FOUND',
-      environmentStatus: 'NOT_STARTED',
-      reason: 'BIOMETRIC_REFERENCE_NOT_FOUND',
-      message: errorMsg,
-    };
-    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
-    throw error;
-  }
+      await logAction(reqUser, 'ATTENDANCE_FACE_MATCH_FAILED', authEmpId, {
+        session_id: sessionId,
+        reason: 'BIOMETRIC_REFERENCE_NOT_FOUND',
+      });
 
-  const liveImageBuffer = livenessResult.referenceImageBuffer;
-  if (!liveImageBuffer) {
-    try {
-      await query(
-        `UPDATE attendance_verification_sessions 
-         SET face_status = 'FAILED', status = 'FAILED', failure_reason = 'LIVENESS_FAILED', updated_at = NOW() 
-         WHERE id = $1`,
-        [sessionId]
-      );
-    } catch (e) {}
-    const errorMsg = 'Reference image from AWS liveness session was missing';
-    const error = new Error(errorMsg);
-    error.statusCode = 400;
-    error.reason = 'LIVENESS_FAILED';
-    error.diagnostic = {
-      endpoint: '/api/v1/attendance/verification/liveness/result',
-      sessionId: sessionId,
-      employeeId: authEmpId,
-      latitude: latitude ?? null,
-      longitude: longitude ?? null,
-      accuracy: accuracy ?? null,
-      livenessStatus: 'PASSED',
-      faceStatus: 'FAILED',
-      environmentStatus: 'NOT_STARTED',
-      reason: 'LIVENESS_FAILED',
-      message: errorMsg,
-    };
-    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
-    throw error;
-  }
+      const errorMsg = 'Attendance Biometric Enrollment is required before marking attendance. Please complete biometric enrollment in the KYC panel.';
+      const error = new Error(errorMsg);
+      error.statusCode = 404;
+      error.reason = 'BIOMETRIC_REFERENCE_NOT_FOUND';
+      error.diagnostic = {
+        endpoint: '/api/v1/attendance/verification/liveness/result',
+        sessionId: sessionId,
+        employeeId: authEmpId,
+        latitude: latitude ?? null,
+        longitude: longitude ?? null,
+        accuracy: accuracy ?? null,
+        livenessStatus: 'PASSED',
+        faceStatus: 'REFERENCE_NOT_FOUND',
+        environmentStatus: 'NOT_STARTED',
+        reason: 'BIOMETRIC_REFERENCE_NOT_FOUND',
+        message: errorMsg,
+      };
+      logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+      throw error;
+    }
 
-  // Compare live AWS liveness reference image against active employee biometric template S3 key
-  const faceRes = await faceMatchProvider.compareFace(liveImageBuffer, activeTemplate.s3_key);
+    const liveImageBuffer = livenessResult.referenceImageBuffer;
+    if (!liveImageBuffer) {
+      try {
+        await query(
+          `UPDATE attendance_verification_sessions 
+           SET face_status = 'FAILED', status = 'FAILED', failure_reason = 'LIVENESS_FAILED', updated_at = NOW() 
+           WHERE id = $1`,
+          [sessionId]
+        );
+      } catch (e) {}
+      const errorMsg = 'Reference image from AWS liveness session was missing';
+      const error = new Error(errorMsg);
+      error.statusCode = 400;
+      error.reason = 'LIVENESS_FAILED';
+      error.diagnostic = {
+        endpoint: '/api/v1/attendance/verification/liveness/result',
+        sessionId: sessionId,
+        employeeId: authEmpId,
+        latitude: latitude ?? null,
+        longitude: longitude ?? null,
+        accuracy: accuracy ?? null,
+        livenessStatus: 'PASSED',
+        faceStatus: 'FAILED',
+        environmentStatus: 'NOT_STARTED',
+        reason: 'LIVENESS_FAILED',
+        message: errorMsg,
+      };
+      logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+      throw error;
+    }
 
-  if (!faceRes.matched) {
-    const reason = faceRes.matchStatus === 'FACE_PROVIDER_NOT_CONFIGURED' || faceRes.matchStatus === 'FACE_PROVIDER_ERROR'
-      ? 'AWS_LIVENESS_ERROR'
-      : 'FACE_MISMATCH';
+    // Compare live AWS liveness reference image against active employee biometric template S3 key
+    faceRes = await faceMatchProvider.compareFace(liveImageBuffer, activeTemplate.s3_key);
 
-    try {
-      await query(
-        `UPDATE attendance_verification_sessions 
-         SET face_status = $1, status = 'FAILED', failure_reason = $2, updated_at = NOW() 
-         WHERE id = $3`,
-        [reason, reason, sessionId]
-      );
-    } catch (e) {}
+    if (!faceRes.matched) {
+      const reason = faceRes.matchStatus === 'FACE_PROVIDER_NOT_CONFIGURED' || faceRes.matchStatus === 'FACE_PROVIDER_ERROR'
+        ? 'AWS_LIVENESS_ERROR'
+        : 'FACE_MISMATCH';
 
-    await logAction(reqUser, 'ATTENDANCE_FACE_MATCH_FAILED', authEmpId, {
-      session_id: sessionId,
-      reason,
-      similarity: faceRes.similarity,
-    });
+      try {
+        await query(
+          `UPDATE attendance_verification_sessions 
+           SET face_status = $1, status = 'FAILED', failure_reason = $2, updated_at = NOW() 
+           WHERE id = $3`,
+          [reason, reason, sessionId]
+        );
+      } catch (e) {}
 
-    const statusCode = reason === 'AWS_LIVENESS_ERROR' ? 500 : 400;
-    const errorMsg = reason === 'AWS_LIVENESS_ERROR'
-      ? 'Face comparison service encountered an error. Please try again.'
-      : 'Face matching failed with your registered KYC identity. Please try again.';
+      await logAction(reqUser, 'ATTENDANCE_FACE_MATCH_FAILED', authEmpId, {
+        session_id: sessionId,
+        reason,
+        similarity: faceRes.similarity,
+      });
 
-    const error = new Error(errorMsg);
-    error.statusCode = statusCode;
-    error.reason = reason;
-    error.diagnostic = {
-      endpoint: '/api/v1/attendance/verification/liveness/result',
-      sessionId: sessionId,
-      employeeId: authEmpId,
-      latitude: latitude ?? null,
-      longitude: longitude ?? null,
-      accuracy: accuracy ?? null,
-      livenessStatus: 'PASSED',
-      faceStatus: 'FAILED',
-      environmentStatus: 'NOT_STARTED',
-      reason,
-      message: errorMsg,
-    };
-    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
-    throw error;
+      const statusCode = reason === 'AWS_LIVENESS_ERROR' ? 500 : 400;
+      const errorMsg = reason === 'AWS_LIVENESS_ERROR'
+        ? 'Face comparison service encountered an error. Please try again.'
+        : 'Face matching failed with your registered KYC identity. Please try again.';
+
+      const error = new Error(errorMsg);
+      error.statusCode = statusCode;
+      error.reason = reason;
+      error.diagnostic = {
+        endpoint: '/api/v1/attendance/verification/liveness/result',
+        sessionId: sessionId,
+        employeeId: authEmpId,
+        latitude: latitude ?? null,
+        longitude: longitude ?? null,
+        accuracy: accuracy ?? null,
+        livenessStatus: 'PASSED',
+        faceStatus: 'FAILED',
+        environmentStatus: 'NOT_STARTED',
+        reason,
+        message: errorMsg,
+      };
+      logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+      throw error;
+    }
   }
 
   // 3. Authoritative Building Geofence & Location Verification
   const hasClientCoordinates = latitude !== undefined && longitude !== undefined && latitude !== null && longitude !== null;
 
-  // Reject if coordinates are missing - geofence verification is mandatory
-  if (!hasClientCoordinates) {
-    const failureReason = 'LOCATION_REQUIRED';
-    try {
-      await query(
-        `UPDATE attendance_verification_sessions 
-         SET face_status = 'PASSED', location_status = 'FAILED', status = 'FAILED', failure_reason = $1, 
-             updated_at = NOW() 
-         WHERE id = $2`,
-        [failureReason, sessionId]
-      );
-    } catch (e) {}
-
-    await logAction(reqUser, 'ATTENDANCE_LOCATION_REQUIRED', authEmpId, {
-      session_id: sessionId,
-      reason: failureReason,
-    });
-
-    const errorMsg = 'Location access is required to verify your office presence.';
-    const error = new Error(errorMsg);
-    error.statusCode = 400;
-    error.reason = failureReason;
-    error.diagnostic = {
-      endpoint: '/api/v1/attendance/verification/liveness/result',
-      sessionId: sessionId,
-      employeeId: authEmpId,
-      latitude: null,
-      longitude: null,
-      accuracy: null,
-      livenessStatus: 'PASSED',
-      faceStatus: 'PASSED',
-      environmentStatus: 'FAILED',
-      reason: failureReason,
-      message: errorMsg,
-    };
-    logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
-    throw error;
-  }
-
-  // Check if employee has an active DB bypass approval
-  let hasDbBypass = false;
-  try {
-    const { rows: bypassRows } = await query(
-      `SELECT id FROM environment_bypass_approvals 
-       WHERE employee_id = $1 AND is_active = TRUE AND start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE LIMIT 1`,
-      [authEmpId]
-    );
-    if (bypassRows && bypassRows.length > 0) {
-      hasDbBypass = true;
-    }
-  } catch (e) {}
-
   let geoResult;
-  if (hasDbBypass || process.env.ATTENDANCE_GEOFENCE_BYPASS === 'true' || process.env.DISABLE_GEOFENCE === 'true') {
-    logger.info(`[ATTENDANCE GEOFENCE] Location verification bypassed for employee ${authEmpId} (Active DB Bypass / ENV Override)`);
+  if (hasLocationBypass || process.env.ATTENDANCE_GEOFENCE_BYPASS === 'true' || process.env.DISABLE_GEOFENCE === 'true') {
+    logger.info(`[ATTENDANCE GEOFENCE] Location verification bypassed for employee ${authEmpId} (Active DB Location Exemption / ENV Override)`);
     geoResult = {
       matched: true,
-      building: { id: '00000000-0000-0000-0000-000000000001', name: 'Office Location (Pune - Approved Bypass)' },
+      building: { id: '00000000-0000-0000-0000-000000000001', name: 'Office Location (Pune - Approved Location Exemption)' },
       isStrictInside: true,
       distanceMeters: 0,
       status: 'LOCATION_VERIFIED',
-      message: 'Location verified via approved bypass'
+      message: 'Location verified via approved exemption'
     };
   } else {
+    // Reject if coordinates are missing - geofence verification is mandatory when not exempt
+    if (!hasClientCoordinates) {
+      const failureReason = 'LOCATION_REQUIRED';
+      try {
+        await query(
+          `UPDATE attendance_verification_sessions 
+           SET face_status = 'PASSED', location_status = 'FAILED', status = 'FAILED', failure_reason = $1, 
+               updated_at = NOW() 
+           WHERE id = $2`,
+          [failureReason, sessionId]
+        );
+      } catch (e) {}
+
+      await logAction(reqUser, 'ATTENDANCE_LOCATION_REQUIRED', authEmpId, {
+        session_id: sessionId,
+        reason: failureReason,
+      });
+
+      const errorMsg = 'Location access is required to verify your office presence.';
+      const error = new Error(errorMsg);
+      error.statusCode = 400;
+      error.reason = failureReason;
+      error.diagnostic = {
+        endpoint: '/api/v1/attendance/verification/liveness/result',
+        sessionId: sessionId,
+        employeeId: authEmpId,
+        latitude: null,
+        longitude: null,
+        accuracy: null,
+        livenessStatus: 'PASSED',
+        faceStatus: 'PASSED',
+        environmentStatus: 'FAILED',
+        reason: failureReason,
+        message: errorMsg,
+      };
+      logger.warn('[ATTENDANCE DIAGNOSTIC REJECTION]', error.diagnostic);
+      throw error;
+    }
+
     geoResult = await buildingGeofenceService.verifyLocationInBuilding(latitude, longitude, accuracy !== undefined ? accuracy : 0);
   }
 

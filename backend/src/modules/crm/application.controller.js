@@ -7041,8 +7041,6 @@ const getRemarkOperatorDashboard = async (req, res, next) => {
   }
 };
 
-let operatorHistoryChecked = false;
-
 // GET /applications/:id/operator-history — Fetch full operator audit trail
 const getApplicationOperatorHistory = async (req, res, next) => {
   try {
@@ -7054,7 +7052,6 @@ const getApplicationOperatorHistory = async (req, res, next) => {
       return forbidden(res, authCheck.reason);
     }
 
-    await ensureOperatorHistoryTable();
     const { rows } = await query(`
       SELECT 
         h.id,

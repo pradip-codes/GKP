@@ -201,21 +201,36 @@ async function delPattern(pattern) {
   if (activeProvider === 'redis' && redisClient && redisClient.isOpen) {
     try {
       const keysToDelete = [];
+      const flushKeys = async () => {
+        if (keysToDelete.length === 0) return;
+        const batch = keysToDelete.splice(0, keysToDelete.length);
+        const validBatch = batch.filter(k => typeof k === 'string' && k.length > 0);
+        if (validBatch.length > 0) {
+          await redisClient.del(validBatch);
+        }
+      };
+
       if (typeof redisClient.scanIterator === 'function') {
-        for await (const key of redisClient.scanIterator({ MATCH: pattern, COUNT: 100 })) {
-          keysToDelete.push(key);
+        for await (const chunk of redisClient.scanIterator({ MATCH: pattern, COUNT: 100 })) {
+          if (Array.isArray(chunk)) {
+            for (const k of chunk) {
+              if (typeof k === 'string' && k.length > 0) keysToDelete.push(k);
+            }
+          } else if (typeof chunk === 'string' && chunk.length > 0) {
+            keysToDelete.push(chunk);
+          }
           if (keysToDelete.length >= 250) {
-            await redisClient.del(keysToDelete);
-            keysToDelete.length = 0;
+            await flushKeys();
           }
         }
-        if (keysToDelete.length > 0) {
-          await redisClient.del(keysToDelete);
-        }
+        await flushKeys();
       } else {
         const keys = await redisClient.keys(pattern);
-        if (keys.length > 0) {
-          await redisClient.del(keys);
+        if (Array.isArray(keys) && keys.length > 0) {
+          const flatKeys = keys.flat().filter(k => typeof k === 'string' && k.length > 0);
+          if (flatKeys.length > 0) {
+            await redisClient.del(flatKeys);
+          }
         }
       }
       return true;

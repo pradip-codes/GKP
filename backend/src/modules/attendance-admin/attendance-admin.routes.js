@@ -33,6 +33,18 @@ router.get('/employee/:employeeId', ctrl.getEmployeeAttendanceDetails);
 router.post('/re-attendance', ctrl.grantReAttendance);
 
 /**
+ * POST /api/v1/attendance/admin/manual-mark
+ * Super Admin / Admin: Mark attendance manually for an employee record
+ */
+router.post('/manual-mark', ctrl.markManualAttendance);
+
+/**
+ * Verification Exemption Configuration (Per-Account Exemption)
+ */
+router.get('/employee/:employeeId/exemption', ctrl.getEmployeeExemption);
+router.post('/employee/:employeeId/exemption', ctrl.setEmployeeExemption);
+
+/**
  * Office Building Geofences Management (Super Admin)
  */
 router.get('/buildings', ctrl.listBuildings);
