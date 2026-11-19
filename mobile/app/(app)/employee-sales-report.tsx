@@ -173,7 +173,8 @@ export default function EmployeeSalesReportScreen() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+    <>
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
@@ -355,6 +356,7 @@ export default function EmployeeSalesReportScreen() {
         </View>
       </View>
     </Modal>
+  </>
   );
 }
 

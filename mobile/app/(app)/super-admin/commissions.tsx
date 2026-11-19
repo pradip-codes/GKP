@@ -168,11 +168,6 @@ export default function SuperAdminCommissionsScreen() {
           </TouchableOpacity>
         ))}
       </ScrollView>
-          onPress={() => setActiveTab('OVERVIEW')}
-        >
-          <Text style={[styles.tabText, activeTab === 'OVERVIEW' && styles.activeTabText]}>Payouts Overview</Text>
-        </TouchableOpacity>
-      </View>
 
       {/* Content */}
       {loading ? (
