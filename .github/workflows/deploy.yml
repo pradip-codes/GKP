@@ -89,6 +89,7 @@ jobs:
               "    sudo -u ubuntu node src/database/migrations/migrate_bulk_sms.js || true",
               "    sudo -u ubuntu node -e '\''require(\"./src/database/migrations/migrate_sales_operator_claim\").migrateSalesOperatorClaim().then(() => process.exit(0)).catch(() => process.exit(0))'\'' || true",
               "    sudo -u ubuntu node -e '\''require(\"./src/database/migrations/migrate_attendance_environment_bypass\").migrateAttendanceEnvironmentBypass().then(() => process.exit(0)).catch(() => process.exit(0))'\'' || true",
+              "    sudo -u ubuntu node src/database/migrations/migrate_hdfc_curing_designations.js || true",
               "  fi",
               "done",
               "sudo -u ubuntu pm2 reload all --update-env || sudo -u ubuntu pm2 restart all --update-env || true",
