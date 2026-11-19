@@ -318,80 +318,6 @@ const grantReAttendance = async (req, res, next) => {
   }
 };
 
-/**
- * POST /api/v1/attendance/admin/manual-mark
- * Super Admin manually marks attendance for an employee
- */
-const markManualAttendance = async (req, res, next) => {
-  try {
-    const { employeeId, date, status, attendanceType, checkInTime, checkOutTime, remarks } = req.body;
-    const result = await attendanceAdminService.markManualAttendance({
-      employeeId,
-      date,
-      status,
-      attendanceType,
-      checkInTime,
-      checkOutTime,
-      remarks,
-      adminUser: req.user
-    });
-
-    res.json(result);
-  } catch (error) {
-    logger.error(`[ATTENDANCE-ADMIN] markManualAttendance error: ${error.message}`);
-    next(error);
-  }
-};
-
-/**
- * GET /api/v1/attendance/admin/employee/:employeeId/exemption
- * Get active verification exemption configuration for an employee
- */
-const getEmployeeExemption = async (req, res, next) => {
-  try {
-    const { employeeId } = req.params;
-    const data = await environmentBypassService.getEnvironmentBypassStatus(employeeId);
-    res.json({
-      success: true,
-      data
-    });
-  } catch (error) {
-    logger.error(`[ATTENDANCE-ADMIN] getEmployeeExemption error: ${error.message}`);
-    next(error);
-  }
-};
-
-/**
- * POST /api/v1/attendance/admin/employee/:employeeId/exemption
- * Configure which verification is NOT required (face, location, or both) for a specific employee account
- */
-const setEmployeeExemption = async (req, res, next) => {
-  try {
-    const { employeeId } = req.params;
-    const { bypassLocation, bypassFace, bypassType, startDate, endDate, bypassReason } = req.body;
-
-    const data = await environmentBypassService.createEnvironmentBypass({
-      employeeId,
-      bypassReason: bypassReason || 'Super Admin verification exemption',
-      startDate,
-      endDate,
-      bypassLocation,
-      bypassFace,
-      bypassType,
-      reqUser: req.user
-    });
-
-    res.status(201).json({
-      success: true,
-      message: 'Verification exemption access granted successfully',
-      data
-    });
-  } catch (error) {
-    logger.error(`[ATTENDANCE-ADMIN] setEmployeeExemption error: ${error.message}`);
-    next(error);
-  }
-};
-
 module.exports = {
   getTodayAttendance,
   getAttendanceHistory,
@@ -404,8 +330,5 @@ module.exports = {
   createBuilding,
   updateBuilding,
   deleteBuilding,
-  grantReAttendance,
-  markManualAttendance,
-  getEmployeeExemption,
-  setEmployeeExemption
+  grantReAttendance
 };

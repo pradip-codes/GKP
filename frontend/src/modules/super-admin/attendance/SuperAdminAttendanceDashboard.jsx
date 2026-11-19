@@ -14,7 +14,7 @@ import api from '../../../services/api';
 
 export default function SuperAdminAttendanceDashboard() {
   const { C, isDark } = useTheme();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const urlTab = searchParams.get('tab');
   const urlStart = searchParams.get('startDate') || searchParams.get('start_date');
   const urlEnd = searchParams.get('endDate') || searchParams.get('end_date');
@@ -78,154 +78,6 @@ export default function SuperAdminAttendanceDashboard() {
   const [reAttendanceMode, setReAttendanceMode] = useState('RESET_CHECKOUT');
   const [reAttendanceLoading, setReAttendanceLoading] = useState(false);
   const [reAttendanceMsg, setReAttendanceMsg] = useState(null);
-
-  // Super Admin Manual Attendance & Verification Exemption State
-  const [manualModalOpen, setManualModalOpen] = useState(false);
-  const [manualTarget, setManualTarget] = useState(null);
-  const [manualTab, setManualTab] = useState('manual'); // 'manual' | 'exemption'
-  const [manualForm, setManualForm] = useState({
-    date: new Date().toISOString().split('T')[0],
-    status: 'PRESENT',
-    attendanceType: 'FULL_TIME',
-    checkInTime: '09:30',
-    checkOutTime: '',
-    remarks: 'Manual attendance marked by Super Admin',
-  });
-  const [exemptionForm, setExemptionForm] = useState({
-    bypassLocation: true,
-    bypassFace: false,
-    duration: 'today',
-    startDate: new Date().toISOString().split('T')[0],
-    endDate: new Date().toISOString().split('T')[0],
-    reason: 'Super Admin location exemption approved'
-  });
-  const [manualSubmitting, setManualSubmitting] = useState(false);
-  const [manualMsg, setManualMsg] = useState(null);
-
-  const handleOpenManualModal = async (row) => {
-    const targetRow = row || (records && records.length > 0 ? records[0] : null);
-    setManualTarget(targetRow);
-    setManualTab('manual');
-    setManualMsg(null);
-    const rowDate = targetRow?.date || targetRow?.attendance_date || selectedDate || new Date().toISOString().split('T')[0];
-    setManualForm({
-      date: rowDate,
-      status: (targetRow?.status || targetRow?.attendance_status || 'PRESENT') === 'NOT_MARKED' ? 'PRESENT' : (targetRow?.status || targetRow?.attendance_status || 'PRESENT'),
-      attendanceType: targetRow?.attendance_type || 'FULL_TIME',
-      checkInTime: targetRow?.check_in_time ? new Date(targetRow.check_in_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }) : '09:30',
-      checkOutTime: targetRow?.check_out_time ? new Date(targetRow.check_out_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }) : '',
-      remarks: 'Manual attendance marked by Super Admin',
-    });
-    setExemptionForm({
-      bypassLocation: true,
-      bypassFace: false,
-      duration: 'today',
-      startDate: rowDate,
-      endDate: rowDate,
-      reason: 'Super Admin location exemption approved'
-    });
-    setManualModalOpen(true);
-
-    if (targetRow?.employee_id) {
-      try {
-        const res = await api.get(`/attendance/admin/employee/${targetRow.employee_id}/exemption`);
-        if (res.data?.success && res.data?.data?.hasBypass) {
-          const ex = res.data.data;
-          setExemptionForm(prev => ({
-            ...prev,
-            bypassLocation: ex.bypassLocation,
-            bypassFace: ex.bypassFace,
-            startDate: ex.startDate ? ex.startDate.split('T')[0] : prev.startDate,
-            endDate: ex.endDate ? ex.endDate.split('T')[0] : prev.endDate,
-            reason: ex.reason || prev.reason
-          }));
-        }
-      } catch {
-        // Exemption record might not exist yet, which is expected
-      }
-    }
-  };
-
-  const handleSubmitManualAttendance = async () => {
-    if (!manualTarget?.employee_id || manualSubmitting) return;
-    setManualSubmitting(true);
-    setManualMsg(null);
-    try {
-      const res = await api.post('/attendance/admin/manual-mark', {
-        employeeId: manualTarget.employee_id,
-        date: manualForm.date,
-        status: manualForm.status,
-        attendanceType: manualForm.attendanceType,
-        checkInTime: manualForm.checkInTime,
-        checkOutTime: manualForm.checkOutTime || null,
-        remarks: manualForm.remarks
-      });
-      setManualMsg({ type: 'success', text: res.data?.message || 'Manual attendance marked successfully!' });
-      setTimeout(() => {
-        setManualModalOpen(false);
-        if (activeTab === 'today') fetchTodayAttendance();
-        else if (activeTab === 'history') fetchHistoryAttendance();
-        else if (activeTab === 'reports') fetchReportsAttendance();
-      }, 1200);
-    } catch (err) {
-      setManualMsg({
-        type: 'error',
-        text: err.response?.data?.message || err.message || 'Failed to mark manual attendance'
-      });
-    } finally {
-      setManualSubmitting(false);
-    }
-  };
-
-  const handleSubmitExemption = async () => {
-    if (!manualTarget?.employee_id || manualSubmitting) return;
-    setManualSubmitting(true);
-    setManualMsg(null);
-
-    let calculatedEnd = exemptionForm.endDate;
-    const startObj = new Date(exemptionForm.startDate);
-    if (exemptionForm.duration === 'today') {
-      calculatedEnd = exemptionForm.startDate;
-    } else if (exemptionForm.duration === '7days') {
-      const endD = new Date(startObj);
-      endD.setDate(endD.getDate() + 7);
-      calculatedEnd = endD.toISOString().split('T')[0];
-    } else if (exemptionForm.duration === '30days') {
-      const endD = new Date(startObj);
-      endD.setDate(endD.getDate() + 30);
-      calculatedEnd = endD.toISOString().split('T')[0];
-    } else if (exemptionForm.duration === 'permanent') {
-      const endD = new Date(startObj);
-      endD.setFullYear(endD.getFullYear() + 2);
-      calculatedEnd = endD.toISOString().split('T')[0];
-    }
-
-    try {
-      const res = await api.post(`/attendance/admin/employee/${manualTarget.employee_id}/exemption`, {
-        bypassLocation: exemptionForm.bypassLocation,
-        bypassFace: exemptionForm.bypassFace,
-        startDate: exemptionForm.startDate,
-        endDate: calculatedEnd,
-        bypassReason: exemptionForm.reason
-      });
-      setManualMsg({
-        type: 'success',
-        text: res.data?.message || 'Verification exemption access granted successfully!'
-      });
-      setTimeout(() => {
-        setManualModalOpen(false);
-        if (activeTab === 'today') fetchTodayAttendance();
-        else if (activeTab === 'history') fetchHistoryAttendance();
-      }, 1200);
-    } catch (err) {
-      setManualMsg({
-        type: 'error',
-        text: err.response?.data?.message || err.message || 'Failed to set verification exemption'
-      });
-    } finally {
-      setManualSubmitting(false);
-    }
-  };
 
   const handleOpenReAttendanceModal = (row) => {
     setReAttendanceTarget(row);
@@ -417,7 +269,6 @@ export default function SuperAdminAttendanceDashboard() {
 
   // Trigger API calls on tab/filter change
   useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect */
     if (activeTab === 'today') {
       fetchTodayAttendance();
     } else if (activeTab === 'history') {
@@ -427,7 +278,6 @@ export default function SuperAdminAttendanceDashboard() {
     } else if (activeTab === 'buildings') {
       fetchBuildings();
     }
-    /* eslint-enable react-hooks/set-state-in-effect */
   }, [activeTab, fetchTodayAttendance, fetchHistoryAttendance, fetchReportsAttendance, fetchBuildings]);
 
   // Building Geofence CRUD Handlers
@@ -623,7 +473,7 @@ export default function SuperAdminAttendanceDashboard() {
         minute: '2-digit',
         hour12: true,
       });
-    } catch {
+    } catch (e) {
       return '-';
     }
   };
@@ -637,7 +487,7 @@ export default function SuperAdminAttendanceDashboard() {
         return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
       }
       return dateStr;
-    } catch {
+    } catch (e) {
       return dateStr;
     }
   };
@@ -645,9 +495,9 @@ export default function SuperAdminAttendanceDashboard() {
   // Status Badge Rendering
   const renderStatusBadge = (status) => {
     const s = String(status || 'NOT_MARKED').toUpperCase();
-    let bg;
-    let color;
-    let icon;
+    let bg = C.border;
+    let color = C.text;
+    let icon = null;
     let label = s.replace('_', ' ');
 
     switch (s) {
@@ -877,28 +727,6 @@ export default function SuperAdminAttendanceDashboard() {
             }}
           >
             <FaBuilding /> Office Buildings & Geofences
-          </button>
-
-          <button
-            onClick={() => handleOpenManualModal(null)}
-            title="Mark Attendance Manually & Configure Verification Exemption"
-            style={{
-              padding: '9px 16px',
-              borderRadius: '10px',
-              border: 'none',
-              background: '#10B981',
-              color: '#FFFFFF',
-              fontSize: '13px',
-              fontWeight: 800,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              boxShadow: '0 2px 8px rgba(16, 185, 129, 0.25)',
-              transition: 'all 0.2s'
-            }}
-          >
-            <FaUserCheck size={13} /> Mark Attendance Manually
           </button>
 
           <button
@@ -2009,27 +1837,6 @@ export default function SuperAdminAttendanceDashboard() {
                       >
                         <FaRedo size={11} /> Re-Attendance
                       </button>
-                      <button
-                        onClick={() => handleOpenManualModal(row)}
-                        title="Mark Attendance Manually & Configure Verification Exemption (Location / Face)"
-                        style={{
-                          padding: '6px 12px',
-                          borderRadius: '8px',
-                          border: '1.5px solid rgba(16, 185, 129, 0.4)',
-                          background: 'rgba(16, 185, 129, 0.12)',
-                          color: '#10B981',
-                          fontSize: '12px',
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          transition: 'all 0.2s',
-                          marginLeft: '6px'
-                        }}
-                      >
-                        <FaUserCheck size={11} color="#10B981" /> Manual / Exemption
-                      </button>
                     </td>
                   </tr>
                 ))}
@@ -3089,428 +2896,6 @@ export default function SuperAdminAttendanceDashboard() {
               >
                 <FaRedo size={12} /> {reAttendanceLoading ? 'Granting...' : 'Confirm Re-Attendance'}
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── MANUAL ATTENDANCE & VERIFICATION EXEMPTION MODAL ── */}
-      {manualModalOpen && (
-        <div style={{
-          position: 'fixed', inset: 0,
-          background: 'rgba(0, 0, 0, 0.65)',
-          backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 9999, padding: '16px'
-        }}>
-          <div style={{
-            background: C.card,
-            borderRadius: '16px',
-            border: `1px solid ${C.border}`,
-            boxShadow: '0 20px 45px rgba(0,0,0,0.3)',
-            width: '100%', maxWidth: '580px',
-            maxHeight: '90vh', overflowY: 'auto',
-            padding: '24px',
-            display: 'flex', flexDirection: 'column', gap: '18px'
-          }}>
-            {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{
-                  width: '36px', height: '36px', borderRadius: '10px',
-                  background: 'rgba(16, 185, 129, 0.15)', color: '#10B981',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontWeight: 900
-                }}>
-                  <FaUserCheck size={18} />
-                </div>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 900, color: C.text }}>
-                    Attendance Control & Verification Exemption
-                  </h3>
-                  <p style={{ margin: '2px 0 0', fontSize: '12px', color: C.textLight }}>
-                    Mark attendance manually or configure per-account location & face exemptions
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setManualModalOpen(false)}
-                style={{
-                  background: 'none', border: 'none', color: C.textLight,
-                  fontSize: '18px', cursor: 'pointer', padding: '4px'
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Employee Target Banner / Selector */}
-            <div style={{
-              padding: '12px 14px', borderRadius: '12px',
-              background: C.inputBg, border: `1px solid ${C.border}`,
-              display: 'flex', flexDirection: 'column', gap: '8px'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '11.5px', fontWeight: 800, color: C.teal, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Target Employee
-                </span>
-                <span style={{ fontSize: '12px', color: C.textLight, fontWeight: 600 }}>
-                  Date: {manualForm.date}
-                </span>
-              </div>
-              {records && records.length > 1 && !manualTarget?.attendance_id ? (
-                <select
-                  value={manualTarget?.employee_id || ''}
-                  onChange={(e) => {
-                    const sel = records.find(r => r.employee_id === e.target.value);
-                    if (sel) handleOpenManualModal(sel);
-                  }}
-                  style={{
-                    padding: '8px 12px', borderRadius: '8px',
-                    border: `1px solid ${C.border}`, background: C.card, color: C.text,
-                    fontSize: '13px', fontWeight: 700, width: '100%'
-                  }}
-                >
-                  {records.map(r => (
-                    <option key={r.employee_id} value={r.employee_id}>
-                      {r.employee_name || r.full_name} ({r.employee_code || r.employee_id}) — {r.designation || 'Staff'}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div>
-                    <div style={{ fontSize: '14.5px', fontWeight: 900, color: C.text }}>
-                      {manualTarget?.employee_name || manualTarget?.full_name || 'Selected Employee'}
-                    </div>
-                    <div style={{ fontSize: '12px', color: C.textLight }}>
-                      {manualTarget?.employee_code || manualTarget?.employee_id} • {manualTarget?.designation || 'Employee'} ({manualTarget?.department || 'General'})
-                    </div>
-                  </div>
-                  <div style={{
-                    padding: '3px 8px', borderRadius: '6px',
-                    background: `${C.teal}15`, color: C.teal,
-                    fontSize: '11px', fontWeight: 800
-                  }}>
-                    {manualTarget?.attendance_status || manualTarget?.status || 'Active'}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Sub-Tabs: Manual Attendance vs Verification Access */}
-            <div style={{
-              display: 'flex', gap: '6px',
-              padding: '4px', borderRadius: '10px',
-              background: C.inputBg, border: `1px solid ${C.border}`
-            }}>
-              <button
-                type="button"
-                onClick={() => setManualTab('manual')}
-                style={{
-                  flex: 1, padding: '8px 12px', borderRadius: '8px', border: 'none',
-                  background: manualTab === 'manual' ? C.card : 'transparent',
-                  color: manualTab === 'manual' ? C.teal : C.textLight,
-                  fontWeight: 800, fontSize: '12.5px', cursor: 'pointer',
-                  boxShadow: manualTab === 'manual' ? '0 2px 6px rgba(0,0,0,0.08)' : 'none',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                  transition: 'all 0.2s'
-                }}
-              >
-                <FaUserCheck size={13} /> Mark Attendance Manually
-              </button>
-              <button
-                type="button"
-                onClick={() => setManualTab('exemption')}
-                style={{
-                  flex: 1, padding: '8px 12px', borderRadius: '8px', border: 'none',
-                  background: manualTab === 'exemption' ? C.card : 'transparent',
-                  color: manualTab === 'exemption' ? '#10B981' : C.textLight,
-                  fontWeight: 800, fontSize: '12.5px', cursor: 'pointer',
-                  boxShadow: manualTab === 'exemption' ? '0 2px 6px rgba(0,0,0,0.08)' : 'none',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                  transition: 'all 0.2s'
-                }}
-              >
-                <FaShieldAlt size={13} /> Verification Access (Exemptions)
-              </button>
-            </div>
-
-            {/* TAB 1: MARK ATTENDANCE MANUALLY */}
-            {manualTab === 'manual' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '4px' }}>
-                      Attendance Status:
-                    </label>
-                    <select
-                      value={manualForm.status}
-                      onChange={(e) => setManualForm({ ...manualForm, status: e.target.value })}
-                      style={{
-                        width: '100%', padding: '9px 12px', borderRadius: '8px',
-                        border: `1px solid ${C.border}`, background: C.inputBg, color: C.text,
-                        fontSize: '13px', fontWeight: 700
-                      }}
-                    >
-                      <option value="PRESENT">PRESENT (Full Day)</option>
-                      <option value="HALF_DAY">HALF_DAY (Half Day)</option>
-                      <option value="LATE">LATE (Late Mark)</option>
-                      <option value="PART_TIME">PART_TIME (Evening Shift)</option>
-                      <option value="LEAVE">LEAVE (Approved Leave)</option>
-                      <option value="ABSENT">ABSENT (Absent)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '4px' }}>
-                      Shift Type:
-                    </label>
-                    <select
-                      value={manualForm.attendanceType}
-                      onChange={(e) => setManualForm({ ...manualForm, attendanceType: e.target.value })}
-                      style={{
-                        width: '100%', padding: '9px 12px', borderRadius: '8px',
-                        border: `1px solid ${C.border}`, background: C.inputBg, color: C.text,
-                        fontSize: '13px', fontWeight: 700
-                      }}
-                    >
-                      <option value="FULL_TIME">Full-Time (Standard Shift)</option>
-                      <option value="PART_TIME">Part-Time (Evening Shift)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '4px' }}>
-                      Check-In Time:
-                    </label>
-                    <input
-                      type="time"
-                      value={manualForm.checkInTime}
-                      onChange={(e) => setManualForm({ ...manualForm, checkInTime: e.target.value })}
-                      style={{
-                        width: '100%', padding: '9px 12px', borderRadius: '8px',
-                        border: `1px solid ${C.border}`, background: C.inputBg, color: C.text,
-                        fontSize: '13px', fontWeight: 700
-                      }}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '4px' }}>
-                      Check-Out Time (Optional):
-                    </label>
-                    <input
-                      type="time"
-                      value={manualForm.checkOutTime}
-                      onChange={(e) => setManualForm({ ...manualForm, checkOutTime: e.target.value })}
-                      placeholder="e.g. 18:30"
-                      style={{
-                        width: '100%', padding: '9px 12px', borderRadius: '8px',
-                        border: `1px solid ${C.border}`, background: C.inputBg, color: C.text,
-                        fontSize: '13px', fontWeight: 700
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '4px' }}>
-                    Admin Remarks / Justification:
-                  </label>
-                  <input
-                    type="text"
-                    value={manualForm.remarks}
-                    onChange={(e) => setManualForm({ ...manualForm, remarks: e.target.value })}
-                    placeholder="Reason for manual marking"
-                    style={{
-                      width: '100%', padding: '9px 12px', borderRadius: '8px',
-                      border: `1px solid ${C.border}`, background: C.inputBg, color: C.text,
-                      fontSize: '13px', fontWeight: 600
-                    }}
-                  />
-                </div>
-
-                <div style={{
-                  padding: '10px 14px', borderRadius: '8px',
-                  background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)',
-                  fontSize: '12px', color: '#10B981', fontWeight: 600
-                }}>
-                  ✓ Marking attendance will record this employee as verified with <code style={{ fontWeight: 800 }}>SUPER_ADMIN_MANUAL</code> authority.
-                </div>
-              </div>
-            )}
-
-            {/* TAB 2: VERIFICATION EXEMPTIONS (PER-ACCOUNT) */}
-            {manualTab === 'exemption' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div style={{
-                  padding: '12px 14px', borderRadius: '10px',
-                  background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)',
-                  fontSize: '12.5px', color: '#3B82F6', fontWeight: 600, lineHeight: 1.5
-                }}>
-                  ℹ️ <strong>Per-Account Exemption:</strong> Select which verification is <u>NOT required</u> for this specific account. <strong>All other employees will remain strictly verified</strong> as usual.
-                </div>
-
-                {/* Exemption Checkboxes */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <label style={{
-                    display: 'flex', alignItems: 'flex-start', gap: '12px',
-                    padding: '14px', borderRadius: '10px',
-                    border: `1.5px solid ${exemptionForm.bypassLocation ? '#10B981' : C.border}`,
-                    background: exemptionForm.bypassLocation ? 'rgba(16, 185, 129, 0.08)' : C.inputBg,
-                    cursor: 'pointer'
-                  }}>
-                    <input
-                      type="checkbox"
-                      checked={exemptionForm.bypassLocation}
-                      onChange={(e) => setExemptionForm({ ...exemptionForm, bypassLocation: e.target.checked })}
-                      style={{ marginTop: '3px', width: '16px', height: '16px', accentColor: '#10B981' }}
-                    />
-                    <div>
-                      <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        📍 Location / Office Geofence NOT Required
-                      </div>
-                      <div style={{ fontSize: '12px', color: C.textLight, marginTop: '3px', lineHeight: 1.4 }}>
-                        When enabled, <strong>only this account</strong> is exempt from office building geofence checks. The employee can mark attendance from field/home/remote locations.
-                      </div>
-                    </div>
-                  </label>
-
-                  <label style={{
-                    display: 'flex', alignItems: 'flex-start', gap: '12px',
-                    padding: '14px', borderRadius: '10px',
-                    border: `1.5px solid ${exemptionForm.bypassFace ? '#10B981' : C.border}`,
-                    background: exemptionForm.bypassFace ? 'rgba(16, 185, 129, 0.08)' : C.inputBg,
-                    cursor: 'pointer'
-                  }}>
-                    <input
-                      type="checkbox"
-                      checked={exemptionForm.bypassFace}
-                      onChange={(e) => setExemptionForm({ ...exemptionForm, bypassFace: e.target.checked })}
-                      style={{ marginTop: '3px', width: '16px', height: '16px', accentColor: '#10B981' }}
-                    />
-                    <div>
-                      <div style={{ fontSize: '13.5px', fontWeight: 800, color: C.text, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        👤 Face / Biometric Matching NOT Required
-                      </div>
-                      <div style={{ fontSize: '12px', color: C.textLight, marginTop: '3px', lineHeight: 1.4 }}>
-                        When enabled, <strong>only this account</strong> is exempt from camera facial recognition and KYC template matching.
-                      </div>
-                    </div>
-                  </label>
-                </div>
-
-                {/* Duration */}
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '6px' }}>
-                    Exemption Duration:
-                  </label>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
-                    {[
-                      { key: 'today', label: 'Today Only' },
-                      { key: '7days', label: '7 Days' },
-                      { key: '30days', label: '30 Days' },
-                      { key: 'permanent', label: 'Permanent' }
-                    ].map(p => (
-                      <button
-                        key={p.key}
-                        type="button"
-                        onClick={() => setExemptionForm({ ...exemptionForm, duration: p.key })}
-                        style={{
-                          padding: '8px 10px', borderRadius: '8px',
-                          border: `1px solid ${exemptionForm.duration === p.key ? '#10B981' : C.border}`,
-                          background: exemptionForm.duration === p.key ? 'rgba(16, 185, 129, 0.15)' : C.inputBg,
-                          color: exemptionForm.duration === p.key ? '#10B981' : C.text,
-                          fontSize: '12px', fontWeight: 800, cursor: 'pointer',
-                          transition: 'all 0.2s'
-                        }}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 800, color: C.text, display: 'block', marginBottom: '4px' }}>
-                    Reason / Approval Note:
-                  </label>
-                  <input
-                    type="text"
-                    value={exemptionForm.reason}
-                    onChange={(e) => setExemptionForm({ ...exemptionForm, reason: e.target.value })}
-                    placeholder="e.g. Field executive / remote client site approval"
-                    style={{
-                      width: '100%', padding: '9px 12px', borderRadius: '8px',
-                      border: `1px solid ${C.border}`, background: C.inputBg, color: C.text,
-                      fontSize: '13px', fontWeight: 600
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {manualMsg && (
-              <div style={{
-                padding: '10px 14px', borderRadius: '8px',
-                background: manualMsg.type === 'error' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
-                border: `1px solid ${manualMsg.type === 'error' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(16, 185, 129, 0.3)'}`,
-                color: manualMsg.type === 'error' ? '#EF4444' : '#10B981',
-                fontSize: '13px', fontWeight: 700
-              }}>
-                {manualMsg.text}
-              </div>
-            )}
-
-            {/* Actions */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
-              <button
-                type="button"
-                onClick={() => setManualModalOpen(false)}
-                style={{
-                  padding: '9px 16px', borderRadius: '8px',
-                  border: `1px solid ${C.border}`, background: C.inputBg, color: C.textLight,
-                  fontSize: '13px', fontWeight: 700, cursor: 'pointer'
-                }}
-              >
-                Cancel
-              </button>
-              {manualTab === 'manual' ? (
-                <button
-                  type="button"
-                  onClick={handleSubmitManualAttendance}
-                  disabled={manualSubmitting}
-                  style={{
-                    padding: '9px 20px', borderRadius: '8px',
-                    border: 'none', background: '#10B981', color: '#FFFFFF',
-                    fontSize: '13px', fontWeight: 800, cursor: manualSubmitting ? 'not-allowed' : 'pointer',
-                    display: 'inline-flex', alignItems: 'center', gap: '6px',
-                    opacity: manualSubmitting ? 0.7 : 1,
-                    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)'
-                  }}
-                >
-                  <FaUserCheck size={12} /> {manualSubmitting ? 'Saving...' : 'Mark Attendance Now'}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleSubmitExemption}
-                  disabled={manualSubmitting}
-                  style={{
-                    padding: '9px 20px', borderRadius: '8px',
-                    border: 'none', background: '#10B981', color: '#FFFFFF',
-                    fontSize: '13px', fontWeight: 800, cursor: manualSubmitting ? 'not-allowed' : 'pointer',
-                    display: 'inline-flex', alignItems: 'center', gap: '6px',
-                    opacity: manualSubmitting ? 0.7 : 1,
-                    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)'
-                  }}
-                >
-                  <FaShieldAlt size={12} /> {manualSubmitting ? 'Granting...' : 'Grant Verification Exemption'}
-                </button>
-              )}
             </div>
           </div>
         </div>
