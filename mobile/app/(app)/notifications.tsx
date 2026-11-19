@@ -13,6 +13,7 @@ import {
   Alert,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { spacing } from '../../theme/spacing';
@@ -22,6 +23,7 @@ import { notificationService } from '../../services/notification.service';
 import { NotificationItem, NotificationPreference } from '../../types';
 
 export default function NotificationsScreen() {
+  const { colors } = useTheme();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);

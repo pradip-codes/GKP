@@ -1,86 +1,73 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  ScrollView,
   StyleSheet,
+  ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  RefreshControl,
+  Alert,
 } from 'react-native';
+import { useRouter } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import apiClient from '../../services/api';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
+import { spacing } from '../../theme/spacing';
+import { Card } from '../../components/Card';
+import { Icon } from '../../components/Icon';
 
-interface ReferralSummary {
-  total_partners: number;
-  active_partners: number;
-  inactive_partners: number;
-  pending_kyc: number;
-  approved_kyc: number;
-  total_team_members: number;
-  largest_team_size: number;
-  highest_team_commission: number;
-  daily_registrations: number;
-  weekly_registrations: number;
-  monthly_registrations: number;
-  referral_conversion_rate: number;
-  average_team_size: number;
-}
-
-interface TopReferrer {
+interface ReferralData {
   id: string;
-  first_name?: string;
-  last_name?: string;
-  partner_code?: string;
+  referrer_name?: string;
+  referrer_code?: string;
   referral_count?: number;
-  children_count?: number;
-  team_commission?: number;
-  email?: string;
-  mobile?: string;
-  status?: string;
+  conversion_count?: number;
+  conversion_rate?: number;
+  total_commission?: number;
+  top_product?: string;
+  recent_referrals?: any[];
+  period?: string;
 }
 
 export default function ReferralAnalyticsScreen() {
+  const { colors } = useTheme();
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [summary, setSummary] = useState<ReferralSummary | null>(null);
-  const [topReferrers, setTopReferrers] = useState<TopReferrer[]>([]);
+  const [referralData, setReferralData] = useState<ReferralData[]>([]);
+  const [timePeriod, setTimePeriod] = useState('month');
+  const [searchText, setSearchText] = useState('');
 
   useEffect(() => {
     fetchReferralAnalytics();
-  }, []);
+  }, [timePeriod]);
 
-  const fetchReferralAnalytics = async (isRefresh = false) => {
+  const fetchReferralAnalytics = async () => {
     try {
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-      const response = await apiClient.get('/superadmin/referral-analytics');
-      const payload = response.data?.data || {};
-      setSummary(payload);
-      setTopReferrers(payload.top_referrers || []);
+      setLoading(true);
+      const response = await apiClient.get('/reports/referral-analytics', {
+        params: { period: timePeriod, limit: 100 },
+      });
+      setReferralData(response.data?.data || []);
     } catch (error) {
       console.error('Failed to fetch referral analytics:', error);
+      Alert.alert('Error', 'Failed to load referral analytics');
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   };
 
-  const onRefresh = useCallback(() => {
-    fetchReferralAnalytics(true);
-  }, []);
+  const filteredData = referralData.filter(r =>
+    (r.referrer_name || '').toLowerCase().includes(searchText.toLowerCase()) ||
+    (r.referrer_code || '').toLowerCase().includes(searchText.toLowerCase())
+  );
 
-  const formatCurrency = (value?: number) =>
-    `₹${Number(value || 0).toLocaleString('en-IN')}`;
-
-  const getReferrerName = (referrer: TopReferrer) =>
-    `${referrer.first_name || ''} ${referrer.last_name || ''}`.trim() ||
-    referrer.partner_code ||
-    'Partner';
+  const totalReferrals = referralData.reduce((sum, r) => sum + (r.referral_count || 0), 0);
+  const totalConversions = referralData.reduce((sum, r) => sum + (r.conversion_count || 0), 0);
+  const totalCommission = referralData.reduce((sum, r) => sum + (r.total_commission || 0), 0);
+  const avgConversionRate = totalReferrals > 0 
+    ? ((totalConversions / totalReferrals) * 100).toFixed(1) 
+    : '0';
 
   if (loading) {
     return (
@@ -92,104 +79,131 @@ export default function ReferralAnalyticsScreen() {
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          colors={[colors.primary]}
-          tintColor={colors.primary}
-        />
-      }
-    >
+    <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Referral Analytics</Text>
-        <TouchableOpacity style={styles.refreshButton} onPress={() => fetchReferralAnalytics(true)}>
-          <Text style={styles.refreshButtonText}>Refresh</Text>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <Icon name="arrow-left" size={24} color={colors.text} />
         </TouchableOpacity>
+        <Text style={styles.title}>Referral Analytics</Text>
       </View>
 
-      {summary && (
-        <View style={styles.statsContainer}>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Total Partners</Text>
-            <Text style={styles.statValue}>{summary.total_partners}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Active Partners</Text>
-            <Text style={styles.statValue}>{summary.active_partners}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Team Members</Text>
-            <Text style={styles.statValue}>{summary.total_team_members}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Referral Conversion</Text>
-            <Text style={styles.statValue}>
-              {Number(summary.referral_conversion_rate || 0).toFixed(2)}%
-            </Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Pending KYC</Text>
-            <Text style={styles.statValue}>{summary.pending_kyc}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Approved KYC</Text>
-            <Text style={styles.statValue}>{summary.approved_kyc}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Avg Team Size</Text>
-            <Text style={styles.statValue}>
-              {Number(summary.average_team_size || 0).toFixed(2)}
-            </Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Largest Team</Text>
-            <Text style={styles.statValue}>{summary.largest_team_size}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Highest Team Comm.</Text>
-            <Text style={styles.statValue}>
-              {formatCurrency(summary.highest_team_commission)}
-            </Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>New (30 Days)</Text>
-            <Text style={styles.statValue}>{summary.monthly_registrations}</Text>
-          </View>
+      <View style={styles.summaryCard}>
+        <View style={styles.summaryItem}>
+          <Text style={styles.summaryValue}>{totalReferrals}</Text>
+          <Text style={styles.summaryLabel}>Total Referrals</Text>
         </View>
-      )}
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Top Referrers</Text>
+        <View style={styles.summaryDivider} />
+        <View style={styles.summaryItem}>
+          <Text style={styles.summaryValue}>{totalConversions}</Text>
+          <Text style={styles.summaryLabel}>Conversions</Text>
+        </View>
+        <View style={styles.summaryDivider} />
+        <View style={styles.summaryItem}>
+          <Text style={styles.summaryValue}>{avgConversionRate}%</Text>
+          <Text style={styles.summaryLabel}>Avg Rate</Text>
+        </View>
+        <View style={styles.summaryDivider} />
+        <View style={styles.summaryItem}>
+          <Text style={styles.summaryValue}>₹{Number(totalCommission).toLocaleString()}</Text>
+          <Text style={styles.summaryLabel}>Commission</Text>
+        </View>
       </View>
 
-      <View style={styles.referrersContainer}>
-        {topReferrers.length === 0 ? (
+      <View style={styles.filterContainer}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {['week', 'month', 'quarter', 'year'].map((period) => (
+            <TouchableOpacity
+              key={period}
+              style={[
+                styles.filterChip,
+                timePeriod === period && styles.filterChipActive,
+              ]}
+              onPress={() => setTimePeriod(period)}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  timePeriod === period && styles.filterChipTextActive,
+                ]}
+              >
+                {period.charAt(0).toUpperCase() + period.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      <View style={styles.searchContainer}>
+        <View style={styles.searchBox}>
+          <Icon name="search" size={18} color={colors.textLight} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search referrers..."
+            value={searchText}
+            onChangeText={setSearchText}
+            placeholderTextColor={colors.textLight}
+          />
+        </View>
+      </View>
+
+      <View style={styles.referralContainer}>
+        {filteredData.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No referral data available</Text>
+            <Icon name="users" size={48} color={colors.textLight} />
+            <Text style={styles.emptyText}>No referral data found</Text>
           </View>
         ) : (
-          topReferrers.map((referrer, index) => (
-            <View key={referrer.id} style={styles.referrerCard}>
-              <View style={styles.rankBadge}>
-                <Text style={styles.rankText}>#{index + 1}</Text>
+          filteredData.map((item) => (
+            <Card key={item.id} style={styles.referralCard}>
+              <View style={styles.cardHeader}>
+                <View style={styles.referrerInfo}>
+                  <Text style={styles.referrerName}>{item.referrer_name || 'Unknown'}</Text>
+                  <Text style={styles.referrerCode}>{item.referrer_code || 'N/A'}</Text>
+                </View>
+                <View style={styles.conversionBadge}>
+                  <Text style={styles.conversionText}>
+                    {item.conversion_rate ? `${item.conversion_rate.toFixed(1)}%` : '0%'}
+                  </Text>
+                </View>
               </View>
-              <View style={styles.referrerInfo}>
-                <Text style={styles.referrerName}>{getReferrerName(referrer)}</Text>
-                <Text style={styles.referrerStats}>
-                  {referrer.partner_code ? `${referrer.partner_code} • ` : ''}
-                  {referrer.referral_count || 0} referrals • {referrer.children_count || 0} team
-                </Text>
+
+              <View style={styles.metricsRow}>
+                <View style={styles.metricItem}>
+                  <Icon name="user-plus" size={16} color={colors.primary} />
+                  <Text style={styles.metricValue}>{item.referral_count || 0}</Text>
+                  <Text style={styles.metricLabel}>Referrals</Text>
+                </View>
+                <View style={styles.metricItem}>
+                  <Icon name="check-circle" size={16} color={colors.success} />
+                  <Text style={styles.metricValue}>{item.conversion_count || 0}</Text>
+                  <Text style={styles.metricLabel}>Converted</Text>
+                </View>
+                <View style={styles.metricItem}>
+                  <Icon name="credit-card" size={16} color={colors.accent} />
+                  <Text style={styles.metricValue}>₹{Number(item.total_commission || 0).toLocaleString()}</Text>
+                  <Text style={styles.metricLabel}>Commission</Text>
+                </View>
               </View>
-              <View style={styles.referrerMetrics}>
-                <Text style={styles.teamCommission}>
-                  {formatCurrency(referrer.team_commission)}
-                </Text>
-                <Text style={styles.revenueLabel}>Team Comm.</Text>
-              </View>
-            </View>
+
+              {item.top_product && (
+                <View style={styles.topProductRow}>
+                  <Text style={styles.topProductLabel}>Top Product:</Text>
+                  <Text style={styles.topProductValue}>{item.top_product}</Text>
+                </View>
+              )}
+
+              {item.recent_referrals && item.recent_referrals.length > 0 && (
+                <View style={styles.recentSection}>
+                  <Text style={styles.recentTitle}>Recent Referrals</Text>
+                  {item.recent_referrals.slice(0, 3).map((ref: any, idx: number) => (
+                    <View key={idx} style={styles.recentItem}>
+                      <Text style={styles.recentName}>{ref.customer_name || 'Customer'}</Text>
+                      <Text style={styles.recentStatus}>{ref.status || 'Pending'}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </Card>
           ))
         )}
       </View>
@@ -216,102 +230,114 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 20,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
     backgroundColor: colors.card,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  backBtn: {
+    padding: spacing.xs,
+  },
   title: {
-    fontSize: typography.sizes.xl,
-    fontWeight: typography.weights.bold,
-    color: colors.text,
-  },
-  refreshButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: colors.primary,
-  },
-  refreshButtonText: {
-    color: '#FFFFFF',
-    fontSize: typography.sizes.sm,
-    fontWeight: typography.weights.bold,
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    padding: 16,
-    gap: 12,
-  },
-  statCard: {
-    width: '48%',
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  statLabel: {
-    fontSize: typography.sizes.xs,
-    color: colors.textLight,
-    marginBottom: 4,
-  },
-  statValue: {
-    fontSize: typography.sizes.xl,
-    fontWeight: typography.weights.bold,
-    color: colors.text,
-  },
-  sectionHeader: {
-    padding: 16,
-    paddingTop: 8,
-  },
-  sectionTitle: {
     fontSize: typography.sizes.lg,
     fontWeight: typography.weights.bold,
     color: colors.text,
+    marginLeft: spacing.sm,
   },
-  referrersContainer: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    gap: 12,
+  summaryCard: {
+    flexDirection: 'row',
+    margin: spacing.md,
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    padding: spacing.lg,
+    alignItems: 'center',
+  },
+  summaryItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  summaryValue: {
+    fontSize: typography.sizes.xl,
+    fontWeight: typography.weights.bold,
+    color: colors.primary,
+  },
+  summaryLabel: {
+    fontSize: typography.sizes.xs,
+    color: colors.textLight,
+    marginTop: 4,
+  },
+  summaryDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: colors.border,
+  },
+  filterContainer: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+  },
+  filterChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 20,
+    backgroundColor: colors.bg,
+    marginRight: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  filterChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  filterChipText: {
+    fontSize: typography.sizes.sm,
+    color: colors.text,
+  },
+  filterChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: typography.weights.bold,
+  },
+  searchContainer: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.bg,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: spacing.sm,
+    fontSize: typography.sizes.sm,
+    color: colors.text,
+  },
+  referralContainer: {
+    padding: spacing.md,
+    gap: spacing.md,
   },
   emptyContainer: {
-    padding: 40,
+    padding: spacing.xl * 2,
     alignItems: 'center',
   },
   emptyText: {
+    marginTop: spacing.md,
     fontSize: typography.sizes.md,
     color: colors.textLight,
   },
-  referrerCard: {
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    padding: 16,
+  referralCard: {
+    padding: spacing.md,
+  },
+  cardHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  rankBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  rankText: {
-    color: '#FFFFFF',
-    fontSize: typography.sizes.sm,
-    fontWeight: typography.weights.bold,
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: spacing.md,
   },
   referrerInfo: {
     flex: 1,
@@ -320,22 +346,82 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.md,
     fontWeight: typography.weights.bold,
     color: colors.text,
-    marginBottom: 4,
   },
-  referrerStats: {
+  referrerCode: {
+    fontSize: typography.sizes.sm,
+    color: colors.textLight,
+    marginTop: 2,
+  },
+  conversionBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: '#10B981',
+  },
+  conversionText: {
+    color: '#FFFFFF',
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: spacing.md,
+    paddingVertical: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  metricItem: {
+    alignItems: 'center',
+  },
+  metricValue: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+    marginTop: 4,
+  },
+  metricLabel: {
+    fontSize: typography.sizes.xs,
+    color: colors.textLight,
+    marginTop: 2,
+  },
+  topProductRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  topProductLabel: {
     fontSize: typography.sizes.xs,
     color: colors.textLight,
   },
-  referrerMetrics: {
-    alignItems: 'flex-end',
+  topProductValue: {
+    fontSize: typography.sizes.sm,
+    color: colors.text,
+    fontWeight: typography.weights.semibold,
   },
-  teamCommission: {
-    fontSize: typography.sizes.md,
+  recentSection: {
+    marginTop: spacing.sm,
+  },
+  recentTitle: {
+    fontSize: typography.sizes.sm,
     fontWeight: typography.weights.bold,
-    color: '#10B981',
-    marginBottom: 2,
+    color: colors.text,
+    marginBottom: spacing.xs,
   },
-  revenueLabel: {
+  recentItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  recentName: {
+    fontSize: typography.sizes.xs,
+    color: colors.text,
+  },
+  recentStatus: {
     fontSize: typography.sizes.xs,
     color: colors.textLight,
   },

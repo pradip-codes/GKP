@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
+import { useTheme } from '../../../contexts/ThemeContext';
 import { colors } from '../../../theme/colors';
 import { typography } from '../../../theme/typography';
 import { spacing } from '../../../theme/spacing';
@@ -45,6 +46,7 @@ interface AttendanceRecord {
 }
 
 export default function SuperAdminAttendanceScreen() {
+  const { colors } = useTheme();
   const [activeTab, setActiveTab] = useState<'today' | 'history' | 'enrollment'>('today');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -52,6 +54,12 @@ export default function SuperAdminAttendanceScreen() {
   const [summary, setSummary] = useState<AttendanceSummary | null>(null);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  const attendanceTabs = [
+    { id: 'today', label: 'Today', icon: '📅' },
+    { id: 'history', label: 'History', icon: '📜' },
+    { id: 'enrollment', label: 'Biometric Enrollment', icon: '🔐' },
+  ];
 
   // ── Biometric Enrolment ────────────────────────────────────────
   const [missingList, setMissingList] = useState<any[]>([]);

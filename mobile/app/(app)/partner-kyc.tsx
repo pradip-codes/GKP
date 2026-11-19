@@ -14,10 +14,14 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePickerVideo from 'expo-image-picker';
+import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { spacing } from '../../theme/spacing';
+import apiClient from '../../services/api';
 import {
   fetchPartnerKycDetails,
   fetchPartnerKycStatus,
@@ -43,6 +47,8 @@ export default function PartnerKycScreen() {
   const [bankName, setBankName] = useState<string>('');
   const [accountHolderName, setAccountHolderName] = useState<string>('');
   const [chequeImageUri, setChequeImageUri] = useState<string | null>(null);
+  const [videoUri, setVideoUri] = useState<string | null>(null);
+  const [uploadingVideo, setUploadingVideo] = useState<boolean>(false);
 
   const loadKyc = useCallback(async (isRefresh = false) => {
     try {
@@ -90,6 +96,55 @@ export default function PartnerKycScreen() {
       }
     } catch (err) {
       Alert.alert('Error', 'Failed to select image');
+    }
+  };
+
+  const handlePickVideo = async () => {
+    try {
+      const permission = await ImagePickerVideo.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permission Denied', 'Storage permission is required to upload video.');
+        return;
+      }
+
+      const result = await ImagePickerVideo.launchImageLibraryAsync({
+        mediaTypes: ImagePickerVideo.MediaTypeOptions.Videos,
+        allowsEditing: false,
+        quality: 1,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        setVideoUri(result.assets[0].uri);
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Failed to select video');
+    }
+  };
+
+  const handleUploadVideo = async () => {
+    if (!videoUri) {
+      Alert.alert('No Video Selected', 'Please select a video first.');
+      return;
+    }
+
+    try {
+      setUploadingVideo(true);
+      const formData = new FormData();
+      formData.append('video', {
+        uri: videoUri,
+        type: 'video/mp4',
+        name: 'kyc_verification_video.mp4',
+      } as any);
+
+      await apiClient.post('/partner/kyc/video', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      Alert.alert('Success', 'Video uploaded successfully for face verification.');
+      loadKyc();
+    } catch (err: any) {
+      Alert.alert('Error', err.response?.data?.message || 'Failed to upload video');
+    } finally {
+      setUploadingVideo(false);
     }
   };
 
@@ -294,6 +349,41 @@ export default function PartnerKycScreen() {
           >
             <Text style={styles.saveBtnText}>Save Bank Details</Text>
           </TouchableOpacity>
+        </View>
+
+        {/* Step 3: Face Verification Video */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.stepNum}>
+              <Text style={styles.stepNumText}>3</Text>
+            </View>
+            <Text style={styles.sectionTitle}>Face Verification Video</Text>
+          </View>
+
+          <Text style={styles.inputDescription}>
+            Upload a short video (max 30 seconds) of yourself holding your PAN card for identity verification.
+          </Text>
+
+          <TouchableOpacity style={styles.uploadBtn} onPress={handlePickVideo}>
+            <Icon name="video" size={16} color={colors.primary} />
+            <Text style={styles.uploadBtnText}>
+              {videoUri ? 'Video Selected ✓' : 'Select Verification Video'}
+            </Text>
+          </TouchableOpacity>
+
+          {videoUri && (
+            <TouchableOpacity
+              style={[styles.saveBtn, uploadingVideo && styles.btnDisabled]}
+              onPress={handleUploadVideo}
+              disabled={uploadingVideo}
+            >
+              {uploadingVideo ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.saveBtnText}>Upload Video</Text>
+              )}
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Final Submit for Review */}

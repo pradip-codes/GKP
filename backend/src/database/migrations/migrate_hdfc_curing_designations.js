@@ -1,3 +1,17 @@
+const path = require('path');
+const fs = require('fs');
+
+const envPaths = [
+  path.resolve(__dirname, '../../.env'),
+  path.resolve(__dirname, '../../../.env'),
+];
+for (const p of envPaths) {
+  if (fs.existsSync(p)) {
+    require('dotenv').config({ path: p });
+    break;
+  }
+}
+
 const { query } = require('../../config/database');
 const logger = require('../../config/logger');
 
@@ -97,5 +111,17 @@ const migrateHdfcCuringDesignations = async () => {
     throw err;
   }
 };
+
+if (require.main === module) {
+  migrateHdfcCuringDesignations()
+    .then(() => {
+      logger.info('HDFC Curing Designations migration complete');
+      process.exit(0);
+    })
+    .catch((err) => {
+      logger.error('HDFC Curing Designations migration failed:', err);
+      process.exit(1);
+    });
+}
 
 module.exports = { migrateHdfcCuringDesignations };

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import apiClient from '../../services/api';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -29,6 +30,7 @@ const CATEGORY_GROUPS: Record<string, string[]> = {
 };
 
 export default function CategoryOverviewScreen() {
+  const { colors } = useTheme();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<CategoryStats[]>([]);

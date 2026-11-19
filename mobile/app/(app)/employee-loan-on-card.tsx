@@ -14,6 +14,7 @@ import {
   Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
@@ -37,6 +38,7 @@ interface LoanOffer {
 const BANK_FILTERS = ['ALL', 'HDFC', 'ICICI', 'SBI', 'AXIS'];
 
 export default function EmployeeLoanOnCreditCardScreen() {
+  const { colors } = useTheme();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);

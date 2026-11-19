@@ -341,3 +341,44 @@ export const acceptTermsAndConditions = async () => {
     throw err.response?.data || { success: false, message: 'Failed to accept terms' };
   }
 };
+
+/**
+ * Employee Settings & Preferences
+ */
+export interface EmployeeSettings {
+  push_notifications_enabled: boolean;
+  email_alerts_enabled: boolean;
+  sms_alerts_enabled: boolean;
+  sound_enabled: boolean;
+}
+
+export const fetchEmployeeSettings = async (): Promise<EmployeeSettings | null> => {
+  try {
+    const res = await apiClient.get('/employee/settings');
+    if (res.data?.success && res.data?.data) {
+      return res.data.data;
+    }
+    return null;
+  } catch (err) {
+    console.error('Failed to fetch employee settings:', err);
+    return null;
+  }
+};
+
+export const updateEmployeeSettings = async (settings: Partial<EmployeeSettings>) => {
+  try {
+    const res = await apiClient.put('/employee/settings', settings);
+    return res.data;
+  } catch (err: any) {
+    throw err.response?.data || { success: false, message: 'Failed to update settings' };
+  }
+};
+
+export const requestAccountDeletion = async (reason?: string) => {
+  try {
+    const res = await apiClient.post('/employee/request-deletion', { reason });
+    return res.data;
+  } catch (err: any) {
+    throw err.response?.data || { success: false, message: 'Failed to request account deletion' };
+  }
+};

@@ -12,6 +12,7 @@ import {
   Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTheme } from '../../../contexts/ThemeContext';
 import { colors } from '../../../theme/colors';
 import { typography } from '../../../theme/typography';
 import { spacing } from '../../../theme/spacing';
@@ -24,6 +25,7 @@ import {
 } from '../../../services/super-admin.service';
 
 export default function SuperAdminBanksScreen() {
+  const { colors } = useTheme();
   const router = useRouter();
   const [banks, setBanks] = useState<any[]>([]);
   const [admins, setAdmins] = useState<any[]>([]);

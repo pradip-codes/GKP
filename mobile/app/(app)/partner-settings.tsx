@@ -9,6 +9,7 @@ import {
   Alert,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { Card } from '../../components/Card';
@@ -16,6 +17,7 @@ import { Icon } from '../../components/Icon';
 import { useAuth } from '../../contexts/AuthContext';
 
 export default function PartnerSettingsScreen() {
+  const { colors } = useTheme();
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
 

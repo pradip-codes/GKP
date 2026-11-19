@@ -1,372 +1,430 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  RefreshControl,
-  SafeAreaView,
-  Share,
+  ActivityIndicator,
   Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Icon } from '../../components/Icon';
+import { useTheme } from '../../contexts/ThemeContext';
+import apiClient from '../../services/api';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { spacing } from '../../theme/spacing';
-import { fetchPartnerShareTracking } from '../../services/partner.service';
-import { useAuth } from '../../contexts/AuthContext';
+import { Card } from '../../components/Card';
+import { Icon } from '../../components/Icon';
 
-interface ShareTrackingStats {
-  total_leads: number;
-  submitted_leads: number;
-  conversion_rate: string;
-  recent_leads: any[];
+interface ShareTrackingData {
+  id: string;
+  customer_name?: string;
+  customer_mobile?: string;
+  product_name?: string;
+  share_link?: string;
+  total_clicks?: number;
+  unique_clicks?: number;
+  conversions?: number;
+  last_clicked_at?: string;
+  created_at?: string;
+  status?: string;
 }
 
-const EMPTY_STATS: ShareTrackingStats = {
-  total_leads: 0,
-  submitted_leads: 0,
-  conversion_rate: '0%',
-  recent_leads: [],
-};
-
-const CONVERTED_STATUSES = ['SUBMITTED', 'APPROVED'];
-
 export default function ShareTrackingScreen() {
+  const { colors } = useTheme();
   const router = useRouter();
-  const { user } = useAuth();
-
-  const [loading, setLoading] = useState<boolean>(true);
-  const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [stats, setStats] = useState<ShareTrackingStats>(EMPTY_STATS);
-
-  const partnerCode = (user as any)?.partner_code || (user as any)?.employee_code || 'GKP';
-
-  const loadStats = useCallback(async (isRefresh = false) => {
-    try {
-      if (isRefresh) setRefreshing(true);
-      else setLoading(true);
-
-      const res = await fetchPartnerShareTracking({ limit: 100 });
-
-      // GET /partner/share-tracking returns a paginated list of leads, not an
-      // aggregate: { success, message, data: rows[], pagination, timestamp }.
-      const rows: any[] = Array.isArray(res?.data) ? res.data : [];
-      const total = res?.pagination?.total ?? rows.length;
-      const submitted = rows.filter(
-        (r: any) =>
-          CONVERTED_STATUSES.includes(String(r.status || '').toUpperCase()) ||
-          String(r.pipeline_stage || '').toLowerCase() === 'submitted'
-      ).length;
-
-      setStats({
-        total_leads: total,
-        submitted_leads: submitted,
-        conversion_rate: total > 0 ? `${((submitted / total) * 100).toFixed(1)}%` : '0%',
-        recent_leads: rows.map((r: any) => ({
-          id: r.id,
-          product: r.product_name || 'Product',
-          customer: r.customer_name || 'Customer',
-          city: r.city || null,
-          status: String(r.status || 'pending').toUpperCase(),
-          date: r.created_at ? new Date(r.created_at).toLocaleString() : '',
-        })),
-      });
-    } catch (e) {
-      setStats(EMPTY_STATS);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+  const [loading, setLoading] = useState(true);
+  const [trackingData, setTrackingData] = useState<ShareTrackingData[]>([]);
+  const [searchText, setSearchText] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
 
   useEffect(() => {
-    loadStats();
-  }, [loadStats]);
+    fetchShareTracking();
+  }, [statusFilter]);
 
-  const handleShareMasterLink = async () => {
+  const fetchShareTracking = async () => {
     try {
-      const shareUrl = `https://gharkapaisa.in/apply/${partnerCode}`;
-      await Share.share({
-        title: 'Apply with GharKaPaisa',
-        message: `Apply for Credit Cards, Personal Loans & Insurance with instant approvals on GharKaPaisa:\n${shareUrl}`,
-        url: shareUrl,
-      });
-    } catch (err) {
-      Alert.alert('Share', 'Could not open share dialog.');
+      setLoading(true);
+      const params: Record<string, string> = { limit: '100' };
+      if (statusFilter !== 'all') params.status = statusFilter;
+      const response = await apiClient.get('/leads/tracking', { params });
+      setTrackingData(response.data?.data || []);
+    } catch (error) {
+      console.error('Failed to fetch share tracking:', error);
+      Alert.alert('Error', 'Failed to load share tracking data');
+    } finally {
+      setLoading(false);
     }
   };
 
+  const filteredData = trackingData.filter(item => {
+    const haystack = [
+      item.customer_name,
+      item.customer_mobile,
+      item.product_name,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(searchText.toLowerCase());
+  });
+
+  const statusOptions = ['all', 'active', 'converted', 'expired'];
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={styles.loadingText}>Loading share tracking...</Text>
+      </View>
+    );
+  }
+
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => loadStats(true)} colors={[colors.primary]} />
-        }
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Icon name="arrow-left" size={20} color={colors.text} />
-          </TouchableOpacity>
-          <View style={styles.headerTextCol}>
-            <Text style={styles.title}>Share Link Tracking</Text>
-            <Text style={styles.subtitle}>Real-time analytics for your promotional links</Text>
-          </View>
+    <ScrollView style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <Icon name="arrow-left" size={24} color={colors.text} />
+        </TouchableOpacity>
+        <Text style={styles.title}>Share Tracking</Text>
+        <View style={{ width: 24 }} />
+      </View>
+
+      <View style={styles.searchContainer}>
+        <View style={styles.searchBox}>
+          <Icon name="search" size={18} color={colors.textLight} />
+          <Text style={styles.searchInput} placeholder="Search shares..." placeholderTextColor={colors.textLight}>
+            {searchText || 'Search shares...'}
+          </Text>
         </View>
+      </View>
 
-        {/* Master Referral Link Card */}
-        <View style={styles.masterCard}>
-          <Text style={styles.masterSubtitle}>YOUR MASTER PRODUCT LINK</Text>
-          <Text style={styles.masterUrl}>https://gharkapaisa.in/apply/{partnerCode}</Text>
+      <View style={styles.filterContainer}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {statusOptions.map((status) => (
+            <TouchableOpacity
+              key={status}
+              style={[
+                styles.filterChip,
+                statusFilter === status && styles.filterChipActive
+              ]}
+              onPress={() => setStatusFilter(status)}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  statusFilter === status && styles.filterChipTextActive
+                ]}
+              >
+                {status.charAt(0).toUpperCase() + status.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
 
-          <TouchableOpacity style={styles.masterShareBtn} onPress={handleShareMasterLink}>
-            <Icon name="share-2" size={16} color="#FFFFFF" />
-            <Text style={styles.masterShareBtnText}>Share Master Link 📲</Text>
-          </TouchableOpacity>
+      <View style={styles.summaryCard}>
+        <View style={styles.summaryItem}>
+          <Text style={styles.summaryValue}>{trackingData.length}</Text>
+          <Text style={styles.summaryLabel}>Total Shares</Text>
         </View>
-
-        {/* KPI Metrics */}
-        <Text style={styles.sectionTitle}>Link Performance</Text>
-        <View style={styles.kpiRow}>
-          <View style={styles.kpiBox}>
-            <Text style={styles.kpiLabel}>Shared Leads</Text>
-            <Text style={styles.kpiValue}>{stats.total_leads}</Text>
-          </View>
-          <View style={styles.kpiBox}>
-            <Text style={styles.kpiLabel}>Submitted</Text>
-            <Text style={[styles.kpiValue, { color: '#059669' }]}>{stats.submitted_leads}</Text>
-          </View>
-          <View style={styles.kpiBox}>
-            <Text style={styles.kpiLabel}>Conversion</Text>
-            <Text style={[styles.kpiValue, { color: colors.primary }]}>{stats.conversion_rate}</Text>
-          </View>
+        <View style={styles.summaryDivider} />
+        <View style={styles.summaryItem}>
+          <Text style={styles.summaryValue}>
+            {trackingData.reduce((sum, item) => sum + (item.total_clicks || 0), 0)}
+          </Text>
+          <Text style={styles.summaryLabel}>Total Clicks</Text>
         </View>
+        <View style={styles.summaryDivider} />
+        <View style={styles.summaryItem}>
+          <Text style={styles.summaryValue}>
+            {trackingData.reduce((sum, item) => sum + (item.conversions || 0), 0)}
+          </Text>
+          <Text style={styles.summaryLabel}>Conversions</Text>
+        </View>
+      </View>
 
-        {/* Recent Share Activity */}
-        <Text style={[styles.sectionTitle, { marginTop: spacing.md }]}>Live Share Activity</Text>
-        {stats.recent_leads.length === 0 ? (
-          <View style={styles.emptyBox}>
-            <Icon name="link" size={28} color={colors.textLight} />
-            <Text style={styles.emptyText}>
-              No share activity yet. Generate a product link from the Products screen and share it with a customer.
-            </Text>
+      <View style={styles.trackingContainer}>
+        {filteredData.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Icon name="share-2" size={48} color={colors.textLight} />
+            <Text style={styles.emptyText}>No share tracking data found</Text>
           </View>
         ) : (
-          stats.recent_leads.map((lead: any) => (
-            <View key={lead.id} style={styles.clickCard}>
-              <View style={styles.clickLeft}>
-                <View style={styles.clickIconBg}>
-                  <Icon name="link" size={14} color={colors.primary} />
+          filteredData.map((item) => (
+            <Card key={item.id} style={styles.trackingCard}>
+              <View style={styles.cardHeader}>
+                <View style={styles.customerInfo}>
+                  <Text style={styles.customerName}>{item.customer_name || 'Unknown'}</Text>
+                  <Text style={styles.customerMobile}>{item.customer_mobile || '—'}</Text>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.clickProduct}>{lead.product}</Text>
-                  <Text style={styles.clickMeta}>
-                    {lead.customer}{lead.city ? ` • ${lead.city}` : ''}{lead.date ? ` • ${lead.date}` : ''}
+                <View
+                  style={[
+                    styles.statusBadge,
+                    { backgroundColor: getStatusColor(item.status || 'active') }
+                  ]}
+                >
+                  <Text style={styles.statusText}>
+                    {(item.status || 'active').charAt(0).toUpperCase() + (item.status || 'active').slice(1)}
                   </Text>
                 </View>
               </View>
-              <View
-                style={[
-                  styles.statusTag,
-                  CONVERTED_STATUSES.includes(lead.status) ? styles.statusTagLead : styles.statusTagClick,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.statusTagText,
-                    CONVERTED_STATUSES.includes(lead.status) ? styles.statusTagLeadText : styles.statusTagClickText,
-                  ]}
-                >
-                  {lead.status}
-                </Text>
+
+              <Text style={styles.productLabel}>{item.product_name || 'Product'}</Text>
+
+              <View style={styles.metricsRow}>
+                <View style={styles.metricItem}>
+                  <Icon name="mouse-pointer" size={16} color={colors.primary} />
+                  <Text style={styles.metricValue}>{item.total_clicks || 0}</Text>
+                  <Text style={styles.metricLabel}>Clicks</Text>
+                </View>
+                <View style={styles.metricItem}>
+                  <Icon name="users" size={16} color={colors.primary} />
+                  <Text style={styles.metricValue}>{item.unique_clicks || 0}</Text>
+                  <Text style={styles.metricLabel}>Unique</Text>
+                </View>
+                <View style={styles.metricItem}>
+                  <Icon name="check-circle" size={16} color={colors.primary} />
+                  <Text style={styles.metricValue}>{item.conversions || 0}</Text>
+                  <Text style={styles.metricLabel}>Converted</Text>
+                </View>
               </View>
-            </View>
+
+              {item.last_clicked_at && (
+                <Text style={styles.lastClickText}>
+                  Last clicked: {new Date(item.last_clicked_at).toLocaleDateString()}
+                </Text>
+              )}
+
+              <TouchableOpacity
+                style={styles.viewLinkButton}
+                onPress={() => {
+                  if (item.share_link) {
+                    Alert.alert('Share Link', item.share_link);
+                  }
+                }}
+              >
+                <Icon name="link" size={14} color={colors.primary} />
+                <Text style={styles.viewLinkText}>View Link</Text>
+              </TouchableOpacity>
+            </Card>
           ))
         )}
-      </ScrollView>
-    </SafeAreaView>
+      </View>
+    </ScrollView>
   );
 }
 
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'active': return '#10B981';
+    case 'converted': return '#3B82F6';
+    case 'expired': return '#EF4444';
+    default: return '#6B7280';
+  }
+};
+
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
   container: {
     flex: 1,
+    backgroundColor: colors.bg,
   },
-  content: {
-    padding: spacing.md,
-    paddingBottom: spacing.xxl,
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.bg,
+  },
+  loadingText: {
+    marginTop: 12,
+    color: colors.textLight,
+    fontSize: typography.sizes.sm,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: spacing.md,
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   backBtn: {
-    padding: 8,
-    marginRight: 8,
-    borderRadius: 8,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  headerTextCol: {
-    flex: 1,
+    padding: spacing.xs,
   },
   title: {
     fontSize: typography.sizes.lg,
-    fontWeight: '800',
+    fontWeight: typography.weights.bold,
     color: colors.text,
   },
-  subtitle: {
+  searchContainer: {
+    padding: spacing.md,
+    backgroundColor: colors.card,
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.bg,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: spacing.sm,
+    fontSize: typography.sizes.sm,
+    color: colors.text,
+  },
+  filterContainer: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+    backgroundColor: colors.card,
+  },
+  filterChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 20,
+    backgroundColor: colors.bg,
+    marginRight: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  filterChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  filterChipText: {
+    fontSize: typography.sizes.sm,
+    color: colors.text,
+  },
+  filterChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: typography.weights.bold,
+  },
+  summaryCard: {
+    flexDirection: 'row',
+    margin: spacing.md,
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    padding: spacing.lg,
+    alignItems: 'center',
+  },
+  summaryItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  summaryValue: {
+    fontSize: typography.sizes.xl,
+    fontWeight: typography.weights.bold,
+    color: colors.primary,
+  },
+  summaryLabel: {
+    fontSize: typography.sizes.xs,
+    color: colors.textLight,
+    marginTop: 4,
+  },
+  summaryDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: colors.border,
+  },
+  trackingContainer: {
+    padding: spacing.md,
+    gap: spacing.md,
+  },
+  emptyContainer: {
+    padding: spacing.xl * 2,
+    alignItems: 'center',
+  },
+  emptyText: {
+    marginTop: spacing.md,
+    fontSize: typography.sizes.md,
+    color: colors.textLight,
+  },
+  trackingCard: {
+    padding: spacing.md,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: spacing.sm,
+  },
+  customerInfo: {
+    flex: 1,
+  },
+  customerName: {
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+  },
+  customerMobile: {
+    fontSize: typography.sizes.sm,
+    color: colors.textLight,
+    marginTop: 2,
+  },
+  statusBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusText: {
+    color: '#FFFFFF',
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+  },
+  productLabel: {
+    fontSize: typography.sizes.sm,
+    color: colors.textLight,
+    marginBottom: spacing.md,
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: spacing.md,
+    paddingVertical: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  metricItem: {
+    alignItems: 'center',
+  },
+  metricValue: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+    marginTop: 4,
+  },
+  metricLabel: {
     fontSize: typography.sizes.xs,
     color: colors.textLight,
     marginTop: 2,
   },
-  masterCard: {
-    backgroundColor: '#1E293B',
-    borderRadius: 16,
-    padding: spacing.md,
+  lastClickText: {
+    fontSize: typography.sizes.xs,
+    color: colors.textLight,
     marginBottom: spacing.md,
   },
-  masterSubtitle: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#94A3B8',
-    letterSpacing: 1,
-  },
-  masterUrl: {
-    fontSize: typography.sizes.sm,
-    fontWeight: '700',
-    color: '#38BDF8',
-    marginVertical: 8,
-  },
-  masterShareBtn: {
+  viewLinkButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: colors.primary,
-    borderRadius: 10,
-    paddingVertical: 12,
-    marginTop: 4,
-  },
-  masterShareBtnText: {
-    color: '#FFFFFF',
-    fontSize: typography.sizes.sm,
-    fontWeight: '800',
-  },
-  sectionTitle: {
-    fontSize: typography.sizes.sm,
-    fontWeight: '700',
-    color: colors.text,
-    marginBottom: spacing.xs,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  kpiRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: spacing.sm,
-  },
-  kpiBox: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    backgroundColor: colors.bg,
+    paddingVertical: spacing.sm,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    padding: spacing.sm,
-    alignItems: 'center',
+    borderColor: colors.border,
   },
-  kpiLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: colors.textLight,
-    marginBottom: 4,
-    textAlign: 'center',
-  },
-  kpiValue: {
-    fontSize: typography.sizes.md,
-    fontWeight: '800',
-    color: colors.text,
-  },
-  clickCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    padding: spacing.md,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  clickLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flex: 1,
-  },
-  clickIconBg: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#EEF2FF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  clickProduct: {
+  viewLinkText: {
+    marginLeft: spacing.sm,
     fontSize: typography.sizes.sm,
-    fontWeight: '700',
-    color: colors.text,
-  },
-  clickMeta: {
-    fontSize: 11,
-    color: colors.textLight,
-    marginTop: 2,
-  },
-  statusTag: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  statusTagLead: {
-    backgroundColor: '#ECFDF5',
-  },
-  statusTagClick: {
-    backgroundColor: '#F1F5F9',
-  },
-  statusTagText: {
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  emptyBox: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    padding: spacing.lg,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 12,
-    color: colors.textLight,
-    textAlign: 'center',
-    marginTop: spacing.xs,
-    lineHeight: 18,
-  },
-  statusTagLeadText: {
-    color: '#059669',
-  },
-  statusTagClickText: {
-    color: '#64748B',
+    color: colors.primary,
+    fontWeight: typography.weights.semibold,
   },
 });

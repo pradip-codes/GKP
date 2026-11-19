@@ -13,6 +13,7 @@ import {
   Share,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
 import { createLead, CreateLeadPayload, sendLeadOtp, verifyLeadOtp } from '../../services/lead.service';
 import {
@@ -36,6 +37,7 @@ const PROCESS_TYPES = [
 const BUSINESS_TYPES = ['Micro-Enterprise', 'Small-Enterprise', 'Medium-Enterprise', 'Large-Enterprise', 'Self-Employed', 'Salaried'];
 
 export default function AddLeadScreen() {
+  const { colors } = useTheme();
   const router = useRouter();
 
   const [products, setProducts] = useState<any[]>([]);

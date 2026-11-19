@@ -13,6 +13,7 @@ import {
   Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';

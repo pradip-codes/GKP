@@ -14,6 +14,7 @@ import {
   Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTheme } from '../../../contexts/ThemeContext';
 import { Icon } from '../../../components/Icon';
 import { colors } from '../../../theme/colors';
 import { spacing } from '../../../theme/spacing';
@@ -57,6 +58,7 @@ const DEFAULT_SCHEDULE: Record<string, WorkingDaySchedule> = {
 };
 
 export default function AdminWorkingHoursScreen() {
+  const { colors } = useTheme();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'schedule' | 'extensions' | 'policies' | 'holidays'>('schedule');
 

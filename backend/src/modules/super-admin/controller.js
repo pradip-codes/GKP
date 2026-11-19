@@ -1810,6 +1810,56 @@ const getPartnersCommissionOverview = async (req, res, next) => {
   }
 };
 
+const getDashboardStats = async (req, res, next) => {
+  try {
+    // Get key dashboard metrics for super-admin
+    const [
+      totalPartners,
+      activePartners,
+      totalApplications,
+      approvedApplications,
+      totalLeads,
+      totalCommission,
+      pendingWithdrawals,
+      pendingKYC
+    ] = await Promise.all([
+      query(`SELECT COUNT(*) as count FROM partner_profiles WHERE status = 'active'`),
+      query(`SELECT COUNT(*) as count FROM partner_profiles`),
+      query(`SELECT COUNT(*) as count FROM applications`),
+      query(`SELECT COUNT(*) as count FROM applications WHERE LOWER(status) LIKE '%approved%'`),
+      query(`SELECT COUNT(*) as count FROM leads`),
+      query(`SELECT COALESCE(SUM(commission_amount), 0) as total FROM partner_commission`),
+      query(`SELECT COUNT(*) as count FROM wallet_withdrawals WHERE status = 'pending'`),
+      query(`SELECT COUNT(*) as count FROM partner_profiles WHERE kyc_status = 'pending'`)
+    ]);
+
+    return success(res, {
+      partners: {
+        total: parseInt(totalPartners.rows[0]?.count || 0),
+        active: parseInt(activePartners.rows[0]?.count || 0)
+      },
+      applications: {
+        total: parseInt(totalApplications.rows[0]?.count || 0),
+        approved: parseInt(approvedApplications.rows[0]?.count || 0)
+      },
+      leads: {
+        total: parseInt(totalLeads.rows[0]?.count || 0)
+      },
+      commission: {
+        total: parseFloat(totalCommission.rows[0]?.total || 0)
+      },
+      withdrawals: {
+        pending: parseInt(pendingWithdrawals.rows[0]?.count || 0)
+      },
+      kyc: {
+        pending: parseInt(pendingKYC.rows[0]?.count || 0)
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   createCommissionRule,
   getCommissionRules,
@@ -1830,5 +1880,6 @@ module.exports = {
   verifyDocument,
   getReferralAnalytics,
   getOperationHeads,
-  assignBankOperationHead
+  assignBankOperationHead,
+  getDashboardStats
 };

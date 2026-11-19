@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,18 +7,64 @@ import {
   TouchableOpacity,
   Switch,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { Card } from '../../components/Card';
 import { Icon } from '../../components/Icon';
+import {
+  fetchEmployeeSettings,
+  updateEmployeeSettings,
+  requestAccountDeletion,
+  EmployeeSettings,
+} from '../../services/employee.service';
 
 export default function EmployeeSettingsScreen() {
-  const [notifications, setNotifications] = useState(true);
-  const [emailAlerts, setEmailAlerts] = useState(true);
-  const [smsAlerts, setSmsAlerts] = useState(true);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const { colors } = useTheme();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [settings, setSettings] = useState<EmployeeSettings>({
+    push_notifications_enabled: true,
+    email_alerts_enabled: true,
+    sms_alerts_enabled: true,
+    sound_enabled: true,
+  });
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      const data = await fetchEmployeeSettings();
+      if (data) {
+        setSettings(data);
+      }
+    } catch (err) {
+      console.error('Failed to load settings:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSettingChange = async (key: keyof EmployeeSettings, value: boolean) => {
+    const updatedSettings = { ...settings, [key]: value };
+    setSettings(updatedSettings);
+
+    try {
+      setSaving(true);
+      await updateEmployeeSettings({ [key]: value });
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to update setting');
+      // Revert on error
+      setSettings(settings);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleDeleteAccount = () => {
     Alert.alert(
@@ -26,12 +72,42 @@ export default function EmployeeSettingsScreen() {
       'Are you sure you want to delete your account? This action cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => {
-          Alert.alert('Success', 'Account deletion request submitted.');
-        }}
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const reason = 'User requested deletion';
+              await requestAccountDeletion(reason);
+              Alert.alert(
+                'Request Submitted',
+                'Your account deletion request has been submitted. You will receive a confirmation email shortly.'
+              );
+            } catch (err: any) {
+              Alert.alert('Error', err.message || 'Failed to submit deletion request');
+            }
+          },
+        },
       ]
     );
   };
+
+  if (loading) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.bg }]}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <Icon name="arrow-left" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Employee Settings</Text>
+          <View style={{ width: 24 }} />
+        </View>
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.bg }]} showsVerticalScrollIndicator={false}>
@@ -51,21 +127,44 @@ export default function EmployeeSettingsScreen() {
               <Icon name="bell" size={20} color={colors.text} />
               <Text style={styles.settingLabel}>Push Notifications</Text>
             </View>
-            <Switch value={notifications} onValueChange={setNotifications} />
+            <Switch
+              value={settings.push_notifications_enabled}
+              onValueChange={(value) => handleSettingChange('push_notifications_enabled', value)}
+              disabled={saving}
+            />
           </View>
           <View style={styles.settingItem}>
             <View style={styles.settingLeft}>
               <Icon name="mail" size={20} color={colors.text} />
               <Text style={styles.settingLabel}>Email Alerts</Text>
             </View>
-            <Switch value={emailAlerts} onValueChange={setEmailAlerts} />
+            <Switch
+              value={settings.email_alerts_enabled}
+              onValueChange={(value) => handleSettingChange('email_alerts_enabled', value)}
+              disabled={saving}
+            />
           </View>
           <View style={styles.settingItem}>
             <View style={styles.settingLeft}>
               <Icon name="message-square" size={20} color={colors.text} />
               <Text style={styles.settingLabel}>SMS Alerts</Text>
             </View>
-            <Switch value={smsAlerts} onValueChange={setSmsAlerts} />
+            <Switch
+              value={settings.sms_alerts_enabled}
+              onValueChange={(value) => handleSettingChange('sms_alerts_enabled', value)}
+              disabled={saving}
+            />
+          </View>
+          <View style={styles.settingItem}>
+            <View style={styles.settingLeft}>
+              <Icon name="volume-2" size={20} color={colors.text} />
+              <Text style={styles.settingLabel}>Sound Enabled</Text>
+            </View>
+            <Switch
+              value={settings.sound_enabled}
+              onValueChange={(value) => handleSettingChange('sound_enabled', value)}
+              disabled={saving}
+            />
           </View>
         </Card>
 
@@ -95,6 +194,11 @@ const styles = StyleSheet.create({
   backButton: { padding: spacing.xs },
   headerTitle: { fontSize: 18, fontWeight: '800', color: colors.text },
   content: { padding: spacing.md },
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   sectionTitle: { fontSize: 16, fontWeight: '800', color: colors.text, marginBottom: spacing.md },
   settingCard: { marginBottom: spacing.md },
   settingItem: {

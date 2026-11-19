@@ -1,60 +1,72 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  ActivityIndicator,
+  Alert,
+  Modal,
+} from 'react-native';
+import { useRouter } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import apiClient from '../../services/api';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
+import { spacing } from '../../theme/spacing';
+import { Card } from '../../components/Card';
+import { Icon } from '../../components/Icon';
 
 interface CommissionRule {
   id: string;
-  product_id: string;
-  partner_id?: string | null;
-  commission_type: string;
-  commission_value: number;
-  effective_from?: string;
-  effective_to?: string | null;
-  created_at: string;
-  product_name?: string;
+  rule_name?: string;
+  designation?: string;
   product_category?: string;
-  first_name?: string;
-  last_name?: string;
-  partner_code?: string;
-}
-
-interface ProductOption {
-  id: string;
-  name: string;
+  bank_id?: string;
+  bank_name?: string;
+  commission_type?: 'percentage' | 'fixed';
+  commission_value?: number;
+  min_amount?: number;
+  max_amount?: number;
+  is_active?: boolean;
+  effective_from?: string;
+  effective_to?: string;
+  created_at?: string;
 }
 
 export default function CommissionRulesScreen() {
+  const { colors } = useTheme();
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [rules, setRules] = useState<CommissionRule[]>([]);
-  const [products, setProducts] = useState<ProductOption[]>([]);
+  const [searchText, setSearchText] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [editingRule, setEditingRule] = useState<CommissionRule | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  // Form state
-  const [productId, setProductId] = useState('');
-  const [commissionType, setCommissionType] = useState('fixed');
-  const [commissionValue, setCommissionValue] = useState('');
+  // Form state for new rule
+  const [formData, setFormData] = useState({
+    rule_name: '',
+    designation: '',
+    product_category: '',
+    bank_id: '',
+    commission_type: 'percentage' as 'percentage' | 'fixed',
+    commission_value: '',
+    min_amount: '',
+    max_amount: '',
+    effective_from: '',
+    effective_to: '',
+  });
 
   useEffect(() => {
     fetchCommissionRules();
-    fetchProducts();
   }, []);
-
-  const fetchProducts = async () => {
-    try {
-      const response = await apiClient.get('/products', { params: { limit: 200 } });
-      setProducts(response.data?.data || []);
-    } catch (error) {
-      console.error('Failed to fetch products:', error);
-    }
-  };
 
   const fetchCommissionRules = async () => {
     try {
       setLoading(true);
-      const response = await apiClient.get('/admin/commission-rules');
+      const response = await apiClient.get('/commission-rules', { params: { limit: '200' } });
       setRules(response.data?.data || []);
     } catch (error) {
       console.error('Failed to fetch commission rules:', error);
@@ -64,11 +76,16 @@ export default function CommissionRulesScreen() {
     }
   };
 
-  const resetForm = () => {
-    setEditingRule(null);
-    setProductId('');
-    setCommissionType('fixed');
-    setCommissionValue('');
+  const handleToggleActive = async (ruleId: string, currentStatus: boolean) => {
+    try {
+      await apiClient.put(`/commission-rules/${ruleId}`, {
+        is_active: !currentStatus,
+      });
+      fetchCommissionRules();
+    } catch (error) {
+      console.error('Failed to update rule:', error);
+      Alert.alert('Error', 'Failed to update rule status');
+    }
   };
 
   const handleDeleteRule = async (ruleId: string) => {
@@ -82,7 +99,7 @@ export default function CommissionRulesScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await apiClient.delete(`/admin/commission-rules/${ruleId}`);
+              await apiClient.delete(`/commission-rules/${ruleId}`);
               fetchCommissionRules();
             } catch (error) {
               console.error('Failed to delete rule:', error);
@@ -94,44 +111,63 @@ export default function CommissionRulesScreen() {
     );
   };
 
-  const handleSaveRule = async () => {
-    if (!productId || !commissionValue) {
-      Alert.alert('Required', 'Please select a product and enter a commission value');
+  const handleSubmitRule = async () => {
+    if (!formData.rule_name.trim()) {
+      Alert.alert('Required', 'Please enter a rule name');
+      return;
+    }
+    if (!formData.designation.trim()) {
+      Alert.alert('Required', 'Please enter a designation');
+      return;
+    }
+    if (!formData.commission_value) {
+      Alert.alert('Required', 'Please enter commission value');
       return;
     }
 
     try {
-      const payload: Record<string, any> = {
-        product_id: productId,
-        commission_type: commissionType,
-        commission_value: Number(commissionValue),
-        effective_from: new Date().toISOString().slice(0, 10),
+      setSubmitting(true);
+      const payload = {
+        rule_name: formData.rule_name.trim(),
+        designation: formData.designation.trim(),
+        product_category: formData.product_category.trim() || null,
+        bank_id: formData.bank_id.trim() || null,
+        commission_type: formData.commission_type,
+        commission_value: Number(formData.commission_value),
+        min_amount: formData.min_amount ? Number(formData.min_amount) : null,
+        max_amount: formData.max_amount ? Number(formData.max_amount) : null,
+        effective_from: formData.effective_from || null,
+        effective_to: formData.effective_to || null,
       };
-      if (editingRule?.partner_id) payload.partner_id = editingRule.partner_id;
 
-      await apiClient.post('/admin/commission-rule', payload);
-
+      await apiClient.post('/commission-rules', payload);
+      Alert.alert('Success', 'Commission rule created successfully');
       setShowAddModal(false);
-      resetForm();
+      setFormData({
+        rule_name: '',
+        designation: '',
+        product_category: '',
+        bank_id: '',
+        commission_type: 'percentage',
+        commission_value: '',
+        min_amount: '',
+        max_amount: '',
+        effective_from: '',
+        effective_to: '',
+      });
       fetchCommissionRules();
-      Alert.alert('Success', 'Commission rule saved successfully');
-    } catch (error) {
-      console.error('Failed to save rule:', error);
-      Alert.alert('Error', 'Failed to save commission rule');
+    } catch (error: any) {
+      Alert.alert('Error', error.response?.data?.message || 'Failed to create rule');
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const formatValue = (rule: CommissionRule) =>
-    rule.commission_type === 'percentage'
-      ? `${Number(rule.commission_value || 0)}%`
-      : `₹${Number(rule.commission_value || 0).toLocaleString('en-IN')}`;
-
-  const formatScope = (rule: CommissionRule) => {
-    const name = `${rule.first_name || ''} ${rule.last_name || ''}`.trim();
-    if (name) return name;
-    if (rule.partner_code) return rule.partner_code;
-    return 'Global (All Partners)';
-  };
+  const filteredRules = rules.filter(r =>
+    (r.rule_name || '').toLowerCase().includes(searchText.toLowerCase()) ||
+    (r.designation || '').toLowerCase().includes(searchText.toLowerCase()) ||
+    (r.bank_name || '').toLowerCase().includes(searchText.toLowerCase())
+  );
 
   if (loading) {
     return (
@@ -145,159 +181,240 @@ export default function CommissionRulesScreen() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <Icon name="arrow-left" size={24} color={colors.text} />
+        </TouchableOpacity>
         <Text style={styles.title}>Commission Rules</Text>
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => {
-            resetForm();
-            setShowAddModal(true);
-          }}
+          onPress={() => setShowAddModal(true)}
         >
-          <Text style={styles.addButtonText}>+ Add Rule</Text>
+          <Icon name="plus" size={20} color="#fff" />
         </TouchableOpacity>
       </View>
 
+      <View style={styles.searchContainer}>
+        <View style={styles.searchBox}>
+          <Icon name="search" size={18} color={colors.textLight} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search rules..."
+            value={searchText}
+            onChangeText={setSearchText}
+            placeholderTextColor={colors.textLight}
+          />
+        </View>
+      </View>
+
       <View style={styles.rulesContainer}>
-        {rules.length === 0 ? (
+        {filteredRules.length === 0 ? (
           <View style={styles.emptyContainer}>
+            <Icon name="percent" size={48} color={colors.textLight} />
             <Text style={styles.emptyText}>No commission rules found</Text>
           </View>
         ) : (
-          rules.map((rule) => (
-            <View key={rule.id} style={styles.ruleCard}>
+          filteredRules.map((rule) => (
+            <Card key={rule.id} style={styles.ruleCard}>
               <View style={styles.ruleHeader}>
                 <View style={styles.ruleInfo}>
-                  <Text style={styles.ruleName}>{rule.product_name || 'Unknown Product'}</Text>
-                  <Text style={styles.productName}>{formatScope(rule)}</Text>
+                  <Text style={styles.ruleName}>{rule.rule_name || 'Unnamed Rule'}</Text>
+                  <Text style={styles.designation}>{rule.designation || 'All Designations'}</Text>
                 </View>
-                <View style={styles.statusBadge}>
-                  <Text style={styles.statusText}>{rule.commission_type}</Text>
-                </View>
+                <TouchableOpacity
+                  onPress={() => handleToggleActive(rule.id, rule.is_active ?? true)}
+                >
+                  <View
+                    style={[
+                      styles.statusBadge,
+                      { backgroundColor: rule.is_active ? '#10B981' : '#EF4444' }
+                    ]}
+                  >
+                    <Text style={styles.statusText}>
+                      {rule.is_active ? 'Active' : 'Inactive'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
               </View>
 
               <View style={styles.ruleDetails}>
                 <View style={styles.detailItem}>
-                  <Text style={styles.detailLabel}>Value</Text>
-                  <Text style={styles.detailValue}>{formatValue(rule)}</Text>
+                  <Text style={styles.detailLabel}>Product Category</Text>
+                  <Text style={styles.detailValue}>{rule.product_category || 'All'}</Text>
                 </View>
                 <View style={styles.detailItem}>
-                  <Text style={styles.detailLabel}>Effective From</Text>
+                  <Text style={styles.detailLabel}>Bank</Text>
+                  <Text style={styles.detailValue}>{rule.bank_name || 'All Banks'}</Text>
+                </View>
+                <View style={styles.detailItem}>
+                  <Text style={styles.detailLabel}>Commission</Text>
                   <Text style={styles.detailValue}>
-                    {rule.effective_from
-                      ? new Date(rule.effective_from).toLocaleDateString()
-                      : '—'}
+                    {rule.commission_type === 'percentage'
+                      ? `${rule.commission_value ?? 0}%`
+                      : `₹${Number(rule.commission_value ?? 0).toLocaleString()}`}
                   </Text>
                 </View>
+                {rule.min_amount && (
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Min Amount</Text>
+                    <Text style={styles.detailValue}>₹{Number(rule.min_amount).toLocaleString()}</Text>
+                  </View>
+                )}
+                {rule.max_amount && (
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Max Amount</Text>
+                    <Text style={styles.detailValue}>₹{Number(rule.max_amount).toLocaleString()}</Text>
+                  </View>
+                )}
               </View>
 
               <View style={styles.ruleActions}>
                 <TouchableOpacity
                   style={styles.actionButton}
                   onPress={() => {
-                    setEditingRule(rule);
-                    setProductId(rule.product_id);
-                    setCommissionType(rule.commission_type);
-                    setCommissionValue(String(rule.commission_value));
-                    setShowAddModal(true);
+                    // TODO: Implement edit functionality
+                    Alert.alert('Info', 'Edit functionality coming soon');
                   }}
                 >
+                  <Icon name="edit" size={16} color={colors.primary} />
                   <Text style={styles.actionButtonText}>Edit</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.actionButton, styles.deleteButton]}
                   onPress={() => handleDeleteRule(rule.id)}
                 >
+                  <Icon name="trash-2" size={16} color="#EF4444" />
                   <Text style={[styles.actionButtonText, styles.deleteButtonText]}>Delete</Text>
                 </TouchableOpacity>
               </View>
-            </View>
+            </Card>
           ))
         )}
       </View>
 
-      {/* Add/Edit Modal */}
-      {showAddModal && (
+      {/* Add Rule Modal */}
+      <Modal visible={showAddModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>
-              {editingRule ? 'Update Commission Rule' : 'Add Commission Rule'}
-            </Text>
+            <Text style={styles.modalTitle}>Add Commission Rule</Text>
 
-            <Text style={styles.inputLabel}>Product *</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.productPicker}>
-              {products.map((product) => (
+            <Text style={styles.inputLabel}>Rule Name *</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g. HDFC Credit Card Gold Commission"
+              value={formData.rule_name}
+              onChangeText={(text) => setFormData({ ...formData, rule_name: text })}
+            />
+
+            <Text style={styles.inputLabel}>Designation *</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g. SD, DSA, FOS"
+              value={formData.designation}
+              onChangeText={(text) => setFormData({ ...formData, designation: text })}
+            />
+
+            <Text style={styles.inputLabel}>Product Category</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g. credit-card"
+              value={formData.product_category}
+              onChangeText={(text) => setFormData({ ...formData, product_category: text })}
+            />
+
+            <Text style={styles.inputLabel}>Bank ID (Optional)</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Bank UUID"
+              value={formData.bank_id}
+              onChangeText={(text) => setFormData({ ...formData, bank_id: text })}
+            />
+
+            <Text style={styles.inputLabel}>Commission Type</Text>
+            <View style={styles.typeSelector}>
+              {(['percentage', 'fixed'] as const).map((type) => (
                 <TouchableOpacity
-                  key={product.id}
+                  key={type}
                   style={[
-                    styles.productChip,
-                    productId === product.id && styles.productChipSelected,
+                    styles.typeChoice,
+                    formData.commission_type === type && styles.typeChoiceActive,
                   ]}
-                  onPress={() => setProductId(product.id)}
-                  disabled={!!editingRule}
+                  onPress={() => setFormData({ ...formData, commission_type: type })}
                 >
                   <Text
                     style={[
-                      styles.productChipText,
-                      productId === product.id && styles.productChipTextSelected,
+                      styles.typeChoiceText,
+                      formData.commission_type === type && styles.typeChoiceTextActive,
                     ]}
                   >
-                    {product.name}
+                    {type.toUpperCase()}
                   </Text>
                 </TouchableOpacity>
               ))}
-            </ScrollView>
-
-            <Text style={styles.inputLabel}>Commission Type</Text>
-            <View style={styles.typeContainer}>
-              <TouchableOpacity
-                style={[styles.typeChip, commissionType === 'percentage' && styles.typeChipSelected]}
-                onPress={() => setCommissionType('percentage')}
-              >
-                <Text style={[styles.typeText, commissionType === 'percentage' && styles.typeTextSelected]}>
-                  Percentage
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.typeChip, commissionType === 'fixed' && styles.typeChipSelected]}
-                onPress={() => setCommissionType('fixed')}
-              >
-                <Text style={[styles.typeText, commissionType === 'fixed' && styles.typeTextSelected]}>
-                  Fixed
-                </Text>
-              </TouchableOpacity>
             </View>
 
-            <Text style={styles.inputLabel}>
-              {commissionType === 'percentage' ? 'Commission Rate (%) *' : 'Commission Amount (₹) *'}
-            </Text>
+            <Text style={styles.inputLabel}>Commission Value *</Text>
             <TextInput
-              style={styles.input}
-              placeholder={commissionType === 'percentage' ? 'e.g. 2.5' : 'e.g. 1500'}
+              style={styles.modalInput}
+              placeholder={formData.commission_type === 'percentage' ? 'e.g. 1.5' : 'e.g. 500'}
               keyboardType="numeric"
-              value={commissionValue}
-              onChangeText={setCommissionValue}
+              value={formData.commission_value}
+              onChangeText={(text) => setFormData({ ...formData, commission_value: text })}
             />
 
-            <View style={styles.modalActions}>
+            <Text style={styles.inputLabel}>Min Amount (Optional)</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g. 10000"
+              keyboardType="numeric"
+              value={formData.min_amount}
+              onChangeText={(text) => setFormData({ ...formData, min_amount: text })}
+            />
+
+            <Text style={styles.inputLabel}>Max Amount (Optional)</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g. 1000000"
+              keyboardType="numeric"
+              value={formData.max_amount}
+              onChangeText={(text) => setFormData({ ...formData, max_amount: text })}
+            />
+
+            <View style={styles.modalButtons}>
               <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
+                style={[styles.modalButton, styles.modalButtonCancel]}
                 onPress={() => {
                   setShowAddModal(false);
-                  resetForm();
+                  setFormData({
+                    rule_name: '',
+                    designation: '',
+                    product_category: '',
+                    bank_id: '',
+                    commission_type: 'percentage',
+                    commission_value: '',
+                    min_amount: '',
+                    max_amount: '',
+                    effective_from: '',
+                    effective_to: '',
+                  });
                 }}
               >
                 <Text style={styles.modalButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, styles.saveButton]}
-                onPress={handleSaveRule}
+                style={[styles.modalButton, styles.modalButtonConfirm]}
+                onPress={handleSubmitRule}
+                disabled={submitting}
               >
-                <Text style={styles.modalButtonText}>Save</Text>
+                {submitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.modalButtonText}>Create Rule</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
         </View>
-      )}
+      </Modal>
     </ScrollView>
   );
 }
@@ -320,75 +437,89 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
     backgroundColor: colors.card,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  backBtn: {
+    padding: spacing.xs,
+  },
   title: {
-    fontSize: typography.sizes.xl,
+    fontSize: typography.sizes.lg,
     fontWeight: typography.weights.bold,
     color: colors.text,
   },
   addButton: {
     backgroundColor: colors.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  addButtonText: {
-    color: '#FFFFFF',
+  searchContainer: {
+    padding: spacing.md,
+    backgroundColor: colors.card,
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.bg,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: spacing.sm,
     fontSize: typography.sizes.sm,
-    fontWeight: typography.weights.bold,
+    color: colors.text,
   },
   rulesContainer: {
-    padding: 16,
-    gap: 12,
+    padding: spacing.md,
+    gap: spacing.md,
   },
   emptyContainer: {
-    padding: 40,
+    padding: spacing.xl * 2,
     alignItems: 'center',
   },
   emptyText: {
+    marginTop: spacing.md,
     fontSize: typography.sizes.md,
     color: colors.textLight,
   },
   ruleCard: {
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    padding: spacing.md,
   },
   ruleHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 12,
+    marginBottom: spacing.sm,
   },
   ruleInfo: {
     flex: 1,
   },
   ruleName: {
-    fontSize: typography.sizes.lg,
+    fontSize: typography.sizes.md,
     fontWeight: typography.weights.bold,
     color: colors.text,
-    marginBottom: 4,
   },
-  productName: {
+  designation: {
     fontSize: typography.sizes.sm,
     color: colors.textLight,
+    marginTop: 2,
   },
   statusBadge: {
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.sm,
     paddingVertical: 4,
     borderRadius: 12,
-    backgroundColor: colors.primary,
   },
   statusText: {
     color: '#FFFFFF',
@@ -397,153 +528,138 @@ const styles = StyleSheet.create({
   },
   ruleDetails: {
     flexDirection: 'row',
-    gap: 24,
-    paddingVertical: 12,
+    flexWrap: 'wrap',
+    marginBottom: spacing.md,
+    paddingVertical: spacing.sm,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   detailItem: {
-    alignItems: 'flex-start',
+    width: '50%',
+    marginBottom: spacing.xs,
   },
   detailLabel: {
     fontSize: typography.sizes.xs,
     color: colors.textLight,
-    marginBottom: 2,
   },
   detailValue: {
-    fontSize: typography.sizes.md,
-    fontWeight: typography.weights.bold,
+    fontSize: typography.sizes.sm,
     color: colors.text,
+    fontWeight: typography.weights.semibold,
   },
   ruleActions: {
     flexDirection: 'row',
-    gap: 8,
+    gap: spacing.sm,
   },
   actionButton: {
     flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.primary,
-  },
-  deleteButton: {
-    backgroundColor: '#EF4444',
+    justifyContent: 'center',
+    backgroundColor: colors.bg,
+    paddingVertical: spacing.sm,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   actionButtonText: {
-    color: '#FFFFFF',
+    marginLeft: spacing.xs,
     fontSize: typography.sizes.sm,
-    fontWeight: typography.weights.bold,
+    color: colors.primary,
+    fontWeight: typography.weights.semibold,
+  },
+  deleteButton: {
+    borderColor: '#EF4444',
   },
   deleteButtonText: {
-    color: '#FFFFFF',
+    color: '#EF4444',
   },
   modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
-    padding: 20,
+    alignItems: 'center',
+    padding: spacing.xl,
   },
   modalContent: {
     backgroundColor: colors.card,
     borderRadius: 16,
-    padding: 20,
+    padding: spacing.lg,
+    width: '100%',
+    maxHeight: '80%',
   },
   modalTitle: {
     fontSize: typography.sizes.lg,
     fontWeight: typography.weights.bold,
     color: colors.text,
-    marginBottom: 16,
+    marginBottom: spacing.md,
   },
   inputLabel: {
     fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.semibold,
+    color: colors.textLight,
+    marginBottom: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  modalInput: {
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    padding: spacing.md,
+    fontSize: typography.sizes.sm,
     color: colors.text,
-    marginBottom: 6,
-    marginTop: 12,
+  },
+  typeSelector: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  typeChoice: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  typeChoiceActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '15',
+  },
+  typeChoiceText: {
+    fontSize: typography.sizes.sm,
+    color: colors.textLight,
     fontWeight: typography.weights.semibold,
   },
-  input: {
-    backgroundColor: colors.bg,
-    borderRadius: 8,
-    padding: 12,
-    fontSize: typography.sizes.sm,
-    color: colors.text,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  productPicker: {
-    flexGrow: 0,
-  },
-  productChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: colors.bg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginRight: 8,
-  },
-  productChipSelected: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  productChipText: {
-    fontSize: typography.sizes.xs,
-    color: colors.text,
-  },
-  productChipTextSelected: {
-    color: '#FFFFFF',
+  typeChoiceTextActive: {
+    color: colors.primary,
     fontWeight: typography.weights.bold,
   },
-  typeContainer: {
+  modalButtons: {
     flexDirection: 'row',
-    gap: 8,
-  },
-  typeChip: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: colors.bg,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  typeChipSelected: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  typeText: {
-    fontSize: typography.sizes.sm,
-    color: colors.text,
-  },
-  typeTextSelected: {
-    color: '#FFFFFF',
-    fontWeight: typography.weights.bold,
-  },
-  modalActions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 20,
+    gap: spacing.sm,
+    marginTop: spacing.lg,
   },
   modalButton: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: spacing.md,
     borderRadius: 8,
     alignItems: 'center',
   },
-  cancelButton: {
-    backgroundColor: colors.border,
+  modalButtonCancel: {
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  saveButton: {
+  modalButtonConfirm: {
     backgroundColor: colors.primary,
   },
   modalButtonText: {
-    color: '#FFFFFF',
     fontSize: typography.sizes.sm,
     fontWeight: typography.weights.bold,
+    color: colors.text,
   },
 });

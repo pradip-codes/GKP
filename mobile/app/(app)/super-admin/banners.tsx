@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { useTheme } from '../../../contexts/ThemeContext';
 import { Icon } from '../../../components/Icon';
 import { colors } from '../../../theme/colors';
 import { spacing } from '../../../theme/spacing';
@@ -35,6 +36,7 @@ interface Banner {
 }
 
 export default function ManageBannersScreen() {
+  const { colors } = useTheme();
   const router = useRouter();
   const [banners, setBanners] = useState<Banner[]>([]);
   const [loading, setLoading] = useState(true);

@@ -12,6 +12,7 @@ import {
   Modal,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useTheme } from '../../../contexts/ThemeContext';
 import { colors } from '../../../theme/colors';
 import { typography } from '../../../theme/typography';
 import { spacing } from '../../../theme/spacing';
@@ -25,6 +26,7 @@ import {
 } from '../../../services/super-admin.service';
 
 export default function SuperAdminAnnouncementsScreen() {
+  const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [announcements, setAnnouncements] = useState<any[]>([]);

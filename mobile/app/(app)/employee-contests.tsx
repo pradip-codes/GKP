@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,14 +7,20 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  Dimensions,
+  Animated,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { Card } from '../../components/Card';
 import { Button } from '../../components/Button';
 import { Icon } from '../../components/Icon';
 import apiClient from '../../services/api';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 interface Contest {
   id: string;
@@ -39,11 +45,16 @@ interface Contest {
 }
 
 export default function EmployeeContestsScreen() {
+  const { colors } = useTheme();
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'UPCOMING' | 'COMPLETED'>('ACTIVE');
   const [contests, setContests] = useState<Contest[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Banner carousel state
+  const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
+  const scrollX = useRef(new Animated.Value(0)).current;
 
   const loadContests = useCallback(async (isRefresh = false) => {
     try {
@@ -78,12 +89,63 @@ export default function EmployeeContestsScreen() {
     loadContests();
   }, [loadContests]);
 
+  // Auto-scroll banner
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentBannerIndex((prev) => (prev + 1) % 3);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
   const filteredContests = contests.filter(c => c.status === activeTab);
 
   const formatDate = (dateString: string) => {
     if (!dateString) return '—';
     const date = new Date(dateString);
     return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  const renderBannerCarousel = () => {
+    const banners = [
+      { id: 1, title: 'Credit Card Champions', subtitle: 'Target: 50 Approved Apps', color: '#0F766E' },
+      { id: 2, title: 'Loan Sprint', subtitle: 'Top performers win gadgets', color: '#7C3AED' },
+      { id: 3, title, subtitle: 'Monthly bonus rewards', color: '#059669' },
+    ];
+
+    return (
+      <View style={styles.bannerContainer}>
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={(e) => {
+            const index = Math.round(e.nativeEvent.contentOffset.x / (SCREEN_WIDTH - spacing.md * 2));
+            setCurrentBannerIndex(index);
+          }}
+          style={styles.bannerScroll}
+        >
+          {banners.map((banner, index) => (
+            <View key={banner.id} style={[styles.bannerCard, { backgroundColor: banner.color }]}>
+              <View style={styles.bannerContent}>
+                <Text style={styles.bannerTitle}>{banner.title}</Text>
+                <Text style={styles.bannerSubtitle}>{banner.subtitle}</Text>
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+        <View style={styles.bannerDots}>
+          {banners.map((_, index) => (
+            <View
+              key={index}
+              style={[
+                styles.bannerDot,
+                index === currentBannerIndex && styles.bannerDotActive,
+              ]}
+            />
+          ))}
+        </View>
+      </View>
+    );
   };
 
   return (
@@ -105,6 +167,9 @@ export default function EmployeeContestsScreen() {
         <Text style={styles.headerTitle}>Sales Contests</Text>
         <View style={{ width: 24 }} />
       </View>
+
+      {/* Banner Carousel */}
+      {renderBannerCarousel()}
 
       {/* Tabs */}
       <View style={styles.tabsContainer}>
@@ -418,5 +483,55 @@ const styles = StyleSheet.create({
     marginTop: 6,
     textAlign: 'center',
     paddingHorizontal: 24,
+  },
+  // Banner Carousel Styles
+  bannerContainer: {
+    marginBottom: spacing.md,
+  },
+  bannerScroll: {
+    flexDirection: 'row',
+  },
+  bannerCard: {
+    width: SCREEN_WIDTH - spacing.md * 2,
+    height: 120,
+    borderRadius: 16,
+    marginHorizontal: spacing.md,
+    padding: spacing.lg,
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  bannerContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  bannerTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  bannerSubtitle: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.9)',
+  },
+  bannerDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+  },
+  bannerDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.border,
+    marginHorizontal: 3,
+  },
+  bannerDotActive: {
+    backgroundColor: colors.primary,
+    width: 20,
   },
 });

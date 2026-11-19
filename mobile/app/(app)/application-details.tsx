@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useLocalSearchParams, router } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { spacing } from '../../theme/spacing';
@@ -163,6 +164,40 @@ export default function ApplicationDetailsScreen() {
   };
 
   const [uploading, setUploading] = useState(false);
+  const [verifyingDoc, setVerifyingDoc] = useState<string | null>(null);
+
+  const handleDocumentVerification = async (docId: string, approved: boolean) => {
+    Alert.alert(
+      approved ? 'Approve Document' : 'Reject Document',
+      `Are you sure you want to ${approved ? 'approve' : 'reject'} this document?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: approved ? 'Approve' : 'Reject',
+          style: approved ? 'default' : 'destructive',
+          onPress: async () => {
+            try {
+              setVerifyingDoc(docId);
+              await apiClient.post(`/applications/${id}/documents/${docId}/verify`, {
+                approved,
+                remarks: approved ? 'Document verified by admin' : 'Document rejected by admin',
+              });
+              Alert.alert('Success', `Document ${approved ? 'approved' : 'rejected'} successfully`);
+              // Reload documents
+              const docsRes = await fetchApplicationDocuments(id);
+              if (docsRes?.data) {
+                setDocuments(docsRes.data);
+              }
+            } catch (err: any) {
+              Alert.alert('Error', err?.message || 'Failed to verify document');
+            } finally {
+              setVerifyingDoc(null);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const handleDocumentUpload = async () => {
     try {
@@ -620,7 +655,10 @@ export default function ApplicationDetailsScreen() {
             <Text style={styles.sectionTitle}>Application Documents</Text>
 
             {documents.length > 0 ? (
-              documents.map((doc, idx) => (
+              documents.map((doc, idx) => {
+                const isPending = (doc.status || doc.verification_status || '').toLowerCase() === 'pending' || 
+                                  (doc.status || doc.verification_status || '').toLowerCase() === 'uploaded';
+                return (
                 <Card key={doc.id || idx.toString()} style={styles.docCard}>
                   <View style={styles.docHeader}>
                     <Text style={styles.docName}>
@@ -638,13 +676,31 @@ export default function ApplicationDetailsScreen() {
                       : 'N/A'}
                   </Text>
 
+                  {isPending && (
+                    <View style={styles.docVerificationActions}>
+                      <TouchableOpacity
+                        style={[styles.docActionButton, styles.docApproveButton]}
+                        onPress={() => handleDocumentVerification(doc.id, true)}
+                      >
+                        <Text style={styles.docActionButtonText}>Approve</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.docActionButton, styles.docRejectButton]}
+                        onPress={() => handleDocumentVerification(doc.id, false)}
+                      >
+                        <Text style={styles.docActionButtonText}>Reject</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
                   <View style={styles.docSecureNotice}>
                     <Text style={styles.docSecureText}>
                       🔒 Protected Document (Accessible via Secure Verification Desk)
                     </Text>
                   </View>
                 </Card>
-              ))
+                );
+              })
             ) : (
               <Card>
                 <Text style={styles.emptyText}>No documents attached to this application.</Text>
@@ -861,6 +917,28 @@ const styles = StyleSheet.create({
   docDate: {
     fontSize: typography.sizes.xs - 1,
     color: colors.textLight,
+  },
+  docVerificationActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  docActionButton: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  docApproveButton: {
+    backgroundColor: '#10B981',
+  },
+  docRejectButton: {
+    backgroundColor: '#EF4444',
+  },
+  docActionButtonText: {
+    color: '#FFFFFF',
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
   },
   docSecureNotice: {
     marginTop: spacing.xs,

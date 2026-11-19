@@ -34,6 +34,7 @@ router.post('/unlock-user', ctrl.unlockUser);
 router.post('/update-partner-status', ctrl.updatePartnerStatus);
 router.get('/audit-logs', ctrl.getAuditLogs);
 router.get('/referral-analytics', ctrl.getReferralAnalytics);
+router.get('/reports/dashboard-stats', ctrl.getDashboardStats);
 
 // Account Activation / Deactivation & Scheduled Lifecycle Management
 router.get('/accounts', accountCtrl.listAccounts);

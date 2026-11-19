@@ -12,6 +12,7 @@ import {
   Modal,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { Card } from '../../components/Card';
@@ -25,6 +26,7 @@ import {
 import apiClient from '../../services/api';
 
 export default function HRDashboardScreen() {
+  const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [candidates, setCandidates] = useState<any[]>([]);

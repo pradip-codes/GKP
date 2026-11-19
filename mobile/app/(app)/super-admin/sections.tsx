@@ -14,6 +14,7 @@ import {
   Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTheme } from '../../../contexts/ThemeContext';
 import { Icon } from '../../../components/Icon';
 import { colors } from '../../../theme/colors';
 import { spacing } from '../../../theme/spacing';
@@ -31,6 +32,7 @@ interface Section {
 }
 
 export default function ManageSectionsScreen() {
+  const { colors } = useTheme();
   const router = useRouter();
   const [sections, setSections] = useState<Section[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,7 +58,7 @@ export default function ManageSectionsScreen() {
       else setLoading(true);
 
       const [sectionsRes, settingsRes] = await Promise.allSettled([
-        apiClient.get('/cms/sections/all'),
+        apiClient.get('/cms/all'),
         apiClient.get('/settings'),
       ]);
 

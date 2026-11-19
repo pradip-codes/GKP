@@ -15,6 +15,7 @@ import {
   Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
@@ -45,6 +46,7 @@ interface CreditCardItem {
 const BANK_FILTERS = ['ALL', 'HDFC', 'SBI', 'ICICI', 'AXIS', 'KOTAK', 'AU', 'LTF (FREE)'];
 
 export default function EmployeeCreditCardsScreen() {
+  const { colors } = useTheme();
   const router = useRouter();
   const { user } = useAuth();
   const [cards, setCards] = useState<CreditCardItem[]>([]);
@@ -52,6 +54,7 @@ export default function EmployeeCreditCardsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBank, setSelectedBank] = useState('ALL');
+  const [activeSubTab, setActiveSubTab] = useState<'cards' | 'applications' | 'customers'>('cards');
 
   // Detail Modal State
   const [selectedCard, setSelectedCard] = useState<CreditCardItem | null>(null);
@@ -375,34 +378,63 @@ export default function EmployeeCreditCardsScreen() {
           </ScrollView>
         </View>
 
-        {/* Content List */}
-        {loading ? (
-          <View style={styles.centered}>
-            <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={styles.loadingText}>Loading credit cards...</Text>
-          </View>
-        ) : (
-          <ScrollView
-            style={styles.scrollView}
-            contentContainerStyle={styles.scrollContent}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={() => loadCards(true)}
-                tintColor={colors.primary}
-              />
-            }
+        {/* Sub-Module Tabs */}
+        <View style={styles.subTabContainer}>
+          <TouchableOpacity
+            style={[styles.subTab, activeSubTab === 'cards' && styles.activeSubTab]}
+            onPress={() => setActiveSubTab('cards')}
           >
-            {filteredCards.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Icon name="credit-card" size={48} color={colors.textLight} />
-                <Text style={styles.emptyTitle}>No Cards Match Your Filter</Text>
-                <Text style={styles.emptySubtitle}>
-                  Try selecting another bank or clearing your search.
-                </Text>
-              </View>
-            ) : (
-              filteredCards.map((card) => {
+            <Text style={[styles.subTabText, activeSubTab === 'cards' && styles.activeSubTabText]}>
+              Credit Cards
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.subTab, activeSubTab === 'applications' && styles.activeSubTab]}
+            onPress={() => setActiveSubTab('applications')}
+          >
+            <Text style={[styles.subTabText, activeSubTab === 'applications' && styles.activeSubTabText]}>
+              Applications
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.subTab, activeSubTab === 'customers' && styles.activeSubTab]}
+            onPress={() => setActiveSubTab('customers')}
+          >
+            <Text style={[styles.subTabText, activeSubTab === 'customers' && styles.activeSubTabText]}>
+              Customers
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Content List */}
+        {activeSubTab === 'cards' ? (
+          loading ? (
+            <View style={styles.centered}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={styles.loadingText}>Loading credit cards...</Text>
+            </View>
+          ) : (
+            <ScrollView
+              style={styles.scrollView}
+              contentContainerStyle={styles.scrollContent}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={() => loadCards(true)}
+                  tintColor={colors.primary}
+                />
+              }
+            >
+              {filteredCards.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Icon name="credit-card" size={48} color={colors.textLight} />
+                  <Text style={styles.emptyTitle}>No Cards Match Your Filter</Text>
+                  <Text style={styles.emptySubtitle}>
+                    Try selecting another bank or clearing your search.
+                  </Text>
+                </View>
+              ) : (
+                filteredCards.map((card) => {
                 const commission = card.commission_amount
                   ? `₹${card.commission_amount}`
                   : card.payout || '₹1,800 - ₹2,500';
@@ -512,6 +544,33 @@ export default function EmployeeCreditCardsScreen() {
               })
             )}
           </ScrollView>
+          )
+        ) : activeSubTab === 'applications' ? (
+          <View style={styles.centered}>
+            <Icon name="file-text" size={48} color={colors.textLight} />
+            <Text style={styles.emptyTitle}>Applications View</Text>
+            <Text style={styles.emptySubtitle}>
+              View and manage your credit card applications here.
+            </Text>
+            <Button
+              title="Go to Applications"
+              onPress={() => router.push('/(app)/applications')}
+              style={{ marginTop: spacing.md }}
+            />
+          </View>
+        ) : (
+          <View style={styles.centered}>
+            <Icon name="users" size={48} color={colors.textLight} />
+            <Text style={styles.emptyTitle}>Customers View</Text>
+            <Text style={styles.emptySubtitle}>
+              View and manage your customer leads here.
+            </Text>
+            <Button
+              title="Go to Leads"
+              onPress={() => router.push('/(app)/leads')}
+              style={{ marginTop: spacing.md }}
+            />
+          </View>
         )}
 
         {/* Card Details Modal */}

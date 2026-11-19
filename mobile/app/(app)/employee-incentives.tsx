@@ -10,6 +10,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { Card } from '../../components/Card';
@@ -18,10 +19,12 @@ import { Button } from '../../components/Button';
 import { fetchEmployeeIncentives } from '../../services/employee.service';
 
 export default function EmployeeIncentivesScreen() {
+  const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState<any>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
+  const [activeView, setActiveView] = useState<'monthly' | 'ledger'>('monthly');
 
   const loadIncentives = useCallback(async () => {
     try {
@@ -64,6 +67,26 @@ export default function EmployeeIncentivesScreen() {
         </View>
       </View>
 
+      {/* View Switcher Tabs */}
+      <View style={styles.viewSwitcher}>
+        <TouchableOpacity
+          style={[styles.viewTab, activeView === 'monthly' && styles.activeViewTab]}
+          onPress={() => setActiveView('monthly')}
+        >
+          <Text style={[styles.viewTabText, activeView === 'monthly' && styles.activeViewTabText]}>
+            🗓️ Monthly Audit
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.viewTab, activeView === 'ledger' && styles.activeViewTab]}
+          onPress={() => setActiveView('ledger')}
+        >
+          <Text style={[styles.viewTabText, activeView === 'ledger' && styles.activeViewTabText]}>
+            📜 Ledger
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       {/* KPI Overview Banner */}
       <View style={styles.kpiRow}>
         <View style={styles.kpiCard}>
@@ -85,6 +108,22 @@ export default function EmployeeIncentivesScreen() {
           </Text>
         </View>
       </View>
+
+      {activeView === 'monthly' ? (
+        <Card style={[styles.card, { marginTop: spacing.md }]}>
+          <Text style={styles.cardTitle}>Monthly Incentive Audit</Text>
+          <Text style={styles.cardSubtitle}>
+            Detailed breakdown of your monthly performance earnings and payouts.
+          </Text>
+          <View style={styles.monthlyContainer}>
+            <Icon name="calendar" size={48} color={colors.textLight} />
+            <Text style={styles.emptyTitle}>Monthly Audit View</Text>
+            <Text style={styles.emptyDesc}>
+              Detailed monthly breakdown with date ranges, performance metrics, and payout summaries will appear here.
+            </Text>
+          </View>
+        </Card>
+      ) : null}
 
       {/* Incentive Structure Breakdown */}
       <Card style={styles.card}>
@@ -127,60 +166,62 @@ export default function EmployeeIncentivesScreen() {
       </Card>
 
       {/* Transactions / Ledger */}
-      <Card style={[styles.card, { marginTop: spacing.md }]}>
-        <Text style={styles.cardTitle}>Recent Incentive Transactions</Text>
-        <Text style={styles.cardSubtitle}>
-          Detailed ledger of disbursed and pending performance bonuses.
-        </Text>
+      {activeView === 'ledger' ? (
+        <Card style={[styles.card, { marginTop: spacing.md }]}>
+          <Text style={styles.cardTitle}>Recent Incentive Transactions</Text>
+          <Text style={styles.cardSubtitle}>
+            Detailed ledger of disbursed and pending performance bonuses.
+          </Text>
 
-        {loading ? (
-          <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
-        ) : transactions.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Icon name="credit-card" size={36} color={colors.textLight} />
-            <Text style={styles.emptyTitle}>No Transactions Yet</Text>
-            <Text style={styles.emptyDesc}>
-              Approved customer applications and sales reports will generate incentives here.
-            </Text>
-          </View>
-        ) : (
-          transactions.map((tx) => (
-            <View key={tx.id} style={styles.txRow}>
-              <View style={styles.txIconWrap}>
-                <Icon name="check-circle" size={18} color="#10B981" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.txTitle}>
-                  {tx.product_name || `Application #${tx.app_number || tx.id.substring(0, 6)}`}
-                </Text>
-                <Text style={styles.txDate}>
-                  {new Date(tx.created_at || Date.now()).toLocaleDateString('en-IN', {
-                    day: 'numeric',
-                    month: 'short',
-                    year: 'numeric',
-                  })}
-                </Text>
-              </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={styles.txAmount}>+₹{tx.amount}</Text>
-                <Text
-                  style={[
-                    styles.txStatus,
-                    {
-                      color:
-                        tx.status?.toUpperCase() === 'COMPLETED' || tx.status?.toUpperCase() === 'PAID'
-                          ? '#10B981'
-                          : '#F59E0B',
-                    },
-                  ]}
-                >
-                  {(tx.status || 'EARNED').toUpperCase()}
-                </Text>
-              </View>
+          {loading ? (
+            <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
+          ) : transactions.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Icon name="credit-card" size={36} color={colors.textLight} />
+              <Text style={styles.emptyTitle}>No Transactions Yet</Text>
+              <Text style={styles.emptyDesc}>
+                Approved customer applications and sales reports will generate incentives here.
+              </Text>
             </View>
-          ))
-        )}
-      </Card>
+          ) : (
+            transactions.map((tx) => (
+              <View key={tx.id} style={styles.txRow}>
+                <View style={styles.txIconWrap}>
+                  <Icon name="check-circle" size={18} color="#10B981" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.txTitle}>
+                    {tx.product_name || `Application #${tx.app_number || tx.id.substring(0, 6)}`}
+                  </Text>
+                  <Text style={styles.txDate}>
+                    {new Date(tx.created_at || Date.now()).toLocaleDateString('en-IN', {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
+                  </Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={styles.txAmount}>+₹{tx.amount}</Text>
+                  <Text
+                    style={[
+                      styles.txStatus,
+                      {
+                        color:
+                          tx.status?.toUpperCase() === 'COMPLETED' || tx.status?.toUpperCase() === 'PAID'
+                            ? '#10B981'
+                            : '#F59E0B',
+                      },
+                    ]}
+                  >
+                    {(tx.status || 'EARNED').toUpperCase()}
+                  </Text>
+                </View>
+              </View>
+            ))
+          )}
+        </Card>
+      ) : null}
     </ScrollView>
   );
 }
@@ -211,6 +252,31 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
     color: '#fff',
+  },
+  viewSwitcher: {
+    flexDirection: 'row',
+    backgroundColor: '#1E293B',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: spacing.md,
+  },
+  viewTab: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  activeViewTab: {
+    backgroundColor: colors.primary,
+  },
+  viewTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textLight,
+  },
+  activeViewTabText: {
+    color: '#fff',
+    fontWeight: '700',
   },
   kpiRow: {
     flexDirection: 'row',
@@ -297,6 +363,10 @@ const styles = StyleSheet.create({
     color: colors.textLight,
     marginTop: 2,
     textAlign: 'center',
+  },
+  monthlyContainer: {
+    alignItems: 'center',
+    paddingVertical: 40,
   },
   txRow: {
     flexDirection: 'row',

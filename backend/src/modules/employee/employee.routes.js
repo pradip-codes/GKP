@@ -2257,5 +2257,117 @@ router.post('/submit-verification', async (req, res, next) => {
   }
 });
 
+// GET /api/v1/employee/settings — Fetch employee notification preferences
+router.get('/settings', async (req, res, next) => {
+  try {
+    const empId = req.employee.id;
+    const { rows } = await query(`
+      SELECT 
+        push_notifications_enabled,
+        email_alerts_enabled,
+        sms_alerts_enabled,
+        sound_enabled
+      FROM employee_settings
+      WHERE employee_id = $1
+    `, [empId]);
+
+    if (rows.length === 0) {
+      // Return default settings if none exist
+      return res.json({
+        success: true,
+        data: {
+          push_notifications_enabled: true,
+          email_alerts_enabled: true,
+          sms_alerts_enabled: true,
+          sound_enabled: true
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      data: rows[0]
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/v1/employee/settings — Update employee notification preferences
+router.put('/settings', async (req, res, next) => {
+  try {
+    const empId = req.employee.id;
+    const {
+      push_notifications_enabled,
+      email_alerts_enabled,
+      sms_alerts_enabled,
+      sound_enabled
+    } = req.body;
+
+    const { rows } = await query(`
+      INSERT INTO employee_settings (
+        employee_id,
+        push_notifications_enabled,
+        email_alerts_enabled,
+        sms_alerts_enabled,
+        sound_enabled,
+        updated_at
+      ) VALUES ($1, $2, $3, $4, $5, NOW())
+      ON CONFLICT (employee_id) DO UPDATE SET
+        push_notifications_enabled = COALESCE(EXCLUDED.push_notifications_enabled, employee_settings.push_notifications_enabled),
+        email_alerts_enabled = COALESCE(EXCLUDED.email_alerts_enabled, employee_settings.email_alerts_enabled),
+        sms_alerts_enabled = COALESCE(EXCLUDED.sms_alerts_enabled, employee_settings.sms_alerts_enabled),
+        sound_enabled = COALESCE(EXCLUDED.sound_enabled, employee_settings.sound_enabled),
+        updated_at = NOW()
+      RETURNING *
+    `, [
+      empId,
+      push_notifications_enabled !== undefined ? push_notifications_enabled : null,
+      email_alerts_enabled !== undefined ? email_alerts_enabled : null,
+      sms_alerts_enabled !== undefined ? sms_alerts_enabled : null,
+      sound_enabled !== undefined ? sound_enabled : null
+    ]);
+
+    res.json({
+      success: true,
+      message: 'Settings updated successfully',
+      data: rows[0]
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/v1/employee/request-deletion — Request account deletion
+router.post('/request-deletion', async (req, res, next) => {
+  try {
+    const empId = req.employee.id;
+    const { reason } = req.body;
+
+    // Insert deletion request
+    const { rows } = await query(`
+      INSERT INTO employee_deletion_requests (
+        employee_id,
+        user_id,
+        reason,
+        status,
+        requested_at
+      ) VALUES ($1, $2, $3, 'PENDING', NOW())
+      RETURNING *
+    `, [empId, req.user.id, reason || 'User requested deletion']);
+
+    // Log the request
+    logger.info(`[EMPLOYEE] Account deletion requested by employee_id: ${empId}, user_id: ${req.user.id}`);
+
+    res.json({
+      success: true,
+      message: 'Account deletion request submitted successfully. You will receive a confirmation email shortly.',
+      data: rows[0]
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
 module.exports.getMonthlyIncentiveReportData = getMonthlyIncentiveReportData;

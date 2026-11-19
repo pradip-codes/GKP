@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, Clipboard } from 'react-native';
+import { useTheme } from '../../contexts/ThemeContext';
 import apiClient from '../../services/api';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -17,6 +18,7 @@ interface ReferralInfo {
 }
 
 export default function PartnerReferralsScreen() {
+  const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [info, setInfo] = useState<ReferralInfo | null>(null);
 

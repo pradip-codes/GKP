@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
+import { useTheme } from '../../contexts/ThemeContext';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { Card } from '../../components/Card';
@@ -23,6 +24,7 @@ import { getEnrollmentStatus } from '../../services/attendance.service';
 type OnboardingStep = 'JOINING_FORM' | 'TERMS' | 'KYC' | 'VERIFICATION' | 'COMPLETED';
 
 export default function EmployeeOnboardingScreen() {
+  const { colors } = useTheme();
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('JOINING_FORM');
   const [loading, setLoading] = useState(false);
   const [onboardingStatus, setOnboardingStatus] = useState<any>(null);

@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
 import {
   fetchEmployeeProfile,
@@ -24,6 +25,7 @@ import { typography } from '../../theme/typography';
 import { spacing } from '../../theme/spacing';
 
 export default function EmployeeReferralsScreen() {
+  const { colors } = useTheme();
   const router = useRouter();
   const { user } = useAuth();
 

@@ -10,8 +10,10 @@ import {
   TextInput,
   Modal,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTheme } from '../../../contexts/ThemeContext';
 import { colors } from '../../../theme/colors';
 import { typography } from '../../../theme/typography';
 import { spacing } from '../../../theme/spacing';
@@ -24,6 +26,7 @@ import {
 } from '../../../services/super-admin.service';
 
 export default function SuperAdminCommissionsScreen() {
+  const { colors } = useTheme();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'RULES' | 'OVERVIEW'>('RULES');
   const [rules, setRules] = useState<any[]>([]);
@@ -38,6 +41,11 @@ export default function SuperAdminCommissionsScreen() {
   const [commissionAmount, setCommissionAmount] = useState('');
   const [commissionType, setCommissionType] = useState<'FLAT' | 'PERCENTAGE'>('FLAT');
   const [submitting, setSubmitting] = useState(false);
+
+  const commissionTabs = [
+    { id: 'RULES', label: 'Commission Rules', icon: '📋' },
+    { id: 'OVERVIEW', label: 'Overview', icon: '📊' },
+  ];
 
   const loadData = useCallback(async (isRefresh = false) => {
     try {
@@ -129,16 +137,37 @@ export default function SuperAdminCommissionsScreen() {
         </View>
       </View>
 
-      {/* Tabs */}
-      <View style={styles.tabBar}>
-        <TouchableOpacity
-          style={[styles.tabBtn, activeTab === 'RULES' && styles.activeTabBtn]}
-          onPress={() => setActiveTab('RULES')}
-        >
-          <Text style={[styles.tabText, activeTab === 'RULES' && styles.activeTabText]}>Rate Rules</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tabBtn, activeTab === 'OVERVIEW' && styles.activeTabBtn]}
+      {/* Tab Navigation */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.tabScroll}
+      >
+        {commissionTabs.map((tab) => (
+          <TouchableOpacity
+            key={tab.id}
+            style={[
+              styles.tabButton,
+              {
+                backgroundColor: activeTab === tab.id ? colors.primary : colors.card,
+                borderColor: activeTab === tab.id ? colors.primary : colors.border,
+              },
+            ]}
+            onPress={() => setActiveTab(tab.id as any)}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 16 }}>{tab.icon}</Text>
+            <Text
+              style={[
+                styles.tabButtonText,
+                { color: activeTab === tab.id ? '#FFF' : colors.text },
+              ]}
+            >
+              {tab.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
           onPress={() => setActiveTab('OVERVIEW')}
         >
           <Text style={[styles.tabText, activeTab === 'OVERVIEW' && styles.activeTabText]}>Payouts Overview</Text>
@@ -277,6 +306,24 @@ const styles = StyleSheet.create({
   },
   flex1: {
     flex: 1,
+  },
+  tabScroll: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+  },
+  tabButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  tabButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   header: {
     backgroundColor: '#0F172A',

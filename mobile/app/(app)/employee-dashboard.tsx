@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,9 +7,13 @@ import {
   RefreshControl,
   TouchableOpacity,
   ActivityIndicator,
+  Dimensions,
+  Image,
+  Animated,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTheme } from '../../contexts/ThemeContext';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { spacing } from '../../theme/spacing';
@@ -30,7 +34,10 @@ import {
   OnboardingChecklist,
 } from '../../services/employee.service';
 
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
 export default function EmployeeDashboardScreen() {
+  const { colors } = useTheme();
   const { user, userRole, userDesignation, reloadUser } = useAuth();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -41,6 +48,16 @@ export default function EmployeeDashboardScreen() {
   const [applications, setApplications] = useState<EmployeeApplicationItem[]>([]);
   const [verificationStatus, setVerificationStatus] = useState<VerificationStatus | null>(null);
   const [onboardingChecklist, setOnboardingChecklist] = useState<OnboardingChecklist | null>(null);
+
+  // Banner carousel state
+  const [banners, setBanners] = useState([
+    { id: 1, title: 'Credit Card Bonus', subtitle: 'Earn up to ₹3,500 per card', color: '#0F766E' },
+    { id: 2, title: 'Loan Contest', subtitle: 'Top performers win rewards', color: '#7C3AED' },
+    { id: 3, title: 'Smart EMI', subtitle: 'Convert spends to EMIs', color: '#059669' },
+  ]);
+  const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
+  const scrollX = useRef(new Animated.Value(0)).current;
+  const flatListRef = useRef(null);
 
   const loadDashboardData = async () => {
     try {
@@ -87,6 +104,16 @@ export default function EmployeeDashboardScreen() {
     await loadDashboardData();
   };
 
+  // Auto-scroll banner
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (banners.length > 0) {
+        setCurrentBannerIndex((prev) => (prev + 1) % banners.length);
+      }
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [banners.length]);
+
   const getGreeting = () => {
     const hour = new Date().getHours();
     if (hour < 12) return 'Good morning';
@@ -110,6 +137,59 @@ export default function EmployeeDashboardScreen() {
   const isVideoRejected = verificationStatus?.video_status?.toUpperCase() === 'REJECTED' ||
                           missingItems.some(i => (i.type === 'video' || i.type === 'terms_video') && String(i.status || '').toUpperCase() === 'REJECTED');
   const needsOnboarding = !isVerified || isVideoRejected;
+
+  const renderBannerCarousel = () => {
+    return (
+      <View style={styles.bannerContainer}>
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={(e) => {
+            const index = Math.round(e.nativeEvent.contentOffset.x / (SCREEN_WIDTH - spacing.md * 2));
+            setCurrentBannerIndex(index);
+          }}
+          style={styles.bannerScroll}
+        >
+          {banners.map((banner, index) => (
+            <TouchableOpacity
+              key={banner.id}
+              style={[styles.bannerCard, { backgroundColor: banner.color }]}
+              onPress={() => {
+                // Navigate to relevant page based on banner
+                if (banner.title.includes('Credit Card')) {
+                  router.push('/(app)/employee-credit-cards');
+                } else if (banner.title.includes('Loan')) {
+                  router.push('/(app)/employee-loan-on-card');
+                } else if (banner.title.includes('EMI')) {
+                  router.push('/(app)/employee-smart-emi');
+                }
+              }}
+            >
+              <View style={styles.bannerContent}>
+                <Text style={styles.bannerTitle}>{banner.title}</Text>
+                <Text style={styles.bannerSubtitle}>{banner.subtitle}</Text>
+                <View style={styles.bannerAction}>
+                  <Text style={styles.bannerActionText}>Explore →</Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        <View style={styles.bannerDots}>
+          {banners.map((_, index) => (
+            <View
+              key={index}
+              style={[
+                styles.bannerDot,
+                index === currentBannerIndex && styles.bannerDotActive,
+              ]}
+            />
+          ))}
+        </View>
+      </View>
+    );
+  };
 
   if (loading && !refreshing) {
     return (
@@ -197,6 +277,9 @@ export default function EmployeeDashboardScreen() {
           </View>
         </View>
       </View>
+
+      {/* Banner Carousel */}
+      {renderBannerCarousel()}
 
       {/* Error Alert with Retry */}
       {error ? (
@@ -608,5 +691,68 @@ const styles = StyleSheet.create({
   },
   onboardingButton: {
     marginTop: spacing.md,
+  },
+  // Banner Carousel Styles
+  bannerContainer: {
+    marginBottom: spacing.md,
+  },
+  bannerScroll: {
+    flexDirection: 'row',
+  },
+  bannerCard: {
+    width: SCREEN_WIDTH - spacing.md * 2,
+    height: 140,
+    borderRadius: 16,
+    marginHorizontal: spacing.md,
+    padding: spacing.lg,
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  bannerContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  bannerTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  bannerSubtitle: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginBottom: spacing.sm,
+  },
+  bannerAction: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  bannerActionText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  bannerDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+  },
+  bannerDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.border,
+    marginHorizontal: 3,
+  },
+  bannerDotActive: {
+    backgroundColor: colors.primary,
+    width: 20,
   },
 });

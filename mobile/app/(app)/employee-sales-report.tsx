@@ -8,8 +8,12 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
+  Modal,
+  Image,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
+import { useTheme } from '../../contexts/ThemeContext';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { Card } from '../../components/Card';
@@ -22,6 +26,7 @@ import {
 import { fetchBanks } from '../../services/application.service';
 
 export default function EmployeeSalesReportScreen() {
+  const { colors } = useTheme();
   const [activeTab, setActiveTab] = useState<'submit' | 'history'>('submit');
 
   // Submit Form State
@@ -32,6 +37,10 @@ export default function EmployeeSalesReportScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [banks, setBanks] = useState<Array<{ id: string; name: string }>>([]);
   const [loadingBanks, setLoadingBanks] = useState(false);
+
+  // Photo Upload State
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
 
   // History State
   const [reportsHistory, setReportsHistory] = useState<any[]>([]);
@@ -88,6 +97,45 @@ export default function EmployeeSalesReportScreen() {
     setTotalCards(String(total));
   };
 
+  const handlePickPhoto = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        setPhotoUri(result.assets[0].uri);
+        setShowPhotoModal(false);
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Failed to pick photo');
+    }
+  };
+
+  const handleTakePhoto = async () => {
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        setPhotoUri(result.assets[0].uri);
+        setShowPhotoModal(false);
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Failed to take photo');
+    }
+  };
+
+  const handleRemovePhoto = () => {
+    setPhotoUri(null);
+  };
+
   const handleSubmit = async () => {
     const cardsNum = parseInt(totalCards) || 0;
     if (cardsNum <= 0) {
@@ -101,6 +149,7 @@ export default function EmployeeSalesReportScreen() {
         report_date: reportDate,
         total_cards: cardsNum,
         remark: remark.trim(),
+        photo: photoUri,
         banks: Object.entries(bankCounts)
           .filter(([_, count]) => count > 0)
           .map(([bId, count]) => ({
@@ -114,6 +163,7 @@ export default function EmployeeSalesReportScreen() {
       setTotalCards('');
       setRemark('');
       setBankCounts({});
+      setPhotoUri(null);
       setActiveTab('history');
     } catch (err: any) {
       Alert.alert('Submission Failed', err.message || 'Could not submit sales report.');
@@ -211,6 +261,22 @@ export default function EmployeeSalesReportScreen() {
             numberOfLines={3}
           />
 
+          {/* Photo Upload Section */}
+          <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>Photo Evidence (Optional)</Text>
+          {photoUri ? (
+            <View style={styles.photoPreviewContainer}>
+              <Image source={{ uri: photoUri }} style={styles.photoPreview} />
+              <TouchableOpacity style={styles.removePhotoBtn} onPress={handleRemovePhoto}>
+                <Icon name="x" size={16} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.uploadPhotoBtn} onPress={() => setShowPhotoModal(true)}>
+              <Icon name="camera" size={20} color={colors.primary} />
+              <Text style={styles.uploadPhotoText}>Add Photo Evidence</Text>
+            </TouchableOpacity>
+          )}
+
           <Button
             title="Submit Daily Sales Report"
             onPress={handleSubmit}
@@ -261,6 +327,34 @@ export default function EmployeeSalesReportScreen() {
         </Card>
       )}
     </ScrollView>
+
+    {/* Photo Selection Modal */}
+    <Modal
+      visible={showPhotoModal}
+      transparent
+      animationType="slide"
+      onRequestClose={() => setShowPhotoModal(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Select Photo</Text>
+          <TouchableOpacity style={styles.modalOption} onPress={handleTakePhoto}>
+            <Icon name="camera" size={24} color={colors.primary} />
+            <Text style={styles.modalOptionText}>Take Photo</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.modalOption} onPress={handlePickPhoto}>
+            <Icon name="image" size={24} color={colors.primary} />
+            <Text style={styles.modalOptionText}>Choose from Gallery</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.modalOption, styles.cancelOption]}
+            onPress={() => setShowPhotoModal(false)}
+          >
+            <Text style={styles.cancelOptionText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -431,5 +525,86 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     marginTop: 2,
+  },
+  uploadPhotoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#334155',
+    borderRadius: 10,
+    padding: spacing.md,
+    marginTop: spacing.xs,
+  },
+  uploadPhotoText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  photoPreviewContainer: {
+    position: 'relative',
+    marginTop: spacing.xs,
+  },
+  photoPreview: {
+    width: '100%',
+    height: 200,
+    borderRadius: 10,
+  },
+  removePhotoBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 16,
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#1E293B',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: spacing.lg,
+    paddingBottom: spacing.xl,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#fff',
+    marginBottom: spacing.md,
+    textAlign: 'center',
+  },
+  modalOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.md,
+    backgroundColor: '#0F172A',
+    borderRadius: 12,
+    marginBottom: spacing.sm,
+  },
+  modalOptionText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  cancelOption: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  cancelOptionText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textMid,
+    textAlign: 'center',
   },
 });

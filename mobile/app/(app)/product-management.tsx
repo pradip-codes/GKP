@@ -45,7 +45,7 @@ export default function ProductManagementScreen() {
 
   const handleToggleActive = async (productId: string, currentStatus: boolean) => {
     try {
-      await apiClient.patch(`/products/${productId}/status`, {
+      await apiClient.put(`/products/status`, {
         id: productId,
         is_active: !currentStatus,
       });

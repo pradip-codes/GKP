@@ -15,6 +15,7 @@ import {
   Share,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTheme } from '../../../contexts/ThemeContext';
 import { Icon } from '../../../components/Icon';
 import { colors } from '../../../theme/colors';
 import { spacing } from '../../../theme/spacing';
@@ -37,6 +38,7 @@ interface BankOption {
 }
 
 export default function ManageLinksScreen() {
+  const { colors } = useTheme();
   const router = useRouter();
   const [bankLinks, setBankLinks] = useState<BankLink[]>([]);
   const [banks, setBanks] = useState<BankOption[]>([]);

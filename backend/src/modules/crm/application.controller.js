@@ -2141,9 +2141,9 @@ const listApplications = async (req, res, next) => {
       querableOperatorFilterSQL = ` ${baseBankAccessFilterSQL} AND ${rejectedCondition}`;
     }
 
-    const isPhysicalCurableUser = ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userDesignation) || ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userRole);
-    const isDigitalCurableUser = ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userRole);
-    const isEmailCurableUser = ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userRole);
+    const isPhysicalCurableUser = ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userDesignation) || ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userRole) || req.query.curing_designation === 'PHYSICAL_CURABLE';
+    const isDigitalCurableUser = ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userRole) || req.query.curing_designation === 'DIGITAL_CURABLE';
+    const isEmailCurableUser = ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userRole) || req.query.curing_designation === 'EMAIL_CURABLE';
     const isCurableOperatorUser = isPhysicalCurableUser || isDigitalCurableUser || isEmailCurableUser;
 
     let curableOperatorFilterSQL = '';
@@ -2160,31 +2160,79 @@ const listApplications = async (req, res, next) => {
       if (isPhysicalCurableUser) {
         curableCondition = `(
           UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) IN ${physicalCodesSQL}
+          OR REGEXP_REPLACE(UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))), '[^A-Z0-9].*$', '') IN ${physicalCodesSQL}
+          OR UPPER(TRIM(COALESCE(combined.secondary_decline_code, ''))) IN ${physicalCodesSQL}
+          OR REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, combined.cureble_type, ''))), ' ', '_') IN ('PHYSICAL_CURABLE', 'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL')
+          OR REPLACE(UPPER(TRIM(COALESCE(combined.secondary_curing_designation, ''))), ' ', '_') IN ('PHYSICAL_CURABLE', 'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL')
           OR (
-            UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${digitalCodesSQL}
+            LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%salary check%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%low income%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%verif%negative%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%verification negative%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%resi%verif%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%biz%verif%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%business proof%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%clear document%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%cpv%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%office appointment%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%dob mismatch%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%pan mismatch%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%company name mismatch%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%city mismatch%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%mobile mismatch%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%incorrect designation%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%incorrect employer%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%multiple defect%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%poor contact%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%physical%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%pickup%'
+          )
+          OR (
+            (
+              combined.status IN ('rejected', 'declined', 'decline', 'technical_error')
+              OR LOWER(COALESCE(combined.final_status, '')) IN ('rejected', 'declined', 'decline', 'technical_error')
+              OR LOWER(COALESCE(combined.final_status, '')) LIKE '%reject%'
+              OR LOWER(COALESCE(combined.final_status, '')) LIKE '%decline%'
+              OR LOWER(COALESCE(combined.bank_current_lead_status, '')) IN ('rejected', 'declined', 'decline')
+              OR (combined.decline_code IS NOT NULL AND TRIM(combined.decline_code) != '' AND UPPER(TRIM(combined.decline_code)) != 'NONE')
+            )
+            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${digitalCodesSQL}
             AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${emailCodesSQL}
-            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) != 'NONE'
-            AND REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, ''))), ' ', '_') IN ('PHYSICAL_CURABLE', 'PHYSICAL_CURABLE_OPERATOR')
+            AND NOT (
+              UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) LIKE '%CIBIL%'
+              OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%cibil%'
+            )
+            AND REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, combined.cureble_type, ''))), ' ', '_') NOT IN ('DIGITAL_CURABLE', 'DIGITAL_CURABLE_OPERATOR', 'EMAIL_CURABLE', 'EMAIL_CURABLE_OPERATOR')
           )
         )`;
       } else if (isDigitalCurableUser) {
         curableCondition = `(
           UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) IN ${digitalCodesSQL}
+          OR REGEXP_REPLACE(UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))), '[^A-Z0-9].*$', '') IN ${digitalCodesSQL}
+          OR UPPER(TRIM(COALESCE(combined.secondary_decline_code, ''))) IN ${digitalCodesSQL}
+          OR REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, combined.cureble_type, ''))), ' ', '_') IN ('DIGITAL_CURABLE', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL')
+          OR REPLACE(UPPER(TRIM(COALESCE(combined.secondary_curing_designation, ''))), ' ', '_') IN ('DIGITAL_CURABLE', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL')
           OR (
-            UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${physicalCodesSQL}
-            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${emailCodesSQL}
-            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) != 'NONE'
-            AND REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, ''))), ' ', '_') IN ('DIGITAL_CURABLE', 'DIGITAL_CURABLE_OPERATOR')
+            LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%vkyc%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%bank statement%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%autopay%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%ekyc%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%income doc%'
           )
         )`;
       } else if (isEmailCurableUser) {
         curableCondition = `(
           UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) IN ${emailCodesSQL}
+          OR REGEXP_REPLACE(UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))), '[^A-Z0-9].*$', '') IN ${emailCodesSQL}
+          OR UPPER(TRIM(COALESCE(combined.secondary_decline_code, ''))) IN ${emailCodesSQL}
+          OR REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, combined.cureble_type, ''))), ' ', '_') IN ('EMAIL_CURABLE', 'EMAIL_CURABLE_OPERATOR', 'EMAIL')
+          OR REPLACE(UPPER(TRIM(COALESCE(combined.secondary_curing_designation, ''))), ' ', '_') IN ('EMAIL_CURABLE', 'EMAIL_CURABLE_OPERATOR', 'EMAIL')
           OR (
-            UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${physicalCodesSQL}
-            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${digitalCodesSQL}
-            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) != 'NONE'
-            AND REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, ''))), ' ', '_') IN ('EMAIL_CURABLE', 'EMAIL_CURABLE_OPERATOR')
+            LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%appeal%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%underwriting%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%landmark%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%not interested%'
+            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%never applied%'
           )
         )`;
       }
@@ -2195,7 +2243,13 @@ const listApplications = async (req, res, next) => {
         AND LOWER(COALESCE(combined.bank_code, '')) NOT LIKE '%tata%'
       )`;
 
-      curableOperatorFilterSQL = ` AND ${creditCardAppSQL} AND ${hdfcBankScopeSQL} AND ${curableCondition}`;
+      const baseBankAccessClean = (baseBankAccessFilterSQL || '').replace(/^\s*AND\s*/i, '').trim();
+      const hasAssignedBanks = baseBankAccessClean && baseBankAccessClean !== '1=0';
+      const curableBankScopeSQL = hasAssignedBanks
+        ? `(${baseBankAccessClean})`
+        : hdfcBankScopeSQL;
+
+      curableOperatorFilterSQL = ` AND ${creditCardAppSQL} AND ${curableBankScopeSQL} AND ${curableCondition}`;
     }
 
     if (!isPartnerOrTeam && !isSuperAdmin && req.user?.id) {
@@ -2249,6 +2303,8 @@ const listApplications = async (req, res, next) => {
 
     const statusFilterBlockSQL = `(
       $2::text IS NULL
+      OR $2::text = ''
+      OR $2::text = 'all'
       OR combined.status = $2::text
       OR ($2::text = 'pending' AND combined.status IN ('pending', 'lead_created', 'new', 'draft', 'initiated', 'link_sent', 'confirmed', 'link_pending'))
       OR ($2::text = 'details_submitted' AND combined.status IN ('details_submitted', 'submitted', 'bank_form_submitted'))
@@ -2548,13 +2604,14 @@ const listApplications = async (req, res, next) => {
         COALESCE(NULLIF(to_jsonb(a)->>'decline_reason', ''), NULLIF(to_jsonb(pad)->>'decline_reason', '')) as decline_reason,
         COALESCE(NULLIF(to_jsonb(a)->>'decline_code', ''), NULLIF(to_jsonb(pad)->>'decline_code', '')) as decline_code,
         COALESCE(NULLIF(to_jsonb(a)->>'decline_description', ''), NULLIF(to_jsonb(pad)->>'decline_description', '')) as decline_description,
-        COALESCE(NULLIF(to_jsonb(a)->>'curing_designation', ''), NULLIF(to_jsonb(pad)->>'curing_designation', '')) as curing_designation,
-        COALESCE(NULLIF(to_jsonb(a)->>'primary_curing_designation', ''), NULLIF(to_jsonb(pad)->>'primary_curing_designation', ''), NULLIF(to_jsonb(a)->>'curing_designation', ''), NULLIF(to_jsonb(pad)->>'curing_designation', '')) as primary_curing_designation,
+        COALESCE(NULLIF(to_jsonb(a)->>'curing_designation', ''), NULLIF(to_jsonb(pad)->>'curing_designation', ''), NULLIF(to_jsonb(a)->>'cureble_type', ''), NULLIF(to_jsonb(pad)->>'cureble_type', '')) as curing_designation,
+        COALESCE(NULLIF(to_jsonb(a)->>'primary_curing_designation', ''), NULLIF(to_jsonb(pad)->>'primary_curing_designation', ''), NULLIF(to_jsonb(a)->>'curing_designation', ''), NULLIF(to_jsonb(pad)->>'curing_designation', ''), NULLIF(to_jsonb(a)->>'cureble_type', ''), NULLIF(to_jsonb(pad)->>'cureble_type', '')) as primary_curing_designation,
         COALESCE(NULLIF(to_jsonb(a)->>'primary_decline_description', ''), NULLIF(to_jsonb(pad)->>'primary_decline_description', ''), NULLIF(to_jsonb(a)->>'decline_description', ''), NULLIF(to_jsonb(pad)->>'decline_description', '')) as primary_decline_description,
         COALESCE(NULLIF(to_jsonb(a)->>'secondary_curing_designation', ''), NULLIF(to_jsonb(pad)->>'secondary_curing_designation', '')) as secondary_curing_designation,
         COALESCE(NULLIF(to_jsonb(a)->>'secondary_decline_description', ''), NULLIF(to_jsonb(pad)->>'secondary_decline_description', '')) as secondary_decline_description,
         COALESCE(NULLIF(to_jsonb(a)->>'primary_decline_code', ''), NULLIF(to_jsonb(pad)->>'primary_decline_code', ''), NULLIF(to_jsonb(a)->>'decline_code', ''), NULLIF(to_jsonb(pad)->>'decline_code', '')) as primary_decline_code,
         COALESCE(NULLIF(to_jsonb(a)->>'secondary_decline_code', ''), NULLIF(to_jsonb(pad)->>'secondary_decline_code', '')) as secondary_decline_code,
+        COALESCE(NULLIF(to_jsonb(a)->>'cureble_type', ''), NULLIF(to_jsonb(pad)->>'cureble_type', ''), NULLIF(to_jsonb(a)->>'curable_type', ''), NULLIF(to_jsonb(pad)->>'curable_type', ''), NULLIF(a.curing_designation, ''), NULLIF(pad.curing_designation, '')) as cureble_type,
         COALESCE(to_jsonb(a)->>'sales_claimed_by', to_jsonb(pad)->>'sales_claimed_by', '') as sales_claimed_by,
         NULLIF(to_jsonb(a)->>'assigned_to_user_id', '') as assigned_to_user_id,
         NULLIF(to_jsonb(a)->>'assigned_to_employee_id', '') as assigned_to_employee_id,
@@ -2628,13 +2685,14 @@ const listApplications = async (req, res, next) => {
         COALESCE(NULLIF(to_jsonb(a)->>'decline_reason', ''), NULLIF(to_jsonb(pad)->>'decline_reason', '')) as decline_reason,
         COALESCE(NULLIF(to_jsonb(a)->>'decline_code', ''), NULLIF(to_jsonb(pad)->>'decline_code', '')) as decline_code,
         COALESCE(NULLIF(to_jsonb(a)->>'decline_description', ''), NULLIF(to_jsonb(pad)->>'decline_description', '')) as decline_description,
-        COALESCE(NULLIF(to_jsonb(a)->>'curing_designation', ''), NULLIF(to_jsonb(pad)->>'curing_designation', '')) as curing_designation,
-        COALESCE(NULLIF(to_jsonb(a)->>'primary_curing_designation', ''), NULLIF(to_jsonb(pad)->>'primary_curing_designation', ''), NULLIF(to_jsonb(a)->>'curing_designation', ''), NULLIF(to_jsonb(pad)->>'curing_designation', '')) as primary_curing_designation,
+        COALESCE(NULLIF(to_jsonb(a)->>'curing_designation', ''), NULLIF(to_jsonb(pad)->>'curing_designation', ''), NULLIF(to_jsonb(a)->>'cureble_type', ''), NULLIF(to_jsonb(pad)->>'cureble_type', '')) as curing_designation,
+        COALESCE(NULLIF(to_jsonb(a)->>'primary_curing_designation', ''), NULLIF(to_jsonb(pad)->>'primary_curing_designation', ''), NULLIF(to_jsonb(a)->>'curing_designation', ''), NULLIF(to_jsonb(pad)->>'curing_designation', ''), NULLIF(to_jsonb(a)->>'cureble_type', ''), NULLIF(to_jsonb(pad)->>'cureble_type', '')) as primary_curing_designation,
         COALESCE(NULLIF(to_jsonb(a)->>'primary_decline_description', ''), NULLIF(to_jsonb(pad)->>'primary_decline_description', ''), NULLIF(to_jsonb(a)->>'decline_description', ''), NULLIF(to_jsonb(pad)->>'decline_description', '')) as primary_decline_description,
         COALESCE(NULLIF(to_jsonb(a)->>'secondary_curing_designation', ''), NULLIF(to_jsonb(pad)->>'secondary_curing_designation', '')) as secondary_curing_designation,
         COALESCE(NULLIF(to_jsonb(a)->>'secondary_decline_description', ''), NULLIF(to_jsonb(pad)->>'secondary_decline_description', '')) as secondary_decline_description,
         COALESCE(NULLIF(to_jsonb(a)->>'primary_decline_code', ''), NULLIF(to_jsonb(pad)->>'primary_decline_code', ''), NULLIF(to_jsonb(a)->>'decline_code', ''), NULLIF(to_jsonb(pad)->>'decline_code', '')) as primary_decline_code,
         COALESCE(NULLIF(to_jsonb(a)->>'secondary_decline_code', ''), NULLIF(to_jsonb(pad)->>'secondary_decline_code', '')) as secondary_decline_code,
+        COALESCE(NULLIF(to_jsonb(a)->>'cureble_type', ''), NULLIF(to_jsonb(pad)->>'cureble_type', ''), NULLIF(to_jsonb(a)->>'curable_type', ''), NULLIF(to_jsonb(pad)->>'curable_type', ''), NULLIF(a.curing_designation, ''), NULLIF(pad.curing_designation, '')) as cureble_type,
         COALESCE(to_jsonb(a)->>'sales_claimed_by', to_jsonb(pad)->>'sales_claimed_by', '') as sales_claimed_by,
         NULLIF(to_jsonb(a)->>'assigned_to_user_id', '') as assigned_to_user_id,
         NULLIF(to_jsonb(a)->>'assigned_to_employee_id', '') as assigned_to_employee_id,
@@ -6859,7 +6917,7 @@ const updateRemarkOperatorApplication = async (req, res, next) => {
               await client.query('ROLLBACK');
               return forbidden(res, 'This application is not allocated to Physical Curable team.');
             }
-          } else if (!appPrimaryCuringDesig.startsWith('PHYSICAL_CURABLE')) {
+          } else if (appPrimaryCuringDesig && !appPrimaryCuringDesig.startsWith('PHYSICAL_CURABLE') && (appPrimaryCuringDesig.startsWith('DIGITAL_CURABLE') || appPrimaryCuringDesig.startsWith('EMAIL_CURABLE'))) {
             await client.query('ROLLBACK');
             return forbidden(res, 'This application is not allocated to Physical Curable team.');
           }
@@ -6869,7 +6927,7 @@ const updateRemarkOperatorApplication = async (req, res, next) => {
               await client.query('ROLLBACK');
               return forbidden(res, 'This application is not allocated to Digital Curable team.');
             }
-          } else if (!appPrimaryCuringDesig.startsWith('DIGITAL_CURABLE')) {
+          } else if (appPrimaryCuringDesig && !appPrimaryCuringDesig.startsWith('DIGITAL_CURABLE') && (appPrimaryCuringDesig.startsWith('PHYSICAL_CURABLE') || appPrimaryCuringDesig.startsWith('EMAIL_CURABLE'))) {
             await client.query('ROLLBACK');
             return forbidden(res, 'This application is not allocated to Digital Curable team.');
           }
@@ -6879,7 +6937,7 @@ const updateRemarkOperatorApplication = async (req, res, next) => {
               await client.query('ROLLBACK');
               return forbidden(res, 'This application is not allocated to Email Curable team.');
             }
-          } else if (!appPrimaryCuringDesig.startsWith('EMAIL_CURABLE')) {
+          } else if (appPrimaryCuringDesig && !appPrimaryCuringDesig.startsWith('EMAIL_CURABLE') && (appPrimaryCuringDesig.startsWith('PHYSICAL_CURABLE') || appPrimaryCuringDesig.startsWith('DIGITAL_CURABLE'))) {
             await client.query('ROLLBACK');
             return forbidden(res, 'This application is not allocated to Email Curable team.');
           }
