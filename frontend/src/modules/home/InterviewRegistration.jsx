@@ -59,6 +59,9 @@ export default function InterviewRegistration() {
   const [emailPreVerified, setEmailPreVerified] = useState(false);
 
   const [formData, setFormData] = useState({
+    first_name: '',
+    middle_name: '',
+    last_name: '',
     full_name: '',
     mobile_number: '',
     email_id: '',
@@ -77,6 +80,8 @@ export default function InterviewRegistration() {
     comfortable_with_location: true,
     relevant_experience: true,
     how_did_you_hear: 'WorkIndia / Job Portal',
+    selected_hr: '',
+    custom_hr_name: '',
     hr_name: '',
     target_role: 'Financial Sales Executive'
   });
@@ -87,13 +92,12 @@ export default function InterviewRegistration() {
   // Check for referral code in URL parameters
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const refParam = params.get('ref') || params.get('emp') || params.get('employee_code') || params.get('referral_code') || params.get('referral') || params.get('referralCode') || params.get('token') || params.get('code');
+    const refParam = params.get('ref') || params.get('referral_code') || params.get('token');
     if (refParam) {
       setReferredByCode(refParam);
       setFormData(prev => ({
         ...prev,
-        how_did_you_hear: 'Employee Reference',
-        hr_name: refParam
+        how_did_you_hear: 'Employee Reference'
       }));
     }
   }, []);
@@ -113,10 +117,30 @@ export default function InterviewRegistration() {
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value
-    }));
+    setFormData((prev) => {
+      const updated = {
+        ...prev,
+        [name]: type === 'checkbox' ? checked : value
+      };
+      if (name === 'first_name' || name === 'middle_name' || name === 'last_name') {
+        const fn = name === 'first_name' ? value : prev.first_name;
+        const mn = name === 'middle_name' ? value : prev.middle_name;
+        const ln = name === 'last_name' ? value : prev.last_name;
+        updated.full_name = [fn, mn, ln].filter(Boolean).map(s => String(s).trim()).filter(Boolean).join(' ');
+      }
+      if (name === 'selected_hr') {
+        if (value !== 'Other') {
+          updated.custom_hr_name = '';
+          updated.hr_name = value;
+        } else {
+          updated.hr_name = prev.custom_hr_name || '';
+        }
+      }
+      if (name === 'custom_hr_name') {
+        updated.hr_name = value;
+      }
+      return updated;
+    });
 
     // Reset verification if mobile or email is altered
     if (name === 'mobile_number') {
@@ -142,7 +166,7 @@ export default function InterviewRegistration() {
   const handleSendMobileOtp = async () => {
     setError('');
     setInfoMsg('');
-    const mob = formData.mobile_number.trim();
+    const mob = formData.mobile_number.trim().replace(/\D/g, '').slice(-10);
     if (!mob || !/^[6-9]\d{9}$/.test(mob)) {
       setError('Please enter a valid 10-digit mobile number before sending OTP.');
       return;
@@ -166,12 +190,19 @@ export default function InterviewRegistration() {
           async (sdkErr) => {
             console.warn('[MSG91 SDK Notice] sendOtp failed, calling backend fallback:', sdkErr);
             try {
-              await axios.post(`${getApiV1Url()}/public/careers/verify-mobile`, { mobile_number: mob });
-            } catch (e) {}
-            setMobileOtpSent(true);
-            setMobileOtpTimer(60);
-            setMobileOtpLoading(false);
-            setInfoMsg('Verification OTP dispatched to your Mobile number!');
+              const res = await axios.post(`${getApiV1Url()}/public/careers/verify-mobile`, { mobile_number: mob });
+              if (res.data?.success) {
+                setMobileOtpSent(true);
+                setMobileOtpTimer(60);
+                setInfoMsg('Verification OTP dispatched to your Mobile number!');
+              } else {
+                setError(res.data?.message || 'Failed to send OTP. Please try again.');
+              }
+            } catch (backendErr) {
+              setError(backendErr.response?.data?.message || 'Failed to send OTP. Please try again.');
+            } finally {
+              setMobileOtpLoading(false);
+            }
           }
         );
         return;
@@ -182,10 +213,14 @@ export default function InterviewRegistration() {
 
     // Direct backend API fallback
     try {
-      await axios.post(`${getApiV1Url()}/public/careers/verify-mobile`, { mobile_number: mob });
-      setMobileOtpSent(true);
-      setMobileOtpTimer(60);
-      setInfoMsg('Verification OTP dispatched to your Mobile number!');
+      const res = await axios.post(`${getApiV1Url()}/public/careers/verify-mobile`, { mobile_number: mob });
+      if (res.data?.success) {
+        setMobileOtpSent(true);
+        setMobileOtpTimer(60);
+        setInfoMsg('Verification OTP dispatched to your Mobile number!');
+      } else {
+        setError(res.data?.message || 'Failed to send OTP. Please try again.');
+      }
     } catch (err) {
       setError(err.response?.data?.message || err.message || 'Failed to send OTP. Please try again.');
     } finally {
@@ -195,11 +230,14 @@ export default function InterviewRegistration() {
 
   // ── Verify Mobile OTP (MSG91 Widget + Backend Fallback, matching PartnerRegister) ──
   const handleVerifyMobileOtp = async (valToVerify) => {
-    const code = valToVerify || mobileOtp;
-    if (!code || String(code).trim().length < 6) {
+    const rawCode = valToVerify !== undefined ? valToVerify : mobileOtp;
+    const code = String(rawCode || '').trim();
+    if (!code || code.length < 6) {
       setError('Please enter the 6-digit Mobile OTP code.');
       return;
     }
+
+    if (mobileVerifyLoading || mobilePreVerified) return;
 
     setError('');
     setInfoMsg('');
@@ -212,52 +250,66 @@ export default function InterviewRegistration() {
       setInfoMsg('✓ Mobile number successfully verified!');
     };
 
-    if (typeof window.verifyOtp === 'function') {
-      const verifyArgs = [
-        Number(String(code).trim()),
-        (data) => {
-          finishMobileVerification();
-        },
-        async (sdkErr) => {
-          console.warn('[MSG91 SDK Notice] verifyOtp failed, trying backend verification:', sdkErr);
-          try {
-            const res = await axios.post(`${getApiV1Url()}/public/careers/verify-otp`, {
-              mobile_number: formData.mobile_number.trim(),
-              mobile_otp: String(code).trim(),
-              type: 'mobile'
-            });
-            if (res.data.success) {
-              finishMobileVerification();
-              return;
-            }
-          } catch (backendErr) {
-            setError(backendErr.response?.data?.message || 'Invalid Mobile OTP. Please try again.');
-            setMobileVerifyLoading(false);
-          }
-        }
-      ];
-      if (mobileOtpRequestId) verifyArgs.push(mobileOtpRequestId);
+    const verifyViaBackend = async (otpCode) => {
       try {
-        window.verifyOtp(...verifyArgs);
+        const mob = formData.mobile_number.trim().replace(/\D/g, '').slice(-10);
+        const res = await axios.post(`${getApiV1Url()}/public/careers/verify-otp`, {
+          mobile_number: mob,
+          mobile_otp: otpCode,
+          type: 'mobile'
+        });
+        if (res.data?.success) {
+          finishMobileVerification();
+          return true;
+        } else {
+          setError(res.data?.message || 'Invalid Mobile OTP. Please try again.');
+          setMobileVerifyLoading(false);
+          return false;
+        }
+      } catch (backendErr) {
+        setError(backendErr.response?.data?.message || 'Invalid Mobile OTP. Please try again.');
+        setMobileVerifyLoading(false);
+        return false;
+      }
+    };
+
+    if (typeof window.verifyOtp === 'function') {
+      let isSettled = false;
+      const verifyTimeout = setTimeout(async () => {
+        if (!isSettled) {
+          isSettled = true;
+          await verifyViaBackend(code);
+        }
+      }, 5000);
+
+      try {
+        window.verifyOtp(
+          code,
+          (data) => {
+            if (isSettled) return;
+            isSettled = true;
+            clearTimeout(verifyTimeout);
+            finishMobileVerification();
+          },
+          async (sdkErr) => {
+            if (isSettled) return;
+            isSettled = true;
+            clearTimeout(verifyTimeout);
+            console.warn('[MSG91 SDK Notice] verifyOtp failed, trying backend verification:', sdkErr);
+            await verifyViaBackend(code);
+          }
+        );
         return;
       } catch (err) {
-        console.warn('MSG91 SDK verifyOtp exception, trying backend verification:', err);
+        if (!isSettled) {
+          isSettled = true;
+          clearTimeout(verifyTimeout);
+          console.warn('MSG91 SDK verifyOtp exception, trying backend verification:', err);
+        }
       }
     }
 
-    try {
-      const res = await axios.post(`${getApiV1Url()}/public/careers/verify-otp`, {
-        mobile_number: formData.mobile_number.trim(),
-        mobile_otp: String(code).trim(),
-        type: 'mobile'
-      });
-      if (res.data.success) {
-        finishMobileVerification();
-      }
-    } catch (err) {
-      setError(err.response?.data?.message || 'Invalid Mobile OTP. Please try again.');
-      setMobileVerifyLoading(false);
-    }
+    await verifyViaBackend(code);
   };
 
   // ── Send Email OTP (Identical to PartnerRegister) ──
@@ -329,8 +381,13 @@ export default function InterviewRegistration() {
     setError('');
     setInfoMsg('');
 
-    if (!formData.full_name || !formData.mobile_number || !formData.email_id) {
-      setError('Please fill in all required personal details (Full Name, Mobile, Email).');
+    if (!formData.first_name?.trim() || !formData.last_name?.trim()) {
+      setError('Please enter your First Name and Last Name.');
+      return;
+    }
+
+    if (!formData.mobile_number?.trim() || !formData.email_id?.trim()) {
+      setError('Please fill in all required personal details (Mobile, Email).');
       return;
     }
 
@@ -344,13 +401,28 @@ export default function InterviewRegistration() {
       return;
     }
 
-    if (formData.how_did_you_hear === 'Employee Reference' && !formData.hr_name) {
-      setError('Please enter the Referring Employee Name / ID.');
+    if (!formData.selected_hr) {
+      setError('Please select an HR from the Select HR field.');
       return;
     }
 
-    if (formData.how_did_you_hear === 'Other' && !formData.hr_name) {
-      setError('Please enter the HR Name / Reference Details.');
+    if (formData.selected_hr === 'Other' && !formData.custom_hr_name?.trim()) {
+      setError('Please enter the name of HR.');
+      return;
+    }
+
+    const finalFullName = [formData.first_name, formData.middle_name, formData.last_name]
+      .filter(Boolean)
+      .map(s => String(s).trim())
+      .filter(Boolean)
+      .join(' ');
+
+    const finalHrName = formData.selected_hr === 'Other'
+      ? formData.custom_hr_name.trim()
+      : formData.selected_hr;
+
+    if (formData.how_did_you_hear === 'Employee Reference' && !referredByCode && !formData.hr_name) {
+      setError('Please enter the Referring Employee Name / ID.');
       return;
     }
 
@@ -365,6 +437,8 @@ export default function InterviewRegistration() {
       Object.keys(formData).forEach(key => {
         registerPayload.append(key, formData[key]);
       });
+      registerPayload.set('full_name', finalFullName);
+      registerPayload.set('hr_name', finalHrName);
       if (referredByCode) {
         registerPayload.append('referred_by_employee_id', referredByCode);
         registerPayload.append('ref', referredByCode);
@@ -504,18 +578,43 @@ export default function InterviewRegistration() {
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: '16px', marginBottom: '24px' }}>
               
-              {/* Full Name */}
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Full Name *</label>
-                <input 
-                  type="text" 
-                  name="full_name" 
-                  required 
-                  value={formData.full_name} 
-                  onChange={handleInputChange} 
-                  placeholder="Enter full name" 
-                  style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }} 
-                />
+              {/* Name Fields: First name, Middle name, Last name */}
+              <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>First Name *</label>
+                  <input 
+                    type="text" 
+                    name="first_name" 
+                    required 
+                    value={formData.first_name} 
+                    onChange={handleInputChange} 
+                    placeholder="First name" 
+                    style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }} 
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Middle Name</label>
+                  <input 
+                    type="text" 
+                    name="middle_name" 
+                    value={formData.middle_name} 
+                    onChange={handleInputChange} 
+                    placeholder="Middle name" 
+                    style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }} 
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Last Name *</label>
+                  <input 
+                    type="text" 
+                    name="last_name" 
+                    required 
+                    value={formData.last_name} 
+                    onChange={handleInputChange} 
+                    placeholder="Last name" 
+                    style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }} 
+                  />
+                </div>
               </div>
 
               {/* Mobile Number & Inline OTP */}
@@ -798,10 +897,66 @@ export default function InterviewRegistration() {
               </div>
             </div>
 
-            {/* Section 4: Source & Resume Upload */}
+            {/* Section 4: Source, HR & Resume Upload */}
             <h2 style={{ fontSize: '19px', fontWeight: 800, margin: '24px 0 20px 0', color: C.teal || '#0F766E', display: 'flex', alignItems: 'center', gap: '10px', borderBottom: `1px solid ${C.border}`, paddingBottom: '10px' }}>
-              <FaFileAlt style={{ color: C.teal || '#0F766E' }} /> 4. Source & Resume Upload
+              <FaFileAlt style={{ color: C.teal || '#0F766E' }} /> 4. HR, Source & Resume Upload
             </h2>
+
+            {/* Select HR Field */}
+            <div style={{ marginBottom: '24px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>
+                Select HR *
+              </label>
+              <select
+                name="selected_hr"
+                required
+                value={formData.selected_hr}
+                onChange={handleInputChange}
+                style={{
+                  width: '100%',
+                  padding: '10px 14px',
+                  background: C.bgSecondary,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: '10px',
+                  color: C.text,
+                  boxSizing: 'border-box',
+                  fontSize: '13px',
+                  outline: 'none'
+                }}
+              >
+                <option value="">-- Select HR --</option>
+                <option value="Hrutika">Hrutika</option>
+                <option value="Nandini">Nandini</option>
+                <option value="Riya">Riya</option>
+                <option value="Other">Other</option>
+              </select>
+
+              {formData.selected_hr === 'Other' && (
+                <div style={{ marginTop: '10px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px', color: C.textMid }}>
+                    Enter Name of HR *
+                  </label>
+                  <input
+                    type="text"
+                    name="custom_hr_name"
+                    required
+                    value={formData.custom_hr_name}
+                    onChange={handleInputChange}
+                    placeholder="Enter name of HR"
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      background: C.bgSecondary,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: '10px',
+                      color: C.text,
+                      boxSizing: 'border-box',
+                      fontSize: '13px'
+                    }}
+                  />
+                </div>
+              )}
+            </div>
 
             <div style={{ marginBottom: '24px' }}>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '10px' }}>How did you hear about this job? *</label>
@@ -827,19 +982,18 @@ export default function InterviewRegistration() {
                 ))}
               </div>
 
-              {/* Conditional Referring Employee / HR Name field */}
-              {(formData.how_did_you_hear === 'Other' || formData.how_did_you_hear === 'Employee Reference') && (
+              {/* Conditional Referring Employee field */}
+              {formData.how_did_you_hear === 'Employee Reference' && !referredByCode && (
                 <div style={{ marginTop: '16px' }}>
                   <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>
-                    {formData.how_did_you_hear === 'Employee Reference' ? 'Referring Employee Name / Employee ID *' : 'HR Name / Reference Details *'}
+                    Referring Employee Name / Employee ID *
                   </label>
                   <input 
                     type="text" 
-                    name="hr_name" 
-                    required
-                    value={formData.hr_name} 
-                    onChange={handleInputChange} 
-                    placeholder={formData.how_did_you_hear === 'Employee Reference' ? 'Enter Referring Employee Name or Employee ID (e.g. Rahul Sharma / GKP1002)' : 'Enter HR Name or how you heard about this job'} 
+                    name="referral_detail" 
+                    value={formData.referral_detail || ''} 
+                    onChange={(e) => setFormData(p => ({ ...p, referral_detail: e.target.value }))} 
+                    placeholder="Enter Referring Employee Name or Employee ID (e.g. Rahul Sharma / GKP1002)" 
                     style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} 
                   />
                 </div>

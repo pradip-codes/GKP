@@ -194,7 +194,10 @@ const createAdmin = async (req, res, next) => {
     logger.info("CREATE ADMIN REQUEST:", req.body);
     logger.info("ROLE:", role);
 
-    if (!fullName || !email || !mobile || !password || !confirmPassword || !designation) {
+    const normRole = String(role).trim().toUpperCase();
+    const isNoDesignationRole = ['HR', 'SUPER_ADMIN', 'SUPER ADMIN', 'PARTNER'].includes(normRole);
+
+    if (!fullName || !email || !mobile || !password || !confirmPassword || (!isNoDesignationRole && !designation)) {
       logger.info("FAILED: Missing required fields");
       return error(res, 'All required fields must be provided', 400);
     }
@@ -203,8 +206,8 @@ const createAdmin = async (req, res, next) => {
       role = 'KYC_OPERATOR';
     }
 
-    if (!['ADMIN', 'EMPLOYEE', 'HR', 'KYC_OPERATOR'].includes(role)) {
-      return error(res, 'Role must be either ADMIN, EMPLOYEE, HR, or KYC_OPERATOR', 400);
+    if (!['ADMIN', 'EMPLOYEE', 'HR', 'KYC_OPERATOR', 'SUPER_ADMIN', 'PARTNER'].includes(normRole)) {
+      return error(res, 'Role must be either ADMIN, SUPER_ADMIN, HR, PARTNER, EMPLOYEE, or KYC_OPERATOR', 400);
     }
 
     if (password !== confirmPassword) {
@@ -226,10 +229,10 @@ const createAdmin = async (req, res, next) => {
       return error(res, 'A user with this mobile number already exists', 400);
     }
 
-    // Check bank assignment requirement BEFORE user insert
+    // Check bank assignment requirement BEFORE user insert (only if designation is applicable)
     const bankIds = Array.isArray(req.body.bank_ids) ? req.body.bank_ids : (req.body.bank_id ? [req.body.bank_id] : []);
     const desigUpper = String(designation || '').toUpperCase();
-    const isOpHead = ['OPERATIONAL_HEAD', 'OPERATIONAL HEAD', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES EXECUTIVE', 'PAN_CHECKER', 'PAN CHECKER', 'REMARK_OPERATOR', 'REMARK OPERATOR', 'QD_OPERATOR', 'QD OPERATOR', 'FINAL_STATUS_OPERATOR', 'FINAL STATUS OPERATOR', 'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE', 'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR'].includes(desigUpper);
+    const isOpHead = !isNoDesignationRole && ['OPERATIONAL_HEAD', 'OPERATIONAL HEAD', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES EXECUTIVE', 'PAN_CHECKER', 'PAN CHECKER', 'REMARK_OPERATOR', 'REMARK OPERATOR', 'QD_OPERATOR', 'QD OPERATOR', 'FINAL_STATUS_OPERATOR', 'FINAL STATUS OPERATOR', 'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE', 'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR'].includes(desigUpper);
     if (isOpHead && bankIds.length === 0) {
       return error(res, 'At least one assigned bank is required for Operational Head, Administrative Operator, Administrative Sales Executive, PAN Checker, Remark Operator, QD Operator, Final Status Operator, Querable Operator, or Curable Operator designation', 400);
     }
@@ -264,7 +267,7 @@ const createAdmin = async (req, res, next) => {
       )
       VALUES ($1, $2, $3, $9::user_role, 'active'::user_status, $4, $5, $6, $7, $8, true, true)
       RETURNING id, email, role, status`,
-      [email, formattedMobile, hashedPassword, fullName, uniqueEmployeeId, department, designation, req.user?.id || null, role]
+      [email, formattedMobile, hashedPassword, fullName, uniqueEmployeeId, department, designation || null, req.user?.id || null, normRole]
     );
 
     logger.info(`Super admin ${req.user.email} created new user: ${email} with role: ${role}`);
