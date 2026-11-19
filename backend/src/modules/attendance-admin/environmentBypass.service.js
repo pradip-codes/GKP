@@ -197,16 +197,6 @@ const getEnvironmentBypassStatus = async (employeeId) => {
   };
 };
 
-  if (activeBypass) {
-    return {
-      hasBypass: true,
-      bypassRecord: activeBypass
-    };
-  }
-
-  return { hasBypass: false };
-};
-
 /**
  * 3. List Environment Bypasses with Pagination
  */
