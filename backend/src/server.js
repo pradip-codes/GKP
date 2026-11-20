@@ -512,6 +512,14 @@ const startServer = async () => {
       logger.warn('Application query indexes auto migration note:', idxErr.message);
     }
 
+    // Always ensure application performance optimization indexes exist on boot
+    try {
+      const { migrateApplicationPerformanceOptimization } = require('./database/migrations/migrate_application_performance_optimization.js');
+      await migrateApplicationPerformanceOptimization();
+    } catch (perfErr) {
+      logger.warn('Application performance optimization auto migration note:', perfErr.message);
+    }
+
     // Always ensure Bulk SMS tables exist on boot
     try {
       const migrateBulkSms = require('./database/migrations/migrate_bulk_sms.js');

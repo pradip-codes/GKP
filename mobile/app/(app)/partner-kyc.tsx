@@ -521,6 +521,12 @@ const styles = StyleSheet.create({
     color: colors.text,
     marginBottom: 4,
   },
+  inputDescription: {
+    fontSize: 12,
+    color: colors.textLight,
+    marginBottom: spacing.sm,
+    lineHeight: 18,
+  },
   input: {
     backgroundColor: '#F8FAFC',
     borderWidth: 1,

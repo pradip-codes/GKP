@@ -38,10 +38,11 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function EmployeeDashboardScreen() {
   const { colors } = useTheme();
-  const { user, userRole, userDesignation, reloadUser } = useAuth();
+  const { user, userRole, userDesignation, reloadUser, logout } = useAuth();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showLogoutMenu, setShowLogoutMenu] = useState(false);
 
   const [profileData, setProfileData] = useState<EmployeeProfileData | null>(null);
   const [incentiveData, setIncentiveData] = useState<EmployeeIncentivesResponse | null>(null);
@@ -113,13 +114,6 @@ export default function EmployeeDashboardScreen() {
     }, 4000);
     return () => clearInterval(interval);
   }, [banners.length]);
-
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Good morning';
-    if (hour < 17) return 'Good afternoon';
-    return 'Good evening';
-  };
 
   const totalApps = profileData?.total_applications ?? 0;
   const approvedApps = profileData?.approved_applications ?? 0;
@@ -209,16 +203,30 @@ export default function EmployeeDashboardScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
       >
         <View style={styles.header}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{(user?.full_name || user?.email || 'E')[0].toUpperCase()}</Text>
-          </View>
-          <View style={styles.headerTextContainer}>
-            <Text style={styles.greeting}>{getGreeting()},</Text>
-            <Text style={styles.userName}>{user?.full_name || user?.name || user?.email}</Text>
-            <View style={styles.roleContainer}>
-              <StatusBadge status={userRole || 'EMPLOYEE'} />
+          <TouchableOpacity
+            style={styles.avatarTouchable}
+            onPress={() => setShowLogoutMenu(!showLogoutMenu)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{(user?.full_name || user?.email || 'E')[0].toUpperCase()}</Text>
             </View>
-          </View>
+          </TouchableOpacity>
+          {showLogoutMenu && (
+            <View style={styles.logoutMenu}>
+              <TouchableOpacity
+                style={styles.logoutMenuItem}
+                onPress={async () => {
+                  setShowLogoutMenu(false);
+                  await logout();
+                  router.replace('/(auth)/login');
+                }}
+              >
+                <Icon name="log-out" size={16} color={colors.error} />
+                <Text style={[styles.logoutMenuText, { color: colors.error }]}>Logout</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         <Card style={styles.onboardingCard}>
@@ -260,22 +268,32 @@ export default function EmployeeDashboardScreen() {
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
     >
-      {/* Header Section */}
+      {/* Header Section - Profile Circle Only */}
       <View style={styles.header}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{(user?.full_name || user?.email || 'E')[0].toUpperCase()}</Text>
-        </View>
-        <View style={styles.headerTextContainer}>
-          <Text style={styles.greeting}>{getGreeting()},</Text>
-          <Text style={styles.userName}>{user?.full_name || user?.name || user?.email}</Text>
-          <View style={styles.roleContainer}>
-            <StatusBadge status={userRole || 'EMPLOYEE'} />
-            {profileData?.employee?.employee_id ? (
-              <Text style={styles.designationText}> • ID: {profileData.employee.employee_id}</Text>
-            ) : null}
-            {userDesignation ? <Text style={styles.designationText}> • {userDesignation}</Text> : null}
+        <TouchableOpacity
+          style={styles.avatarTouchable}
+          onPress={() => setShowLogoutMenu(!showLogoutMenu)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{(user?.full_name || user?.email || 'E')[0].toUpperCase()}</Text>
           </View>
-        </View>
+        </TouchableOpacity>
+        {showLogoutMenu && (
+          <View style={styles.logoutMenu}>
+            <TouchableOpacity
+              style={styles.logoutMenuItem}
+              onPress={async () => {
+                setShowLogoutMenu(false);
+                await logout();
+                router.replace('/(auth)/login');
+              }}
+            >
+              <Icon name="log-out" size={16} color={colors.error} />
+              <Text style={[styles.logoutMenuText, { color: colors.error }]}>Logout</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       {/* Banner Carousel */}
@@ -492,6 +510,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  avatarTouchable: {
     marginRight: spacing.md,
   },
   avatarText: {
@@ -499,27 +519,31 @@ const styles = StyleSheet.create({
     fontWeight: typography.weights.bold,
     color: '#FFF',
   },
-  headerTextContainer: {
-    flex: 1,
+  logoutMenu: {
+    position: 'absolute',
+    top: 56,
+    left: 0,
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    paddingVertical: spacing.xs,
+    minWidth: 140,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
+    zIndex: 1000,
   },
-  greeting: {
-    fontSize: typography.sizes.xs,
-    color: colors.textLight,
-  },
-  userName: {
-    fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.bold,
-    color: colors.text,
-  },
-  roleContainer: {
+  logoutMenuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
-    flexWrap: 'wrap',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
   },
-  designationText: {
-    fontSize: typography.sizes.xs,
-    color: colors.textMid,
+  logoutMenuText: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.semibold,
   },
   errorCard: {
     borderColor: colors.danger,
