@@ -88,7 +88,7 @@ async function migrateOfficeBuildingGeofences() {
         73.8748080,
         0,
         JSON.stringify(defaultCoordinates),
-        3,
+        10,
         true
       ]
     );
@@ -123,7 +123,7 @@ async function migrateOfficeBuildingGeofences() {
         85.1431463,
         0,
         JSON.stringify(patnaCoordinates),
-        3,
+        10,
         true
       ]
     );

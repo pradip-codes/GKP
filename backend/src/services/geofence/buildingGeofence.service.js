@@ -17,7 +17,7 @@ const DEFAULT_BUILDINGS = [
       [18.6194760, 73.8748440],
       [18.6194570, 73.8747940]
     ],
-    tolerance_meters: 3,
+    tolerance_meters: 10,
     is_active: true
   },
   {
@@ -76,7 +76,7 @@ const DEFAULT_BUILDINGS = [
       [25.6137460, 85.1431590],
       [25.6137380, 85.1431460]
     ],
-    tolerance_meters: 3,
+    tolerance_meters: 10,
     is_active: true
   }
 ];

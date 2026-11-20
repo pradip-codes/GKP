@@ -149,7 +149,7 @@ export default function EmployeeSalesReportScreen() {
         report_date: reportDate,
         total_cards: cardsNum,
         remark: remark.trim(),
-        photo: photoUri,
+        photo_url: photoUri || undefined,
         banks: Object.entries(bankCounts)
           .filter(([_, count]) => count > 0)
           .map(([bId, count]) => ({
@@ -180,9 +180,10 @@ export default function EmployeeSalesReportScreen() {
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Icon name="chevron-left" size={24} color="#fff" />
         </TouchableOpacity>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, marginLeft: spacing.xs }}>
           <Text style={styles.headerSubtitle}>EMPLOYEE PORTAL</Text>
           <Text style={styles.headerTitle}>Daily Sales Report</Text>
+          <Text style={styles.headerDesc}>Submit daily card sales & track history</Text>
         </View>
       </View>
 
@@ -383,9 +384,14 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
   },
   headerTitle: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
     color: '#fff',
+  },
+  headerDesc: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
   },
   tabRow: {
     flexDirection: 'row',

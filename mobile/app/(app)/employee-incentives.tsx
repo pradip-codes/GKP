@@ -67,46 +67,66 @@ export default function EmployeeIncentivesScreen() {
         </View>
       </View>
 
-      {/* View Switcher Tabs */}
+      {/* View Switcher Tabs - Website Style */}
       <View style={styles.viewSwitcher}>
         <TouchableOpacity
           style={[styles.viewTab, activeView === 'monthly' && styles.activeViewTab]}
           onPress={() => setActiveView('monthly')}
         >
+          <View style={[styles.iconCircle, activeView === 'monthly' ? { backgroundColor: 'rgba(255,255,255,0.2)' } : { backgroundColor: '#334155' }]}>
+            <Text style={{ fontSize: 16 }}>🗓️</Text>
+          </View>
           <Text style={[styles.viewTabText, activeView === 'monthly' && styles.activeViewTabText]}>
-            🗓️ Monthly Audit
+            Monthly Audit
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.viewTab, activeView === 'ledger' && styles.activeViewTab]}
           onPress={() => setActiveView('ledger')}
         >
+          <View style={[styles.iconCircle, activeView === 'ledger' ? { backgroundColor: 'rgba(255,255,255,0.2)' } : { backgroundColor: '#334155' }]}>
+            <Text style={{ fontSize: 16 }}>📜</Text>
+          </View>
           <Text style={[styles.viewTabText, activeView === 'ledger' && styles.activeViewTabText]}>
-            📜 Ledger
+            Ledger
           </Text>
         </TouchableOpacity>
       </View>
 
-      {/* KPI Overview Banner */}
-      <View style={styles.kpiRow}>
-        <View style={styles.kpiCard}>
-          <Text style={styles.kpiLabel}>Total Paid</Text>
-          <Text style={[styles.kpiValue, { color: '#10B981' }]}>
+      {/* KPI Overview Banner - Website Style */}
+      <View style={styles.statsRow}>
+        <TouchableOpacity style={styles.statItem}>
+          <View style={[styles.iconCircle, { backgroundColor: '#DCFCE7' }]}>
+            <Icon name="check-circle" size={18} color="#059669" />
+          </View>
+          <Text style={[styles.statValue, { color: '#10B981' }]}>
             ₹{(stats?.total_paid || 0).toLocaleString('en-IN')}
           </Text>
-        </View>
-        <View style={styles.kpiCard}>
-          <Text style={styles.kpiLabel}>Pending Incentive</Text>
-          <Text style={[styles.kpiValue, { color: '#F59E0B' }]}>
+          <Text style={styles.statLabel}>Total Paid</Text>
+          <Text style={styles.statSublabel}>Released</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.statItem}>
+          <View style={[styles.iconCircle, { backgroundColor: '#FEF3C7' }]}>
+            <Icon name="clock" size={18} color="#D97706" />
+          </View>
+          <Text style={[styles.statValue, { color: '#F59E0B' }]}>
             ₹{(stats?.pending_incentive || 0).toLocaleString('en-IN')}
           </Text>
-        </View>
-        <View style={styles.kpiCard}>
-          <Text style={styles.kpiLabel}>Cards Converted</Text>
-          <Text style={[styles.kpiValue, { color: colors.primaryLight }]}>
+          <Text style={styles.statLabel}>Pending</Text>
+          <Text style={styles.statSublabel}>Incentive</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.statItem}>
+          <View style={[styles.iconCircle, { backgroundColor: '#EEF2FF' }]}>
+            <Icon name="credit-card" size={18} color="#4F46E5" />
+          </View>
+          <Text style={[styles.statValue, { color: colors.primaryLight }]}>
             {stats?.total_leads_converted || transactions.length}
           </Text>
-        </View>
+          <Text style={styles.statLabel}>Cards Converted</Text>
+          <Text style={styles.statSublabel}>This Month</Text>
+        </TouchableOpacity>
       </View>
 
       {activeView === 'monthly' ? (
@@ -116,7 +136,9 @@ export default function EmployeeIncentivesScreen() {
             Detailed breakdown of your monthly performance earnings and payouts.
           </Text>
           <View style={styles.monthlyContainer}>
-            <Icon name="calendar" size={48} color={colors.textLight} />
+            <View style={[styles.iconCircle, { backgroundColor: '#EEF2FF', width: 60, height: 60, borderRadius: 30 }]}>
+              <Text style={{ fontSize: 28 }}>🗓️</Text>
+            </View>
             <Text style={styles.emptyTitle}>Monthly Audit View</Text>
             <Text style={styles.emptyDesc}>
               Detailed monthly breakdown with date ranges, performance metrics, and payout summaries will appear here.
@@ -177,7 +199,9 @@ export default function EmployeeIncentivesScreen() {
             <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
           ) : transactions.length === 0 ? (
             <View style={styles.emptyContainer}>
-              <Icon name="credit-card" size={36} color={colors.textLight} />
+              <View style={[styles.iconCircle, { backgroundColor: '#F1F5F9', width: 60, height: 60, borderRadius: 30 }]}>
+                <Text style={{ fontSize: 28 }}>💳</Text>
+              </View>
               <Text style={styles.emptyTitle}>No Transactions Yet</Text>
               <Text style={styles.emptyDesc}>
                 Approved customer applications and sales reports will generate incentives here.
@@ -262,8 +286,11 @@ const styles = StyleSheet.create({
   },
   viewTab: {
     flex: 1,
-    paddingVertical: 8,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    gap: 8,
     borderRadius: 8,
   },
   activeViewTab: {
@@ -278,28 +305,36 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '700',
   },
-  kpiRow: {
+  statsRow: {
     flexDirection: 'row',
-    gap: spacing.xs,
+    justifyContent: 'space-between',
     marginBottom: spacing.md,
   },
-  kpiCard: {
+  statItem: {
+    alignItems: 'center',
     flex: 1,
-    backgroundColor: '#1E293B',
-    borderRadius: 12,
-    padding: spacing.sm,
-    borderWidth: 1,
-    borderColor: '#334155',
+  },
+  iconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  kpiLabel: {
-    fontSize: 10,
-    color: colors.textLight,
-    fontWeight: '600',
-  },
-  kpiValue: {
-    fontSize: 16,
+  statValue: {
+    fontSize: 17,
     fontWeight: '800',
+    color: '#fff',
+    marginTop: 4,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: colors.textLight,
+    marginTop: 2,
+  },
+  statSublabel: {
+    fontSize: 9.5,
+    color: colors.textLight,
     marginTop: 2,
   },
   card: {

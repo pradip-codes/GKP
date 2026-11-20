@@ -519,9 +519,10 @@ export default function EmployeeOnboardingScreen() {
           <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
             <Icon name="chevron-left" size={24} color="#fff" />
           </TouchableOpacity>
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, marginLeft: spacing.sm }}>
             <Text style={styles.headerSubtitle}>EMPLOYEE ONBOARDING</Text>
             <Text style={styles.headerTitle}>Complete Your Profile</Text>
+            <Text style={styles.headerDesc}>Join GharKaPaisa in 4 simple steps</Text>
           </View>
         </View>
 
@@ -564,9 +565,14 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '800',
     color: '#fff',
+  },
+  headerDesc: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
   },
   stepIndicator: {
     flexDirection: 'row',

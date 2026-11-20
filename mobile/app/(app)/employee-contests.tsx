@@ -109,7 +109,7 @@ export default function EmployeeContestsScreen() {
     const banners = [
       { id: 1, title: 'Credit Card Champions', subtitle: 'Target: 50 Approved Apps', color: '#0F766E' },
       { id: 2, title: 'Loan Sprint', subtitle: 'Top performers win gadgets', color: '#7C3AED' },
-      { id: 3, title, subtitle: 'Monthly bonus rewards', color: '#059669' },
+      { id: 3, title: 'Monthly Bonus Rewards', subtitle: 'Weekly leaderboard prizes', color: '#059669' },
     ];
 
     return (
@@ -164,7 +164,11 @@ export default function EmployeeContestsScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Icon name="arrow-left" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Sales Contests</Text>
+        <View style={styles.headerTextCol}>
+          <Text style={styles.headerSubtitle}>EMPLOYEE PORTAL</Text>
+          <Text style={styles.headerTitle}>Sales Contests</Text>
+          <Text style={styles.headerDesc}>Compete and win rewards</Text>
+        </View>
         <View style={{ width: 24 }} />
       </View>
 
@@ -294,10 +298,25 @@ const styles = StyleSheet.create({
   backButton: {
     padding: spacing.xs,
   },
+  headerTextCol: {
+    flex: 1,
+    marginLeft: spacing.xs,
+  },
+  headerSubtitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.textLight,
+    letterSpacing: 1,
+  },
   headerTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: colors.text,
+  },
+  headerDesc: {
+    fontSize: 11,
+    color: colors.textLight,
+    marginTop: 2,
   },
   tabsContainer: {
     flexDirection: 'row',

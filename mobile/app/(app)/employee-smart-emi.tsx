@@ -198,6 +198,7 @@ export default function EmployeeSmartEmiScreen() {
             <Icon name="arrow-left" size={22} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.headerTitleWrap}>
+            <Text style={styles.headerEyebrow}>EMPLOYEE PORTAL</Text>
             <Text style={styles.headerTitle}>Smart EMI On Card</Text>
             <Text style={styles.headerSubtitle}>
               Convert Spends into Flexible Low-Interest EMIs
@@ -399,14 +400,21 @@ const styles = StyleSheet.create({
   },
   headerTitleWrap: {
     flex: 1,
+    marginLeft: spacing.sm,
+  },
+  headerEyebrow: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 1,
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: '800',
     color: '#F8FAFC',
   },
   headerSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#94A3B8',
     marginTop: 2,
   },

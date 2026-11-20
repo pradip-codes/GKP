@@ -93,7 +93,7 @@ export default function EmployeeTeamScreen() {
         <View style={styles.headerLeft}>
           <Text style={styles.headerSubtitle}>ORGANIZATION & HIERARCHY</Text>
           <Text style={styles.headerTitle}>My Team Desk</Text>
-          <Text style={styles.designationText}>
+          <Text style={styles.headerDesc}>
             Designation: {userDesignation || emp.designation || 'Employee'}
           </Text>
         </View>
@@ -251,7 +251,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     marginTop: 2,
   },
-  designationText: {
+  headerDesc: {
     fontSize: 12,
     color: '#CCFBF1',
     marginTop: 2,

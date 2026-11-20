@@ -706,11 +706,11 @@ const validateLivenessResult = async ({
 
   // 2. Authoritative KYC Face Matching using liveness ReferenceImage (Skipped if face is exempt)
   let faceRes;
+  let activeTemplate = null; // Declare at function scope to avoid ReferenceError
   if (hasFaceBypass) {
     logger.info(`[ATTENDANCE FACE] Face verification bypassed for employee ${authEmpId} (Active DB Face Exemption)`);
     faceRes = { matched: true, similarity: 100, matchStatus: 'MATCHED' };
   } else {
-    let activeTemplate = null;
     try {
       const { rows } = await query(
         `SELECT id, version, s3_key FROM employee_biometric_templates WHERE employee_id = $1 AND status = 'ACTIVE' LIMIT 1`,
@@ -962,12 +962,12 @@ const validateLivenessResult = async ({
   await logAction(reqUser, 'ATTENDANCE_FACE_MATCH_SUCCESS', authEmpId, {
     session_id: sessionId,
     similarity: faceRes.similarity,
-    template_version: activeTemplate.version,
+    template_version: activeTemplate?.version || null,
   });
 
   await logAction(reqUser, 'ATTENDANCE_VERIFICATION_SUCCESS', authEmpId, {
     session_id: sessionId,
-    template_version: activeTemplate.version,
+    template_version: activeTemplate?.version || null,
     building: matchedBuildingName,
     location_lat: latitude,
     location_lng: longitude,

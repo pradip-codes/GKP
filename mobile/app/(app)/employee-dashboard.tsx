@@ -365,59 +365,65 @@ export default function EmployeeDashboardScreen() {
         </View>
       </Card>
 
-      {/* Quick Launch Action Grid */}
+      {/* Quick Launch Action Grid - Website Style */}
       <Text style={styles.sectionTitle}>Quick Actions</Text>
-      <Card style={styles.actionCard}>
-        <View style={styles.actionGrid}>
-          <Button
-            title="Add New Lead"
-            onPress={() => router.push('/(app)/add-lead')}
-            style={styles.actionBtn}
-          />
-          <Button
-            title="My Applications"
-            onPress={() => router.push('/(app)/applications')}
-            variant="secondary"
-            style={styles.actionBtn}
-          />
-          <Button
-            title="My Team & Hierarchy"
-            onPress={() => router.push('/(app)/employee-team')}
-            variant="secondary"
-            style={styles.actionBtn}
-          />
-          <Button
-            title="My Referrals & Links"
-            onPress={() => router.push('/(app)/employee-referrals')}
-            variant="secondary"
-            style={styles.actionBtn}
-          />
-          <Button
-            title="Customers & Leads"
-            onPress={() => router.push('/(app)/leads')}
-            variant="secondary"
-            style={styles.actionBtn}
-          />
-          <Button
-            title="WhatsApp Business"
-            onPress={() => router.push('/(app)/whatsapp')}
-            variant="outline"
-            style={styles.actionBtn}
-          />
-          <Button
-            title="Finance Buddy"
-            onPress={() => router.push('/(app)/finance-buddy')}
-            variant="outline"
-            style={styles.actionBtn}
-          />
-          <Button
-            title="Notifications"
-            onPress={() => router.push('/(app)/notifications')}
-            variant="outline"
-            style={styles.actionBtn}
-          />
-        </View>
-      </Card>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickActionsScroll}>
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/add-lead')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#EEF2FF' }]}>
+            <Icon name="user-plus" size={20} color="#4F46E5" />
+          </View>
+          <Text style={styles.serviceItemText}>Punch Lead</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/applications')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#ECFDF5' }]}>
+            <Icon name="file-text" size={20} color="#10B981" />
+          </View>
+          <Text style={styles.serviceItemText}>Applications</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/employee-team')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#FAF5FF' }]}>
+            <Icon name="users" size={20} color="#7C3AED" />
+          </View>
+          <Text style={styles.serviceItemText}>My Team</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/employee-referrals')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#F3E8FF' }]}>
+            <Icon name="share-2" size={20} color="#9333EA" />
+          </View>
+          <Text style={styles.serviceItemText}>Referrals</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/leads')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#FEF3C7' }]}>
+            <Icon name="users" size={20} color="#D97706" />
+          </View>
+          <Text style={styles.serviceItemText}>Leads</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/whatsapp')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#ECFDF5' }]}>
+            <Icon name="message-circle" size={20} color="#25D366" />
+          </View>
+          <Text style={styles.serviceItemText}>WhatsApp</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/finance-buddy')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#EFF6FF' }]}>
+            <Icon name="zap" size={20} color="#2563EB" />
+          </View>
+          <Text style={styles.serviceItemText}>Finance Buddy</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/notifications')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#FDF2F8' }]}>
+            <Icon name="bell" size={20} color="#DB2777" />
+          </View>
+          <Text style={styles.serviceItemText}>Notifications</Text>
+        </TouchableOpacity>
+      </ScrollView>
 
       {/* Recent Submissions List */}
       <Text style={styles.sectionTitle}>Recent Application Submissions</Text>
@@ -530,29 +536,38 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     marginBottom: spacing.xs,
   },
-  statsGrid: {
+  statsRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
   },
-  statCard: {
-    width: '48%',
-    borderLeftWidth: 4,
+  statItem: {
+    alignItems: 'center',
+    flex: 1,
     padding: spacing.sm,
   },
-  statLabel: {
-    fontSize: typography.sizes.xs,
-    color: colors.textLight,
+  iconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   statValue: {
-    fontSize: typography.sizes.xl,
-    fontWeight: typography.weights.bold,
+    fontSize: 17,
+    fontWeight: '800',
     color: colors.text,
-    marginVertical: 2,
+    marginTop: 4,
   },
-  statSub: {
-    fontSize: typography.sizes.xs - 2,
-    color: colors.textMid,
+  statLabel: {
+    fontSize: 11,
+    color: colors.text,
+    marginTop: 2,
+  },
+  statSublabel: {
+    fontSize: 9.5,
+    color: colors.textLight,
+    marginTop: 2,
   },
   performanceCard: {
     marginTop: spacing.xs,
@@ -627,6 +642,20 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.md,
     fontWeight: typography.weights.bold,
     marginTop: 2,
+  },
+  quickActionsScroll: {
+    marginBottom: spacing.lg,
+  },
+  serviceItem: {
+    alignItems: 'center',
+    marginRight: spacing.md,
+  },
+  serviceItemText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.text,
+    textAlign: 'center',
+    marginTop: 4,
   },
   actionCard: {
     marginTop: spacing.xs,

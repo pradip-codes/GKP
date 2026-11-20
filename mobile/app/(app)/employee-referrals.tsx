@@ -137,8 +137,11 @@ export default function EmployeeReferralsScreen() {
         </View>
       ) : null}
 
-      {/* Employee Code Card */}
+      {/* Employee Code Card - Website Style */}
       <View style={styles.codeCard}>
+        <View style={styles.codeIconBg}>
+          <Icon name="gift" size={24} color="#0F766E" />
+        </View>
         <View style={styles.codeLeft}>
           <Text style={styles.codeLabel}>My Unique Employee Referral Code</Text>
           <Text style={styles.codeValue}>{empCode}</Text>
@@ -152,23 +155,35 @@ export default function EmployeeReferralsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Referral Performance KPIs */}
+      {/* Referral Performance KPIs - Website Style */}
       <Text style={styles.sectionTitle}>Referral Tracking</Text>
-      <View style={styles.kpiRow}>
-        <View style={styles.kpiBox}>
-          <Text style={styles.kpiNum}>{totalLeads}</Text>
-          <Text style={styles.kpiLabel}>Punched Leads</Text>
-        </View>
+      <View style={styles.statsRow}>
+        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/(app)/leads')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#EEF2FF' }]}>
+            <Icon name="users" size={18} color="#4F46E5" />
+          </View>
+          <Text style={styles.statValue}>{totalLeads}</Text>
+          <Text style={styles.statLabel}>Punched Leads</Text>
+          <Text style={styles.statSublabel}>This Month</Text>
+        </TouchableOpacity>
 
-        <View style={styles.kpiBox}>
-          <Text style={[styles.kpiNum, { color: '#0F766E' }]}>{totalApps}</Text>
-          <Text style={styles.kpiLabel}>Applications</Text>
-        </View>
+        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/(app)/applications')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#ECFDF5' }]}>
+            <Icon name="file-text" size={18} color="#10B981" />
+          </View>
+          <Text style={[styles.statValue, { color: '#0F766E' }]}>{totalApps}</Text>
+          <Text style={styles.statLabel}>Applications</Text>
+          <Text style={styles.statSublabel}>This Month</Text>
+        </TouchableOpacity>
 
-        <View style={styles.kpiBox}>
-          <Text style={[styles.kpiNum, { color: '#166534' }]}>{approvedApps}</Text>
-          <Text style={styles.kpiLabel}>Approved Cards</Text>
-        </View>
+        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/(app)/applications')}>
+          <View style={[styles.iconCircle, { backgroundColor: '#DCFCE7' }]}>
+            <Icon name="check-circle" size={18} color="#059669" />
+          </View>
+          <Text style={[styles.statValue, { color: '#166534' }]}>{approvedApps}</Text>
+          <Text style={styles.statLabel}>Approved Cards</Text>
+          <Text style={styles.statSublabel}>This Month</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Product Referral Links List */}
@@ -178,7 +193,9 @@ export default function EmployeeReferralsScreen() {
 
       {productLinks.length === 0 ? (
         <View style={styles.emptyCard}>
-          <Icon name="link-2" size={36} color="#94A3B8" />
+          <View style={[styles.iconCircle, { backgroundColor: '#F1F5F9', width: 60, height: 60, borderRadius: 30 }]}>
+            <Icon name="link-2" size={28} color="#94A3B8" />
+          </View>
           <Text style={styles.emptyTitle}>No Product Links Available</Text>
           <Text style={styles.emptyDesc}>Active credit card & loan referral links will appear here once assigned.</Text>
         </View>
@@ -186,7 +203,7 @@ export default function EmployeeReferralsScreen() {
         productLinks.map((item) => (
           <View key={item.product_id} style={styles.productCard}>
             <View style={styles.productTop}>
-              <View style={styles.productIconBg}>
+              <View style={[styles.iconCircle, { backgroundColor: '#CCFBF1', width: 44, height: 44, borderRadius: 22 }]}>
                 <Icon name="credit-card" size={22} color="#0F766E" />
               </View>
               <View style={styles.productMeta}>
@@ -328,8 +345,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
+  codeIconBg: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#CCFBF1',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   codeLeft: {
     flex: 1,
+    marginLeft: spacing.sm,
   },
   codeLabel: {
     fontSize: 11,
@@ -360,31 +386,37 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
-  kpiRow: {
+  statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: spacing.md,
   },
-  kpiBox: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: spacing.md,
-    width: '31%',
+  statItem: {
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    flex: 1,
   },
-  kpiNum: {
-    fontSize: 20,
+  iconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  statValue: {
+    fontSize: 17,
     fontWeight: '800',
     color: '#0F172A',
+    marginTop: 4,
   },
-  kpiLabel: {
-    fontSize: 10,
-    color: '#64748B',
-    fontWeight: '600',
+  statLabel: {
+    fontSize: 11,
+    color: colors.text,
     marginTop: 2,
-    textAlign: 'center',
+  },
+  statSublabel: {
+    fontSize: 9.5,
+    color: '#64748B',
+    marginTop: 2,
   },
   emptyCard: {
     backgroundColor: '#FFFFFF',
@@ -420,17 +452,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: spacing.xs,
   },
-  productIconBg: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: '#CCFBF1',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: spacing.sm,
-  },
   productMeta: {
     flex: 1,
+    marginLeft: spacing.sm,
   },
   productName: {
     fontSize: 14,

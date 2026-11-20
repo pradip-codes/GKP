@@ -77,14 +77,23 @@ async function runGpsGeofenceTests() {
     'Former Pune office coordinates outside the new polygon are rejected'
   );
 
-  // Test 3c: Allow a small GPS boundary buffer, but not locations beyond it
+  // Test 3c: Allow a realistic GPS boundary buffer (10m) for indoor drift, but not locations beyond it
   const reportedPoint = [18.6195302, 73.8747686];
   const resReportedPoint = await verifyLocationInBuilding(reportedPoint[0], reportedPoint[1], 5.358);
   assert(
     resReportedPoint.matched === true && resReportedPoint.status === 'LOCATION_VERIFIED',
-    'Reported GPS point 2m outside the polygon is accepted within the 3m boundary tolerance'
+    'Reported GPS point 2m outside the polygon is accepted within the boundary tolerance'
   );
-  const beyondTolerancePoint = [18.6195450, 73.8747686];
+
+  // Test 3c-2: Employee coordinates 5m outside polygon due to indoor GPS jitter are accepted
+  const employeePoint = [18.6194562, 73.8746821];
+  const resEmployeePoint = await verifyLocationInBuilding(employeePoint[0], employeePoint[1], 24.14);
+  assert(
+    resEmployeePoint.matched === true && resEmployeePoint.status === 'LOCATION_VERIFIED',
+    'Employee GPS point 5m outside polygon with 24m accuracy is accepted within the 10m tolerance'
+  );
+
+  const beyondTolerancePoint = [18.6197000, 73.8747686];
   const resBeyondTolerance = await verifyLocationInBuilding(
     beyondTolerancePoint[0],
     beyondTolerancePoint[1],
@@ -92,7 +101,7 @@ async function runGpsGeofenceTests() {
   );
   assert(
     resBeyondTolerance.matched === false && resBeyondTolerance.status === 'LOCATION_MISMATCH',
-    'GPS points more than 3m outside the polygon are rejected'
+    'GPS points more than 10m outside the polygon are rejected'
   );
 
   // Test 3d: Patna branch office geofence verification

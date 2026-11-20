@@ -17,6 +17,7 @@ import {
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
+import { Button } from '../../components/Button';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { useAuth } from '../../contexts/AuthContext';
@@ -329,8 +330,9 @@ export default function EmployeeCreditCardsScreen() {
             <Icon name="arrow-left" size={22} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.headerTitleWrap}>
+            <Text style={styles.headerSubtitle}>EMPLOYEE PORTAL</Text>
             <Text style={styles.headerTitle}>Credit Cards Portfolio</Text>
-            <Text style={styles.headerSubtitle}>
+            <Text style={styles.headerDesc}>
               Official Bank Cards • Earn Up to ₹3,500 Commission
             </Text>
           </View>
@@ -719,14 +721,21 @@ const styles = StyleSheet.create({
   },
   headerTitleWrap: {
     flex: 1,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#F8FAFC',
+    marginLeft: spacing.sm,
   },
   headerSubtitle: {
-    fontSize: 12,
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 1,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#F8FAFC',
+  },
+  headerDesc: {
+    fontSize: 11,
     color: '#94A3B8',
     marginTop: 2,
   },
@@ -774,6 +783,33 @@ const styles = StyleSheet.create({
   },
   filterChipTextActive: {
     color: '#FFFFFF',
+  },
+  subTabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#1E293B',
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    borderRadius: 10,
+    padding: 4,
+    gap: 4,
+  },
+  subTab: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  activeSubTab: {
+    backgroundColor: colors.primary,
+  },
+  subTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  activeSubTabText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
   scrollView: {
     flex: 1,
