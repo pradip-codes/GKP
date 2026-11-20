@@ -183,10 +183,26 @@ async function generatePartnerExcel(filters = {}) {
   return workbook;
 }
 
+// Privacy: mask mobile & PAN to last 4 digits for non-super-admin exports
+const maskMobileLast4 = (mob) => {
+  if (!mob) return mob ?? '';
+  const digits = String(mob).replace(/\D/g, '');
+  if (!digits) return '';
+  return digits.length >= 4 ? `XXXXXX${digits.slice(-4)}` : `XXXXXX${digits}`;
+};
+
+const maskPanLast4 = (pan) => {
+  if (!pan || String(pan).trim() === '' || String(pan).toUpperCase() === 'N/A' || String(pan).toUpperCase() === 'NA') return pan ?? '';
+  const cleanPan = String(pan).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!cleanPan) return '';
+  return cleanPan.length >= 4 ? `XXXXXX${cleanPan.slice(-4)}` : `XXXX${cleanPan}`;
+};
+
 /**
  * 5. Generate Application Report Excel
  */
-async function generateApplicationExcel(filters = {}) {
+async function generateApplicationExcel(filters = {}, options = {}) {
+  const { maskPII = false } = options;
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'GharKaPaisa System';
   const sheet = workbook.addWorksheet('Application Report');
@@ -203,7 +219,8 @@ async function generateApplicationExcel(filters = {}) {
   const appData = await getApplicationReportData(filters);
   appData.forEach(row => {
     sheet.addRow([
-      row.application_id, row.application_number, row.customer_name, row.customer_mobile,
+      row.application_id, row.application_number, row.customer_name,
+      maskPII ? maskMobileLast4(row.customer_mobile) : row.customer_mobile,
       row.product, row.bank, row.employee, row.employee_id, row.partner, row.application_date,
       row.application_status, row.soft_approval_status, row.kyc_status, row.sanction_amount,
       row.disbursed_amount, row.disbursement_date, row.commission, row.commission_status,
@@ -218,7 +235,8 @@ async function generateApplicationExcel(filters = {}) {
 /**
  * 6. Generate Complete System Report Excel (Multi-Sheet Workbook)
  */
-async function generateCompleteSystemExcel(filters = {}) {
+async function generateCompleteSystemExcel(filters = {}, options = {}) {
+  const { maskPII = false } = options;
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'GharKaPaisa System';
 
@@ -249,7 +267,7 @@ async function generateCompleteSystemExcel(filters = {}) {
   const empHeaders = ['Employee ID', 'Full Name', 'Mobile', 'Email', 'Designation', 'Department', 'Status', 'Total Customers', 'Total Apps', 'Approved', 'Disbursed', 'Total Business (₹)'];
   applyHeaderStyles(empSheet, empHeaders);
   const empData = await getEmployeeReportData(filters, true);
-  empData.forEach(r => empSheet.addRow([r.employee_id, r.full_name, r.mobile, r.email, r.designation, r.department, r.employment_status, r.total_customers, r.total_applications, r.approved_applications, r.disbursed_applications, r.total_business]));
+  empData.forEach(r => empSheet.addRow([r.employee_id, r.full_name, maskPII ? maskMobileLast4(r.mobile) : r.mobile, r.email, r.designation, r.department, r.employment_status, r.total_customers, r.total_applications, r.approved_applications, r.disbursed_applications, r.total_business]));
   autoFitColumns(empSheet);
 
   // Sheet 3: Customers
@@ -257,7 +275,7 @@ async function generateCompleteSystemExcel(filters = {}) {
   const custHeaders = ['Customer ID', 'Name', 'Mobile', 'Email', 'City', 'Assigned Employee', 'Total Apps', 'Approved Apps', 'Loan Amount (₹)'];
   applyHeaderStyles(custSheet, custHeaders);
   const custData = await getCustomerReportData(filters, true);
-  custData.forEach(r => custSheet.addRow([r.customer_id, r.customer_name, r.mobile_number, r.email, r.city, r.assigned_employee, r.application_count, r.approved_applications, r.total_loan_amount]));
+  custData.forEach(r => custSheet.addRow([r.customer_id, r.customer_name, maskPII ? maskMobileLast4(r.mobile_number) : r.mobile_number, r.email, r.city, r.assigned_employee, r.application_count, r.approved_applications, r.total_loan_amount]));
   autoFitColumns(custSheet);
 
   // Sheet 4: Applications
@@ -273,7 +291,7 @@ async function generateCompleteSystemExcel(filters = {}) {
   const partHeaders = ['Partner Code', 'Name', 'Mobile', 'Email', 'Company', 'KYC Status', 'Total Apps', 'Approved', 'Total Earnings (₹)'];
   applyHeaderStyles(partSheet, partHeaders);
   const partData = await getPartnerReportData(filters);
-  partData.forEach(r => partSheet.addRow([r.partner_code, r.partner_name, r.mobile, r.email, r.company_name, r.kyc_status, r.total_applications, r.approved_applications, r.total_earnings]));
+  partData.forEach(r => partSheet.addRow([r.partner_code, r.partner_name, maskPII ? maskMobileLast4(r.mobile) : r.mobile, r.email, r.company_name, r.kyc_status, r.total_applications, r.approved_applications, r.total_earnings]));
   autoFitColumns(partSheet);
 
   return workbook;

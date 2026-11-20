@@ -207,10 +207,14 @@ async function exportPartnerReport(req, res) {
   }
 }
 
+// Privacy: only SUPER_ADMIN sees full mobile/PAN in report exports; other authorized roles get last-4 masking
+const isSuperAdminRequester = (req) => ['SUPER_ADMIN', 'SUPERADMIN'].includes((req.user?.role || req.user?.user_role || '').toUpperCase());
+const piiExportOptions = (req) => ({ maskPII: !isSuperAdminRequester(req) });
+
 async function exportApplicationReport(req, res) {
   try {
     const filters = req.query;
-    const workbook = await generateApplicationExcel(filters);
+    const workbook = await generateApplicationExcel(filters, piiExportOptions(req));
 
     const filename = getTodayFilenamePrefix('application');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -227,7 +231,7 @@ async function exportApplicationReport(req, res) {
 async function exportCompleteSystemReport(req, res) {
   try {
     const filters = req.query;
-    const workbook = await generateCompleteSystemExcel(filters);
+    const workbook = await generateCompleteSystemExcel(filters, piiExportOptions(req));
 
     const filename = getTodayFilenamePrefix('complete-system');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

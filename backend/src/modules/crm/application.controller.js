@@ -2043,8 +2043,10 @@ const listApplications = async (req, res, next) => {
 
       const baseBankAccessClean = (baseBankAccessFilterSQL || '').replace(/^\s*AND\s*/i, '').trim();
       const hasValidBaseBank = baseBankAccessClean && baseBankAccessClean !== '1=0';
+      // Sales exec/operator sees ONLY their assigned banks; SBI is no longer force-included.
+      // The HDFC+SBI default pool applies only when the user has no valid bank assignments.
       const salesBankScopeSQL = hasValidBaseBank
-        ? ` AND (${baseBankAccessClean} OR ${sbiBankMatchSQL})`
+        ? ` AND (${baseBankAccessClean})`
         : ` AND (${hdfcBankMatchSQL} OR ${sbiBankMatchSQL})`;
 
       const tataExclusionFilter = `NOT (
@@ -4406,8 +4408,9 @@ const exportApplicationsCSV = async (req, res, next) => {
       const hdfcMatch = `(combined.bank_name ILIKE '%hdfc%' AND combined.bank_name NOT ILIKE '%tata%')`;
       const cleanWhere = (whereClause || '').replace(/^\s*WHERE\s*/i, '').trim();
       const hasValidBase = cleanWhere && cleanWhere !== '1=0';
+      // Sales exec/operator export sees ONLY their assigned banks; SBI is no longer force-included.
       const bankScope = hasValidBase
-        ? `(${cleanWhere} OR ${sbiMatch})`
+        ? `(${cleanWhere})`
         : `(${hdfcMatch} OR ${sbiMatch})`;
       const claimFilter = `(combined.sales_claimed_by IS NULL OR combined.sales_claimed_by = '' OR combined.sales_claimed_by = '${userId}')`;
       whereClause = `WHERE ${bankScope} AND ${claimFilter}`;
