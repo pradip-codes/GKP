@@ -28,6 +28,7 @@ export default function PartnerCrm() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const isTeamMember = useAuthStore((state) => state.user?.role === 'TEAM_MEMBER');
+  const userRole = (useAuthStore((state) => state.user?.role) || '').toUpperCase();
 
   useEffect(() => {
     if (location.state?.openAddModal || searchParams.get('action') === 'add') {
@@ -260,14 +261,34 @@ export default function PartnerCrm() {
     return matchesSearch && matchesStatus && matchesTag;
   });
 
+  // Privacy: exports mask mobile & PAN to last 4 digits for all roles EXCEPT SUPER_ADMIN panel
+  const isSuperAdminExport = ['SUPER_ADMIN', 'SUPERADMIN'].includes(userRole) ||
+    (typeof window !== 'undefined' && window.location.pathname.startsWith('/super-admin'));
+
+  const maskMobileLast4 = (mobile) => {
+    if (isSuperAdminExport) return mobile ? String(mobile).trim() : '';
+    if (!mobile) return '';
+    const digits = String(mobile).replace(/\D/g, '');
+    if (!digits) return '';
+    return digits.length >= 4 ? `XXXXXX${digits.slice(-4)}` : `XXXXXX${digits}`;
+  };
+
+  const maskPanLast4 = (pan) => {
+    if (!pan || String(pan).trim() === '' || String(pan).toUpperCase() === 'N/A' || String(pan).toUpperCase() === 'NA') return 'NA';
+    const cleanPan = String(pan).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!cleanPan) return 'NA';
+    if (isSuperAdminExport) return cleanPan;
+    return cleanPan.length >= 4 ? `XXXXXX${cleanPan.slice(-4)}` : `XXXX${cleanPan}`;
+  };
+
   const exportCustomersCSV = () => {
     if (!customers || !customers.length) return alert('No customers found to export');
     const headers = ['Full Name', 'Mobile', 'Email', 'PAN', 'City', 'State', 'Monthly Income', 'Employment Type', 'Tag', 'Created At'];
     const rows = (filteredCustomers || []).map(c => [
       `"${(c.full_name || '').replace(/"/g, '""')}"`,
-      `"${c.mobile || ''}"`,
+      `"${maskMobileLast4(c.mobile) || 'N/A'}"`,
       `"${c.email || ''}"`,
-      `"${c.pan_number || ''}"`,
+      `"${maskPanLast4(c.pan_number)}"`,
       `"${c.city || ''}"`,
       `"${c.state || ''}"`,
       c.monthly_income || 0,

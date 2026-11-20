@@ -740,9 +740,25 @@ export default function PartnerApplications() {
     }
   };
 
-  const userDesignation = (user?.designation || '').toUpperCase();
-  const isAdminOperator = ['ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'OPERATOR'].includes(userRole) || ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR'].includes(userDesignation);
-  const hideCustomerMobileInCsv = isAdminOperator || isEmployeeRole;
+  // Privacy: exports mask mobile & PAN to last 4 digits for all roles EXCEPT SUPER_ADMIN panel
+  const isSuperAdminExport = ['SUPER_ADMIN', 'SUPERADMIN'].includes(userRole) ||
+    (typeof window !== 'undefined' && window.location.pathname.startsWith('/super-admin'));
+
+  const maskMobileLast4 = (mobile) => {
+    if (isSuperAdminExport) return mobile ? String(mobile).trim() : '';
+    if (!mobile) return '';
+    const digits = String(mobile).replace(/\D/g, '');
+    if (!digits) return '';
+    return digits.length >= 4 ? `XXXXXX${digits.slice(-4)}` : `XXXXXX${digits}`;
+  };
+
+  const maskPanLast4 = (pan) => {
+    if (!pan || String(pan).trim() === '' || String(pan).toUpperCase() === 'N/A' || String(pan).toUpperCase() === 'NA') return 'NA';
+    const cleanPan = String(pan).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!cleanPan) return 'NA';
+    if (isSuperAdminExport) return cleanPan;
+    return cleanPan.length >= 4 ? `XXXXXX${cleanPan.slice(-4)}` : `XXXX${cleanPan}`;
+  };
 
   const handleExportCSV = () => {
     setShowExportModal(true);
@@ -766,9 +782,9 @@ export default function PartnerApplications() {
     const colDefs = [
       { header: 'Application / Lead ID', getVal: a => a.app_number || '' },
       { header: 'Customer Name', getVal: a => a.customer_name || '' },
-      { header: 'Customer Mobile', getVal: a => hideCustomerMobileInCsv ? 'REDACTED' : (a.customer_mobile || a.mobile || '') },
+      { header: 'Customer Mobile', getVal: a => maskMobileLast4(a.customer_mobile || a.mobile || '') || 'N/A' },
       { header: 'Email', getVal: a => a.customer_email || a.email || '' },
-      { header: 'PAN Number', getVal: a => a.pan_number || '' },
+      { header: 'PAN Number', getVal: a => maskPanLast4(a.pan_number || a.pan || '') },
       { header: 'City', getVal: a => a.city || '' },
       { header: 'State', getVal: a => a.state || '' },
       { header: 'Pincode', getVal: a => a.pincode || '' },

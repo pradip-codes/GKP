@@ -9,24 +9,24 @@ export default function ExportApplicationsModal({ isOpen, onClose, defaultApplic
   const user = useAuthStore((state) => state.user);
   const userRole = (user?.role || user?.user_role || '').toUpperCase();
   const userDesignation = (user?.designation || '').toUpperCase();
-  const isAdminOperator = ['ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'OPERATOR'].includes(userRole) || ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR'].includes(userDesignation);
-  const isEmployeeRole = userRole === 'EMPLOYEE' || window.location.pathname.startsWith('/employee');
-  const hideCustomerMobile = isAdminOperator || isEmployeeRole;
+  // Privacy: exports mask mobile & PAN to last 4 digits for all roles EXCEPT SUPER_ADMIN panel
+  const isSuperAdminExport = ['SUPER_ADMIN', 'SUPERADMIN'].includes(userRole) ||
+    (typeof window !== 'undefined' && window.location.pathname.startsWith('/super-admin'));
 
-  const maskMobileNumber = (mobile) => {
+  const maskMobileLast4 = (mobile) => {
+    if (isSuperAdminExport) return mobile ? String(mobile).trim() : 'N/A';
     if (!mobile) return 'N/A';
-    const str = String(mobile).trim();
-    const digitsOnly = str.replace(/\D/g, '');
-    if (digitsOnly.length >= 10) {
-      const mainDigits = digitsOnly.slice(-10);
-      const visiblePart = mainDigits.slice(0, 4);
-      const prefix = str.startsWith('+91') ? '+91 ' : (str.length > 10 ? str.slice(0, str.length - 10) : '');
-      return `${prefix}${visiblePart}******`;
-    }
-    if (str.length > 6) {
-      return str.slice(0, str.length - 6) + '******';
-    }
-    return str.replace(/\d/g, '*');
+    const digits = String(mobile).replace(/\D/g, '');
+    if (!digits) return 'N/A';
+    return digits.length >= 4 ? `XXXXXX${digits.slice(-4)}` : `XXXXXX${digits}`;
+  };
+
+  const maskPanLast4 = (pan) => {
+    if (!pan || String(pan).trim() === '' || String(pan).toUpperCase() === 'N/A' || String(pan).toUpperCase() === 'NA') return 'NA';
+    const cleanPan = String(pan).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!cleanPan) return 'NA';
+    if (isSuperAdminExport) return cleanPan;
+    return cleanPan.length >= 4 ? `XXXXXX${cleanPan.slice(-4)}` : `XXXX${cleanPan}`;
   };
 
   const getTodayStr = () => new Date().toISOString().split('T')[0];
@@ -463,22 +463,10 @@ export default function ExportApplicationsModal({ isOpen, onClose, defaultApplic
       const colDefs = [
         { header: 'Application No', getVal: a => a.app_number || a.application_no || a.id || '' },
         { header: 'Customer Name', getVal: a => a.customer_name || a.full_name || 'N/A' },
-        { header: 'Mobile Number', getVal: a => {
-            const rawMob = a.customer_mobile || a.mobile || a.phone || '';
-            if (!rawMob) return 'N/A';
-            return hideCustomerMobile ? maskMobileNumber(rawMob) : String(rawMob).trim();
-          }
+        { header: 'Mobile Number', getVal: a => maskMobileLast4(a.customer_mobile || a.mobile || a.phone || '')
         },
         { header: 'Email', getVal: a => a.customer_email || a.email || 'N/A' },
-        { header: 'PAN Number', getVal: a => {
-            const rawPan = a.pan_number || a.pan || '';
-            if (!rawPan || String(rawPan).trim() === '' || String(rawPan).toUpperCase() === 'N/A' || String(rawPan).toUpperCase() === 'NA') return 'NA';
-            const cleanPan = String(rawPan).trim().toUpperCase();
-            if (isAdminOperator || isEmployeeRole) {
-              return cleanPan.length >= 6 ? 'XXXXXX' + cleanPan.slice(6) : 'XXXXXX';
-            }
-            return cleanPan;
-          }
+        { header: 'PAN Number', getVal: a => maskPanLast4(a.pan_number || a.pan || '')
         },
         { header: 'City', getVal: a => a.city || 'N/A' },
         { header: 'State', getVal: a => a.state || 'N/A' },
@@ -604,27 +592,10 @@ export default function ExportApplicationsModal({ isOpen, onClose, defaultApplic
       const HDFC_COL_DEFS = [
         { header: 'Application no', getVal: a => a.app_number || a.application_no || a.id || '' },
         { header: 'Customer name', getVal: a => a.customer_name || a.full_name || a.pan_name || 'N/A' },
-        { header: 'Mobile number', getVal: a => {
-            const rawMob = a.customer_mobile || a.mobile || a.phone || a.aadhaar_linked_mobile || '';
-            if (!rawMob) return 'N/A';
-            const digits = String(rawMob).replace(/\D/g, '');
-            if (!digits) return 'N/A';
-            return digits.length >= 4 ? `XXXXXX${digits.slice(-4)}` : `XXXXXX${digits}`;
-          }
+        { header: 'Mobile number', getVal: a => maskMobileLast4(a.customer_mobile || a.mobile || a.phone || a.aadhaar_linked_mobile || '')
         },
         { header: 'Email ID', getVal: a => a.customer_email || a.email || a.personal_email || 'N/A' },
-        { header: 'Pan no', getVal: a => {
-            const rawPan = a.pan_number || a.pan || '';
-            if (!rawPan || String(rawPan).trim() === '' || String(rawPan).toUpperCase() === 'N/A' || String(rawPan).toUpperCase() === 'NA') return 'NA';
-            const cleanPan = String(rawPan).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-            if (cleanPan.length === 10) {
-              return `XXXXX${cleanPan.slice(5, 9)}X`;
-            }
-            if (cleanPan.length >= 5) {
-              return `XXXXX${cleanPan.slice(-4)}`;
-            }
-            return 'XXXXX';
-          }
+        { header: 'Pan no', getVal: a => maskPanLast4(a.pan_number || a.pan || '')
         },
         { header: 'City', getVal: a => a.city || a.physical_details?.city || 'N/A' },
         { header: 'State', getVal: a => a.state || a.physical_details?.state || 'N/A' },
