@@ -4680,8 +4680,21 @@ const exportApplicationsCSV = async (req, res, next) => {
       const hdfcRows = rows.filter(r => (r.bank_name || '').toLowerCase().includes('hdfc') || (r.product_name || '').toLowerCase().includes('hdfc'));
 
       for (const row of (hdfcRows.length > 0 ? hdfcRows : rows)) {
-        const mobVal = hideCustomerMobile ? 'REDACTED' : (row.customer_mobile || '');
-        const panVal = formatPanNumber(row.pan_number);
+        const rawMob = row.customer_mobile || row.mobile || row.phone || '';
+        const digits = String(rawMob).replace(/\D/g, '');
+        const mobVal = digits ? (digits.length >= 4 ? `XXXXXX${digits.slice(-4)}` : `XXXXXX${digits}`) : 'N/A';
+        const rawPan = row.pan_number || row.pan || '';
+        let panVal = 'NA';
+        if (rawPan && String(rawPan).trim() !== '' && String(rawPan).toUpperCase() !== 'N/A' && String(rawPan).toUpperCase() !== 'NA') {
+          const cleanPan = String(rawPan).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+          if (cleanPan.length === 10) {
+            panVal = `XXXXX${cleanPan.slice(5, 9)}X`;
+          } else if (cleanPan.length >= 5) {
+            panVal = `XXXXX${cleanPan.slice(-4)}`;
+          } else {
+            panVal = 'XXXXX';
+          }
+        }
         const bankAppNoVal = formatBankAppNumber(row.bank_application_number, row.app_number);
         const vkycLink = (row.vkyc_url && String(row.vkyc_url).trim() !== '' && String(row.vkyc_url).toUpperCase() !== 'N/A') ? row.vkyc_url : 'NA';
         const finalStatus = (row.final_status && String(row.final_status).trim() !== '' && String(row.final_status).toUpperCase() !== 'N/A') ? row.final_status : (row.bank_current_lead_status || 'NA');

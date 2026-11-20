@@ -181,18 +181,23 @@ const getFrontendColDefs = (hideCustomerMobile, isAdminOperator) => [
   { header: 'Mobile number', getVal: a => {
       const rawMob = a.customer_mobile || a.mobile || a.phone || a.aadhaar_linked_mobile || '';
       if (!rawMob) return 'N/A';
-      return hideCustomerMobile ? maskMobileNumber(rawMob) : String(rawMob).trim();
+      const digits = String(rawMob).replace(/\D/g, '');
+      if (!digits) return 'N/A';
+      return digits.length >= 4 ? `XXXXXX${digits.slice(-4)}` : `XXXXXX${digits}`;
     }
   },
   { header: 'Email ID', getVal: a => a.customer_email || a.email || a.personal_email || 'N/A' },
   { header: 'Pan no', getVal: a => {
       const rawPan = a.pan_number || a.pan || '';
       if (!rawPan || String(rawPan).trim() === '' || String(rawPan).toUpperCase() === 'N/A' || String(rawPan).toUpperCase() === 'NA') return 'NA';
-      const cleanPan = String(rawPan).trim().toUpperCase();
-      if (isAdminOperator) {
-        return cleanPan.length >= 6 ? 'XXXXXX' + cleanPan.slice(6) : 'XXXXXX';
+      const cleanPan = String(rawPan).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (cleanPan.length === 10) {
+        return `XXXXX${cleanPan.slice(5, 9)}X`;
       }
-      return cleanPan;
+      if (cleanPan.length >= 5) {
+        return `XXXXX${cleanPan.slice(-4)}`;
+      }
+      return 'XXXXX';
     }
   },
   { header: 'City', getVal: a => a.city || a.physical_details?.city || 'N/A' },
@@ -373,9 +378,9 @@ const maskedVals = maskedColDefs.map(c => formatCsvCell(c.getVal(mockApplication
 const maskedRow = parseCSV(maskedVals.join(','))[0];
 
 assert.strictEqual(maskedRow.length, 33);
-assert.strictEqual(maskedRow[2], '9876******', `Mobile number must be masked (got ${maskedRow[2]})`);
-assert.strictEqual(maskedRow[4], 'XXXXXX234F', `PAN number must be masked (got ${maskedRow[4]})`);
-console.log('✔ Masking permissions verified for Mobile (9876******) and PAN (XXXXXX234F)');
+assert.strictEqual(maskedRow[2], 'XXXXXX3210', `Mobile number must be masked with last 4 digits (got ${maskedRow[2]})`);
+assert.strictEqual(maskedRow[4], 'XXXXX1234X', `PAN number must be masked as XXXXX1234X (got ${maskedRow[4]})`);
+console.log('✔ Masking verified for Mobile (XXXXXX3210) and PAN (XXXXX1234X)');
 
 // 7. Test Bank Resolution Helper & Canonical UUIDs
 console.log('\n--- TEST 6: Bank Resolution & Canonical UUID Validation ---');

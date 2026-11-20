@@ -607,18 +607,23 @@ export default function ExportApplicationsModal({ isOpen, onClose, defaultApplic
         { header: 'Mobile number', getVal: a => {
             const rawMob = a.customer_mobile || a.mobile || a.phone || a.aadhaar_linked_mobile || '';
             if (!rawMob) return 'N/A';
-            return hideCustomerMobile ? maskMobileNumber(rawMob) : String(rawMob).trim();
+            const digits = String(rawMob).replace(/\D/g, '');
+            if (!digits) return 'N/A';
+            return digits.length >= 4 ? `XXXXXX${digits.slice(-4)}` : `XXXXXX${digits}`;
           }
         },
         { header: 'Email ID', getVal: a => a.customer_email || a.email || a.personal_email || 'N/A' },
         { header: 'Pan no', getVal: a => {
             const rawPan = a.pan_number || a.pan || '';
             if (!rawPan || String(rawPan).trim() === '' || String(rawPan).toUpperCase() === 'N/A' || String(rawPan).toUpperCase() === 'NA') return 'NA';
-            const cleanPan = String(rawPan).trim().toUpperCase();
-            if (isAdminOperator || isEmployeeRole) {
-              return cleanPan.length >= 6 ? 'XXXXXX' + cleanPan.slice(6) : 'XXXXXX';
+            const cleanPan = String(rawPan).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+            if (cleanPan.length === 10) {
+              return `XXXXX${cleanPan.slice(5, 9)}X`;
             }
-            return cleanPan;
+            if (cleanPan.length >= 5) {
+              return `XXXXX${cleanPan.slice(-4)}`;
+            }
+            return 'XXXXX';
           }
         },
         { header: 'City', getVal: a => a.city || a.physical_details?.city || 'N/A' },
