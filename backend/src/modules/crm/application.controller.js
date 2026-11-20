@@ -2150,37 +2150,82 @@ const listApplications = async (req, res, next) => {
     const ownCurableTeam = Object.keys(curableDesignationSets).find(team =>
       curableDesignationSets[team].includes(userDesignation) || curableDesignationSets[team].includes(userRole)
     ) || null;
-    const requestedCurableTeam = Object.prototype.hasOwnProperty.call(curableDesignationSets, req.query.curing_designation)
-      ? req.query.curing_designation
-      : null;
+    const requestedParam = String(req.query.curing_designation || '').trim().toUpperCase().replace(/ /g, '_');
+    const requestedCurableTeam = curableDesignationSets[requestedParam] ? requestedParam : null;
     const activeCurableTeam = ownCurableTeam || requestedCurableTeam;
     const isCurableOperatorUser = Boolean(activeCurableTeam);
 
     let curableOperatorFilterSQL = '';
     if (isCurableOperatorUser && req.user?.id) {
-      const teamCodesSQL = `(${HDFC_DECLINE_CODES
+      const teamCodes = HDFC_DECLINE_CODES
         .filter(c => c.designation === CURING_DESIGNATIONS[activeCurableTeam])
-        .map(c => `'${c.code.toUpperCase()}'`)
-        .join(', ')})`;
+        .map(c => `'${c.code.toUpperCase()}'`);
+      const teamCodesSQL = `(${teamCodes.join(', ')})`;
+
+      const teamTypes = HDFC_DECLINE_CODES
+        .filter(c => c.designation === CURING_DESIGNATIONS[activeCurableTeam])
+        .map(c => `'${c.type.toUpperCase().replace(/'/g, "''")}'`);
+      const teamTypesSQL = `(${teamTypes.join(', ')})`;
+
+      const otherTeamsCodes = HDFC_DECLINE_CODES
+        .filter(c => c.designation !== CURING_DESIGNATIONS[activeCurableTeam])
+        .map(c => `'${c.code.toUpperCase()}'`);
+      const otherTeamsCodesSQL = `(${otherTeamsCodes.join(', ')})`;
+
+      const otherTeamsTypes = HDFC_DECLINE_CODES
+        .filter(c => c.designation !== CURING_DESIGNATIONS[activeCurableTeam])
+        .map(c => `'${c.type.toUpperCase().replace(/'/g, "''")}'`);
+      const otherTeamsTypesSQL = `(${otherTeamsTypes.join(', ')})`;
 
       const primaryCodeSQL = `UPPER(TRIM(COALESCE(NULLIF(TRIM(combined.primary_decline_code), ''), NULLIF(TRIM(combined.decline_code), ''), '')))`;
       const secondaryCodeSQL = `UPPER(TRIM(COALESCE(NULLIF(TRIM(combined.secondary_decline_code), ''), '')))`;
       const codePrefix = (expr) => `REGEXP_REPLACE(${expr}, '[^A-Z0-9].*$', '')`;
 
       const curableCondition = `(
-        ${primaryCodeSQL} IN ${teamCodesSQL}
-        OR ${codePrefix(primaryCodeSQL)} IN ${teamCodesSQL}
-        OR ${secondaryCodeSQL} IN ${teamCodesSQL}
-        OR ${codePrefix(secondaryCodeSQL)} IN ${teamCodesSQL}
+        (
+          ${primaryCodeSQL} IN ${teamCodesSQL}
+          OR ${codePrefix(primaryCodeSQL)} IN ${teamCodesSQL}
+          OR ${primaryCodeSQL} IN ${teamTypesSQL}
+          OR (
+            ${primaryCodeSQL} NOT IN ${otherTeamsCodesSQL}
+            AND ${codePrefix(primaryCodeSQL)} NOT IN ${otherTeamsCodesSQL}
+            AND ${primaryCodeSQL} NOT IN ${otherTeamsTypesSQL}
+            AND (
+              ${secondaryCodeSQL} IN ${teamCodesSQL}
+              OR ${codePrefix(secondaryCodeSQL)} IN ${teamCodesSQL}
+              OR ${secondaryCodeSQL} IN ${teamTypesSQL}
+              OR REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, combined.cureble_type, ''))), ' ', '_') IN ('${activeCurableTeam}', '${activeCurableTeam}_OPERATOR')
+              OR REPLACE(UPPER(TRIM(COALESCE(combined.secondary_curing_designation, ''))), ' ', '_') IN ('${activeCurableTeam}', '${activeCurableTeam}_OPERATOR')
+            )
+          )
+        )
+        AND ${primaryCodeSQL} NOT IN ('CIBIL DECLINE', 'NONE')
       )`;
 
       const hdfcBankScopeSQL = `(
-        (LOWER(COALESCE(combined.bank_name, '')) LIKE '%hdfc%' OR LOWER(COALESCE(combined.bank_code, '')) LIKE '%hdfc%')
+        (
+          combined.bank_id = 'f0b5742d-f04d-4a91-b162-6009ddf6e345'::uuid
+          OR LOWER(COALESCE(combined.bank_name, '')) LIKE '%hdfc%'
+          OR LOWER(COALESCE(combined.bank_code, '')) LIKE '%hdfc%'
+        )
         AND LOWER(COALESCE(combined.bank_name, '')) NOT LIKE '%tata%'
         AND LOWER(COALESCE(combined.bank_code, '')) NOT LIKE '%tata%'
       )`;
 
-      curableOperatorFilterSQL = ` AND ${creditCardAppSQL} AND ${hdfcBankScopeSQL} AND ${curableCondition}`;
+      const isDeclineCaseSQL = `(
+        combined.status IN ('rejected', 'declined', 'decline', 'technical_error')
+        OR LOWER(COALESCE(combined.status, '')) LIKE '%reject%'
+        OR LOWER(COALESCE(combined.status, '')) LIKE '%decline%'
+        OR LOWER(COALESCE(combined.final_status, '')) IN ('rejected', 'declined', 'decline', 'technical_error')
+        OR LOWER(COALESCE(combined.final_status, '')) LIKE '%reject%'
+        OR LOWER(COALESCE(combined.final_status, '')) LIKE '%decline%'
+        OR LOWER(COALESCE(combined.bank_current_lead_status, '')) LIKE '%reject%'
+        OR LOWER(COALESCE(combined.bank_current_lead_status, '')) LIKE '%decline%'
+        OR (combined.primary_decline_code IS NOT NULL AND TRIM(combined.primary_decline_code) != '' AND UPPER(TRIM(combined.primary_decline_code)) != 'NONE')
+        OR (combined.decline_code IS NOT NULL AND TRIM(combined.decline_code) != '' AND UPPER(TRIM(combined.decline_code)) != 'NONE')
+      )`;
+
+      curableOperatorFilterSQL = ` AND ${isDeclineCaseSQL} AND ${creditCardAppSQL} AND ${hdfcBankScopeSQL} AND ${curableCondition}`;
     }
 
     if (!isPartnerOrTeam && !isSuperAdmin && req.user?.id) {
@@ -6843,10 +6888,19 @@ const updateRemarkOperatorApplication = async (req, res, next) => {
           return forbidden(res, 'Curable Operators can only access HDFC applications.');
         }
 
-        // Routed strictly by decline code (primary, or secondary for dual-code cases)
+        // Routed by decline code or curing designation
         const teamCodes = HDFC_DECLINE_CODES
           .filter(c => c.designation === CURING_DESIGNATIONS[ownCurableTeamForUpdate])
           .map(c => c.code.toUpperCase());
+        const teamTypes = HDFC_DECLINE_CODES
+          .filter(c => c.designation === CURING_DESIGNATIONS[ownCurableTeamForUpdate])
+          .map(c => c.type.toUpperCase());
+        const otherTeamsCodes = HDFC_DECLINE_CODES
+          .filter(c => c.designation !== CURING_DESIGNATIONS[ownCurableTeamForUpdate])
+          .map(c => c.code.toUpperCase());
+        const otherTeamsTypes = HDFC_DECLINE_CODES
+          .filter(c => c.designation !== CURING_DESIGNATIONS[ownCurableTeamForUpdate])
+          .map(c => c.type.toUpperCase());
         const normalizeDeclineCode = (v) => String(v || '').trim().toUpperCase().replace(/[^A-Z0-9].*$/, '');
 
         // Decline codes can live on applications or physical_application_details (same fallback as the list query)
@@ -6854,7 +6908,7 @@ const updateRemarkOperatorApplication = async (req, res, next) => {
         await client.query('SAVEPOINT curable_guard_sp');
         try {
           const padRes = await client.query(
-            `SELECT primary_decline_code, decline_code, secondary_decline_code FROM physical_application_details WHERE application_id = $1 LIMIT 1`,
+            `SELECT primary_decline_code, decline_code, secondary_decline_code, curing_designation, primary_curing_designation, secondary_curing_designation FROM physical_application_details WHERE application_id = $1 LIMIT 1`,
             [app.id]
           );
           curablePad = padRes.rows[0] || null;
@@ -6865,12 +6919,32 @@ const updateRemarkOperatorApplication = async (req, res, next) => {
         }
         const appPrimaryDeclineCode = normalizeDeclineCode(app.primary_decline_code || app.decline_code || curablePad?.primary_decline_code || curablePad?.decline_code);
         const appSecondaryDeclineCode = normalizeDeclineCode(app.secondary_decline_code || curablePad?.secondary_decline_code);
+        const rawPrimary = String(app.primary_decline_code || app.decline_code || curablePad?.primary_decline_code || curablePad?.decline_code || '').trim().toUpperCase();
+        const rawSecondary = String(app.secondary_decline_code || curablePad?.secondary_decline_code || '').trim().toUpperCase();
+        const rawCuringDesig = String(app.primary_curing_designation || app.curing_designation || curablePad?.primary_curing_designation || curablePad?.curing_designation || '').trim().toUpperCase().replace(/ /g, '_');
+        const rawSecondaryCuringDesig = String(app.secondary_curing_designation || curablePad?.secondary_curing_designation || '').trim().toUpperCase().replace(/ /g, '_');
 
-        if (!appPrimaryDeclineCode && !appSecondaryDeclineCode) {
+        if (rawPrimary === 'CIBIL DECLINE' || rawPrimary === 'NONE') {
           await client.query('ROLLBACK');
-          return forbidden(res, 'Curable Operators can only access declined applications that have an HDFC decline code.');
+          return forbidden(res, 'Curable Operators cannot access non-curable or CIBIL decline applications.');
         }
-        if (!teamCodes.includes(appPrimaryDeclineCode) && !teamCodes.includes(appSecondaryDeclineCode)) {
+
+        const isPrimaryTeamMatch = teamCodes.includes(appPrimaryDeclineCode) || teamTypes.includes(rawPrimary);
+        const isPrimaryOtherMatch = otherTeamsCodes.includes(appPrimaryDeclineCode) || otherTeamsTypes.includes(rawPrimary);
+
+        let isMatch = false;
+        if (isPrimaryTeamMatch) {
+          isMatch = true;
+        } else if (!isPrimaryOtherMatch) {
+          if (teamCodes.includes(appSecondaryDeclineCode) || teamTypes.includes(rawSecondary)) {
+            isMatch = true;
+          } else if (rawCuringDesig === ownCurableTeamForUpdate || rawCuringDesig === `${ownCurableTeamForUpdate}_OPERATOR` ||
+                     rawSecondaryCuringDesig === ownCurableTeamForUpdate || rawSecondaryCuringDesig === `${ownCurableTeamForUpdate}_OPERATOR`) {
+            isMatch = true;
+          }
+        }
+
+        if (!isMatch) {
           await client.query('ROLLBACK');
           return forbidden(res, `This application is not allocated to ${teamLabel} Curable team.`);
         }
