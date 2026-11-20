@@ -56,6 +56,42 @@ async function ensureTasksTableExists() {
       CREATE INDEX IF NOT EXISTS idx_employee_tasks_type ON employee_tasks(employee_id, task_date, task_type);
     `);
 
+    // One-time backfill: legacy attendance_tasks -> employee_tasks (idempotent)
+    try {
+      const { rows: [tbl] } = await query(
+        `SELECT EXISTS (
+           SELECT 1 FROM information_schema.tables
+           WHERE table_schema = 'public' AND table_name = 'attendance'
+         ) AS exists`
+      );
+      const { rows: [tasksTbl] } = await query(
+        `SELECT EXISTS (
+           SELECT 1 FROM information_schema.tables
+           WHERE table_schema = 'public' AND table_name = 'attendance_tasks'
+         ) AS exists`
+      );
+      if (tbl?.exists && tasksTbl?.exists) {
+        await query(
+          `INSERT INTO employee_tasks (employee_id, task_date, title, status, completed_at, task_type, created_at)
+           SELECT e.id, att.attendance_date, at.task,
+                  CASE WHEN LOWER(at.status) = 'completed' THEN 'completed' ELSE 'pending' END,
+                  at.completed_at, 'STANDARD', at.created_at
+           FROM attendance_tasks at
+           JOIN attendance att ON att.id = at.attendance_id
+           JOIN employees e ON (e.id = att.employee_id OR e.user_id = att.employee_id)
+           WHERE att.attendance_date IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM employee_tasks et
+               WHERE et.employee_id = e.id
+                 AND et.task_date = att.attendance_date
+                 AND LOWER(et.title) = LOWER(at.task)
+             )`
+        );
+      }
+    } catch (backfillErr) {
+      logger.warn('[EMPLOYEE COMMITMENTS] Legacy attendance_tasks backfill skipped:', backfillErr.message);
+    }
+
     tablesVerified = true;
   } catch (err) {
     logger.warn('[EMPLOYEE COMMITMENTS] Table auto-creation notice:', err.message);

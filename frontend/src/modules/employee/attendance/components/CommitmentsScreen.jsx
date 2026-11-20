@@ -34,8 +34,9 @@ export default function CommitmentsScreen({
 
   // Sync initial tasks when passed
   useEffect(() => {
-    if (initialCarryOver && initialCarryOver.length) setCarryOverTasks(initialCarryOver);
-    if (initialToday && initialToday.length) setTodayTasks(initialToday);
+    if (initialCarryOver && (initialCarryOver.length || carryOverTasks.length)) setCarryOverTasks(initialCarryOver);
+    if (initialToday && (initialToday.length || todayTasks.length)) setTodayTasks(initialToday);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialCarryOver, initialToday]);
 
   // Format check-in chip

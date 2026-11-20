@@ -266,19 +266,24 @@ export default function AttendanceScreen() {
     }
   };
 
-  const handleAddReportingTask = () => {
+  const handleAddReportingTask = async () => {
     if (!taskInput.trim()) {
       Alert.alert('Error', 'Please enter a task');
       return;
     }
-    const newTask: AttendanceTask = {
-      id: Date.now().toString(),
-      task: taskInput.trim(),
-      status: 'PENDING',
-      created_at: new Date().toISOString(),
-    };
-    setReportingTasks([...reportingTasks, newTask]);
-    setTaskInput('');
+    setTaskLoading(true);
+    try {
+      await apiClient.post('/employee/tasks/extra', {
+        title: taskInput.trim(),
+        isCompleted: false,
+      });
+      setTaskInput('');
+      await handleFetchReportingTasks();
+    } catch (err: any) {
+      Alert.alert('Error', err.response?.data?.message || 'Failed to add task');
+    } finally {
+      setTaskLoading(false);
+    }
   };
 
   useEffect(() => {

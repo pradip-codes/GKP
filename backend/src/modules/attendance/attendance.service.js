@@ -2,7 +2,7 @@ const { query, getClient } = require('../../config/database');
 const logger = require('../../config/logger');
 const { logAction } = require('../admin/audit.service');
 const penaltyService = require('./attendance-penalty.service');
-const { evaluateAttendanceType } = require('../employee/employee-commitments.service');
+const { evaluateAttendanceType, ensureTasksTableExists } = require('../employee/employee-commitments.service');
 
 const isValidUuid = (str) => typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 
@@ -1082,11 +1082,12 @@ const saveTasks = async ({ reqUser, tasks }) => {
     throw new Error('Employee not found');
   }
 
+  await ensureTasksTableExists();
   const todayDate = await getKolkataDateString();
 
   // Check if attendance exists for today
   const { rows: [attendance] } = await query(
-    `SELECT id FROM attendance WHERE employee_id = $1 AND attendance_date = $2`,
+    `SELECT id FROM employee_attendance WHERE employee_id = $1 AND attendance_date = $2`,
     [employeeId, todayDate]
   );
 
@@ -1094,18 +1095,27 @@ const saveTasks = async ({ reqUser, tasks }) => {
     throw new Error('No attendance record found for today');
   }
 
-  // Delete existing tasks for today
+  // Replace today's planned tasks while preserving carry-over, extra,
+  // completed and already-submitted commitment rows.
   await query(
-    `DELETE FROM attendance_tasks WHERE attendance_id = $1`,
-    [attendance.id]
+    `DELETE FROM employee_tasks
+     WHERE employee_id = $1 AND task_date = $2
+       AND task_type = 'STANDARD'
+       AND carried_from_date IS NULL
+       AND carry_count = 0
+       AND status = 'pending'
+       AND submitted_at IS NULL`,
+    [employeeId, todayDate]
   );
 
   // Insert new tasks
   for (const task of tasks) {
+    const title = String(task.task || task.title || '').trim().slice(0, 255);
+    if (!title) continue;
     await query(
-      `INSERT INTO attendance_tasks (attendance_id, task, status, created_at)
-       VALUES ($1, $2, $3, NOW())`,
-      [attendance.id, task.task, task.status || 'PENDING']
+      `INSERT INTO employee_tasks (employee_id, task_date, title, status, task_type)
+       VALUES ($1, $2, $3, 'pending', 'STANDARD')`,
+      [employeeId, todayDate, title]
     );
   }
 
@@ -1129,10 +1139,11 @@ const getTodayTasks = async ({ reqUser }) => {
     throw new Error('Employee not found');
   }
 
+  await ensureTasksTableExists();
   const todayDate = await getKolkataDateString();
 
   const { rows: [attendance] } = await query(
-    `SELECT id FROM attendance WHERE employee_id = $1 AND attendance_date = $2`,
+    `SELECT id FROM employee_attendance WHERE employee_id = $1 AND attendance_date = $2`,
     [employeeId, todayDate]
   );
 
@@ -1140,13 +1151,24 @@ const getTodayTasks = async ({ reqUser }) => {
     return { tasks: [] };
   }
 
-  const { rows: tasks } = await query(
-    `SELECT id, task, status, created_at, completed_at
-     FROM attendance_tasks
-     WHERE attendance_id = $1
+  const { rows } = await query(
+    `SELECT id, title, status, task_type, carried_from_date, carry_count, created_at, completed_at
+     FROM employee_tasks
+     WHERE employee_id = $1 AND task_date = $2
      ORDER BY created_at ASC`,
-    [attendance.id]
+    [employeeId, todayDate]
   );
+
+  const tasks = (rows || []).map(t => ({
+    id: t.id,
+    task: t.title,
+    status: String(t.status).toLowerCase() === 'completed' ? 'COMPLETED' : 'PENDING',
+    task_type: t.task_type,
+    carried_from_date: t.carried_from_date,
+    carry_count: Number(t.carry_count) || 0,
+    created_at: t.created_at,
+    completed_at: t.completed_at,
+  }));
 
   return { tasks };
 };
@@ -1160,14 +1182,14 @@ const updateTaskStatus = async ({ reqUser, taskId, status }) => {
     throw new Error('Employee not found');
   }
 
+  await ensureTasksTableExists();
   const todayDate = await getKolkataDateString();
+  const normalizedStatus = String(status).toLowerCase() === 'completed' ? 'completed' : 'pending';
 
-  // Verify task belongs to employee's today's attendance
+  // Verify task belongs to employee for today
   const { rows: [task] } = await query(
-    `SELECT at.id, at.attendance_id, a.employee_id
-     FROM attendance_tasks at
-     JOIN attendance a ON a.id = at.attendance_id
-     WHERE at.id = $1 AND a.employee_id = $2 AND a.attendance_date = $3`,
+    `SELECT id FROM employee_tasks
+     WHERE id = $1 AND employee_id = $2 AND task_date = $3`,
     [taskId, employeeId, todayDate]
   );
 
@@ -1176,23 +1198,22 @@ const updateTaskStatus = async ({ reqUser, taskId, status }) => {
   }
 
   // Update task status
-  const completedAt = status === 'COMPLETED' ? 'NOW()' : null;
   await query(
-    `UPDATE attendance_tasks
-     SET status = $1, completed_at = ${completedAt}
+    `UPDATE employee_tasks
+     SET status = $1, completed_at = ${normalizedStatus === 'completed' ? 'NOW()' : 'NULL'}
      WHERE id = $2`,
-    [status, taskId]
+    [normalizedStatus, taskId]
   );
 
   // Log audit
   await logAction({
     user_id: reqUser.id,
     action: 'ATTENDANCE_TASK_STATUS_UPDATED',
-    details: `Updated task ${taskId} status to ${status}`,
+    details: `Updated task ${taskId} status to ${normalizedStatus}`,
     ip_address: req.ip,
   });
 
-  return { success: true, task_id: taskId, status };
+  return { success: true, task_id: taskId, status: normalizedStatus.toUpperCase() };
 };
 
 module.exports = {
