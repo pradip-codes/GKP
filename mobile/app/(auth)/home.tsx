@@ -489,7 +489,12 @@ export default function HomeScreen() {
 
         {/* ── SECTION 4: Popular Credit Card Banks ── */}
         <View style={styles.sectionContainer}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Popular Credit Card Banks</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Popular Credit Card Banks</Text>
+            <TouchableOpacity onPress={() => router.push({ pathname: '/(auth)/bank-cards', params: { bank: 'ALL' } })}>
+              <Text style={[styles.viewAllText, { color: tealColor }]}>See All →</Text>
+            </TouchableOpacity>
+          </View>
           <View style={styles.bankGrid}>
             {[
               { id: 'HDFC', label: 'HDFC Bank', logo: bankLogos.HDFC },

@@ -472,6 +472,14 @@ const startServer = async () => {
       logger.warn('Employee Attendance Phase 4 auto migration note:', aErr.message);
     }
 
+    // Always ensure attendance source constraint includes SUPER_ADMIN_MANUAL
+    try {
+      const { migrateAttendanceManualMarkSource } = require('./database/migrations/migrate_attendance_manual_mark_source.js');
+      await migrateAttendanceManualMarkSource();
+    } catch (msErr) {
+      logger.warn('Attendance Manual Mark Source auto migration note:', msErr.message);
+    }
+
     // Always ensure Loan on Credit Card & Smart EMI products are seeded on boot
     try {
       const { seedSmartEmiAndLoccProducts } = require('./database/seeds/seed-smart-emi-locc.js');

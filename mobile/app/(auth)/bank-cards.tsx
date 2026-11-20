@@ -68,8 +68,23 @@ export default function BankCardsScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const bankName = bank || 'ALL';
-  const bankColor = BANK_COLORS[bankName] || colors.primary;
+  const isAllBanks = bankName === 'ALL';
+  const bankColor = isAllBanks ? colors.primary : (BANK_COLORS[bankName] || colors.primary);
   const bankLogoSource = bankLogos[bankName];
+
+  const allBanks = [
+    { id: 'HDFC', label: 'HDFC Bank', logo: bankLogos.HDFC },
+    { id: 'SBI', label: 'SBI Card', logo: bankLogos.SBI },
+    { id: 'ICICI', label: 'ICICI Bank', logo: bankLogos.ICICI },
+    { id: 'Axis', label: 'Axis Bank', logo: bankLogos.Axis },
+    { id: 'Kotak', label: 'Kotak Bank', logo: bankLogos.Kotak },
+    { id: 'IDFC', label: 'IDFC First', logo: bankLogos.IDFC },
+    { id: 'Yes Bank', label: 'Yes Bank', logo: bankLogos['Yes Bank'] },
+    { id: 'BOB', label: 'Bank of Baroda', logo: bankLogos.BOB },
+    { id: 'AU', label: 'AU Small Finance', logo: bankLogos.AU },
+    { id: 'Federal', label: 'Federal Bank', logo: bankLogos.Federal },
+    { id: 'RBL', label: 'RBL Bank', logo: bankLogos.RBL },
+  ];
 
   const loadBankCards = async () => {
     try {
@@ -142,12 +157,41 @@ export default function BankCardsScreen() {
             <Icon name="arrow-left" size={24} color="#FFFFFF" />
           </TouchableOpacity>
           <View style={styles.headerTitleWrap}>
-            <Text style={styles.headerTitle}>{bankName} Credit Cards</Text>
-            <Text style={styles.headerSubtitle}>Official Bank Partner • GharKaPaisa</Text>
+            <Text style={styles.headerTitle}>{isAllBanks ? 'All Credit Card Banks' : `${bankName} Credit Cards`}</Text>
+            <Text style={styles.headerSubtitle}>
+              {isAllBanks ? 'Select a bank to view cards' : 'Official Bank Partner • GharKaPaisa'}
+            </Text>
           </View>
           <View style={{ width: 24 }} />
         </View>
 
+        {isAllBanks ? (
+          /* All Banks Grid View */
+          <View style={styles.allBanksContainer}>
+            <Text style={[styles.allBanksTitle, { color: colors.text }]}>Choose Your Bank</Text>
+            <Text style={[styles.allBanksSubtitle, { color: colors.textMid }]}>
+              {allBanks.length} Partner Banks Available
+            </Text>
+            <View style={styles.allBanksGrid}>
+              {allBanks.map((b) => (
+                <TouchableOpacity
+                  key={b.id}
+                  style={[styles.allBankCard, { backgroundColor: isDark ? colors.card : '#FFFFFF', borderColor: colors.border }]}
+                  onPress={() => router.push({ pathname: '/(auth)/bank-cards', params: { bank: b.id } })}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.allBankLogoWrap}>
+                    <Image source={b.logo} style={styles.allBankLogo} resizeMode="contain" />
+                  </View>
+                  <Text style={[styles.allBankLabel, { color: colors.text }]} numberOfLines={1}>
+                    {b.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        ) : (
+          <>
         {/* Bank Showcase Card */}
         <View style={styles.heroCardContainer}>
           <View style={[styles.heroCard, { backgroundColor: isDark ? colors.card : '#FFFFFF', borderColor: colors.border }]}>
@@ -297,6 +341,8 @@ export default function BankCardsScreen() {
               );
             })}
           </View>
+        )}
+          </>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -552,5 +598,47 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     marginTop: 12,
+  },
+  allBanksContainer: {
+    padding: 16,
+  },
+  allBanksTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  allBanksSubtitle: {
+    fontSize: 13,
+    marginBottom: 16,
+  },
+  allBanksGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  allBankCard: {
+    width: '30%',
+    aspectRatio: 1,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+  },
+  allBankLogoWrap: {
+    width: 48,
+    height: 36,
+    marginBottom: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  allBankLogo: {
+    width: '100%',
+    height: '100%',
+  },
+  allBankLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 });
