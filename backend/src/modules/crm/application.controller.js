@@ -2141,101 +2141,38 @@ const listApplications = async (req, res, next) => {
       querableOperatorFilterSQL = ` ${baseBankAccessFilterSQL} AND ${rejectedCondition}`;
     }
 
-    const isPhysicalCurableUser = ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userDesignation) || ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userRole) || req.query.curing_designation === 'PHYSICAL_CURABLE';
-    const isDigitalCurableUser = ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userRole) || req.query.curing_designation === 'DIGITAL_CURABLE';
-    const isEmailCurableUser = ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userRole) || req.query.curing_designation === 'EMAIL_CURABLE';
-    const isCurableOperatorUser = isPhysicalCurableUser || isDigitalCurableUser || isEmailCurableUser;
+    // ── Curable Operators (Physical / Digital / Email) ─────────────────────────
+    const curableDesignationSets = {
+      PHYSICAL_CURABLE: ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'],
+      DIGITAL_CURABLE: ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'],
+      EMAIL_CURABLE: ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'],
+    };
+    const ownCurableTeam = Object.keys(curableDesignationSets).find(team =>
+      curableDesignationSets[team].includes(userDesignation) || curableDesignationSets[team].includes(userRole)
+    ) || null;
+    const requestedCurableTeam = Object.prototype.hasOwnProperty.call(curableDesignationSets, req.query.curing_designation)
+      ? req.query.curing_designation
+      : null;
+    const activeCurableTeam = ownCurableTeam || requestedCurableTeam;
+    const isCurableOperatorUser = Boolean(activeCurableTeam);
 
     let curableOperatorFilterSQL = '';
     if (isCurableOperatorUser && req.user?.id) {
-      const physicalCodesList = HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.PHYSICAL_CURABLE).map(c => `'${c.code.toUpperCase()}'`);
-      const digitalCodesList = HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.DIGITAL_CURABLE).map(c => `'${c.code.toUpperCase()}'`);
-      const emailCodesList = HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.EMAIL_CURABLE).map(c => `'${c.code.toUpperCase()}'`);
+      const teamCodesSQL = `(${HDFC_DECLINE_CODES
+        .filter(c => c.designation === CURING_DESIGNATIONS[activeCurableTeam])
+        .map(c => `'${c.code.toUpperCase()}'`)
+        .join(', ')})`;
 
-      const physicalCodesSQL = `(${physicalCodesList.join(', ')})`;
-      const digitalCodesSQL = `(${digitalCodesList.join(', ')})`;
-      const emailCodesSQL = `(${emailCodesList.join(', ')})`;
+      const primaryCodeSQL = `UPPER(TRIM(COALESCE(NULLIF(TRIM(combined.primary_decline_code), ''), NULLIF(TRIM(combined.decline_code), ''), '')))`;
+      const secondaryCodeSQL = `UPPER(TRIM(COALESCE(NULLIF(TRIM(combined.secondary_decline_code), ''), '')))`;
+      const codePrefix = (expr) => `REGEXP_REPLACE(${expr}, '[^A-Z0-9].*$', '')`;
 
-      let curableCondition = '';
-      if (isPhysicalCurableUser) {
-        curableCondition = `(
-          UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) IN ${physicalCodesSQL}
-          OR REGEXP_REPLACE(UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))), '[^A-Z0-9].*$', '') IN ${physicalCodesSQL}
-          OR UPPER(TRIM(COALESCE(combined.secondary_decline_code, ''))) IN ${physicalCodesSQL}
-          OR REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, combined.cureble_type, ''))), ' ', '_') IN ('PHYSICAL_CURABLE', 'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL')
-          OR REPLACE(UPPER(TRIM(COALESCE(combined.secondary_curing_designation, ''))), ' ', '_') IN ('PHYSICAL_CURABLE', 'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL')
-          OR (
-            LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%salary check%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%low income%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%verif%negative%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%verification negative%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%resi%verif%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%biz%verif%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%business proof%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%clear document%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%cpv%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%office appointment%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%dob mismatch%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%pan mismatch%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%company name mismatch%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%city mismatch%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%mobile mismatch%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%incorrect designation%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%incorrect employer%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%multiple defect%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%poor contact%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%physical%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%pickup%'
-          )
-          OR (
-            (
-              combined.status IN ('rejected', 'declined', 'decline', 'technical_error')
-              OR LOWER(COALESCE(combined.final_status, '')) IN ('rejected', 'declined', 'decline', 'technical_error')
-              OR LOWER(COALESCE(combined.final_status, '')) LIKE '%reject%'
-              OR LOWER(COALESCE(combined.final_status, '')) LIKE '%decline%'
-              OR LOWER(COALESCE(combined.bank_current_lead_status, '')) IN ('rejected', 'declined', 'decline')
-              OR (combined.decline_code IS NOT NULL AND TRIM(combined.decline_code) != '' AND UPPER(TRIM(combined.decline_code)) != 'NONE')
-            )
-            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${digitalCodesSQL}
-            AND UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) NOT IN ${emailCodesSQL}
-            AND NOT (
-              UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) LIKE '%CIBIL%'
-              OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%cibil%'
-            )
-            AND REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, combined.cureble_type, ''))), ' ', '_') NOT IN ('DIGITAL_CURABLE', 'DIGITAL_CURABLE_OPERATOR', 'EMAIL_CURABLE', 'EMAIL_CURABLE_OPERATOR')
-          )
-        )`;
-      } else if (isDigitalCurableUser) {
-        curableCondition = `(
-          UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) IN ${digitalCodesSQL}
-          OR REGEXP_REPLACE(UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))), '[^A-Z0-9].*$', '') IN ${digitalCodesSQL}
-          OR UPPER(TRIM(COALESCE(combined.secondary_decline_code, ''))) IN ${digitalCodesSQL}
-          OR REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, combined.cureble_type, ''))), ' ', '_') IN ('DIGITAL_CURABLE', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL')
-          OR REPLACE(UPPER(TRIM(COALESCE(combined.secondary_curing_designation, ''))), ' ', '_') IN ('DIGITAL_CURABLE', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL')
-          OR (
-            LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%vkyc%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%bank statement%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%autopay%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%ekyc%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%income doc%'
-          )
-        )`;
-      } else if (isEmailCurableUser) {
-        curableCondition = `(
-          UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))) IN ${emailCodesSQL}
-          OR REGEXP_REPLACE(UPPER(TRIM(COALESCE(combined.primary_decline_code, combined.decline_code, ''))), '[^A-Z0-9].*$', '') IN ${emailCodesSQL}
-          OR UPPER(TRIM(COALESCE(combined.secondary_decline_code, ''))) IN ${emailCodesSQL}
-          OR REPLACE(UPPER(TRIM(COALESCE(combined.primary_curing_designation, combined.curing_designation, combined.cureble_type, ''))), ' ', '_') IN ('EMAIL_CURABLE', 'EMAIL_CURABLE_OPERATOR', 'EMAIL')
-          OR REPLACE(UPPER(TRIM(COALESCE(combined.secondary_curing_designation, ''))), ' ', '_') IN ('EMAIL_CURABLE', 'EMAIL_CURABLE_OPERATOR', 'EMAIL')
-          OR (
-            LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%appeal%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%underwriting%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%landmark%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%not interested%'
-            OR LOWER(COALESCE(combined.decline_description, combined.primary_decline_description, combined.decline_reason, '')) LIKE '%never applied%'
-          )
-        )`;
-      }
+      const curableCondition = `(
+        ${primaryCodeSQL} IN ${teamCodesSQL}
+        OR ${codePrefix(primaryCodeSQL)} IN ${teamCodesSQL}
+        OR ${secondaryCodeSQL} IN ${teamCodesSQL}
+        OR ${codePrefix(secondaryCodeSQL)} IN ${teamCodesSQL}
+      )`;
 
       const hdfcBankScopeSQL = `(
         (LOWER(COALESCE(combined.bank_name, '')) LIKE '%hdfc%' OR LOWER(COALESCE(combined.bank_code, '')) LIKE '%hdfc%')
@@ -2243,13 +2180,7 @@ const listApplications = async (req, res, next) => {
         AND LOWER(COALESCE(combined.bank_code, '')) NOT LIKE '%tata%'
       )`;
 
-      const baseBankAccessClean = (baseBankAccessFilterSQL || '').replace(/^\s*AND\s*/i, '').trim();
-      const hasAssignedBanks = baseBankAccessClean && baseBankAccessClean !== '1=0';
-      const curableBankScopeSQL = hasAssignedBanks
-        ? `(${baseBankAccessClean})`
-        : hdfcBankScopeSQL;
-
-      curableOperatorFilterSQL = ` AND ${creditCardAppSQL} AND ${curableBankScopeSQL} AND ${curableCondition}`;
+      curableOperatorFilterSQL = ` AND ${creditCardAppSQL} AND ${hdfcBankScopeSQL} AND ${curableCondition}`;
     }
 
     if (!isPartnerOrTeam && !isSuperAdmin && req.user?.id) {
@@ -6891,56 +6822,57 @@ const updateRemarkOperatorApplication = async (req, res, next) => {
         }
       }
 
-      const isPhysicalCurable = ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userDesignation) || ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userRole);
-      const isDigitalCurable = ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userRole);
-      const isEmailCurable = ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userRole);
+      const ownCurableTeamForUpdate = ['PHYSICAL_CURABLE', 'DIGITAL_CURABLE', 'EMAIL_CURABLE'].find(team => {
+        const names = [team, team.replace('_', ' '), `${team}_OPERATOR`, `${team.replace('_', ' ')} OPERATOR`];
+        return names.includes(userDesignation) || names.includes(userRole);
+      }) || null;
 
-      if (isPhysicalCurable || isDigitalCurable || isEmailCurable) {
-        const statusStr = (app.status || '').toLowerCase();
-        const finalStatusStr = (app.final_status || '').toLowerCase();
-        const appPrimaryDeclineCode = (app.primary_decline_code || app.decline_code || '').trim().toUpperCase();
-        const appPrimaryCuringDesig = (app.primary_curing_designation || app.curing_designation || '').trim().toUpperCase().replace(/ /g, '_');
-        const hasDeclineCode = Boolean(appPrimaryDeclineCode && appPrimaryDeclineCode !== 'NONE');
-        const isRejected = statusStr.includes('reject') || statusStr.includes('decline') || finalStatusStr.includes('reject') || finalStatusStr.includes('decline') || hasDeclineCode;
-        if (!isRejected) {
+      if (ownCurableTeamForUpdate) {
+        const teamLabel = ownCurableTeamForUpdate === 'PHYSICAL_CURABLE' ? 'Physical' : ownCurableTeamForUpdate === 'DIGITAL_CURABLE' ? 'Digital' : 'Email';
+
+        // HDFC only (a.* has no bank name, so resolve the bank from banks table)
+        const curableBankId = app.bank_id || pRow?.bank_id;
+        let curableBankRow = null;
+        if (curableBankId) {
+          const { rows: [bRow] } = await client.query(`SELECT name, short_code FROM banks WHERE id = $1`, [curableBankId]).catch(() => ({ rows: [] }));
+          curableBankRow = bRow || null;
+        }
+        const appBankText = `${curableBankRow?.name || ''} ${curableBankRow?.short_code || ''} ${app.bank_name || ''} ${app.bank_code || ''}`.toLowerCase();
+        if (!appBankText.includes('hdfc') || appBankText.includes('tata')) {
           await client.query('ROLLBACK');
-          return forbidden(res, 'Curable Operators can only access declined or curable applications.');
+          return forbidden(res, 'Curable Operators can only access HDFC applications.');
         }
 
-        const physicalCodes = HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.PHYSICAL_CURABLE).map(c => c.code.toUpperCase());
-        const digitalCodes = HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.DIGITAL_CURABLE).map(c => c.code.toUpperCase());
-        const emailCodes = HDFC_DECLINE_CODES.filter(c => c.designation === CURING_DESIGNATIONS.EMAIL_CURABLE).map(c => c.code.toUpperCase());
+        // Routed strictly by decline code (primary, or secondary for dual-code cases)
+        const teamCodes = HDFC_DECLINE_CODES
+          .filter(c => c.designation === CURING_DESIGNATIONS[ownCurableTeamForUpdate])
+          .map(c => c.code.toUpperCase());
+        const normalizeDeclineCode = (v) => String(v || '').trim().toUpperCase().replace(/[^A-Z0-9].*$/, '');
 
-        if (isPhysicalCurable) {
-          if (appPrimaryDeclineCode && appPrimaryDeclineCode !== 'NONE') {
-            if (!physicalCodes.includes(appPrimaryDeclineCode)) {
-              await client.query('ROLLBACK');
-              return forbidden(res, 'This application is not allocated to Physical Curable team.');
-            }
-          } else if (appPrimaryCuringDesig && !appPrimaryCuringDesig.startsWith('PHYSICAL_CURABLE') && (appPrimaryCuringDesig.startsWith('DIGITAL_CURABLE') || appPrimaryCuringDesig.startsWith('EMAIL_CURABLE'))) {
-            await client.query('ROLLBACK');
-            return forbidden(res, 'This application is not allocated to Physical Curable team.');
-          }
-        } else if (isDigitalCurable) {
-          if (appPrimaryDeclineCode && appPrimaryDeclineCode !== 'NONE') {
-            if (!digitalCodes.includes(appPrimaryDeclineCode)) {
-              await client.query('ROLLBACK');
-              return forbidden(res, 'This application is not allocated to Digital Curable team.');
-            }
-          } else if (appPrimaryCuringDesig && !appPrimaryCuringDesig.startsWith('DIGITAL_CURABLE') && (appPrimaryCuringDesig.startsWith('PHYSICAL_CURABLE') || appPrimaryCuringDesig.startsWith('EMAIL_CURABLE'))) {
-            await client.query('ROLLBACK');
-            return forbidden(res, 'This application is not allocated to Digital Curable team.');
-          }
-        } else if (isEmailCurable) {
-          if (appPrimaryDeclineCode && appPrimaryDeclineCode !== 'NONE') {
-            if (!emailCodes.includes(appPrimaryDeclineCode)) {
-              await client.query('ROLLBACK');
-              return forbidden(res, 'This application is not allocated to Email Curable team.');
-            }
-          } else if (appPrimaryCuringDesig && !appPrimaryCuringDesig.startsWith('EMAIL_CURABLE') && (appPrimaryCuringDesig.startsWith('PHYSICAL_CURABLE') || appPrimaryCuringDesig.startsWith('DIGITAL_CURABLE'))) {
-            await client.query('ROLLBACK');
-            return forbidden(res, 'This application is not allocated to Email Curable team.');
-          }
+        // Decline codes can live on applications or physical_application_details (same fallback as the list query)
+        let curablePad = null;
+        await client.query('SAVEPOINT curable_guard_sp');
+        try {
+          const padRes = await client.query(
+            `SELECT primary_decline_code, decline_code, secondary_decline_code FROM physical_application_details WHERE application_id = $1 LIMIT 1`,
+            [app.id]
+          );
+          curablePad = padRes.rows[0] || null;
+          await client.query('RELEASE SAVEPOINT curable_guard_sp');
+        } catch (padErr) {
+          await client.query('ROLLBACK TO SAVEPOINT curable_guard_sp');
+          await client.query('RELEASE SAVEPOINT curable_guard_sp');
+        }
+        const appPrimaryDeclineCode = normalizeDeclineCode(app.primary_decline_code || app.decline_code || curablePad?.primary_decline_code || curablePad?.decline_code);
+        const appSecondaryDeclineCode = normalizeDeclineCode(app.secondary_decline_code || curablePad?.secondary_decline_code);
+
+        if (!appPrimaryDeclineCode && !appSecondaryDeclineCode) {
+          await client.query('ROLLBACK');
+          return forbidden(res, 'Curable Operators can only access declined applications that have an HDFC decline code.');
+        }
+        if (!teamCodes.includes(appPrimaryDeclineCode) && !teamCodes.includes(appSecondaryDeclineCode)) {
+          await client.query('ROLLBACK');
+          return forbidden(res, `This application is not allocated to ${teamLabel} Curable team.`);
         }
       }
     }
