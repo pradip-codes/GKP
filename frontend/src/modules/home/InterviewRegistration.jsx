@@ -432,6 +432,28 @@ export default function InterviewRegistration() {
             if (verifyHandled) return;
             verifyHandled = true;
             clearTimeout(verifyTimeout);
+
+            const tokenVal =
+              verifyData?.message ||
+              verifyData?.accessToken ||
+              verifyData?.["access-token"] ||
+              (typeof verifyData === "string" ? verifyData : verifyData?.data);
+
+            // Call backend with access_token to complete server-side verification with MSG91
+            if (tokenVal) {
+              try {
+                const mob = formData.mobile_number.trim().replace(/\D/g, '').slice(-10);
+                await axios.post(`${getApiV1Url()}/public/careers/verify-otp`, {
+                  mobile_number: mob,
+                  mobile_otp: code,
+                  access_token: tokenVal,
+                  type: 'mobile'
+                });
+              } catch (bErr) {
+                console.warn('[MSG91] Backend verifyAccessToken notice:', bErr.message);
+              }
+            }
+
             setMobilePreVerified(true);
             setMobileOtpSent(false);
             setInfoMsg('✓ Mobile number successfully verified via MSG91!');

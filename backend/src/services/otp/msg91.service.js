@@ -3,7 +3,7 @@ const axios = require('axios');
 const VERIFY_ACCESS_TOKEN_URL = 'https://control.msg91.com/api/v5/widget/verifyAccessToken';
 
 const getAuthKey = () => {
-  const authKey = process.env.MSG91_AUTH_KEY;
+  const authKey = process.env.MSG91_TOKEN_AUTH || process.env.MSG91_AUTH_KEY || '534683TU4WDwc8S0M6a36b963P1';
   if (!authKey) {
     throw new Error('MSG91_AUTH_KEY is not configured');
   }

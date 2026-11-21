@@ -183,22 +183,36 @@ router.post('/verify-email', async (req, res, next) => {
   }
 });
 
-// POST /api/v1/public/careers/verify-otp — Verify OTP from PostgreSQL
+// POST /api/v1/public/careers/verify-otp — Verify OTP from PostgreSQL or MSG91 Access Token
 router.post('/verify-otp', async (req, res, next) => {
   try {
     await ensurePublicTablesExist();
-    const { mobile_number, email_id, otp, mobile_otp, email_otp, type } = req.body;
+    const { mobile_number, email_id, otp, mobile_otp, email_otp, type, access_token, accessToken } = req.body;
     let verified = false;
+
+    const tokenToVerify = access_token || accessToken;
+    const cleanMobile = mobile_number ? String(mobile_number).trim().replace(/\D/g, '').slice(-10) : '';
+
+    // If an MSG91 Widget Access Token is provided, verify it directly with MSG91
+    if (tokenToVerify && (type === 'mobile' || !email_id)) {
+      try {
+        const { verifyAccessToken } = require('../../services/otp/msg91.service');
+        await verifyAccessToken({ accessToken: tokenToVerify, expectedMobile: cleanMobile });
+        verified = true;
+        logger.info(`[CAREERS OTP] MSG91 access token verified successfully on backend for mobile: ${cleanMobile}`);
+      } catch (tokenErr) {
+        logger.warn(`[CAREERS OTP] MSG91 access token backend verification note: ${tokenErr.message}`);
+      }
+    }
 
     const mOtp = mobile_otp || otp;
     const eOtp = email_otp || otp;
-    const cleanMobile = mobile_number ? String(mobile_number).trim().replace(/\D/g, '').slice(-10) : '';
     const cleanEmail = email_id ? String(email_id).trim().toLowerCase() : '';
 
     const isDev = process.env.NODE_ENV !== 'production';
-    if (isDev && (mOtp === '123456' || eOtp === '123456' || mOtp === '1234' || eOtp === '1234' || otp === '123456')) {
+    if (!verified && isDev && (mOtp === '123456' || eOtp === '123456' || mOtp === '1234' || eOtp === '1234' || otp === '123456')) {
       verified = true;
-    } else {
+    } else if (!verified) {
       try {
         if (type === 'mobile' || (cleanMobile && mOtp && !cleanEmail)) {
           const mHash = hashOtp(mOtp);
