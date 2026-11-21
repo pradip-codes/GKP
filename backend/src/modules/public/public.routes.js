@@ -88,7 +88,7 @@ router.post('/verify-mobile', async (req, res, next) => {
     res.json({ success: true, message: 'OTP sent to mobile number', debug_otp: process.env.NODE_ENV !== 'production' ? otp : undefined });
   } catch (err) {
     logger.error('Verify mobile error:', err);
-    res.json({ success: true, message: 'OTP request processed' });
+    res.status(500).json({ success: false, message: 'Failed to process mobile OTP request. Please try again.' });
   }
 });
 
@@ -156,7 +156,7 @@ router.post('/verify-email', async (req, res, next) => {
     });
   } catch (err) {
     logger.error('Verify email error:', err);
-    res.json({ success: true, message: 'Verification OTP dispatched to your Email address!' });
+    res.status(500).json({ success: false, message: 'Failed to process email OTP request. Please try again.' });
   }
 });
 

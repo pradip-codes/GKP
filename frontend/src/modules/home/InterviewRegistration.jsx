@@ -294,7 +294,7 @@ export default function InterviewRegistration() {
   //   setPreviewModal(prev => ({ ...prev, isOpen: false }));
   // };
 
-  // ── Mobile OTP Handler (Backend + Simulation Fallback) ──
+  // ── Mobile OTP Handler (Connected to Backend Verification Endpoints) ──
   const handleSendMobileOtp = async () => {
     setError('');
     setInfoMsg('');
@@ -305,25 +305,30 @@ export default function InterviewRegistration() {
     }
 
     setMobileOtpLoading(true);
-    const testCode = String(Math.floor(100000 + Math.random() * 900000));
-    setSimulatedMobileOtpCode(testCode);
 
     try {
       const res = await axios.post(`${getApiV1Url()}/public/careers/verify-mobile`, { mobile_number: mob });
       if (res.data?.success) {
         setMobileOtpSent(true);
         setMobileOtpTimer(60);
-        setInfoMsg(`Verification OTP sent to your Mobile! (Testing code: ${testCode} or 123456)`);
+        setInfoMsg(res.data.message || 'Verification OTP sent to your Mobile number!');
+        if (res.data.debug_otp) {
+          setSimulatedMobileOtpCode(String(res.data.debug_otp));
+        }
       } else {
-        setMobileOtpSent(true);
-        setMobileOtpTimer(60);
-        setInfoMsg(`[Local Simulation Mode] Mobile OTP dispatched: ${testCode} (No external SMS sent).`);
+        setError(res.data?.message || 'Failed to send OTP to mobile. Please try again.');
       }
     } catch (err) {
-      console.warn('Backend verify-mobile call notice, falling back to local simulation mode:', err.message);
-      setMobileOtpSent(true);
-      setMobileOtpTimer(60);
-      setInfoMsg(`[Local Simulation Mode] Mobile OTP dispatched: ${testCode} (No external SMS sent).`);
+      const errorMsg = err.response?.data?.message || err.message || 'Failed to send Mobile OTP. Please check your network connection and try again.';
+      setError(errorMsg);
+      // In development mode, if backend is completely offline (no HTTP response), provide dev fallback
+      if (!err.response && import.meta.env.DEV) {
+        const testCode = String(Math.floor(100000 + Math.random() * 900000));
+        setSimulatedMobileOtpCode(testCode);
+        setMobileOtpSent(true);
+        setMobileOtpTimer(60);
+        setInfoMsg(`[Dev Offline Mode] Backend unreachable. Generated test code: ${testCode}`);
+      }
     } finally {
       setMobileOtpLoading(false);
     }
@@ -341,14 +346,6 @@ export default function InterviewRegistration() {
     setInfoMsg('');
     setMobileVerifyLoading(true);
 
-    if (code === simulatedMobileOtpCode || code === '123456') {
-      setMobilePreVerified(true);
-      setMobileOtpSent(false);
-      setMobileVerifyLoading(false);
-      setInfoMsg('✓ Mobile number successfully verified!');
-      return;
-    }
-
     try {
       const mob = formData.mobile_number.trim().replace(/\D/g, '').slice(-10);
       const res = await axios.post(`${getApiV1Url()}/public/careers/verify-otp`, {
@@ -361,16 +358,23 @@ export default function InterviewRegistration() {
         setMobileOtpSent(false);
         setInfoMsg('✓ Mobile number successfully verified!');
       } else {
-        setError(res.data?.message || `Invalid Mobile OTP. Enter ${simulatedMobileOtpCode || '123456'} for testing.`);
+        setError(res.data?.message || 'Invalid or expired Mobile OTP. Please enter the valid OTP code.');
       }
     } catch (err) {
-      setError(`Invalid Mobile OTP. Enter ${simulatedMobileOtpCode || '123456'} for testing.`);
+      // In dev mode allow test fallback if offline
+      if ((!err.response || import.meta.env.DEV) && (code === '123456' || (simulatedMobileOtpCode && code === simulatedMobileOtpCode))) {
+        setMobilePreVerified(true);
+        setMobileOtpSent(false);
+        setInfoMsg('✓ Mobile number successfully verified!');
+      } else {
+        setError(err.response?.data?.message || err.message || 'Invalid or expired Mobile OTP. Please enter the valid OTP code.');
+      }
     } finally {
       setMobileVerifyLoading(false);
     }
   };
 
-  // ── Email OTP Handler (Backend + Simulation Fallback) ──
+  // ── Email OTP Handler (Connected to Backend Verification Endpoints) ──
   const handleSendEmailOtp = async () => {
     setError('');
     setInfoMsg('');
@@ -381,25 +385,30 @@ export default function InterviewRegistration() {
     }
 
     setEmailOtpLoading(true);
-    const testCode = String(Math.floor(100000 + Math.random() * 900000));
-    setSimulatedEmailOtpCode(testCode);
 
     try {
       const res = await axios.post(`${getApiV1Url()}/public/careers/verify-email`, { email_id: em });
       if (res.data?.success) {
         setEmailOtpSent(true);
         setEmailOtpTimer(60);
-        setInfoMsg(`Verification OTP sent to your Email! (Testing code: ${testCode} or 123456)`);
+        setInfoMsg(res.data.message || `Verification OTP sent to ${em}`);
+        if (res.data.debug_otp) {
+          setSimulatedEmailOtpCode(String(res.data.debug_otp));
+        }
       } else {
-        setEmailOtpSent(true);
-        setEmailOtpTimer(60);
-        setInfoMsg(`[Local Simulation Mode] Email OTP dispatched: ${testCode} (No external email sent).`);
+        setError(res.data?.message || 'Failed to send OTP to email. Please try again.');
       }
     } catch (err) {
-      console.warn('Backend verify-email call notice, falling back to local simulation mode:', err.message);
-      setEmailOtpSent(true);
-      setEmailOtpTimer(60);
-      setInfoMsg(`[Local Simulation Mode] Email OTP dispatched: ${testCode} (No external email sent).`);
+      const errorMsg = err.response?.data?.message || err.message || 'Failed to send Email OTP. Please check your network connection and try again.';
+      setError(errorMsg);
+      // In development mode, if backend is completely offline (no HTTP response), provide dev fallback
+      if (!err.response && import.meta.env.DEV) {
+        const testCode = String(Math.floor(100000 + Math.random() * 900000));
+        setSimulatedEmailOtpCode(testCode);
+        setEmailOtpSent(true);
+        setEmailOtpTimer(60);
+        setInfoMsg(`[Dev Offline Mode] Backend unreachable. Generated test code: ${testCode}`);
+      }
     } finally {
       setEmailOtpLoading(false);
     }
@@ -417,14 +426,6 @@ export default function InterviewRegistration() {
     setInfoMsg('');
     setEmailVerifyLoading(true);
 
-    if (code === simulatedEmailOtpCode || code === '123456') {
-      setEmailPreVerified(true);
-      setEmailOtpSent(false);
-      setEmailVerifyLoading(false);
-      setInfoMsg('✓ Email address successfully verified!');
-      return;
-    }
-
     try {
       const em = formData.email_id.trim().toLowerCase();
       const res = await axios.post(`${getApiV1Url()}/public/careers/verify-otp`, {
@@ -437,10 +438,17 @@ export default function InterviewRegistration() {
         setEmailOtpSent(false);
         setInfoMsg('✓ Email address successfully verified!');
       } else {
-        setError(res.data?.message || `Invalid Email OTP. Enter ${simulatedEmailOtpCode || '123456'} for testing.`);
+        setError(res.data?.message || 'Invalid or expired Email OTP. Please enter the valid OTP code.');
       }
     } catch (err) {
-      setError(`Invalid Email OTP. Enter ${simulatedEmailOtpCode || '123456'} for testing.`);
+      // In dev mode allow test fallback if offline
+      if ((!err.response || import.meta.env.DEV) && (code === '123456' || (simulatedEmailOtpCode && code === simulatedEmailOtpCode))) {
+        setEmailPreVerified(true);
+        setEmailOtpSent(false);
+        setInfoMsg('✓ Email address successfully verified!');
+      } else {
+        setError(err.response?.data?.message || err.message || 'Invalid or expired Email OTP. Please enter the valid OTP code.');
+      }
     } finally {
       setEmailVerifyLoading(false);
     }
@@ -657,33 +665,41 @@ export default function InterviewRegistration() {
         setLoading(false);
         setStep(3);
         return;
+      } else {
+        setError(res.data?.message || 'Candidate registration failed. Please review your details.');
+        setLoading(false);
+        return;
       }
     } catch (apiErr) {
-      console.warn('Backend careers/register call notice, using local simulation fallback:', apiErr.message);
-    }
-
-    // Fallback local registration simulation
-    setTimeout(() => {
-      const generatedCode = `CAND-${Math.floor(100000 + Math.random() * 900000)}`;
-      setReferenceCode(generatedCode);
-
-      try {
-        const existingRaw = localStorage.getItem('gkp_interview_registrations_mock');
-        const existingList = existingRaw ? JSON.parse(existingRaw) : [];
-        existingList.unshift({
-          ...submitPayload,
-          reference_code: generatedCode,
-          interview_status: 'REGISTERED',
-          registered_at: new Date().toISOString()
-        });
-        localStorage.setItem('gkp_interview_registrations_mock', JSON.stringify(existingList));
-      } catch (err) {
-        console.warn('localStorage mock write warning:', err);
+      if (apiErr.response?.data?.message) {
+        setError(apiErr.response.data.message);
+        setLoading(false);
+        return;
       }
-
+      if (!apiErr.response && import.meta.env.DEV) {
+        // Fallback local registration simulation only if backend server is completely offline
+        const generatedCode = `CAND-${Math.floor(100000 + Math.random() * 900000)}`;
+        setReferenceCode(generatedCode);
+        try {
+          const existingRaw = localStorage.getItem('gkp_interview_registrations_mock');
+          const existingList = existingRaw ? JSON.parse(existingRaw) : [];
+          existingList.unshift({
+            ...submitPayload,
+            reference_code: generatedCode,
+            interview_status: 'REGISTERED',
+            registered_at: new Date().toISOString()
+          });
+          localStorage.setItem('gkp_interview_registrations_mock', JSON.stringify(existingList));
+        } catch (err) {
+          console.warn('localStorage mock write warning:', err);
+        }
+        setLoading(false);
+        setStep(3);
+        return;
+      }
+      setError(apiErr.message || 'Network error occurred during registration. Please try again.');
       setLoading(false);
-      setStep(3);
-    }, 600);
+    }
   };
 
   // // ── Helper to Render Individual Document Upload Cards ──
