@@ -239,12 +239,14 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
     await ensurePublicTablesExist();
 
     const {
-      full_name, mobile_number, email_id, date_of_birth, current_address,
-      highest_qualification, passing_year, experience_type, total_experience_years,
-      current_company, current_designation, last_salary_ctc, expected_salary,
+      full_name, first_name, middle_name, last_name, age, mobile_number, email_id, date_of_birth, current_address,
+      address_flat_no, address_society, address_area, address_state, address_district, address_city, pincode,
+      highest_qualification, education_stream, education_detail, pursuing_year, passing_year,
+      experience_type, total_experience_years,
+      current_company, current_designation, last_salary_ctc, expected_salary, previous_salary,
       immediate_joining, notice_period_days, comfortable_with_location,
       relevant_experience, how_did_you_hear, referred_by_employee_id,
-      target_role, hr_name
+      target_role, hr_name, selected_hr, hr_reference
     } = req.body;
 
     if (!full_name || !mobile_number || !email_id || !highest_qualification) {
@@ -305,20 +307,28 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
 
     const insertQuery = `
       INSERT INTO employee_candidates (
-        reference_code, full_name, mobile_number, email_id, date_of_birth, current_address,
-        highest_qualification, passing_year, experience_type, total_experience_years,
-        current_company, current_designation, last_salary_ctc, expected_salary,
+        reference_code, full_name, first_name, middle_name, last_name, age,
+        mobile_number, email_id, date_of_birth, current_address,
+        address_flat_no, address_society, address_area, address_state, address_district, address_city, pincode,
+        highest_qualification, education_stream, education_detail, pursuing_year, passing_year,
+        experience_type, total_experience_years,
+        current_company, current_designation, last_salary_ctc, expected_salary, previous_salary,
         immediate_joining, notice_period_days, comfortable_with_location,
         relevant_experience, how_did_you_hear, referred_by_employee_id,
-        resume_url, resume_file_name, target_role, hr_name, mobile_verified, email_verified, otp_verified,
+        resume_url, resume_file_name, target_role, hr_name, selected_hr, hr_reference,
+        mobile_verified, email_verified, otp_verified,
         interview_status
       ) VALUES (
         $1, $2, $3, $4, $5, $6,
         $7, $8, $9, $10,
-        $11, $12, $13, $14,
-        $15, $16, $17,
-        $18, $19, $20,
-        $21, $22, $23, $24, true, true, true,
+        $11, $12, $13, $14, $15, $16, $17,
+        $18, $19, $20, $21, $22,
+        $23, $24,
+        $25, $26, $27, $28, $29,
+        $30, $31, $32,
+        $33, $34, $35,
+        $36, $37, $38, $39, $40, $41,
+        true, true, true,
         'REGISTERED'
       ) RETURNING id, reference_code, interview_status, created_at
     `;
@@ -342,9 +352,21 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
       }
     }
 
-    const finalHrName = hr_name || (!isUuid(referred_by_employee_id) && referred_by_employee_id ? String(referred_by_employee_id).trim() : (rawRefCode ? String(rawRefCode).trim() : null));
-
     const cleanStr = (val) => (val && typeof val === 'string' && val.trim() ? val.trim() : null);
+
+    const cleanSelectedHr = cleanStr(selected_hr);
+    const cleanHrName = cleanStr(hr_name);
+    const OTHER_HR_VALUES = ['Other HR / Reference', 'Other'];
+    const isOtherHr = !cleanSelectedHr || OTHER_HR_VALUES.includes(cleanSelectedHr);
+    const finalHrName = (!isOtherHr ? cleanSelectedHr : null)
+      || cleanHrName
+      || cleanStr(hr_reference)
+      || (!isUuid(referred_by_employee_id) && referred_by_employee_id ? String(referred_by_employee_id).trim() : (rawRefCode ? String(rawRefCode).trim() : null));
+
+    const addressParts = [address_flat_no, address_society, address_area, address_city, address_district, address_state, pincode]
+      .map(v => cleanStr(v)).filter(Boolean);
+    const composedAddress = addressParts.length ? addressParts.join(', ') : null;
+    const finalAddress = cleanStr(current_address) || composedAddress;
     
     const parseDate = (val) => {
       if (!val || typeof val !== 'string' || !val.trim()) return null;
@@ -403,11 +425,25 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
     const values = [
       reference_code,
       full_name.trim(),
+      cleanStr(first_name),
+      cleanStr(middle_name),
+      cleanStr(last_name),
+      parseIntNum(age),
       mobile_number.trim(),
       email_id.trim().toLowerCase(),
       parseDate(date_of_birth),
-      cleanStr(current_address),
-      highest_qualification.trim(),
+      finalAddress,
+      cleanStr(address_flat_no),
+      cleanStr(address_society),
+      cleanStr(address_area),
+      cleanStr(address_state),
+      cleanStr(address_district),
+      cleanStr(address_city),
+      cleanStr(pincode),
+      (highest_qualification || '').trim(),
+      cleanStr(education_stream),
+      cleanStr(education_detail),
+      cleanStr(pursuing_year),
       parseIntNum(passing_year),
       experience_type || 'Fresher',
       parseExpYears(total_experience_years),
@@ -415,6 +451,7 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
       cleanStr(current_designation),
       parseSalary(last_salary_ctc),
       parseSalary(expected_salary),
+      parseSalary(previous_salary),
       parseBool(immediate_joining, true),
       parseNoticeDays(notice_period_days),
       parseBool(comfortable_with_location, true),
@@ -424,7 +461,9 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
       resume_url,
       resume_file_name,
       cleanStr(target_role),
-      cleanStr(finalHrName)
+      cleanStr(finalHrName),
+      cleanSelectedHr,
+      cleanStr(hr_reference) || (isOtherHr ? cleanHrName : null)
     ];
 
     const { rows } = await query(insertQuery, values);
@@ -455,8 +494,8 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
             ) ON CONFLICT (mobile_number) DO NOTHING RETURNING id`,
             [
               empCode, uId, registeredCand.id, full_name.trim(), mobile_number.trim(), email_id.trim().toLowerCase(),
-              parseDate(date_of_birth), cleanStr(current_address), target_role || 'TC',
-              experience_type === 'Fresher' ? 'Full-time' : 'Experienced', parseNum(expected_salary) || 18000, how_did_you_hear || 'Career Portal'
+              parseDate(date_of_birth), finalAddress, target_role || 'TC',
+              experience_type === 'Fresher' ? 'Full-time' : 'Experienced', parseNum(expected_salary) || parseNum(previous_salary) || 18000, how_did_you_hear || 'Career Portal'
             ]
           );
           const eId = empRes.rows[0]?.id;

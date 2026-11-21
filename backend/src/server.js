@@ -576,6 +576,14 @@ const startServer = async () => {
       logger.warn('Employee Dashboard performance indexes boot note:', empIdxErr.message);
     }
 
+    // Always ensure employee_candidates extended registration fields exist on boot
+    try {
+      const { migrateCandidateExtendedFields } = require('./database/migrations/migrate_candidate_extended_fields.js');
+      await migrateCandidateExtendedFields();
+    } catch (candErr) {
+      logger.warn('Candidate extended fields boot migration note:', candErr.message);
+    }
+
     // Initialize scheduled CRON jobs
     const { initReportJobs } = require('./jobs/report.job.js');
     initReportJobs();
