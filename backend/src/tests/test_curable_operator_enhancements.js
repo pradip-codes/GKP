@@ -18,22 +18,20 @@ assert.ok(modalContent.includes('<option value="DIGITAL PENDING">DIGITAL PENDING
 assert.ok(modalContent.includes('<option value="DIGITAL SOLVED">DIGITAL SOLVED</option>'), 'Must include DIGITAL SOLVED option');
 assert.ok(modalContent.includes('<option value="NOT REQUIRED">NOT REQUIRED</option>'), 'Must include NOT REQUIRED option');
 
-// 1.2 Address selectable buttons & manual text input field
-assert.ok(modalContent.includes('CURRENT ADDRESS'), 'Must render CURRENT ADDRESS button');
-assert.ok(modalContent.includes('OFFICE ADDRESS'), 'Must render OFFICE ADDRESS button');
-assert.ok(modalContent.includes("setAddressType('Current Address')"), 'Must allow selecting Current Address');
-assert.ok(modalContent.includes("setAddressType('Office Address')"), 'Must allow selecting Office Address');
-assert.ok(modalContent.includes('addressType'), 'Must use addressType state');
-assert.ok(modalContent.includes('details manually...'), 'Must provide manual text input field for address');
-assert.ok(modalContent.includes('activeAddressText'), 'Must use activeAddressText for manual address');
-assert.ok(modalContent.includes('setActiveAddressText'), 'Must provide setActiveAddressText handler');
+// 1.2 Address: Two separate input boxes for CURRENT ADDRESS and OFFICE ADDRESS
+assert.ok(modalContent.includes('CURRENT ADDRESS'), 'Must render CURRENT ADDRESS label/box');
+assert.ok(modalContent.includes('OFFICE ADDRESS'), 'Must render OFFICE ADDRESS label/box');
+assert.ok(modalContent.includes('currentAddressText'), 'Must bind currentAddressText to current address input');
+assert.ok(modalContent.includes('officeAddressText'), 'Must bind officeAddressText to office address input');
+assert.ok(modalContent.includes('Enter current address manually...'), 'Must provide manual text input box for current address');
+assert.ok(modalContent.includes('Enter office address manually...'), 'Must provide manual text input box for office address');
 
 // 1.3 Final Form displays and saves Cureable Remark & Address
 assert.ok(modalContent.includes('Cureable Remark: '), 'Final form must display Cureable Remark in summary');
-assert.ok(modalContent.includes('Address: '), 'Final form must display Address in summary');
+assert.ok(modalContent.includes('Current Address: '), 'Final form must display Current Address in summary');
+assert.ok(modalContent.includes('Office Address: '), 'Final form must display Office Address in summary');
 assert.ok(modalContent.includes("queryable_remark: queryableRemark || 'NOT REQUIRED'"), 'Must save queryable_remark');
 assert.ok(modalContent.includes("address_type: addressType || 'Current Address'"), 'Must save address_type');
-assert.ok(modalContent.includes("curing_address: activeAddressText || ''"), 'Must save manual curing_address');
 
 // 1.3 Save Remarks & Stage moves to Cured & Approved
 assert.ok(modalContent.includes("payload.status = 'approved'"), 'Must set status to approved for curable operator');

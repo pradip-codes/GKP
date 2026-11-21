@@ -3600,83 +3600,66 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                             </select>
                           </div>
 
-                          {/* 4. ADDRESS */}
-                          <div>
-                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>4. ADDRESS</label>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                              <button
-                                type="button"
-                                disabled={!canEditRemark}
-                                onClick={() => {
-                                  setAddressType('Current Address');
-                                  if (!currentAddressText && address1) setCurrentAddressText(address1);
-                                }}
-                                style={{
-                                  padding: '10px 12px',
-                                  borderRadius: '8px',
-                                  fontSize: '12px',
-                                  fontWeight: 800,
-                                  cursor: !canEditRemark ? 'not-allowed' : 'pointer',
-                                  border: (addressType === 'Current Address' || !addressType || String(addressType).toLowerCase().includes('current')) ? '2px solid #2563eb' : '1px solid #cbd5e1',
-                                  background: (addressType === 'Current Address' || !addressType || String(addressType).toLowerCase().includes('current')) ? '#eff6ff' : (!canEditRemark ? '#f8fafc' : '#ffffff'),
-                                  color: (addressType === 'Current Address' || !addressType || String(addressType).toLowerCase().includes('current')) ? '#1d4ed8' : '#64748b',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: '6px',
-                                  boxShadow: (addressType === 'Current Address' || !addressType || String(addressType).toLowerCase().includes('current')) ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
-                                  transition: 'all 0.15s ease'
-                                }}
-                              >
-                                {(addressType === 'Current Address' || !addressType || String(addressType).toLowerCase().includes('current')) && <CheckCircle size={14} color="#1d4ed8" />}
-                                CURRENT ADDRESS
-                              </button>
-                              <button
-                                type="button"
-                                disabled={!canEditRemark}
-                                onClick={() => {
-                                  setAddressType('Office Address');
-                                  if (!officeAddressText && companyAddress) setOfficeAddressText(companyAddress);
-                                }}
-                                style={{
-                                  padding: '10px 12px',
-                                  borderRadius: '8px',
-                                  fontSize: '12px',
-                                  fontWeight: 800,
-                                  cursor: !canEditRemark ? 'not-allowed' : 'pointer',
-                                  border: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '2px solid #2563eb' : '1px solid #cbd5e1',
-                                  background: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '#eff6ff' : (!canEditRemark ? '#f8fafc' : '#ffffff'),
-                                  color: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '#1d4ed8' : '#64748b',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: '6px',
-                                  boxShadow: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
-                                  transition: 'all 0.15s ease'
-                                }}
-                              >
-                                {(addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) && <CheckCircle size={14} color="#1d4ed8" />}
-                                OFFICE ADDRESS
-                              </button>
+                          {/* 4. ADDRESS: TWO SEPARATE INPUT BOXES */}
+                          <div style={{ gridColumn: '1 / -1', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '14px' }}>
+                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', textTransform: 'uppercase', display: 'block', marginBottom: '10px' }}>
+                              4. ADDRESS
+                            </label>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+                              {/* 1. CURRENT ADDRESS */}
+                              <div>
+                                <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e40af', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                                  🏠 CURRENT ADDRESS
+                                </label>
+                                <textarea
+                                  disabled={!canEditRemark}
+                                  value={currentAddressText}
+                                  onChange={(e) => {
+                                    setCurrentAddressText(e.target.value);
+                                    setAddress1(e.target.value);
+                                  }}
+                                  placeholder="Enter current address manually..."
+                                  rows={3}
+                                  style={{
+                                    width: '100%',
+                                    padding: '10px 12px',
+                                    borderRadius: '8px',
+                                    border: '1px solid #cbd5e1',
+                                    fontSize: '13px',
+                                    background: !canEditRemark ? '#f8fafc' : '#ffffff',
+                                    fontWeight: 500,
+                                    resize: 'vertical'
+                                  }}
+                                />
+                              </div>
+
+                              {/* 2. OFFICE ADDRESS */}
+                              <div>
+                                <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e40af', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                                  🏢 OFFICE ADDRESS
+                                </label>
+                                <textarea
+                                  disabled={!canEditRemark}
+                                  value={officeAddressText}
+                                  onChange={(e) => {
+                                    setOfficeAddressText(e.target.value);
+                                    setCompanyAddress(e.target.value);
+                                  }}
+                                  placeholder="Enter office address manually..."
+                                  rows={3}
+                                  style={{
+                                    width: '100%',
+                                    padding: '10px 12px',
+                                    borderRadius: '8px',
+                                    border: '1px solid #cbd5e1',
+                                    fontSize: '13px',
+                                    background: !canEditRemark ? '#f8fafc' : '#ffffff',
+                                    fontWeight: 500,
+                                    resize: 'vertical'
+                                  }}
+                                />
+                              </div>
                             </div>
-                            <textarea
-                              disabled={!canEditRemark}
-                              value={activeAddressText}
-                              onChange={(e) => setActiveAddressText(e.target.value)}
-                              placeholder={`Enter or edit ${isOfficeSelected ? 'Office Address' : 'Current Address'} details manually...`}
-                              rows={2}
-                              style={{
-                                width: '100%',
-                                marginTop: '8px',
-                                padding: '8px 12px',
-                                borderRadius: '8px',
-                                border: '1px solid #cbd5e1',
-                                fontSize: '13px',
-                                background: !canEditRemark ? '#f8fafc' : '#ffffff',
-                                fontWeight: 500,
-                                resize: 'vertical'
-                              }}
-                            />
                           </div>
 
                           {/* 5. DIGITAL QUERY DETAILS (AVAILABLE FOR DIGITAL, PHYSICAL, NOT REQUIRED) */}
@@ -3873,10 +3856,15 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                       </strong>
                     </div>
                     <div>
-                      <span style={{ color: '#64748b', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' }}>Address: </span>
+                      <span style={{ color: '#64748b', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' }}>Current Address: </span>
                       <strong style={{ color: '#1d4ed8', background: '#eff6ff', padding: '2px 8px', borderRadius: '4px', border: '1px solid #bfdbfe' }}>
-                        {addressType ? String(addressType).toUpperCase() : 'CURRENT ADDRESS'}
-                        {activeAddressText ? `: ${activeAddressText}` : ''}
+                        {currentAddressText || 'Not Filled'}
+                      </strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#64748b', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' }}>Office Address: </span>
+                      <strong style={{ color: '#0369a1', background: '#f0f9ff', padding: '2px 8px', borderRadius: '4px', border: '1px solid #bae6fd' }}>
+                        {officeAddressText || 'Not Filled'}
                       </strong>
                     </div>
                   </div>
@@ -4243,85 +4231,66 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                         </select>
                       </div>
 
-                      {/* ADDRESS SELECTION BUTTONS & MANUAL TEXT INPUT */}
-                      <div>
-                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                      {/* 4. ADDRESS: TWO SEPARATE INPUT BOXES */}
+                      <div style={{ gridColumn: '1 / -1', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '14px' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', textTransform: 'uppercase', display: 'block', marginBottom: '10px' }}>
                           ADDRESS
                         </label>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                          <button
-                            type="button"
-                            disabled={!canEditFinal}
-                            onClick={() => {
-                              setAddressType('Current Address');
-                              if (!currentAddressText && address1) setCurrentAddressText(address1);
-                            }}
-                            style={{
-                              padding: '10px 12px',
-                              borderRadius: '8px',
-                              fontSize: '12px',
-                              fontWeight: 800,
-                              cursor: !canEditFinal ? 'not-allowed' : 'pointer',
-                              border: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '2px solid #2563eb' : '1px solid #cbd5e1',
-                              background: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '#eff6ff' : (!canEditFinal ? '#f8fafc' : '#ffffff'),
-                              color: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '#1d4ed8' : '#64748b',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '6px',
-                              boxShadow: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
-                              transition: 'all 0.15s ease'
-                            }}
-                          >
-                            {(!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) && <CheckCircle size={14} color="#1d4ed8" />}
-                            CURRENT ADDRESS
-                          </button>
-                          <button
-                            type="button"
-                            disabled={!canEditFinal}
-                            onClick={() => {
-                              setAddressType('Office Address');
-                              if (!officeAddressText && companyAddress) setOfficeAddressText(companyAddress);
-                            }}
-                            style={{
-                              padding: '10px 12px',
-                              borderRadius: '8px',
-                              fontSize: '12px',
-                              fontWeight: 800,
-                              cursor: !canEditFinal ? 'not-allowed' : 'pointer',
-                              border: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '2px solid #2563eb' : '1px solid #cbd5e1',
-                              background: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '#eff6ff' : (!canEditFinal ? '#f8fafc' : '#ffffff'),
-                              color: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '#1d4ed8' : '#64748b',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '6px',
-                              boxShadow: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
-                              transition: 'all 0.15s ease'
-                            }}
-                          >
-                            {(addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) && <CheckCircle size={14} color="#1d4ed8" />}
-                            OFFICE ADDRESS
-                          </button>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+                          {/* 1. CURRENT ADDRESS */}
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e40af', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                              🏠 CURRENT ADDRESS
+                            </label>
+                            <textarea
+                              disabled={!canEditFinal}
+                              value={currentAddressText}
+                              onChange={(e) => {
+                                setCurrentAddressText(e.target.value);
+                                setAddress1(e.target.value);
+                              }}
+                              placeholder="Enter current address manually..."
+                              rows={3}
+                              style={{
+                                width: '100%',
+                                padding: '10px 12px',
+                                borderRadius: '8px',
+                                border: '1px solid #cbd5e1',
+                                fontSize: '13px',
+                                background: !canEditFinal ? '#f8fafc' : '#ffffff',
+                                fontWeight: 500,
+                                resize: 'vertical'
+                              }}
+                            />
+                          </div>
+
+                          {/* 2. OFFICE ADDRESS */}
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e40af', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                              🏢 OFFICE ADDRESS
+                            </label>
+                            <textarea
+                              disabled={!canEditFinal}
+                              value={officeAddressText}
+                              onChange={(e) => {
+                                setOfficeAddressText(e.target.value);
+                                setCompanyAddress(e.target.value);
+                              }}
+                              placeholder="Enter office address manually..."
+                              rows={3}
+                              style={{
+                                width: '100%',
+                                padding: '10px 12px',
+                                borderRadius: '8px',
+                                border: '1px solid #cbd5e1',
+                                fontSize: '13px',
+                                background: !canEditFinal ? '#f8fafc' : '#ffffff',
+                                fontWeight: 500,
+                                resize: 'vertical'
+                              }}
+                            />
+                          </div>
                         </div>
-                        <textarea
-                          disabled={!canEditFinal}
-                          value={activeAddressText}
-                          onChange={(e) => setActiveAddressText(e.target.value)}
-                          placeholder={`Enter or edit ${isOfficeSelected ? 'Office Address' : 'Current Address'} details manually...`}
-                          rows={2}
-                          style={{
-                            width: '100%',
-                            marginTop: '8px',
-                            padding: '8px 12px',
-                            borderRadius: '8px',
-                            border: '1px solid #cbd5e1',
-                            fontSize: '13px',
-                            background: !canEditFinal ? '#f8fafc' : '#ffffff',
-                            fontWeight: 500,
-                            resize: 'vertical'
-                          }}
-                        />
                       </div>
 
                       {/* USER REMARK */}
@@ -4786,85 +4755,66 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                     </select>
                   </div>
 
-                  {/* ADDRESS SELECTION BUTTONS & MANUAL TEXT INPUT */}
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                  {/* 4. ADDRESS: TWO SEPARATE INPUT BOXES */}
+                  <div style={{ gridColumn: '1 / -1', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '14px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', textTransform: 'uppercase', display: 'block', marginBottom: '10px' }}>
                       ADDRESS
                     </label>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                      <button
-                        type="button"
-                        disabled={!canEditFinal}
-                        onClick={() => {
-                          setAddressType('Current Address');
-                          if (!currentAddressText && address1) setCurrentAddressText(address1);
-                        }}
-                        style={{
-                          padding: '10px 12px',
-                          borderRadius: '8px',
-                          fontSize: '12px',
-                          fontWeight: 800,
-                          cursor: !canEditFinal ? 'not-allowed' : 'pointer',
-                          border: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '2px solid #2563eb' : '1px solid #cbd5e1',
-                          background: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '#eff6ff' : (!canEditFinal ? '#f8fafc' : '#ffffff'),
-                          color: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '#1d4ed8' : '#64748b',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px',
-                          boxShadow: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
-                          transition: 'all 0.15s ease'
-                        }}
-                      >
-                        {(!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) && <CheckCircle size={14} color="#1d4ed8" />}
-                        CURRENT ADDRESS
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!canEditFinal}
-                        onClick={() => {
-                          setAddressType('Office Address');
-                          if (!officeAddressText && companyAddress) setOfficeAddressText(companyAddress);
-                        }}
-                        style={{
-                          padding: '10px 12px',
-                          borderRadius: '8px',
-                          fontSize: '12px',
-                          fontWeight: 800,
-                          cursor: !canEditFinal ? 'not-allowed' : 'pointer',
-                          border: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '2px solid #2563eb' : '1px solid #cbd5e1',
-                          background: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '#eff6ff' : (!canEditFinal ? '#f8fafc' : '#ffffff'),
-                          color: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '#1d4ed8' : '#64748b',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px',
-                          boxShadow: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
-                          transition: 'all 0.15s ease'
-                        }}
-                      >
-                        {(addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) && <CheckCircle size={14} color="#1d4ed8" />}
-                        OFFICE ADDRESS
-                      </button>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+                      {/* 1. CURRENT ADDRESS */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e40af', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                          🏠 CURRENT ADDRESS
+                        </label>
+                        <textarea
+                          disabled={!canEditFinal}
+                          value={currentAddressText}
+                          onChange={(e) => {
+                            setCurrentAddressText(e.target.value);
+                            setAddress1(e.target.value);
+                          }}
+                          placeholder="Enter current address manually..."
+                          rows={3}
+                          style={{
+                            width: '100%',
+                            padding: '10px 12px',
+                            borderRadius: '8px',
+                            border: '1px solid #cbd5e1',
+                            fontSize: '13px',
+                            background: !canEditFinal ? '#f8fafc' : '#ffffff',
+                            fontWeight: 500,
+                            resize: 'vertical'
+                          }}
+                        />
+                      </div>
+
+                      {/* 2. OFFICE ADDRESS */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e40af', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                          🏢 OFFICE ADDRESS
+                        </label>
+                        <textarea
+                          disabled={!canEditFinal}
+                          value={officeAddressText}
+                          onChange={(e) => {
+                            setOfficeAddressText(e.target.value);
+                            setCompanyAddress(e.target.value);
+                          }}
+                          placeholder="Enter office address manually..."
+                          rows={3}
+                          style={{
+                            width: '100%',
+                            padding: '10px 12px',
+                            borderRadius: '8px',
+                            border: '1px solid #cbd5e1',
+                            fontSize: '13px',
+                            background: !canEditFinal ? '#f8fafc' : '#ffffff',
+                            fontWeight: 500,
+                            resize: 'vertical'
+                          }}
+                        />
+                      </div>
                     </div>
-                    <textarea
-                      disabled={!canEditFinal}
-                      value={activeAddressText}
-                      onChange={(e) => setActiveAddressText(e.target.value)}
-                      placeholder={`Enter or edit ${isOfficeSelected ? 'Office Address' : 'Current Address'} details manually...`}
-                      rows={2}
-                      style={{
-                        width: '100%',
-                        marginTop: '8px',
-                        padding: '8px 12px',
-                        borderRadius: '8px',
-                        border: '1px solid #cbd5e1',
-                        fontSize: '13px',
-                        background: !canEditFinal ? '#f8fafc' : '#ffffff',
-                        fontWeight: 500,
-                        resize: 'vertical'
-                      }}
-                    />
                   </div>
 
                   {/* 3. USER REMARK */}
