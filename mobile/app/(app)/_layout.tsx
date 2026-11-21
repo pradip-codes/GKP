@@ -1,29 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import { Tabs, Redirect, useRouter, usePathname } from 'expo-router';
-import { Text, View, StyleSheet, AppState } from 'react-native';
+import { Text, View, StyleSheet, AppState, Modal, TouchableOpacity, ScrollView, Image } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { LoadingState } from '../../components/LoadingState';
 import { MinimalDock } from '../../components/MinimalDock';
+import { PartnerDock } from '../../components/PartnerDock';
 import { typography } from '../../theme/typography';
 import { getUnreadCount } from '../../services/messenger.service';
 import { getMessengerSocket } from '../../services/messengerSocket';
 
 const TabIcon = ({ label, focused, badgeCount }: { label: string; focused: boolean; badgeCount?: number }) => {
-  const getSymbol = () => {
+  const getIconName = (): keyof typeof Ionicons.glyphMap => {
     switch (label) {
-      case 'Dashboard': return '🏠';
-      case 'Applications': return '📄';
-      case 'Customers': return '👥';
-      case 'Messenger': return '💬';
-      case 'More': return '•••';
-      default: return '📱';
+      case 'Dashboard': return 'home';
+      case 'Applications': return 'document-text';
+      case 'Customers': return 'people';
+      case 'Messenger': return 'chatbubble';
+      case 'More': return 'menu';
+      default: return 'phone-portrait';
     }
   };
 
   return (
     <View style={styles.tabItem}>
-      <Text style={[styles.icon, focused && styles.iconActive]}>{getSymbol()}</Text>
+      <Ionicons name={getIconName()} size={20} color={focused ? '#0D5CAB' : '#64748B'} />
       {label === 'Messenger' && badgeCount !== undefined && badgeCount > 0 && (
         <View style={styles.badgeContainer}>
           <Text style={styles.badgeText}>{badgeCount > 99 ? '99+' : badgeCount}</Text>
@@ -34,11 +36,11 @@ const TabIcon = ({ label, focused, badgeCount }: { label: string; focused: boole
 };
 
 export default function AppLayout() {
-  const { isAuthenticated, isLoading } = useAuth();
-  const { colors } = useTheme();
+  const { isAuthenticated, isLoading, userRole, userDesignation } = useAuth();
+  const { colors, isDark } = useTheme();
   const router = useRouter();
   const [unreadCount, setUnreadCount] = useState<number>(0);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [partnerMenuOpen, setPartnerMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -110,68 +112,103 @@ export default function AppLayout() {
 
   const pathname = usePathname();
 
-  const currentTab = (() => {
-    if (pathname.includes('/applications')) return 'applications';
-    if (pathname.includes('/customers')) return 'customers';
-    if (pathname.includes('/messenger')) return 'messenger';
-    if (pathname.includes('/more')) return 'more';
-    if (pathname.includes('/dashboard')) return 'dashboard';
-    return activeTab;
+  // ── Role-based panel routing (mirrors the website's per-role layouts) ──
+  const role = (userRole || '').toUpperCase();
+  const hasDesignation = !!userDesignation;
+
+  const roleHome = (() => {
+    if (role === 'SUPER_ADMIN') return '/(app)/super-admin';
+    if (role === 'ADMIN') return '/(app)/admin-dashboard';
+    if (role === 'HR') return '/(app)/hr-dashboard';
+    if (role === 'EMPLOYEE') return hasDesignation ? '/(app)/dashboard' : '/(app)/employee-dashboard';
+    if (role === 'TEAM_MEMBER') return '/(app)/team-dashboard';
+    if (role === 'PARTNER') return '/(app)/partner-dashboard';
+    return '/(app)/dashboard';
   })();
 
-  const dockItems = [
-    {
-      id: 'home',
-      label: 'Home',
-      icon: '🏠',
-      active: currentTab === 'dashboard',
-      onPress: () => {
-        setActiveTab('dashboard');
-        router.replace('/(app)/dashboard');
-      },
-    },
-    {
-      id: 'cards',
-      label: 'Cards',
-      icon: '💳',
-      active: currentTab === 'applications',
-      onPress: () => {
-        setActiveTab('applications');
-        router.replace('/(app)/applications');
-      },
-    },
-    {
-      id: 'customers',
-      label: 'Customers',
-      icon: '👥',
-      active: currentTab === 'customers',
-      onPress: () => {
-        setActiveTab('customers');
-        router.replace('/(app)/customers');
-      },
-    },
-    {
-      id: 'chat',
-      label: 'Chat',
-      icon: '💬',
-      active: currentTab === 'messenger',
-      badgeCount: unreadCount,
-      onPress: () => {
-        setActiveTab('messenger');
-        router.replace('/(app)/messenger');
-      },
-    },
-    {
-      id: 'more',
-      label: 'More',
-      icon: '☰',
-      active: currentTab === 'more',
-      onPress: () => {
-        setActiveTab('more');
-        router.replace('/(app)/more');
-      },
-    },
-  ];
+  // Admin-side roles never land on the generic partner workspace dashboard
+  if (pathname === '/dashboard' && ['SUPER_ADMIN', 'ADMIN', 'HR'].includes(role)) {
+    return <Redirect href={roleHome as any} />;
+  }
+
+  const dockItem = (id: string, label: string, icon: string, route: string, match?: string, badgeCount?: number) => ({
+    id,
+    label,
+    icon,
+    badgeCount,
+    active: pathname.includes(match || route),
+    onPress: () => router.replace(route as any),
+  });
+
+  const chatItem = dockItem('chat', 'Chat', 'chatbubble', '/(app)/messenger', '/messenger', unreadCount);
+  const moreItem = dockItem('more', 'More', 'menu', '/(app)/more', '/more');
+
+  // Each role gets its own panel shortcuts — not one shared feature set
+  const dockItems = (() => {
+    switch (role) {
+      case 'SUPER_ADMIN':
+        return [
+          dockItem('panel', 'Panel', 'home', '/(app)/super-admin', '/super-admin'),
+          dockItem('staff', 'Staff', 'people', '/(app)/super-admin/employees', '/employees'),
+          dockItem('apps', 'Apps', 'document-text', '/(app)/super-admin/applications', '/applications'),
+          chatItem,
+          moreItem,
+        ];
+      case 'ADMIN':
+        return [
+          dockItem('panel', 'Panel', 'home', '/(app)/admin-dashboard', '/admin-dashboard'),
+          dockItem('partners', 'Partners', 'people', '/(app)/admin-partners', '/admin-partners'),
+          dockItem('queue', 'Queue', 'briefcase', '/(app)/op-queue', '/op-queue'),
+          chatItem,
+          moreItem,
+        ];
+      case 'HR':
+        return [
+          dockItem('panel', 'Panel', 'home', '/(app)/hr-dashboard', '/hr-dashboard'),
+          dockItem('candidates', 'Candidates', 'id-card', '/(app)/hr-candidates', '/hr-candidates'),
+          dockItem('apps', 'Apps', 'document-text', '/(app)/applications', '/applications'),
+          chatItem,
+          moreItem,
+        ];
+      case 'EMPLOYEE':
+        return [
+          dockItem('panel', 'Panel', 'home', roleHome, hasDesignation ? '/dashboard' : '/employee-dashboard'),
+          dockItem('attendance', 'Attendance', 'location', '/(app)/attendance', '/attendance'),
+          dockItem('apps', 'Apps', 'document-text', '/(app)/applications', '/applications'),
+          chatItem,
+          moreItem,
+        ];
+      case 'TEAM_MEMBER':
+        return [
+          dockItem('panel', 'Panel', 'home', '/(app)/team-dashboard', '/team-dashboard'),
+          dockItem('wallet', 'Wallet', 'wallet', '/(app)/wallet', '/wallet'),
+          dockItem('apps', 'Apps', 'document-text', '/(app)/applications', '/applications'),
+          chatItem,
+          moreItem,
+        ];
+      default: // PARTNER & others — custom dock: Dashboard, Applications, +Add Lead, Chat, More
+        return [
+          dockItem('panel', 'Dashboard', 'home', '/(app)/partner-dashboard', '/partner-dashboard'),
+          dockItem('apps', 'Applications', 'document-text', '/(app)/applications', '/applications'),
+          {
+            id: 'add',
+            label: 'Add Lead',
+            icon: 'add',
+            active: false,
+            isCenter: true,
+            onPress: () => router.push('/(app)/add-lead' as any),
+          },
+          chatItem,
+          {
+            id: 'menu',
+            label: 'More',
+            icon: 'menu',
+            active: false,
+            onPress: () => setPartnerMenuOpen(true),
+          },
+        ];
+    }
+  })();
 
   return (
     <View style={{ flex: 1 }}>
@@ -280,10 +317,110 @@ export default function AppLayout() {
       <Tabs.Screen name="employee-loan-on-card" options={{ href: null }} />
       <Tabs.Screen name="employee-smart-emi" options={{ href: null }} />
       </Tabs>
-      <MinimalDock items={dockItems} />
+      {role === 'PARTNER' || !['SUPER_ADMIN', 'ADMIN', 'HR', 'EMPLOYEE', 'TEAM_MEMBER'].includes(role) ? (
+        <PartnerDock items={dockItems as any} />
+      ) : (
+        <MinimalDock items={dockItems} />
+      )}
+
+      {/* Partner feature sidebar — hamburger menu, labels only */}
+      <Modal visible={partnerMenuOpen} transparent animationType="slide" onRequestClose={() => setPartnerMenuOpen(false)}>
+        <View style={sidebarStyles.overlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setPartnerMenuOpen(false)} />
+          <View style={[sidebarStyles.drawer, { backgroundColor: isDark ? colors.card : '#FFFFFF', borderColor: colors.border }]}>
+            <View style={[sidebarStyles.drawerHeader, { borderBottomColor: colors.border }]}>
+              <Image source={require('../../assets/images/logo.png')} style={sidebarStyles.drawerLogo} resizeMode="contain" />
+              <Text style={[sidebarStyles.drawerTitle, { color: isDark ? colors.text : '#111827' }]}>GharKaPaisa</Text>
+              <TouchableOpacity onPress={() => setPartnerMenuOpen(false)} style={sidebarStyles.closeBtn}>
+                <Ionicons name="close" size={22} color={isDark ? colors.text : '#111827'} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+              {PARTNER_SIDEBAR_ITEMS.map((item) => {
+                const isActive = pathname.includes(item.match);
+                return (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[sidebarStyles.item, isActive && { backgroundColor: colors.primary + '12' }]}
+                    onPress={() => {
+                      setPartnerMenuOpen(false);
+                      router.push(item.route as any);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name={item.icon} size={20} color={isActive ? colors.primary : (colors.textMid || colors.textLight)} />
+                    <Text style={[sidebarStyles.itemLabel, { color: isActive ? colors.primary : (isDark ? colors.text : '#374151') }]}>
+                      {item.label}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={16} color={colors.textLight} />
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
+
+// Partner sidebar features — labels only, mirrors the partner section of the More menu
+const PARTNER_SIDEBAR_ITEMS: { id: string; label: string; icon: keyof typeof Ionicons.glyphMap; route: string; match: string }[] = [
+  { id: 'panel', label: 'Dashboard', icon: 'home', route: '/(app)/partner-dashboard', match: '/partner-dashboard' },
+  { id: 'products', label: 'Products', icon: 'grid', route: '/(app)/products', match: '/products' },
+  { id: 'leads', label: 'Leads & CRM', icon: 'trending-up', route: '/(app)/leads', match: '/leads' },
+  { id: 'applications', label: 'Applications', icon: 'document-text', route: '/(app)/applications', match: '/applications' },
+  { id: 'customers', label: 'Customers', icon: 'people', route: '/(app)/customers', match: '/customers' },
+  { id: 'add-lead', label: 'Add Lead', icon: 'person-add', route: '/(app)/add-lead', match: '/add-lead' },
+  { id: 'team', label: 'My Team', icon: 'people-circle', route: '/(app)/team', match: '/team' },
+  { id: 'wallet', label: 'Wallet', icon: 'wallet', route: '/(app)/wallet', match: '/wallet' },
+  { id: 'travel', label: 'Travel & Utilities', icon: 'airplane', route: '/(app)/travel-utilities', match: '/travel-utilities' },
+  { id: 'marketing', label: 'Marketing', icon: 'megaphone', route: '/(app)/marketing', match: '/marketing' },
+  { id: 'training', label: 'Training', icon: 'school', route: '/(app)/training', match: '/training' },
+  { id: 'share', label: 'Share Tracking', icon: 'share-social', route: '/(app)/share-tracking', match: '/share-tracking' },
+  { id: 'vault', label: 'Document Vault', icon: 'archive', route: '/(app)/vault', match: '/vault' },
+  { id: 'kyc', label: 'KYC Centre', icon: 'shield-checkmark', route: '/(app)/partner-kyc', match: '/partner-kyc' },
+  { id: 'referrals', label: 'Referrals', icon: 'git-branch', route: '/(app)/partner-referrals', match: '/partner-referrals' },
+  { id: 'support', label: 'Support', icon: 'headset', route: '/(app)/support', match: '/support' },
+  { id: 'notifications', label: 'Notifications', icon: 'notifications', route: '/(app)/notifications', match: '/notifications' },
+  { id: 'profile', label: 'Profile', icon: 'person-circle', route: '/(app)/profile', match: '/profile' },
+  { id: 'security', label: 'Security', icon: 'lock-closed', route: '/(app)/security', match: '/security' },
+  { id: 'settings', label: 'Settings', icon: 'settings', route: '/(app)/settings', match: '/settings' },
+];
+
+const sidebarStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  drawer: {
+    width: '78%',
+    maxWidth: 320,
+    height: '100%',
+    borderRightWidth: 1,
+    paddingTop: 56,
+  },
+  drawerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+  },
+  drawerLogo: { width: 30, height: 30 },
+  drawerTitle: { flex: 1, fontSize: 17, fontWeight: '800' },
+  closeBtn: { padding: 4 },
+  item: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 13,
+  },
+  itemLabel: { flex: 1, fontSize: 14.5, fontWeight: '600' },
+});
 
 const styles = StyleSheet.create({
   tabItem: {

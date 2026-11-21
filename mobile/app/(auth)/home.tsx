@@ -11,12 +11,13 @@ import {
   TextInput,
   SafeAreaView,
   Linking,
+  Animated,
+  Easing,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useTheme } from '../../contexts/ThemeContext';
-import { useAuth } from '../../contexts/AuthContext';
 import { Icon } from '../../components/Icon';
-import apiClient from '../../services/api';
+import apiClient, { API_BASE_URL } from '../../services/api';
 
 const { width } = Dimensions.get('window');
 
@@ -27,6 +28,43 @@ const bannerImages: Record<string, any> = {
   loan: require('../../assets/images/loan.png'),
   emi: require('../../assets/images/smart emi.png'),
   insurance: require('../../assets/images/insurance.png'),
+  'hdfc pixel card.png': require('../../assets/images/hdfc pixel card.png'),
+  'emi.jpeg': require('../../assets/images/emi.jpeg'),
+};
+
+const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1\/?$/, '');
+
+const resolveBannerImage = (url: any): any => {
+  if (!url) return bannerImages.offer;
+  const rawUrl = typeof url === 'string' ? url : url.image_url || url.image || '';
+  if (!rawUrl) return bannerImages.offer;
+  if (bannerImages[rawUrl]) return bannerImages[rawUrl];
+  const filename = String(rawUrl).split('/').pop()?.split('\\').pop() || '';
+  if (bannerImages[filename]) return bannerImages[filename];
+  try {
+    const decoded = decodeURIComponent(filename);
+    if (bannerImages[decoded]) return bannerImages[decoded];
+  } catch (_) {}
+  if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) return { uri: rawUrl };
+  if (rawUrl.startsWith('/')) return { uri: `${API_ORIGIN}${rawUrl}` };
+  return bannerImages.offer;
+};
+
+const resolveBannerRoute = (clickUrl: any): { route?: any; external?: string } => {
+  const fallback = { pathname: '/(auth)/products', params: { category: 'credit_card' } };
+  if (!clickUrl || typeof clickUrl !== 'string') return { route: fallback };
+  if (clickUrl.startsWith('http://') || clickUrl.startsWith('https://')) return { external: clickUrl };
+  let r = clickUrl
+    .replace('/partner/credit-cards', '/(auth)/bank-cards')
+    .replace('/partner/products', '/(auth)/products')
+    .replace('/partner/team-network', '/(app)/partner-dashboard')
+    .replace('/credit-cards', '/(auth)/bank-cards')
+    .replace('/loans', '/(auth)/products?category=personal_loan')
+    .replace('/partner/', '/');
+  if (r.includes('personal_loan')) return { route: { pathname: '/(auth)/products', params: { category: 'personal_loan' } } };
+  if (r.includes('bank-cards')) return { route: { pathname: '/(auth)/bank-cards', params: { bank: 'ALL' } } };
+  if (r.startsWith('/')) return { route: r };
+  return { route: fallback };
 };
 
 // ── ATTRACTIVE CARDS ASSETS ──
@@ -96,6 +134,50 @@ const getCardImage = (card: ProductItem | any) => {
   return popularCardImages.hdfc;
 };
 
+// ── INFINITE MARQUEE (same auto-rotate behaviour as the website) ──
+// Content is rendered twice; translating by exactly one set width loops seamlessly.
+// Pauses while the user touches the row (website pauses on hover/touch).
+const startMarquee = (
+  anim: Animated.Value,
+  setWidth: number,
+  speedPxPerSec: number,
+  pausedRef: React.MutableRefObject<boolean>,
+) => {
+  let cancelled = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const step = () => {
+    if (cancelled) return;
+    if (pausedRef.current) {
+      timer = setTimeout(step, 150);
+      return;
+    }
+    let from = (anim as any).__getValue() as number;
+    if (from <= -setWidth + 0.5) from = 0;
+    const toValue = -setWidth;
+    const duration = (Math.abs(toValue - from) / speedPxPerSec) * 1000;
+    Animated.timing(anim, {
+      toValue,
+      duration,
+      easing: Easing.linear,
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (cancelled) return;
+      if (!finished) {
+        timer = setTimeout(step, 150);
+        return;
+      }
+      anim.setValue(0);
+      step();
+    });
+  };
+  step();
+  return () => {
+    cancelled = true;
+    if (timer) clearTimeout(timer);
+    anim.stopAnimation();
+  };
+};
+
 interface ProductItem {
   id: string;
   name: string;
@@ -109,7 +191,6 @@ interface ProductItem {
 
 export default function HomeScreen() {
   const { colors, isDark, toggleTheme } = useTheme();
-  const { user, isAuthenticated } = useAuth();
 
   const [loading, setLoading] = useState(false);
   const [featuredProducts, setFeaturedProducts] = useState<ProductItem[]>([]);
@@ -117,62 +198,44 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const bannerScrollRef = useRef<any>(null);
 
-  // 1. HERO BANNERS MATCHING WEBSITE
-  const heroBanners = [
-    {
-      id: 'offer',
-      title: 'Special Credit Card & Financial Offers',
-      subtitle: 'Instant Bank Approvals & Exclusive Cashback Rewards',
-      btnText: 'Explore Offers',
-      image: bannerImages.offer,
-      route: '/(auth)/products',
-      params: { category: 'credit_card' },
-    },
-    {
-      id: 'ltf',
-      title: 'Lifetime Free Credit Cards',
-      subtitle: 'No Annual Fees Forever + Pre-Approved Credit Limits',
-      btnText: 'Apply LTF Card',
-      image: bannerImages.ltf,
-      route: '/(auth)/ltf-cards',
-    },
-    {
-      id: 'loan',
-      title: 'Instant Personal & Business Loans',
-      subtitle: 'Low Interest Rates starting at 10.5% p.a. with fast disbursal',
-      btnText: 'Check Loan Offers',
-      image: bannerImages.loan,
-      route: '/(auth)/products',
-      params: { category: 'personal_loan' },
-    },
-    {
-      id: 'emi',
-      title: 'Smart EMI Credit Cards',
-      subtitle: 'Convert Big Purchases into Easy Monthly Installments',
-      btnText: 'Get EMI Card',
-      image: bannerImages.emi,
-      route: '/(auth)/products',
-      params: { category: 'smart_emi' },
-    },
-    {
-      id: 'insurance',
-      title: 'Health & Life Protection Plans',
-      subtitle: 'Comprehensive Family Coverage with Hassle-free Claims',
-      btnText: 'View Plans',
-      image: bannerImages.insurance,
-      route: '/(public)/insurance',
-    },
-  ];
+  // 1. HERO BANNER — offer banners from API (image only, auto-sliding)
+  const [offerBanners, setOfferBanners] = useState<any[]>([]);
+
+  useEffect(() => {
+    const fetchOfferBanners = async () => {
+      try {
+        const res = await apiClient.get('/banners', { params: { page: 'offer' } });
+        const list = res.data?.data;
+        if (res.data?.success && Array.isArray(list) && list.length > 0) {
+          setOfferBanners(list);
+        }
+      } catch (_) {}
+    };
+    fetchOfferBanners();
+  }, []);
+
+  const heroBanners = offerBanners.length > 0
+    ? offerBanners.map((b: any) => ({
+        id: b.id,
+        image: resolveBannerImage(b.image_url || b.image),
+        ...resolveBannerRoute(b.click_url),
+      }))
+    : [{
+        id: 'offer',
+        image: bannerImages.offer,
+        route: { pathname: '/(auth)/products', params: { category: 'credit_card' } },
+      }];
 
   // Auto-scroll hero banners
   useEffect(() => {
+    if (heroBanners.length <= 1) return;
     const timer = setInterval(() => {
       const nextIndex = (currentBannerIndex + 1) % heroBanners.length;
       bannerScrollRef.current?.scrollTo({ x: nextIndex * width, animated: true });
       setCurrentBannerIndex(nextIndex);
     }, 4500);
     return () => clearInterval(timer);
-  }, [currentBannerIndex]);
+  }, [currentBannerIndex, heroBanners.length]);
 
   // Load popular products from API with most-selling sorting
   useEffect(() => {
@@ -201,19 +264,36 @@ export default function HomeScreen() {
     fetchProducts();
   }, []);
 
+  // ── AUTO-ROTATE MARQUEES (Attractive Cards & Partner Banks — same as website) ──
+  const attractiveScrollX = useRef(new Animated.Value(0)).current;
+  const attractivePaused = useRef(false);
+  const banksScrollX = useRef(new Animated.Value(0)).current;
+  const banksPaused = useRef(false);
+
+  const attractiveCards = [
+    { id: 'personal-loan', title: 'Personal Loan', desc: 'Quick & easy personal loans', img: attractiveImages.personalLoan, cat: 'personal_loan' },
+    { id: 'ltf-cards', title: 'Lifetime Free Cards', desc: 'Zero annual fees forever', img: attractiveImages.ltf, cat: 'credit_card' },
+    { id: 'cibil-loans', title: 'CIBIL Loan', desc: 'Personalized loan offers', img: attractiveImages.cibil, cat: 'personal_loan' },
+    { id: 'loan-on-card', title: 'Loan on Credit Card', desc: 'Instant cash on card limit', img: attractiveImages.loanOnCard, cat: 'credit_card' },
+    { id: 'smart-emi', title: 'Smart EMI Card', desc: 'No-cost EMI purchases', img: attractiveImages.smartEmi, cat: 'smart_emi' },
+    { id: 'secured-cards', title: 'FD Backed Card', desc: 'Build credit with FD', img: attractiveImages.fdBacked, cat: 'credit_card' },
+    { id: 'upi-cards', title: 'UPI Credit Card', desc: 'Pay via UPI with credit', img: attractiveImages.upi, cat: 'credit_card' },
+  ];
+  const bankKeys = Object.keys(bankLogos);
+
+  // Grid card widths matching the website's mobile columns
+  const contentW = width - 32; // sectionContainer horizontal padding (16 * 2)
+  const cardW5 = (contentW - 4 * 6) / 5;        // Money Transfer: 5 cols, gap 6
+  const cardW4Gap6 = (contentW - 3 * 6) / 4;    // Travel: 4 cols, gap 6
+  const cardW4Gap10 = (contentW - 3 * 10) / 4;  // Loans & Business: 4 cols, gap 10
+
+  useEffect(() => startMarquee(attractiveScrollX, attractiveCards.length * (160 + 12), 45, attractivePaused), []);
+  useEffect(() => startMarquee(banksScrollX, bankKeys.length * (115 + 12), 55, banksPaused), []);
+
   const handleBannerScroll = (event: any) => {
     const offsetX = event.nativeEvent.contentOffset.x;
     const index = Math.round(offsetX / width);
     setCurrentBannerIndex(index);
-  };
-
-  const getDashboardRoute = () => {
-    if (!user) return '/(auth)/login';
-    const role = (user.role || '').toUpperCase();
-    if (role === 'SUPER_ADMIN') return '/(app)/super-admin/dashboard';
-    if (role === 'ADMIN' || role === 'HR') return '/(app)/admin-dashboard';
-    if (role === 'EMPLOYEE') return '/(app)/employee-dashboard';
-    return '/(app)/partner-dashboard';
   };
 
   // Theme color tokens matching website C
@@ -240,16 +320,16 @@ export default function HomeScreen() {
             onPress={toggleTheme}
             activeOpacity={0.7}
           >
-            <Text style={{ fontSize: 16 }}>{isDark ? '☀️' : '🌙'}</Text>
+            <Icon name={isDark ? 'sunny' : 'moon'} size={16} color={colors.text} />
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[styles.authPillBtn, { backgroundColor: tealColor }]}
-            onPress={() => router.push(getDashboardRoute() as any)}
+            onPress={() => router.push('/(auth)/register')}
             activeOpacity={0.8}
           >
-            <Icon name={isAuthenticated ? 'user' : 'arrow-right'} size={14} color="#FFF" />
-            <Text style={styles.authPillText}>{isAuthenticated ? 'Dashboard' : 'Sign In'}</Text>
+            <Icon name="user" size={14} color="#FFF" />
+            <Text style={styles.authPillText}>Register</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -258,7 +338,7 @@ export default function HomeScreen() {
         {/* ── SEARCH BAR ── */}
         <View style={[styles.searchContainer, { backgroundColor: colors.bg }]}>
           <View style={[styles.searchInputWrapper, { backgroundColor: cardBg, borderColor }]}>
-            <Text style={{ fontSize: 16, marginRight: 8, color: colors.textLight }}>🔍</Text>
+            <Icon name="search" size={16} color={colors.textLight} />
             <TextInput
               placeholder="Search credit cards, loans, banks..."
               placeholderTextColor={colors.textLight}
@@ -286,34 +366,27 @@ export default function HomeScreen() {
                 key={banner.id}
                 activeOpacity={0.9}
                 style={[styles.bannerSlide, { width }]}
-                onPress={() => router.push({ pathname: banner.route as any, params: banner.params })}
+                onPress={() => {
+                  if (banner.external) {
+                    Linking.openURL(banner.external).catch(() => {});
+                  } else if (banner.route) {
+                    router.push(banner.route);
+                  }
+                }}
               >
-                <View style={[styles.bannerCard, { backgroundColor: cardBg, borderColor }]}>
+                <View style={[styles.bannerCard, { backgroundColor: isDark ? '#0F172A' : '#F5F3FF', borderColor }]}>
                   <Image
                     source={banner.image}
                     style={styles.bannerImage}
-                    resizeMode="cover"
+                    resizeMode="contain"
                   />
-                  <View style={styles.bannerOverlay}>
-                    <View style={styles.bannerTextContainer}>
-                      <Text style={styles.bannerTitle} numberOfLines={2}>
-                        {banner.title}
-                      </Text>
-                      <Text style={styles.bannerSubtitle} numberOfLines={1}>
-                        {banner.subtitle}
-                      </Text>
-                    </View>
-                    <View style={[styles.bannerButton, { backgroundColor: tealColor }]}>
-                      <Text style={styles.bannerButtonText}>{banner.btnText}</Text>
-                      <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '800' }}> →</Text>
-                    </View>
-                  </View>
                 </View>
               </TouchableOpacity>
             ))}
           </ScrollView>
 
           {/* Banner Dot Indicators */}
+          {heroBanners.length > 1 && (
           <View style={styles.bannerIndicators}>
             {heroBanners.map((_, index) => (
               <View
@@ -329,12 +402,13 @@ export default function HomeScreen() {
               />
             ))}
           </View>
+          )}
         </View>
 
         {/* ── SECTION 1: Money Transfer & Payments ── */}
         <View style={styles.sectionContainer}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Money Transfer & Payments</Text>
-          <View style={styles.gridRow5}>
+          <View style={[styles.gridRow5, { gap: 6 }]}>
             {[
               { id: 'tomobile', label: 'To Mobile', img: utilityImages.upiTransfer, route: '/(public)/money-transfer' },
               { id: 'recharge', label: 'Recharge', img: utilityImages.recharge, route: '/(public)/services' },
@@ -344,7 +418,7 @@ export default function HomeScreen() {
             ].map((item) => (
               <TouchableOpacity
                 key={item.id}
-                style={[styles.squareActionCard, { backgroundColor: softBg, borderColor }]}
+                style={[styles.squareActionCard, { width: cardW5, backgroundColor: softBg, borderColor }]}
                 onPress={() => router.push(item.route as any)}
                 activeOpacity={0.7}
               >
@@ -362,7 +436,7 @@ export default function HomeScreen() {
         {/* ── SECTION 8: Travel & Transit ── */}
         <View style={styles.sectionContainer}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Travel & Transit</Text>
-          <View style={styles.gridRow4}>
+          <View style={[styles.gridRow4, { gap: 6 }]}>
             {[
               { id: 'flight', label: 'Flight Booking', img: utilityImages.flight, route: '/(public)/travel-booking' },
               { id: 'train', label: 'Train Ticket', img: utilityImages.train, route: '/(public)/travel-booking' },
@@ -371,7 +445,7 @@ export default function HomeScreen() {
             ].map((item) => (
               <TouchableOpacity
                 key={item.id}
-                style={[styles.squareActionCard, { backgroundColor: softBg, borderColor }]}
+                style={[styles.squareActionCard, { width: cardW4Gap6, backgroundColor: softBg, borderColor }]}
                 onPress={() => router.push(item.route as any)}
                 activeOpacity={0.7}
               >
@@ -395,36 +469,36 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hScrollContent}>
-            {[
-              { id: 'personal-loan', title: 'Personal Loan', desc: 'Quick & easy personal loans', img: attractiveImages.personalLoan, cat: 'personal_loan' },
-              { id: 'ltf-cards', title: 'Lifetime Free Cards', desc: 'Zero annual fees forever', img: attractiveImages.ltf, cat: 'credit_card' },
-              { id: 'cibil-loans', title: 'CIBIL Loan', desc: 'Personalized loan offers', img: attractiveImages.cibil, cat: 'personal_loan' },
-              { id: 'loan-on-card', title: 'Loan on Credit Card', desc: 'Instant cash on card limit', img: attractiveImages.loanOnCard, cat: 'credit_card' },
-              { id: 'smart-emi', title: 'Smart EMI Card', desc: 'No-cost EMI purchases', img: attractiveImages.smartEmi, cat: 'smart_emi' },
-              { id: 'secured-cards', title: 'FD Backed Card', desc: 'Build credit with FD', img: attractiveImages.fdBacked, cat: 'credit_card' },
-              { id: 'upi-cards', title: 'UPI Credit Card', desc: 'Pay via UPI with credit', img: attractiveImages.upi, cat: 'credit_card' },
-            ].map((card) => (
-              <TouchableOpacity
-                key={card.id}
-                style={[styles.attractiveCard, { backgroundColor: softBg, borderColor }]}
-                onPress={() => router.push({ pathname: '/(auth)/products', params: { category: card.cat } })}
-                activeOpacity={0.85}
-              >
-                <View style={styles.attractiveImgBox}>
-                  <Image source={card.img} style={styles.attractiveImage} resizeMode="contain" />
-                </View>
-                <View style={styles.attractiveTextBox}>
-                  <Text style={[styles.attractiveTitle, { color: colors.text }]} numberOfLines={1}>
-                    {card.title}
-                  </Text>
-                  <Text style={[styles.attractiveDesc, { color: colors.textMid }]} numberOfLines={2}>
-                    {card.desc}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+          {/* Auto-rotating marquee — same as website (pauses while touched) */}
+          <View style={styles.marqueeClip}>
+            <Animated.View
+              style={[styles.marqueeRow, { transform: [{ translateX: attractiveScrollX }] }]}
+              onTouchStart={() => { attractivePaused.current = true; attractiveScrollX.stopAnimation(); }}
+              onTouchEnd={() => { attractivePaused.current = false; }}
+              onTouchCancel={() => { attractivePaused.current = false; }}
+            >
+              {[...attractiveCards, ...attractiveCards].map((card, idx) => (
+                <TouchableOpacity
+                  key={`${card.id}-${idx}`}
+                  style={[styles.attractiveCard, { backgroundColor: softBg, borderColor }]}
+                  onPress={() => router.push({ pathname: '/(auth)/products', params: { category: card.cat } })}
+                  activeOpacity={0.85}
+                >
+                  <View style={styles.attractiveImgBox}>
+                    <Image source={card.img} style={styles.attractiveImage} resizeMode="contain" />
+                  </View>
+                  <View style={styles.attractiveTextBox}>
+                    <Text style={[styles.attractiveTitle, { color: colors.text }]} numberOfLines={1}>
+                      {card.title}
+                    </Text>
+                    <Text style={[styles.attractiveDesc, { color: colors.textMid }]} numberOfLines={2}>
+                      {card.desc}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </Animated.View>
+          </View>
         </View>
 
         {/* ── SECTION 3: Popular Credit Cards (Most Selling) ── */}
@@ -461,9 +535,6 @@ export default function HomeScreen() {
                 >
                   {/* Most Selling Badge & Card Visual */}
                   <View style={[styles.popularCardImageBox, { backgroundColor: cardBg }]}>
-                    <View style={styles.mostSellingBadge}>
-                      <Text style={styles.mostSellingBadgeText}>🔥 MOST SELLING</Text>
-                    </View>
                     <Image
                       source={getCardImage(card)}
                       style={styles.popularCardImage}
@@ -526,29 +597,29 @@ export default function HomeScreen() {
               <Text style={[styles.viewAllText, { color: tealColor }]}>See All →</Text>
             </TouchableOpacity>
           </View>
-          <View style={styles.gridRow4}>
+          <View style={[styles.gridRow4, { gap: 10 }]}>
             {[
-              { id: 'personal_loan', label: 'Personal Loan', icon: '💵' },
-              { id: 'home_loan', label: 'Home Loan', icon: '🏠' },
-              { id: 'business_loan', label: 'Business Loan', icon: '🏢' },
-              { id: 'education_loan', label: 'Education Loan', icon: '🎓' },
-              { id: 'car_loan', label: 'Car Loan', icon: '🚗' },
-              { id: 'used_car_loan', label: 'Used Car Loan', icon: '🚙' },
-              { id: 'instant_loan', label: 'Instant Loan', icon: '⚡' },
-              { id: 'lap_loan', label: 'Loan Against Property', icon: '📑' },
-              { id: 'gold_loan', label: 'Gold Loan', icon: '🪙' },
-              { id: 'loan_against_car', label: 'Loan Against Car', icon: '🔑' },
-              { id: 'two_wheeler', label: '2 Wheeler Loan', icon: '🏍️' },
-              { id: 'mutual_fund', label: 'Loan vs Mutual Funds', icon: '📈' },
+              { id: 'personal_loan', label: 'Personal Loan', icon: 'cash' },
+              { id: 'home_loan', label: 'Home Loan', icon: 'home' },
+              { id: 'business_loan', label: 'Business Loan', icon: 'business' },
+              { id: 'education_loan', label: 'Education Loan', icon: 'school' },
+              { id: 'car_loan', label: 'Car Loan', icon: 'car' },
+              { id: 'used_car_loan', label: 'Used Car Loan', icon: 'car-sport' },
+              { id: 'instant_loan', label: 'Instant Loan', icon: 'flash' },
+              { id: 'lap_loan', label: 'Loan Against Property', icon: 'document' },
+              { id: 'gold_loan', label: 'Gold Loan', icon: 'diamond' },
+              { id: 'loan_against_car', label: 'Loan Against Car', icon: 'key' },
+              { id: 'two_wheeler', label: '2 Wheeler Loan', icon: 'bicycle' },
+              { id: 'mutual_fund', label: 'Loan vs Mutual Funds', icon: 'trending-up' },
             ].map((loan) => (
               <TouchableOpacity
                 key={loan.id}
-                style={[styles.squareActionCard, { backgroundColor: softBg, borderColor }]}
+                style={[styles.squareActionCard, { width: cardW4Gap10, backgroundColor: softBg, borderColor }]}
                 onPress={() => router.push({ pathname: '/(auth)/products', params: { category: loan.id } })}
                 activeOpacity={0.7}
               >
                 <View style={[styles.squareIconBox, { backgroundColor: cardBg, borderColor }]}>
-                  <Text style={{ fontSize: 20 }}>{loan.icon}</Text>
+                  <Icon name={loan.icon} size={20} color={tealColor} />
                 </View>
                 <Text style={[styles.squareActionLabel, { color: colors.text }]} numberOfLines={2}>
                   {loan.label}
@@ -563,10 +634,10 @@ export default function HomeScreen() {
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Insurance</Text>
           <View style={styles.gridRow2}>
             {[
-              { id: 'health', label: 'Health Insurance', icon: '🏥' },
-              { id: 'life', label: 'Life Insurance', icon: '🛡️' },
-              { id: 'general', label: 'General Insurance', icon: '☂️' },
-              { id: 'loanProtection', label: 'Loan Protection Insurance', icon: '🤝' },
+              { id: 'health', label: 'Health Insurance', icon: 'medkit' },
+              { id: 'life', label: 'Life Insurance', icon: 'shield' },
+              { id: 'general', label: 'General Insurance', icon: 'umbrella' },
+              { id: 'loanProtection', label: 'Loan Protection Insurance', icon: 'hand-left' },
             ].map((ins) => (
               <TouchableOpacity
                 key={ins.id}
@@ -575,7 +646,7 @@ export default function HomeScreen() {
                 activeOpacity={0.7}
               >
                 <View style={[styles.insuranceIconBox, { backgroundColor: cardBg, borderColor }]}>
-                  <Text style={{ fontSize: 24 }}>{ins.icon}</Text>
+                  <Icon name={ins.icon} size={24} color={tealColor} />
                 </View>
                 <Text style={[styles.insuranceLabel, { color: colors.text }]} numberOfLines={2}>
                   {ins.label}
@@ -588,25 +659,25 @@ export default function HomeScreen() {
         {/* ── SECTION 7: Business Services ── */}
         <View style={styles.sectionContainer}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Business & Utility Services</Text>
-          <View style={styles.gridRow4}>
+          <View style={[styles.gridRow4, { gap: 10 }]}>
             {[
-              { id: 'gst', label: 'GST Returns', icon: '📋' },
-              { id: 'company', label: 'Company Registration', icon: '🏢' },
-              { id: 'itr', label: 'ITR Filing', icon: '🧮' },
-              { id: 'pfesic', label: 'PF & ESIC', icon: '👥' },
-              { id: 'tds', label: 'TDS Filing', icon: '💰' },
-              { id: 'trade', label: 'Trade License', icon: '🪪' },
-              { id: 'msme', label: 'MSME Registration', icon: '🏭' },
-              { id: 'dsc', label: 'DSC Services', icon: '📜' },
+              { id: 'gst', label: 'GST Returns', icon: 'document-text' },
+              { id: 'company', label: 'Company Registration', icon: 'business' },
+              { id: 'itr', label: 'ITR Filing', icon: 'calculator' },
+              { id: 'pfesic', label: 'PF & ESIC', icon: 'people' },
+              { id: 'tds', label: 'TDS Filing', icon: 'cash' },
+              { id: 'trade', label: 'Trade License', icon: 'id-card' },
+              { id: 'msme', label: 'MSME Registration', icon: 'storefront' },
+              { id: 'dsc', label: 'DSC Services', icon: 'reader' },
             ].map((svc) => (
               <TouchableOpacity
                 key={svc.id}
-                style={[styles.squareActionCard, { backgroundColor: softBg, borderColor }]}
+                style={[styles.squareActionCard, { width: cardW4Gap10, backgroundColor: softBg, borderColor }]}
                 onPress={() => router.push('/(public)/services')}
                 activeOpacity={0.7}
               >
                 <View style={[styles.squareIconBox, { backgroundColor: cardBg, borderColor }]}>
-                  <Text style={{ fontSize: 20 }}>{svc.icon}</Text>
+                  <Icon name={svc.icon} size={20} color={tealColor} />
                 </View>
                 <Text style={[styles.squareActionLabel, { color: colors.text }]} numberOfLines={2}>
                   {svc.label}
@@ -619,13 +690,21 @@ export default function HomeScreen() {
         {/* ── SECTION 9: Partner Banks & NBFCs Ticker ── */}
         <View style={styles.sectionContainer}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Our Partner Banks & NBFCs</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hScrollContent}>
-            {Object.keys(bankLogos).map((bKey) => (
-              <View key={bKey} style={[styles.tickerBadge, { backgroundColor: softBg, borderColor }]}>
-                <Image source={bankLogos[bKey]} style={styles.tickerLogo} resizeMode="contain" />
-              </View>
-            ))}
-          </ScrollView>
+          {/* Auto-rotating marquee — same as website (pauses while touched) */}
+          <View style={styles.marqueeClip}>
+            <Animated.View
+              style={[styles.marqueeRow, { transform: [{ translateX: banksScrollX }] }]}
+              onTouchStart={() => { banksPaused.current = true; banksScrollX.stopAnimation(); }}
+              onTouchEnd={() => { banksPaused.current = false; }}
+              onTouchCancel={() => { banksPaused.current = false; }}
+            >
+              {[...bankKeys, ...bankKeys].map((bKey, idx) => (
+                <View key={`${bKey}-${idx}`} style={[styles.tickerBadge, { backgroundColor: softBg, borderColor }]}>
+                  <Image source={bankLogos[bKey]} style={styles.tickerLogo} resizeMode="contain" />
+                </View>
+              ))}
+            </Animated.View>
+          </View>
         </View>
 
         {/* ── CUSTOMER QUICK ASSISTANCE ── */}
@@ -638,7 +717,7 @@ export default function HomeScreen() {
               activeOpacity={0.7}
             >
               <View style={[styles.serviceIconCircle, { backgroundColor: cardBg, borderColor }]}>
-                <Text style={{ fontSize: 18 }}>🔍</Text>
+                <Icon name="search" size={18} color={tealColor} />
               </View>
               <Text style={[styles.serviceBtnText, { color: colors.text }]}>Track Application</Text>
             </TouchableOpacity>
@@ -649,7 +728,7 @@ export default function HomeScreen() {
               activeOpacity={0.7}
             >
               <View style={[styles.serviceIconCircle, { backgroundColor: cardBg, borderColor }]}>
-                <Text style={{ fontSize: 18 }}>🤖</Text>
+                <Icon name="chatbubble-ellipses" size={18} color={tealColor} />
               </View>
               <Text style={[styles.serviceBtnText, { color: colors.text }]}>AI Assistant</Text>
             </TouchableOpacity>
@@ -660,7 +739,7 @@ export default function HomeScreen() {
               activeOpacity={0.7}
             >
               <View style={[styles.serviceIconCircle, { backgroundColor: cardBg, borderColor }]}>
-                <Text style={{ fontSize: 18 }}>🎧</Text>
+                <Icon name="headset" size={18} color={tealColor} />
               </View>
               <Text style={[styles.serviceBtnText, { color: colors.text }]}>Helpline</Text>
             </TouchableOpacity>
@@ -678,10 +757,21 @@ export default function HomeScreen() {
 
           {/* Social Icons Row */}
           <View style={styles.socialRow}>
-            {['📘', '🐦', '📸', '💼', '▶️'].map((icon, i) => (
-              <View key={i} style={[styles.socialIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,138,96,0.10)' }]}>
-                <Text style={{ fontSize: 14 }}>{icon}</Text>
-              </View>
+            {[
+              { name: 'logo-facebook', url: 'https://facebook.com/gharkapaisa' },
+              { name: 'logo-twitter', url: 'https://twitter.com/gharkapaisa' },
+              { name: 'logo-instagram', url: 'https://instagram.com/gharkapaisa' },
+              { name: 'logo-linkedin', url: 'https://linkedin.com/company/gharkapaisa' },
+              { name: 'logo-youtube', url: 'https://youtube.com/@gharkapaisa' },
+            ].map((social, i) => (
+              <TouchableOpacity
+                key={i}
+                style={[styles.socialIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,138,96,0.10)', borderColor: tealColor }]}
+                onPress={() => Linking.openURL(social.url).catch(() => {})}
+                activeOpacity={0.7}
+              >
+                <Icon name={social.name} size={15} color={tealColor} />
+              </TouchableOpacity>
             ))}
           </View>
 
@@ -772,13 +862,80 @@ export default function HomeScreen() {
 
           {/* Copyright */}
           <Text style={[styles.footerCopyright, { color: isDark ? 'rgba(255,255,255,0.85)' : (colors.textMid || '#475569') }]}>
-            © 2026 GharKaPaisa Technologies. All Rights Reserved.
+            © 2026 Developed by SP Technologies. All Rights Reserved.
           </Text>
         </View>
 
         {/* Bottom spacer for floating navigation */}
-        <View style={{ height: 80 }} />
+        <View style={{ height: 90 }} />
       </ScrollView>
+
+      {/* ── FLOATING BOTTOM NAV (same as website mobile nav) ── */}
+      <View style={[styles.bottomNavWrap, { backgroundColor: isDark ? '#1E293B' : '#FFFFFF', borderColor }]}>
+        {[
+          {
+            key: 'home',
+            label: 'Home',
+            icon: 'home',
+            color: '#008A60',
+            active: true,
+            onPress: () => router.push('/(auth)/home' as any),
+          },
+          {
+            key: 'cards',
+            label: 'Credit Cards',
+            icon: 'card',
+            color: '#2563EB',
+            active: false,
+            onPress: () => router.push({ pathname: '/(auth)/bank-cards', params: { bank: 'ALL' } } as any),
+          },
+          {
+            key: 'login',
+            label: 'Login',
+            icon: 'log-in',
+            color: '#7C3AED',
+            active: false,
+            onPress: () => router.push('/(auth)/login' as any),
+          },
+          {
+            key: 'loan',
+            label: 'Loan',
+            icon: 'cash',
+            color: '#D97706',
+            active: false,
+            onPress: () => router.push({ pathname: '/(auth)/products', params: { category: 'personal_loan' } } as any),
+          },
+          {
+            key: 'support',
+            label: 'Support',
+            icon: 'headset',
+            color: '#DB2777',
+            active: false,
+            onPress: () => router.push('/(public)/contact' as any),
+          },
+        ].map((item) => (
+          <TouchableOpacity key={item.key} style={styles.bottomNavItem} onPress={item.onPress} activeOpacity={0.7}>
+            <View
+              style={[
+                styles.bottomNavIconBadge,
+                {
+                  backgroundColor: item.active ? item.color : `${item.color}14`,
+                  shadowColor: item.color,
+                  shadowOpacity: item.active ? 0.35 : 0,
+                  shadowRadius: 8,
+                  shadowOffset: { width: 0, height: 4 },
+                  elevation: item.active ? 5 : 0,
+                },
+              ]}
+            >
+              <Icon name={item.icon} size={19} color={item.active ? '#FFFFFF' : item.color} />
+            </View>
+            <Text style={[styles.bottomNavLabel, { color: item.active ? item.color : colors.textLight, fontWeight: item.active ? '800' : '500' }]}>
+              {item.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
     </SafeAreaView>
   );
 }
@@ -811,7 +968,7 @@ const styles = StyleSheet.create({
   headerIconBtn: {
     width: 36,
     height: 36,
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -841,7 +998,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 8,
     paddingHorizontal: 12,
     height: 44,
   },
@@ -859,7 +1016,7 @@ const styles = StyleSheet.create({
   },
   bannerCard: {
     height: 175,
-    borderRadius: 20,
+    borderRadius: 8,
     borderWidth: 1,
     overflow: 'hidden',
     position: 'relative',
@@ -884,8 +1041,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
+    borderBottomLeftRadius: 8,
+    borderBottomRightRadius: 8,
   },
   bannerTextContainer: {
     flex: 1,
@@ -953,7 +1110,7 @@ const styles = StyleSheet.create({
   },
   gridRow5: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexWrap: 'wrap',
     gap: 6,
   },
   gridRow4: {
@@ -962,13 +1119,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   squareActionCard: {
-    flex: 1,
-    minWidth: '18%',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 9,
     paddingHorizontal: 3,
-    borderRadius: 12,
+    borderRadius: 8,
     borderWidth: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -979,7 +1134,7 @@ const styles = StyleSheet.create({
   squareIconBox: {
     width: 40,
     height: 40,
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -995,14 +1150,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 12,
   },
-  hScrollContent: {
-    paddingRight: 16,
+  marqueeClip: {
+    overflow: 'hidden',
+  },
+  marqueeRow: {
+    flexDirection: 'row',
     gap: 12,
+    paddingVertical: 2,
   },
   attractiveCard: {
     width: 160,
     height: 190,
-    borderRadius: 18,
+    borderRadius: 8,
     borderWidth: 1,
     padding: 8,
     gap: 8,
@@ -1015,7 +1174,7 @@ const styles = StyleSheet.create({
   attractiveImgBox: {
     width: '100%',
     height: 90,
-    borderRadius: 12,
+    borderRadius: 8,
     backgroundColor: '#F8FAFC',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1045,7 +1204,7 @@ const styles = StyleSheet.create({
   },
   popularCard: {
     width: (width - 40) / 2,
-    borderRadius: 14,
+    borderRadius: 8,
     borderWidth: 1,
     overflow: 'hidden',
     height: 180,
@@ -1055,25 +1214,9 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
-  mostSellingBadge: {
-    position: 'absolute',
-    top: 4,
-    left: 4,
-    backgroundColor: '#DC2626',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 5,
-    zIndex: 2,
-  },
-  mostSellingBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 8.5,
-    fontWeight: '900',
-    letterSpacing: 0.2,
-  },
   popularCardImageBox: {
     height: 80,
-    borderRadius: 10,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
@@ -1101,7 +1244,7 @@ const styles = StyleSheet.create({
   },
   applyBtn: {
     borderWidth: 1,
-    borderRadius: 6,
+    borderRadius: 8,
     paddingVertical: 6,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1118,7 +1261,7 @@ const styles = StyleSheet.create({
   bankCard: {
     width: (width - 32 - 18) / 4,
     height: 46,
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1136,7 +1279,7 @@ const styles = StyleSheet.create({
   tickerBadge: {
     width: 115,
     height: 46,
-    borderRadius: 12,
+    borderRadius: 8,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1157,7 +1300,7 @@ const styles = StyleSheet.create({
   },
   serviceBtn: {
     flex: 1,
-    borderRadius: 14,
+    borderRadius: 8,
     borderWidth: 1,
     paddingVertical: 12,
     paddingHorizontal: 6,
@@ -1201,7 +1344,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 14,
     paddingHorizontal: 8,
-    borderRadius: 14,
+    borderRadius: 8,
     borderWidth: 1,
     gap: 6,
     shadowColor: '#000',
@@ -1213,7 +1356,7 @@ const styles = StyleSheet.create({
   insuranceIconBox: {
     width: 44,
     height: 44,
-    borderRadius: 12,
+    borderRadius: 8,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1229,7 +1372,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     marginHorizontal: 16,
     padding: 22,
-    borderRadius: 24,
+    borderRadius: 8,
     borderWidth: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
@@ -1293,7 +1436,7 @@ const styles = StyleSheet.create({
   careersBtn: {
     paddingVertical: 8,
     paddingHorizontal: 16,
-    borderRadius: 10,
+    borderRadius: 8,
     alignSelf: 'flex-start',
     marginBottom: 10,
   },
@@ -1322,5 +1465,42 @@ const styles = StyleSheet.create({
   quickLink: {
     fontSize: 12,
     fontWeight: '600',
+  },
+  // ── Floating bottom nav (matches website HomeMobileBottomNav) ──
+  bottomNavWrap: {
+    position: 'absolute',
+    bottom: 10,
+    left: 10,
+    right: 10,
+    maxWidth: 540,
+    alignSelf: 'center',
+    height: 68,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    borderRadius: 24,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 30,
+    elevation: 10,
+  },
+  bottomNavItem: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 3,
+  },
+  bottomNavLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  bottomNavIconBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

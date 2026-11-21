@@ -321,9 +321,9 @@ export const markNotificationRead = async (id: string) => {
   }
 };
 
-export const fetchPartnerBanners = async () => {
+export const fetchPartnerBanners = async (page: string = 'partner') => {
   try {
-    const res = await apiClient.get('/banners', { params: { page: 'partner' } });
+    const res = await apiClient.get('/banners', { params: { page } });
     return res.data;
   } catch (err: any) {
     return { success: false, data: [] };

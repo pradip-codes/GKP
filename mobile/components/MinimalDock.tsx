@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path, Rect, Circle, Line } from 'react-native-svg';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../contexts/ThemeContext';
 import { spacing } from '../theme/spacing';
 
@@ -102,6 +103,12 @@ const MoreGlyph: React.FC<{ size?: number; color: string; focused?: boolean }> =
   </Svg>
 );
 
+const IONICON_NAMES = new Set([
+  'home', 'people', 'document-text', 'chatbubble', 'menu', 'briefcase', 'id-card',
+  'location', 'wallet', 'trending-up', 'person', 'card', 'settings', 'log-out',
+  'ellipse', 'grid', 'stats-chart', 'shield', 'cash', 'school', 'business',
+]);
+
 const renderGlyph = (item: DockItem, color: string, focused: boolean) => {
   const key = (item.id || item.label || '').toLowerCase();
   if (key.includes('home') || key.includes('dash')) {
@@ -120,11 +127,13 @@ const renderGlyph = (item: DockItem, color: string, focused: boolean) => {
     return <MoreGlyph color={color} focused={focused} />;
   }
 
-  // Fallback to text icon / emoji if passed
+  // Fallback to a real icon glyph for role-specific dock items
   return (
-    <Text style={[styles.fallbackIcon, { color }]}>
-      {item.icon || '•'}
-    </Text>
+    <Ionicons
+      name={((item.icon && IONICON_NAMES.has(item.icon)) ? item.icon : 'ellipse') as any}
+      size={20}
+      color={color}
+    />
   );
 };
 

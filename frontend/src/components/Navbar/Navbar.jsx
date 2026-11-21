@@ -258,7 +258,8 @@ const Navbar = () => {
                 style={{ color: C.text }}
                 onMouseEnter={(e) => e.currentTarget.style.background = C.bgSecondary}
                 onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                title={t('nav.login', 'Login')}
+                data-tooltip={t('nav.login', 'Login')}
+                aria-label={t('nav.login', 'Login')}
               >
                 <FaSignInAlt className="nav-btn-icon" />
                 <span className="nav-btn-text">{t('nav.login', 'Login')}</span>
@@ -267,7 +268,8 @@ const Navbar = () => {
                 id="nav-register-button"
                 onClick={() => navigate('/register')}
                 className="nav-auth-btn nav-register-btn"
-                title={t('nav.register', 'Register')}
+                data-tooltip={t('nav.register', 'Register')}
+                aria-label={t('nav.register', 'Register')}
               >
                 <FaUserPlus className="nav-btn-icon" />
                 <span className="nav-btn-text">{t('nav.register', 'Register')}</span>

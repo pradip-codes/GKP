@@ -584,6 +584,14 @@ const startServer = async () => {
       logger.warn('Candidate extended fields boot migration note:', candErr.message);
     }
 
+    // Always ensure Payroll schema (salary structures, payroll records, payslip requests, documents) exists on boot
+    try {
+      const { migratePayroll } = require('./database/migrations/migrate_payroll.js');
+      await migratePayroll();
+    } catch (payErr) {
+      logger.warn('Payroll auto migration note:', payErr.message);
+    }
+
     // Initialize scheduled CRON jobs
     const { initReportJobs } = require('./jobs/report.job.js');
     initReportJobs();

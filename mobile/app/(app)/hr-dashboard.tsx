@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { Card } from '../../components/Card';
@@ -27,6 +28,7 @@ import apiClient from '../../services/api';
 
 export default function HRDashboardScreen() {
   const { colors } = useTheme();
+  const { logout } = useAuth();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [candidates, setCandidates] = useState<any[]>([]);
@@ -174,6 +176,17 @@ export default function HRDashboardScreen() {
           <Text style={styles.headerSubtitle}>TALENT ACQUISITION</Text>
           <Text style={styles.headerTitle}>HR Recruitment Desk</Text>
         </View>
+        <TouchableOpacity
+          style={styles.logoutBtn}
+          onPress={async () => {
+            await logout();
+            router.replace('/(auth)/login');
+          }}
+          activeOpacity={0.7}
+        >
+          <Icon name="log-out" size={15} color="#fff" />
+          <Text style={styles.logoutBtnText}>Logout</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Module Tabs */}
@@ -455,6 +468,22 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '800',
     color: '#fff',
+  },
+  logoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  logoutBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '800',
   },
   moduleTabRow: {
     flexDirection: 'row',

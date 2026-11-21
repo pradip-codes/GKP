@@ -18,7 +18,7 @@ import { spacing } from '../../theme/spacing';
 
 export default function TeamDashboardScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -76,8 +76,21 @@ export default function TeamDashboardScreen() {
             Designation: {user?.designation || emp.designation || 'Team Member'}
           </Text>
         </View>
-        <View style={styles.statusBadge}>
-          <Text style={styles.statusText}>{emp.activation_status || 'ACTIVE'}</Text>
+        <View style={{ alignItems: 'flex-end', gap: 6 }}>
+          <View style={styles.statusBadge}>
+            <Text style={styles.statusText}>{emp.activation_status || 'ACTIVE'}</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.logoutBtn, { borderColor: colors.error }]}
+            onPress={async () => {
+              await logout();
+              router.replace('/(auth)/login');
+            }}
+            activeOpacity={0.7}
+          >
+            <Icon name="log-out" size={14} color={colors.error} />
+            <Text style={[styles.logoutText, { color: colors.error }]}>Logout</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -202,6 +215,19 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  logoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  logoutText: {
+    fontSize: 11,
+    fontWeight: '700',
   },
   errorBanner: {
     flexDirection: 'row',

@@ -2369,5 +2369,9 @@ router.post('/request-deletion', async (req, res, next) => {
   }
 });
 
+// ── Payroll / Salary / Payslips / Documents (mounted after jwtAuth + resolveEmployee) ──
+const employeePayrollRouter = require('../payroll/payroll.employee.routes.js');
+router.use('/payroll', employeePayrollRouter);
+
 module.exports = router;
 module.exports.getMonthlyIncentiveReportData = getMonthlyIncentiveReportData;

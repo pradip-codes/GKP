@@ -42,6 +42,10 @@ const EmployeeSettingsPortal = lazy(() => import('../modules/employee/settings/E
 const EmployeeSalesReports = lazy(() => import('../modules/employee/reports/EmployeeSalesReports'));
 const EmployeeVerification = lazy(() => import('../modules/employee/profile/EmployeeVerification'));
 const EmployeeContests = lazy(() => import('../modules/employee/contests/EmployeeContests'));
+const EmployeeMySalary = lazy(() => import('../modules/employee/payroll/EmployeeMySalary'));
+const EmployeePayslip = lazy(() => import('../modules/employee/payroll/EmployeePayslip'));
+const EmployeeDocumentsReports = lazy(() => import('../modules/employee/payroll/EmployeeDocumentsReports'));
+const HRPayroll = lazy(() => import('../modules/hr/payroll/HRPayroll'));
 const ManageContests = lazy(() => import('../modules/super-admin/contests/ManageContests'));
 const PartnerLogin = lazy(() => import('../modules/authentication/login/PartnerLogin'));
 const PartnerRegister = lazy(() => import('../modules/authentication/register/PartnerRegister'));
@@ -363,6 +367,9 @@ const AppRoutes = () => {
             <Route path="/employee/messenger" element={<MessengerView />} />
             <Route path="/employee/settings" element={<EmployeeSettingsPortal />} />
             <Route path="/employee/sales-reports" element={<EmployeeSalesReports />} />
+            <Route path="/employee/salary" element={<EmployeeMySalary />} />
+            <Route path="/employee/payslip" element={<EmployeePayslip />} />
+            <Route path="/employee/documents" element={<EmployeeDocumentsReports />} />
           </Route>
         </Route>
       </Route>
@@ -374,6 +381,7 @@ const AppRoutes = () => {
             <Route path="/hr" element={<HRDashboard />} />
             <Route path="/hr/dashboard" element={<HRDashboard />} />
             <Route path="/hr/candidates" element={<HRDashboard />} />
+            <Route path="/hr/payroll" element={<HRPayroll />} />
           </Route>
         </Route>
       </Route>

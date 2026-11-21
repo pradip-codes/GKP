@@ -553,4 +553,8 @@ router.post('/kyc/:id/verify', async (req, res, next) => {
   }
 });
 
+// ── Payroll Management (salary structures, payroll generation, approvals, documents) ──
+const hrPayrollRouter = require('../payroll/payroll.hr.routes.js');
+router.use('/payroll', hrPayrollRouter);
+
 module.exports = router;

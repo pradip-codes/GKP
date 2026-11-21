@@ -204,30 +204,80 @@ body.no-scroll {
   overflow: hidden;
 }
 
-/* Premium Auth Buttons in Navbar */
+/* Premium Auth Buttons in Navbar — icon-only, name revealed on hover */
 .nav-auth-btn {
   border: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  position: relative;
+  width: 38px;
+  height: 38px;
+  padding: 0;
   font-size: 13px;
   font-weight: 700;
-  border-radius: 10px;
+  border-radius: 50%;
   transition: all 0.2s ease;
   box-sizing: border-box;
 }
 
+/* Button text is hidden — the tooltip shows the name on hover/focus */
+.nav-btn-text {
+  display: none;
+}
+
+/* Hover / focus tooltip showing the button name */
+.nav-auth-btn::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background: #101828;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 6px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+}
+
+.nav-auth-btn::before {
+  content: "";
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  border: 5px solid transparent;
+  border-top-color: #101828;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 1000;
+}
+
+.nav-auth-btn:hover::after,
+.nav-auth-btn:hover::before,
+.nav-auth-btn:focus-visible::after,
+.nav-auth-btn:focus-visible::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 .nav-login-btn {
   background: transparent;
-  padding: 8px 12px;
 }
 
 .nav-register-btn {
   background: transparent;
   color: #0D6EFD;
-  padding: 8px 16px;
 }
 
 .nav-register-btn:hover {
@@ -235,7 +285,7 @@ body.no-scroll {
 }
 
 .nav-btn-icon {
-  font-size: 14px;
+  font-size: 15px;
 }
 
 @media (max-width: 768px) {
@@ -255,28 +305,6 @@ body.no-scroll {
 
   .hamburger {
     display: flex;
-  }
-
-  /* Hide auth text on mobile, keep only icons visible */
-  .nav-btn-text {
-    display: none !important;
-  }
-  
-  .nav-auth-btn {
-    padding: 8px !important;
-    gap: 0 !important;
-    border-radius: 50% !important;
-    width: 34px !important;
-    height: 34px !important;
-  }
-
-  .nav-login-btn {
-    background: transparent !important;
-  }
-
-  .nav-register-btn {
-    background: transparent !important;
-    color: #0D6EFD !important;
   }
 
   .desktop-widgets {

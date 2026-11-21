@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { Icon } from '../../components/Icon';
 import apiClient from '../../services/api';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -19,6 +21,7 @@ interface AdminStats {
 export default function AdminDashboardScreen() {
   const { colors } = useTheme();
   const router = useRouter();
+  const { logout } = useAuth();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<AdminStats | null>(null);
 
@@ -63,8 +66,21 @@ export default function AdminDashboardScreen() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Admin Dashboard</Text>
-        <Text style={styles.subtitle}>Overview of admin operations</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Admin Dashboard</Text>
+          <Text style={styles.subtitle}>Overview of admin operations</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.logoutBtn}
+          onPress={async () => {
+            await logout();
+            router.replace('/(auth)/login');
+          }}
+          activeOpacity={0.7}
+        >
+          <Icon name="log-out" size={16} color={colors.error} />
+          <Text style={[styles.logoutText, { color: colors.error }]}>Logout</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Quick Stats */}
@@ -216,6 +232,23 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  logoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.error,
+    backgroundColor: colors.bg,
+  },
+  logoutText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
   },
   title: {
     fontSize: typography.sizes.xl,

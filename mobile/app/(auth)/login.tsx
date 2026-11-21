@@ -88,12 +88,17 @@ export default function LoginScreen() {
 
   const resolveRoleRedirect = (user: any) => {
     const role = (user?.role || '').toUpperCase();
+    const designation = user?.designation || '';
     if (role === 'SUPER_ADMIN') {
       router.replace('/(app)/super-admin/dashboard');
-    } else if (role === 'ADMIN' || role === 'HR') {
+    } else if (role === 'ADMIN') {
       router.replace('/(app)/admin-dashboard');
+    } else if (role === 'HR') {
+      router.replace('/(app)/hr-dashboard');
     } else if (role === 'EMPLOYEE') {
-      router.replace('/(app)/employee-dashboard');
+      router.replace(designation ? '/(app)/dashboard' : '/(app)/employee-dashboard');
+    } else if (role === 'TEAM_MEMBER') {
+      router.replace('/(app)/team-dashboard');
     } else {
       router.replace('/(app)/partner-dashboard');
     }
@@ -231,6 +236,10 @@ export default function LoginScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
       >
+        {/* ── AMBIENT BACKGROUND ORBS (same as website login page) ── */}
+        <View pointerEvents="none" style={[styles.orb, styles.orbBlue, { opacity: isDark ? 0.10 : 0.5 }]} />
+        <View pointerEvents="none" style={[styles.orb, styles.orbGreen, { opacity: isDark ? 0.08 : 0.4 }]} />
+
         {/* ── TOP NAV BAR ── */}
         <View style={[styles.navBar, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
           <TouchableOpacity
@@ -252,7 +261,7 @@ export default function LoginScreen() {
             onPress={() => router.push('/(public)/language-settings')}
             activeOpacity={0.7}
           >
-            <Text style={{ fontSize: 16 }}>🌐</Text>
+            <Icon name="globe" size={16} color={colors.text} />
           </TouchableOpacity>
         </View>
 
@@ -265,7 +274,10 @@ export default function LoginScreen() {
           <View style={[styles.loginCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             {/* Welcome Badge */}
             <View style={styles.welcomeBadge}>
-              <Text style={styles.welcomeBadgeText}>Welcome Back! 👋</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Icon name="hand-left" size={14} color={colors.primary} />
+                <Text style={styles.welcomeBadgeText}>Welcome Back!</Text>
+              </View>
             </View>
 
             {/* Headline */}
@@ -336,7 +348,7 @@ export default function LoginScreen() {
             {/* Error Message Box */}
             {errorMsg && (
               <View style={styles.errorBox}>
-                <Text style={{ fontSize: 14 }}>⚠️</Text>
+                <Icon name="alert-circle" size={14} color={colors.error} />
                 <Text style={styles.errorText}>{errorMsg}</Text>
               </View>
             )}
@@ -348,7 +360,7 @@ export default function LoginScreen() {
                 <View style={styles.inputGroup}>
                   <Text style={[styles.fieldLabel, { color: colors.text }]}>Email or Mobile Number</Text>
                   <View style={[styles.inputWrapper, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
-                    <Text style={{ fontSize: 16, marginRight: 8 }}>{isMobileNumber ? '📞' : '✉️'}</Text>
+                    <Icon name={isMobileNumber ? 'call' : 'mail'} size={16} color={colors.textLight} />
                     <TextInput
                       style={[styles.textInput, { color: colors.text }]}
                       placeholder="Enter registered email or mobile"
@@ -377,7 +389,7 @@ export default function LoginScreen() {
                     </View>
 
                     <View style={[styles.inputWrapper, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
-                      <Text style={{ fontSize: 16, marginRight: 8 }}>🔒</Text>
+                      <Icon name="lock" size={16} color={colors.textLight} />
                       <TextInput
                         style={[styles.textInput, { color: colors.text }]}
                         placeholder="Enter your account password"
@@ -391,7 +403,7 @@ export default function LoginScreen() {
                         autoCapitalize="none"
                       />
                       <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
-                        <Text style={{ fontSize: 15 }}>{showPassword ? '👁️' : '🙈'}</Text>
+                        <Icon name={showPassword ? 'eye' : 'eye-off'} size={15} color={colors.textLight} />
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -421,7 +433,7 @@ export default function LoginScreen() {
                       disabled={loading}
                       activeOpacity={0.8}
                     >
-                      <Text style={{ fontSize: 18 }}>👆</Text>
+                      <Icon name="finger-print" size={18} color={colors.text} />
                       <Text style={[styles.biometricBtnText, { color: colors.text }]}>
                         Sign In with {biometricName}
                       </Text>
@@ -469,7 +481,7 @@ export default function LoginScreen() {
                       <View style={styles.inputGroup}>
                         <Text style={[styles.fieldLabel, { color: colors.text }]}>6-Digit Verification Code</Text>
                         <View style={[styles.inputWrapper, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
-                          <Text style={{ fontSize: 16, marginRight: 8 }}>🔑</Text>
+                          <Icon name="key" size={16} color={colors.textLight} />
                           <TextInput
                             style={[styles.textInput, { color: colors.text, letterSpacing: 4, fontWeight: '800' }]}
                             placeholder="• • • • • •"
@@ -535,7 +547,7 @@ export default function LoginScreen() {
 
           {/* Trust Guarantees */}
           <View style={styles.trustRow}>
-            <Text style={{ fontSize: 14 }}>🛡️</Text>
+            <Icon name="shield" size={14} color={colors.textLight} />
             <Text style={[styles.trustText, { color: colors.textLight }]}>
               Bank-Grade 256-bit SSL Encrypted & Protected
             </Text>
@@ -547,7 +559,7 @@ export default function LoginScreen() {
             onPress={() => router.push('/(public)/chatbot')}
             activeOpacity={0.85}
           >
-            <Text style={{ fontSize: 20 }}>🤖</Text>
+            <Icon name="chatbubble-ellipses" size={20} color="#FFF" />
           </TouchableOpacity>
         </ScrollView>
 
@@ -634,18 +646,38 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   scrollContent: {
-    padding: 16,
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 20,
     paddingBottom: 40,
   },
+  orb: {
+    position: 'absolute',
+    borderRadius: 9999,
+  },
+  orbBlue: {
+    width: 320,
+    height: 320,
+    right: -120,
+    top: 90,
+    backgroundColor: 'rgba(37, 99, 235, 0.35)',
+  },
+  orbGreen: {
+    width: 300,
+    height: 300,
+    left: -110,
+    top: 340,
+    backgroundColor: 'rgba(16, 185, 129, 0.30)',
+  },
   loginCard: {
-    borderRadius: 20,
+    borderRadius: 26,
     borderWidth: 1,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    elevation: 3,
+    padding: 24,
+    shadowColor: '#1E40AF',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.10,
+    shadowRadius: 32,
+    elevation: 6,
   },
   welcomeBadge: {
     alignSelf: 'flex-start',

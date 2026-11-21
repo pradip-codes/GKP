@@ -1,5 +1,6 @@
 import React from 'react';
-import { Text, TextStyle } from 'react-native';
+import { StyleProp, TextStyle, ViewStyle } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 export type IconName =
   | 'check-circle'
@@ -70,96 +71,337 @@ export type IconName =
   | 'envelope'
   | 'user-circle'
   | 'cog'
-  | 'camera';
+  | 'camera'
+  | 'home'
+  | 'log-out'
+  | 'moon'
+  | 'sunny'
+  | 'chat'
+  | 'headset'
+  | 'business'
+  | 'cash'
+  | 'card'
+  | 'school'
+  | 'school'
+  | 'flash'
+  | 'document'
+  | 'document-text'
+  | 'people'
+  | 'person'
+  | 'person-add'
+  | 'person-remove'
+  | 'ribbon'
+  | 'link'
+  | 'archive'
+  | 'time'
+  | 'swap-vertical'
+  | 'phone-portrait'
+  | 'close'
+  | 'ellipse'
+  | 'lock-closed'
+  | 'notifications'
+  | 'pulse'
+  | 'wallet'
+  | 'chatbubble'
+  | 'git-merge'
+  | 'add'
+  | 'create'
+  | 'school'
+  | 'eye'
+  | 'search'
+  | 'information-circle'
+  | 'cloud-upload'
+  | 'stats-chart'
+  | 'ellipsis-vertical'
+  | 'refresh'
+  | 'ellipsis-horizontal'
+  | 'key'
+  | 'flash'
+  | 'trash'
+  | 'warning'
+  | 'calendar'
+  | 'document'
+  | 'videocam'
+  | 'call'
+  | 'mail'
+  | 'person-circle'
+  | 'settings'
+  | 'camera'
+  | 'close-circle'
+  | 'shield-checkmark'
+  | 'logo-facebook'
+  | 'logo-twitter'
+  | 'logo-instagram'
+  | 'logo-linkedin'
+  | 'logo-youtube'
+  | 'logo-whatsapp'
+  | 'megaphone'
+  | 'clipboard'
+  | 'eye-off'
+  | 'finger-print'
+  | 'call'
+  | 'hardware-chip'
+  | 'car'
+  | 'car-sport'
+  | 'bicycle'
+  | 'medkit'
+  | 'umbrella'
+  | 'hand-left'
+  | 'calculator'
+  | 'storefront'
+  | 'id-card-outline'
+  | 'reader'
+  | 'pricetag'
+  | 'receipt'
+  | 'ribbon-outline'
+  | 'construct'
+  | 'business-outline'
+  | 'people-outline'
+  | 'cash-outline'
+  | 'card-outline'
+  | 'home-outline'
+  | 'log-in'
+  | 'log-out-outline'
+  | 'call-outline'
+  | 'chatbubble-ellipses'
+  | 'sparkles'
+  | 'planet'
+  | 'location'
+  | 'time-outline'
+  | 'checkmark-circle-outline'
+  | 'alert-circle-outline'
+  | 'shield-outline'
+  | 'briefcase-outline'
+  | 'analytics'
+  | 'trending-up'
+  | 'pie-chart'
+  | 'bar-chart'
+  | 'wallet-outline'
+  | 'school-outline'
+  | 'flash-outline'
+  | 'document-outline'
+  | 'person-outline'
+  | 'add-circle-outline'
+  | 'create-outline'
+  | 'trash-outline'
+  | 'eye-outline'
+  | 'search-outline'
+  | 'information-circle-outline'
+  | 'notifications-outline'
+  | 'settings-outline'
+  | 'moon-outline'
+  | 'sunny-outline'
+  | 'heart'
+  | 'star'
+  | 'diamond'
+  | 'flame'
+  | 'thumbs-up'
+  | 'gift'
+  | 'globe'
+  | 'navigate'
+  | 'compass'
+  | 'map'
+  | 'airplane'
+  | 'boat'
+  | 'bus'
+  | 'train'
+  | 'bicycle-outline'
+  | 'car-outline'
+  | 'home-outline'
+  | 'business-outline'
+  | 'storefront-outline'
+  | 'pricetag-outline'
+  | 'receipt-outline'
+  | 'calculator-outline'
+  | 'reader-outline'
+  | 'construct-outline'
+  | 'ribbon-outline'
+  | 'umbrella-outline'
+  | 'medkit-outline'
+  | 'hand-left-outline'
+  | 'analytics-outline'
+  | 'trending-up-outline'
+  | 'pie-chart-outline'
+  | 'bar-chart-outline'
+  | 'wallet-outline'
+  | 'school-outline'
+  | 'flash-outline'
+  | 'document-outline'
+  | 'person-outline'
+  | 'add-circle-outline'
+  | 'create-outline'
+  | 'trash-outline'
+  | 'eye-outline'
+  | 'search-outline'
+  | 'information-circle-outline'
+  | 'notifications-outline'
+  | 'settings-outline'
+  | 'moon-outline'
+  | 'sunny-outline'
+  | 'heart-outline'
+  | 'star-outline'
+  | 'thumbs-up-outline'
+  | 'gift-outline'
+  | 'globe-outline'
+  | 'navigate-outline'
+  | 'compass-outline'
+  | 'map-outline'
+  | 'airplane-outline'
+  | 'boat-outline'
+  | 'bus-outline'
+  | 'train-outline';
 
 interface IconProps {
   name: IconName | string;
   size?: number;
   color?: string;
-  style?: TextStyle;
+  style?: StyleProp<TextStyle | ViewStyle>;
 }
 
-export const Icon: React.FC<IconProps> = ({ name, size = 16, color = '#000', style }) => {
-  const getSymbol = (): string => {
-    switch (name) {
-      case 'check-circle': return '✓';
-      case 'alert-circle': return '⚠️';
-      case 'credit-card': return '💳';
-      case 'chevron-right': return '›';
-      case 'chevron-left': return '‹';
-      case 'chevron-down': return '⌄';
-      case 'chevron-up': return '⌃';
-      case 'user-plus': return '👤+';
-      case 'user-check': return '👤✓';
-      case 'user': return '👤';
-      case 'user-shield': return '👤🛡️';
-      case 'award': return '🎗️';
-      case 'copy': return '📋';
-      case 'link-2': return '🔗';
-      case 'users': return '👥';
-      case 'list': return '📋';
-      case 'file-text': return '📄';
-      case 'grid': return '▦';
-      case 'arrow-left': return '←';
-      case 'check': return '✓';
-      case 'shield': return '🛡️';
-      case 'share-2': return '🔗';
-      case 'inbox': return '📥';
-      case 'download': return '⬇️';
-      case 'clock': return '🕒';
-      case 'arrow-down-left': return '↙';
-      case 'arrow-up-right': return '↗';
-      case 'device': return '📱';
-      case 'x': return '✕';
-      case 'circle': return '○';
-      case 'lock': return '�';
-      case 'calendar': return '�';
-      case 'camera': return '📷';
-      case 'x-circle': return '❌';
-      case 'shield-check': return '🛡️✓';
-      case 'bell': return '🔔';
-      case 'activity': return '⚡';
-      case 'dollar-sign': return '💵';
-      case 'briefcase': return '💼';
-      case 'settings': return '⚙️';
-      case 'message-square': return '💬';
-      case 'merge': return '🔀';
-      case 'plus': return '+';
-      case 'git-branch': return '🌳';
-      case 'edit-2': return '✏️';
-      case 'id-card': return '🪪';
-      case 'university': return '🏛️';
-      case 'eye': return '👁️';
-      case 'search': return '🔍';
-      case 'info': return 'ℹ️';
-      case 'file-upload': return '📤';
-      case 'user-times': return '👤✕';
-      case 'unlink': return '🔗✕';
-      case 'chart-line': return '📈';
-      case 'trophy': return '🏆';
-      case 'ellipsis-v': return '⋮';
-      case 'redo': return '↻';
-      case 'ellipsis-h': return '⋯';
-      case 'key': return '🔑';
-      case 'ellipsis': return '…';
-      case 'bolt': return '⚡';
-      case 'trash': return '🗑️';
-      case 'exclamation-circle': return '⚠️';
-      case 'calendar-alt': return '📅';
-      case 'file-alt': return '📄';
-      case 'video': return '🎥';
-      case 'building': return '🏢';
-      case 'phone': return '📞';
-      case 'envelope': return '✉️';
-      case 'user-circle': return '👤';
-      case 'cog': return '⚙️';
-      default: return '•';
-    }
-  };
+type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
-  return (
-    <Text style={[{ fontSize: size, color, fontWeight: '700' }, style]}>
-      {getSymbol()}
-    </Text>
-  );
+const ICON_MAP: Record<string, IoniconName> = {
+  'check-circle': 'checkmark-circle',
+  'alert-circle': 'alert-circle',
+  'credit-card': 'card',
+  'chevron-right': 'chevron-forward',
+  'chevron-left': 'chevron-back',
+  'chevron-down': 'chevron-down',
+  'chevron-up': 'chevron-up',
+  'user-plus': 'person-add',
+  'user-check': 'person-circle',
+  'user': 'person',
+  'user-shield': 'shield-checkmark',
+  'award': 'ribbon',
+  'copy': 'copy',
+  'link-2': 'link',
+  'users': 'people',
+  'list': 'list',
+  'file-text': 'document-text',
+  'grid': 'grid',
+  'arrow-left': 'arrow-back',
+  'check': 'checkmark',
+  'shield': 'shield',
+  'share-2': 'share-social',
+  'inbox': 'archive',
+  'download': 'download',
+  'clock': 'time',
+  'arrow-down-left': 'arrow-undo',
+  'arrow-up-right': 'arrow-redo',
+  'device': 'phone-portrait',
+  'x': 'close',
+  'circle': 'ellipse',
+  'lock': 'lock-closed',
+  'calendar': 'calendar',
+  'bell': 'notifications',
+  'activity': 'pulse',
+  'dollar-sign': 'cash',
+  'briefcase': 'briefcase',
+  'settings': 'settings',
+  'message-square': 'chatbubble',
+  'merge': 'git-merge',
+  'plus': 'add',
+  'git-branch': 'git-branch',
+  'edit-2': 'create',
+  'id-card': 'id-card',
+  'university': 'school',
+  'eye': 'eye',
+  'search': 'search',
+  'info': 'information-circle',
+  'file-upload': 'cloud-upload',
+  'user-times': 'person-remove',
+  'unlink': 'close-circle',
+  'chart-line': 'stats-chart',
+  'trophy': 'trophy',
+  'ellipsis-v': 'ellipsis-vertical',
+  'redo': 'refresh',
+  'ellipsis-h': 'ellipsis-horizontal',
+  'key': 'key',
+  'ellipsis': 'ellipsis-horizontal',
+  'bolt': 'flash',
+  'trash': 'trash',
+  'exclamation-circle': 'warning',
+  'calendar-alt': 'calendar',
+  'file-alt': 'document',
+  'video': 'videocam',
+  'building': 'business',
+  'phone': 'call',
+  'envelope': 'mail',
+  'user-circle': 'person-circle',
+  'cog': 'settings',
+  'camera': 'camera',
+  'x-circle': 'close-circle',
+  'shield-check': 'shield-checkmark',
+  'home': 'home',
+  'log-out': 'log-out',
+  'moon': 'moon',
+  'sunny': 'sunny',
+  'chat': 'chatbubble',
+  'headset': 'headset',
+  'business': 'business',
+  'cash': 'cash',
+  'card': 'card',
+  'school': 'school',
+  'flash': 'flash',
+  'document': 'document',
+  'people': 'people',
+  'person': 'person',
+  'ribbon': 'ribbon',
+  'link': 'link',
+  'time': 'time',
+  'car': 'car',
+  'car-sport': 'car-sport',
+  'bicycle': 'bicycle',
+  'medkit': 'medkit',
+  'umbrella': 'umbrella',
+  'hand-left': 'hand-left',
+  'calculator': 'calculator',
+  'storefront': 'storefront',
+  'id-card-outline': 'id-card',
+  'reader': 'reader',
+  'pricetag': 'pricetag',
+  'receipt': 'receipt',
+  'construct': 'construct',
+  'analytics': 'analytics',
+  'trending-up': 'trending-up',
+  'pie-chart': 'pie-chart',
+  'bar-chart': 'bar-chart',
+  'wallet': 'wallet',
+  'heart': 'heart',
+  'star': 'star',
+  'diamond': 'diamond',
+  'flame': 'flame',
+  'thumbs-up': 'thumbs-up',
+  'gift': 'gift',
+  'globe': 'globe',
+  'navigate': 'navigate',
+  'compass': 'compass',
+  'map': 'map',
+  'airplane': 'airplane',
+  'boat': 'boat',
+  'bus': 'bus',
+  'train': 'train',
+  'location': 'location',
+  'planet': 'planet',
+  'sparkles': 'sparkles',
+  'chatbubble-ellipses': 'chatbubble-ellipses',
+  'log-in': 'log-in',
+  'call-outline': 'call',
+  'logo-facebook': 'logo-facebook',
+  'logo-twitter': 'logo-twitter',
+  'logo-instagram': 'logo-instagram',
+  'logo-linkedin': 'logo-linkedin',
+  'logo-youtube': 'logo-youtube',
+  'logo-whatsapp': 'logo-whatsapp',
+  'megaphone': 'megaphone',
+  'clipboard': 'clipboard',
+  'eye-off': 'eye-off',
+  'finger-print': 'finger-print',
+  'call': 'call',
+  'hardware-chip': 'hardware-chip',
+};
+
+export const Icon: React.FC<IconProps> = ({ name, size = 16, color = '#000', style }) => {
+  const ionicon = ICON_MAP[name] || 'ellipse';
+  return <Ionicons name={ionicon} size={size} color={color} style={style as any} />;
 };

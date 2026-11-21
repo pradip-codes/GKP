@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   Modal,
   FlatList,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { Card } from '../../components/Card';
@@ -50,15 +50,85 @@ const JOB_OPENINGS = [
   },
 ];
 
-const HR_OPTIONS = ['Hrutika', 'Nandini', 'Riya', 'Poonam', 'Riyakumari', 'Other HR / Reference'];
+// Option lists mirror the website InterviewRegistration form exactly
+// ({ label, value } pairs where the website shows a descriptive label but stores a code)
+const HR_OPTIONS = ['Hrutika', 'Nandini', 'Riya', 'Poonam', 'Riyakumari', 'Other'];
 const SOURCE_OPTIONS = ['Employee Reference', 'WhatsApp', 'Instagram', 'WorkIndia / Job Portal', 'College Reference', 'Other'];
 const EXPERIENCE_OPTIONS = ['Fresher', 'Experienced'];
-const QUALIFICATION_OPTIONS = ['12th Pass', 'Graduate', 'Diploma', 'Post Graduate', 'Pursuing'];
+const QUALIFICATION_OPTIONS = ['12th', 'ITI', 'Diploma', 'Graduate', 'Post Graduate', 'Pursuing'];
 const TWELFTH_STREAMS = ['Commerce', 'Science', 'Arts', 'Other'];
-const GRADUATE_DEGREES = ['B.Com', 'B.Sc', 'B.A', 'BBA', 'BCA', 'B.Tech / B.E', 'Other'];
-const PG_DEGREES = ['M.Com', 'M.Sc', 'M.A', 'MBA', 'MCA', 'M.Tech', 'Other'];
-const DIPLOMA_TYPES = ['Engineering Diploma', 'Polytechnic', 'Commercial Practice', 'Other'];
-const PURSUING_YEARS = ['1st Year', '2nd Year', '3rd Year', '4th Year', 'Final Year'];
+const UG_DEGREES = [
+  { label: 'BA (Bachelor of Arts)', value: 'BA' },
+  { label: 'BCom (Bachelor of Commerce)', value: 'BCom' },
+  { label: 'BSc (Bachelor of Science)', value: 'BSc' },
+  { label: 'BBA (Bachelor of Business Administration)', value: 'BBA' },
+  { label: 'BCA (Bachelor of Computer Applications)', value: 'BCA' },
+  { label: 'BCS (Bachelor of Computer Science)', value: 'BCS' },
+  { label: 'BTech (Bachelor of Technology)', value: 'BTech' },
+  { label: 'BE (Bachelor of Engineering)', value: 'BE' },
+  { label: 'Other', value: 'Other' },
+];
+const PG_DEGREES = [
+  { label: 'MA (Master of Arts)', value: 'MA' },
+  { label: 'MCom (Master of Commerce)', value: 'MCom' },
+  { label: 'MSc (Master of Science)', value: 'MSc' },
+  { label: 'MCA (Master of Computer Applications)', value: 'MCA' },
+  { label: 'MCS (Master of Computer Science)', value: 'MCS' },
+  { label: 'MBA (Master of Business Administration)', value: 'MBA' },
+  { label: 'MTech (Master of Technology)', value: 'MTech' },
+  { label: 'ME (Master of Engineering)', value: 'ME' },
+  { label: 'Other', value: 'Other' },
+];
+const DIPLOMA_TYPES = [
+  'Diploma in Mechanical Engineering',
+  'Diploma in Civil Engineering',
+  'Diploma in Electrical Engineering',
+  'Diploma in Computer / IT',
+  'Diploma in Electronics & Telecommunication',
+  'Diploma in Computer Applications (DCA)',
+  'Diploma in Business Management',
+  'Diploma in Pharmacy (D.Pharm)',
+  'Other',
+];
+const PURSUING_YEARS = ['First Year', 'Second Year', 'Third Year', 'Fourth Year'];
+const IMMEDIATE_JOINING_OPTIONS = [
+  { label: 'Yes - Immediate Joining', value: 'Yes' },
+  { label: 'No - Needs Notice Period', value: 'No' },
+];
+const LOCATION_OPTIONS = [
+  { label: 'Yes - Comfortable with location', value: 'Yes' },
+  { label: 'No - Prefers Remote / Other', value: 'No' },
+];
+const RELEVANT_EXPERIENCE_OPTIONS = [
+  { label: 'Yes - Direct Financial / Domain Experience', value: 'Yes' },
+  { label: 'No - Related / Fresh Experience', value: 'No' },
+];
+const TARGET_ROLE_OPTIONS = [
+  'Financial Sales Executive',
+  'Credit Card Specialist',
+  'Sales Manager',
+  'Branch Head',
+  'Assistant Manager',
+  'Manager',
+  'Senior Manager',
+  'Product Manager',
+  'HR Executive',
+  'HR Manager',
+  'Senior HR Manager',
+  'Recruiter',
+  'Trainee Developer',
+  'Junior Developer',
+  'Senior Developer',
+  'Frontend Developer',
+  'Backend Developer',
+  'Full Stack Developer',
+  'Full Stack React / Node Developer',
+  'Team Leader',
+  'Telecaller',
+  'Customer Support & Verification',
+  'Partner Relationship Manager',
+  'Operations Associate',
+];
 
 const calculateAge = (dob: string): number | null => {
   if (!dob) return null;
@@ -70,6 +140,8 @@ const calculateAge = (dob: string): number | null => {
   if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age--;
   return age;
 };
+
+type SelectOption = string | { label: string; value: string };
 
 // Simple dropdown select built on Modal (no external picker dependency)
 function FormSelect({
@@ -83,13 +155,15 @@ function FormSelect({
 }: {
   label: string;
   value: string;
-  options: string[];
+  options: SelectOption[];
   onSelect: (v: string) => void;
   placeholder?: string;
   required?: boolean;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const normalized = options.map((o) => (typeof o === 'string' ? { label: o, value: o } : o));
+  const selectedLabel = normalized.find((o) => o.value === value)?.label;
   return (
     <View>
       <Text style={styles.inputLabel}>
@@ -102,7 +176,7 @@ function FormSelect({
         disabled={disabled}
       >
         <Text style={[styles.selectText, !value && { color: colors.textLight }]}>
-          {value || placeholder}
+          {selectedLabel || value || placeholder}
         </Text>
         <Icon name="chevron-down" size={16} color={colors.textLight} />
       </TouchableOpacity>
@@ -110,17 +184,17 @@ function FormSelect({
         <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setOpen(false)}>
           <View style={styles.modalCard}>
             <FlatList
-              data={options}
-              keyExtractor={(i) => i}
+              data={normalized}
+              keyExtractor={(o) => o.value}
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={styles.modalOption}
                   onPress={() => {
-                    onSelect(item);
+                    onSelect(item.value);
                     setOpen(false);
                   }}
                 >
-                  <Text style={styles.modalOptionText}>{item}</Text>
+                  <Text style={styles.modalOptionText}>{item.label}</Text>
                 </TouchableOpacity>
               )}
             />
@@ -133,8 +207,9 @@ function FormSelect({
 
 export default function CareersScreen() {
   const [activeTab, setActiveTab] = useState<'openings' | 'apply' | 'status'>('openings');
+  const params = useLocalSearchParams();
 
-  // Application Form State
+  // Application Form State (mirrors website InterviewRegistration formData)
   const [form, setForm] = useState({
     first_name: '',
     middle_name: '',
@@ -149,22 +224,26 @@ export default function CareersScreen() {
     address_district: '',
     address_city: '',
     pincode: '',
-    highest_qualification: 'Graduate',
+    highest_qualification: '',
     twelfth_stream: '',
     twelfth_stream_other: '',
     degree_type: '',
     degree_other: '',
     diploma_type: '',
+    diploma_other: '',
     pursuing_year: '',
     passing_year: '',
+    target_role: 'Financial Sales Executive',
     experience_type: 'Fresher',
-    total_experience_years: '',
+    total_experience_years: '0',
     current_company: '',
     current_designation: '',
     last_salary_ctc: '',
-    expected_salary: '',
     previous_salary: '',
-    target_role: 'TC',
+    immediate_joining: 'Yes',
+    notice_period_days: '0',
+    comfortable_with_location: 'Yes',
+    relevant_experience: 'Yes',
     selected_hr: 'Riya',
     hr_name: '',
     how_did_you_hear: 'WorkIndia / Job Portal',
@@ -196,7 +275,7 @@ export default function CareersScreen() {
   const dobIsFuture = !!form.date_of_birth && candidateAge !== null && candidateAge < 0;
   const ageInvalid = dobIsFuture || (candidateAge !== null && candidateAge < 18);
 
-  const degreeOptions = form.highest_qualification === 'Post Graduate' ? PG_DEGREES : GRADUATE_DEGREES;
+  const degreeOptions = form.highest_qualification === 'Post Graduate' ? PG_DEGREES : UG_DEGREES;
   const passingYearOptions = useMemo(() => {
     const currentYear = new Date().getFullYear();
     if (form.highest_qualification === 'Pursuing') {
@@ -204,6 +283,22 @@ export default function CareersScreen() {
     }
     return Array.from({ length: currentYear - 1980 + 1 }, (_, i) => String(currentYear - i));
   }, [form.highest_qualification]);
+
+  // Referral code from deep-link params — same keys the website reads (?ref, ?emp, ...)
+  const referredByCode = useMemo(() => {
+    const raw =
+      params.ref || params.emp || params.employee_code || params.referral_code ||
+      params.referral || params.referralCode || params.token || params.code;
+    const v = Array.isArray(raw) ? raw[0] : raw;
+    return typeof v === 'string' ? v : '';
+  }, [params]);
+
+  useEffect(() => {
+    if (referredByCode) {
+      setForm((prev) => ({ ...prev, how_did_you_hear: 'Employee Reference' }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [referredByCode]);
 
   const handleSendMobileOtp = async () => {
     const mob = form.mobile_number.replace(/\D/g, '').slice(-10);
@@ -289,10 +384,10 @@ export default function CareersScreen() {
   };
 
   const educationDetail =
-    form.highest_qualification === '12th Pass'
+    form.highest_qualification === '12th'
       ? form.twelfth_stream === 'Other' ? form.twelfth_stream_other : form.twelfth_stream
       : form.highest_qualification === 'Diploma'
-        ? form.diploma_type
+        ? form.diploma_type === 'Other' ? form.diploma_other : form.diploma_type
         : form.degree_type === 'Other' ? form.degree_other : form.degree_type;
 
   const handleApply = async () => {
@@ -301,54 +396,145 @@ export default function CareersScreen() {
       .filter(Boolean)
       .join(' ');
 
-    if (!form.first_name.trim() || !form.last_name.trim()) {
-      Alert.alert('Required', 'Please enter First Name and Last Name');
+    // ── Validation mirrors the website form exactly ──
+    if (!form.first_name.trim() || !form.middle_name.trim() || !form.last_name.trim()) {
+      Alert.alert('Required', 'First Name, Middle Name, and Last Name are all required.');
       return;
     }
-    if (dobIsFuture) {
-      Alert.alert('Invalid DOB', 'Date of Birth cannot be in the future');
+    if (!form.mobile_number || form.mobile_number.replace(/\D/g, '').length !== 10) {
+      Alert.alert('Required', 'Please enter a valid 10-digit mobile number.');
       return;
     }
-    if (candidateAge !== null && candidateAge < 18) {
-      Alert.alert('Age Restriction', '⚠️ Candidate must be at least 18 years old to apply');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email_id.trim())) {
+      Alert.alert('Required', 'Please enter a valid Email address.');
       return;
     }
     if (!mobileVerified) {
-      Alert.alert('Verification Required', 'Please verify your Mobile Number with OTP');
+      Alert.alert('Verification Required', 'Please verify your Mobile Number with OTP before submitting.');
       return;
     }
     if (!emailVerified) {
-      Alert.alert('Verification Required', 'Please verify your Email Address with OTP');
+      Alert.alert('Verification Required', 'Please verify your Email Address with OTP before submitting.');
       return;
     }
-    if (!form.address_state || !form.address_district || !form.address_city.trim() || !form.pincode.trim()) {
-      Alert.alert('Required', 'Please complete your address (State, District, City, Pincode)');
+    if (!form.date_of_birth) {
+      Alert.alert('Required', 'Date of Birth is required.');
+      return;
+    }
+    if (dobIsFuture) {
+      Alert.alert('Invalid DOB', 'Date of Birth cannot be in the future.');
+      return;
+    }
+    if (candidateAge === null || candidateAge < 18) {
+      Alert.alert('Age Restriction', '⚠️ Candidate must be at least 18 years old to apply.');
+      return;
+    }
+    if (!form.address_flat_no.trim() || !form.address_society.trim() || !form.address_area.trim() ||
+        !form.address_state || !form.address_district || !form.address_city.trim() || !form.pincode.trim()) {
+      Alert.alert('Required', 'Please complete all address fields (Flat No., Society, Area, State, District, City, Pincode).');
+      return;
+    }
+    if (!form.highest_qualification) {
+      Alert.alert('Required', 'Please select your Highest Educational Qualification.');
+      return;
+    }
+    if (form.highest_qualification === '12th') {
+      if (!form.twelfth_stream) {
+        Alert.alert('Required', 'Please select your 12th Stream (Commerce, Science, Arts, Other).');
+        return;
+      }
+      if (form.twelfth_stream === 'Other' && !form.twelfth_stream_other.trim()) {
+        Alert.alert('Required', 'Please specify your 12th Stream name.');
+        return;
+      }
+    }
+    if (form.highest_qualification === 'Graduate') {
+      if (!form.degree_type) {
+        Alert.alert('Required', 'Please select your Graduate Degree Type.');
+        return;
+      }
+      if (form.degree_type === 'Other' && !form.degree_other.trim()) {
+        Alert.alert('Required', 'Please specify your Graduate Degree name.');
+        return;
+      }
+    }
+    if (form.highest_qualification === 'Diploma') {
+      if (!form.diploma_type) {
+        Alert.alert('Required', 'Please select your Diploma Type.');
+        return;
+      }
+      if (form.diploma_type === 'Other' && !form.diploma_other.trim()) {
+        Alert.alert('Required', 'Please specify your Diploma name.');
+        return;
+      }
+    }
+    if (form.highest_qualification === 'Post Graduate') {
+      if (!form.degree_type) {
+        Alert.alert('Required', 'Please select your Post Graduate Degree Type.');
+        return;
+      }
+      if (form.degree_type === 'Other' && !form.degree_other.trim()) {
+        Alert.alert('Required', 'Please specify your Post Graduate Degree name.');
+        return;
+      }
+    }
+    if (form.highest_qualification === 'Pursuing') {
+      if (!form.degree_type) {
+        Alert.alert('Required', 'Please select your Pursuing Degree Type.');
+        return;
+      }
+      if (form.degree_type === 'Other' && !form.degree_other.trim()) {
+        Alert.alert('Required', 'Please specify your Pursuing Degree name.');
+        return;
+      }
+      if (!form.pursuing_year) {
+        Alert.alert('Required', 'Please select your Current Year of Study.');
+        return;
+      }
+    }
+    if (!form.passing_year) {
+      Alert.alert('Required', 'Please select your Passing Year / Expected Passing Year.');
+      return;
+    }
+    if (form.experience_type === 'Experienced') {
+      if (!form.total_experience_years.trim() || !form.current_company.trim() || !form.current_designation.trim()) {
+        Alert.alert('Required', 'Please complete Total Experience, Current / Last Company and Designation.');
+        return;
+      }
+      if (!form.previous_salary.trim()) {
+        Alert.alert('Required', 'Please enter your Previous Salary (Monthly ₹).');
+        return;
+      }
+    }
+    if (!form.immediate_joining) {
+      Alert.alert('Required', 'Please select if you are available for Immediate Joining.');
+      return;
+    }
+    if (form.immediate_joining === 'No' && !form.notice_period_days.trim()) {
+      Alert.alert('Required', 'Please enter your Notice Period (Days).');
+      return;
+    }
+    if (!form.comfortable_with_location) {
+      Alert.alert('Required', 'Please select if you are comfortable with the job location.');
+      return;
+    }
+    if (!form.relevant_experience) {
+      Alert.alert('Required', 'Please select if you have relevant experience.');
       return;
     }
     if (!form.selected_hr) {
-      Alert.alert('Required', 'Please select an HR');
+      Alert.alert('Required', 'Please select an HR reference.');
       return;
     }
-    if ((form.selected_hr === 'Other HR / Reference' || form.selected_hr === 'Other') && !form.hr_name.trim()) {
-      Alert.alert('Required', 'Please enter HR Name / Reference Details');
+    const needsHrDetail =
+      form.selected_hr === 'Other' || form.selected_hr === 'Other HR / Reference' ||
+      form.how_did_you_hear === 'Employee Reference' || form.how_did_you_hear === 'Other';
+    if (needsHrDetail && !form.hr_name.trim()) {
+      Alert.alert('Required', form.how_did_you_hear === 'Employee Reference'
+        ? 'Please enter Referring Employee Name or ID.'
+        : 'Please enter the HR Name or Reference details.');
       return;
     }
-    if (form.how_did_you_hear === 'Employee Reference' && !form.hr_name.trim()) {
-      Alert.alert('Required', 'Please enter the Referring Employee Name / ID');
-      return;
-    }
-    if (form.experience_type === 'Experienced' && !form.previous_salary.trim()) {
-      Alert.alert('Required', 'Previous Salary (Monthly ₹) is mandatory for experienced candidates');
-      return;
-    }
-
-    const composedAddress = [
-      form.address_flat_no, form.address_society, form.address_area,
-      form.address_city, form.address_district, form.address_state, form.pincode,
-    ].map((v) => v.trim()).filter(Boolean).join(', ');
-
-    const isOtherHr = form.selected_hr === 'Other HR / Reference' || form.selected_hr === 'Other';
-    const finalHrName = isOtherHr ? form.hr_name.trim() : form.selected_hr;
 
     setSubmitting(true);
     try {
@@ -358,10 +544,10 @@ export default function CareersScreen() {
         middle_name: form.middle_name.trim(),
         last_name: form.last_name.trim(),
         age: candidateAge,
-        mobile_number: form.mobile_number.trim(),
+        mobile_number: form.mobile_number.replace(/\D/g, '').slice(-10),
         email_id: form.email_id.trim().toLowerCase(),
         date_of_birth: form.date_of_birth,
-        current_address: composedAddress,
+        current_address: `${form.address_flat_no.trim()}, ${form.address_society.trim()}, ${form.address_area.trim()}, ${form.address_city.trim()}, ${form.address_district}, ${form.address_state} - ${form.pincode.trim()}`,
         address_flat_no: form.address_flat_no.trim(),
         address_society: form.address_society.trim(),
         address_area: form.address_area.trim(),
@@ -369,23 +555,29 @@ export default function CareersScreen() {
         address_district: form.address_district,
         address_city: form.address_city.trim(),
         pincode: form.pincode.trim(),
-        highest_qualification: (educationDetail ? `${form.highest_qualification} - ${educationDetail}` : form.highest_qualification).slice(0, 100),
-        education_stream: form.highest_qualification === '12th Pass' ? (form.twelfth_stream === 'Other' ? form.twelfth_stream_other : form.twelfth_stream) : '',
+        highest_qualification: form.highest_qualification,
+        education_stream: form.highest_qualification === '12th' ? form.twelfth_stream : '',
         education_detail: educationDetail,
         pursuing_year: form.pursuing_year,
         passing_year: form.passing_year,
         experience_type: form.experience_type,
-        total_experience_years: form.total_experience_years,
+        total_experience_years: form.total_experience_years || '0',
         current_company: form.current_company.trim(),
         current_designation: form.current_designation.trim(),
         last_salary_ctc: form.last_salary_ctc,
-        expected_salary: form.expected_salary,
-        previous_salary: form.previous_salary,
-        target_role: form.target_role,
-        selected_hr: form.selected_hr,
-        hr_name: finalHrName,
-        hr_reference: form.hr_name.trim() || null,
+        expected_salary: form.experience_type === 'Experienced' ? form.previous_salary : '',
+        previous_salary: form.experience_type === 'Experienced' ? form.previous_salary : '',
+        immediate_joining: form.immediate_joining === 'Yes',
+        notice_period_days: form.immediate_joining === 'Yes' ? '0' : form.notice_period_days,
+        comfortable_with_location: form.comfortable_with_location === 'Yes',
+        relevant_experience: form.relevant_experience === 'Yes',
         how_did_you_hear: form.how_did_you_hear,
+        selected_hr: form.selected_hr,
+        hr_name: form.hr_name.trim(),
+        hr_reference: form.hr_name.trim() || null,
+        referred_by_employee_id: referredByCode || null,
+        ref: referredByCode || null,
+        target_role: form.target_role,
       });
 
       const ref = res?.data?.reference_code || res?.data?.data?.reference_code;
@@ -499,7 +691,8 @@ export default function CareersScreen() {
               <Button
                 title="Apply for this Role"
                 onPress={() => {
-                  setField('target_role', job.role.includes('TC') ? 'TC' : job.role.includes('TL') ? 'TL' : 'Operations');
+                  const role = job.role;
+                  setField('target_role', role.includes('TC') ? 'Telecaller' : role.includes('TL') ? 'Team Leader' : 'Operations Associate');
                   setActiveTab('apply');
                 }}
                 style={{ marginTop: spacing.sm }}
@@ -528,7 +721,7 @@ export default function CareersScreen() {
             value={form.first_name}
             onChangeText={(v) => setField('first_name', v)}
           />
-          <Text style={styles.inputLabel}>Middle Name</Text>
+          <Text style={styles.inputLabel}>Middle Name *</Text>
           <TextInput
             style={styles.textInput}
             placeholder="Enter middle name"
@@ -665,11 +858,11 @@ export default function CareersScreen() {
 
           {/* 2. Address */}
           <Text style={styles.sectionTitle}>2. Current Residential Address</Text>
-          <Text style={styles.inputLabel}>Flat No. / House No.</Text>
+          <Text style={styles.inputLabel}>Flat No. / House No. *</Text>
           <TextInput style={styles.textInput} placeholder="Flat 402 / House 12" placeholderTextColor={colors.textLight} value={form.address_flat_no} onChangeText={(v) => setField('address_flat_no', v)} />
-          <Text style={styles.inputLabel}>Society / Apartment Name</Text>
+          <Text style={styles.inputLabel}>Society / Apartment Name *</Text>
           <TextInput style={styles.textInput} placeholder="Green Valley Heights" placeholderTextColor={colors.textLight} value={form.address_society} onChangeText={(v) => setField('address_society', v)} />
-          <Text style={styles.inputLabel}>Area / Landmark</Text>
+          <Text style={styles.inputLabel}>Area / Landmark *</Text>
           <TextInput style={styles.textInput} placeholder="Near Metro Station / Main Road" placeholderTextColor={colors.textLight} value={form.address_area} onChangeText={(v) => setField('address_area', v)} />
           <FormSelect
             label="State"
@@ -710,12 +903,13 @@ export default function CareersScreen() {
               setField('degree_type', '');
               setField('degree_other', '');
               setField('diploma_type', '');
+              setField('diploma_other', '');
               setField('pursuing_year', '');
               setField('passing_year', '');
             }}
             required
           />
-          {form.highest_qualification === '12th Pass' && (
+          {form.highest_qualification === '12th' && (
             <>
               <FormSelect label="Stream" value={form.twelfth_stream} options={TWELFTH_STREAMS} onSelect={(v) => { setField('twelfth_stream', v); setField('twelfth_stream_other', ''); }} required />
               {form.twelfth_stream === 'Other' && (
@@ -732,7 +926,12 @@ export default function CareersScreen() {
             </>
           )}
           {form.highest_qualification === 'Diploma' && (
-            <FormSelect label="Diploma Type" value={form.diploma_type} options={DIPLOMA_TYPES} onSelect={setField.bind(null, 'diploma_type')} required />
+            <>
+              <FormSelect label="Diploma Type" value={form.diploma_type} options={DIPLOMA_TYPES} onSelect={(v) => { setField('diploma_type', v); setField('diploma_other', ''); }} required />
+              {form.diploma_type === 'Other' && (
+                <TextInput style={styles.textInput} placeholder="Specify Diploma Name" placeholderTextColor={colors.textLight} value={form.diploma_other} onChangeText={(v) => setField('diploma_other', v)} />
+              )}
+            </>
           )}
           {form.highest_qualification === 'Post Graduate' && (
             <>
@@ -758,7 +957,7 @@ export default function CareersScreen() {
           <FormSelect
             label="Target Job Role"
             value={form.target_role}
-            options={['TC', 'Team Leader', 'Operations', 'Financial Sales Executive', 'Credit Card Specialist', 'Telecaller', 'Customer Support & Verification', 'Full Stack React / Node Developer', 'Partner Relationship Manager', 'Operations Associate']}
+            options={TARGET_ROLE_OPTIONS}
             onSelect={(v) => setField('target_role', v)}
             required
           />
@@ -766,29 +965,67 @@ export default function CareersScreen() {
             label="Fresher / Experienced"
             value={form.experience_type}
             options={EXPERIENCE_OPTIONS}
-            onSelect={(v) => setField('experience_type', v)}
+            onSelect={(v) => {
+              setField('experience_type', v);
+              if (v === 'Fresher') setField('previous_salary', '');
+            }}
             required
           />
           {form.experience_type === 'Experienced' && (
             <>
-              <Text style={styles.inputLabel}>Total Experience (Years)</Text>
+              <Text style={styles.inputLabel}>Total Experience (Years) *</Text>
               <TextInput style={styles.textInput} placeholder="e.g. 2.5" placeholderTextColor={colors.textLight} value={form.total_experience_years} onChangeText={(v) => setField('total_experience_years', v)} keyboardType="decimal-pad" />
-              <Text style={styles.inputLabel}>Current / Last Company</Text>
+              <Text style={styles.inputLabel}>Current / Last Company *</Text>
               <TextInput style={styles.textInput} placeholder="e.g. HDFC / Axis DSA" placeholderTextColor={colors.textLight} value={form.current_company} onChangeText={(v) => setField('current_company', v)} />
-              <Text style={styles.inputLabel}>Current / Last Designation</Text>
+              <Text style={styles.inputLabel}>Current / Last Designation *</Text>
               <TextInput style={styles.textInput} placeholder="e.g. Senior Executive" placeholderTextColor={colors.textLight} value={form.current_designation} onChangeText={(v) => setField('current_designation', v)} />
-              <Text style={styles.inputLabel}>Last Salary / CTC</Text>
+              <Text style={styles.inputLabel}>Last Annual CTC (₹)</Text>
               <TextInput style={styles.textInput} placeholder="e.g. 3,50,000" placeholderTextColor={colors.textLight} value={form.last_salary_ctc} onChangeText={(v) => setField('last_salary_ctc', v)} keyboardType="numeric" />
-              <Text style={styles.inputLabel}>Previous Salary (Monthly ₹) *</Text>
-              <TextInput style={styles.textInput} placeholder="e.g. 30,000" placeholderTextColor={colors.textLight} value={form.previous_salary} onChangeText={(v) => setField('previous_salary', v)} keyboardType="numeric" />
             </>
           )}
-          {form.experience_type === 'Fresher' && (
+          {/* Previous Salary (Monthly ₹) — required for Experienced, disabled for Freshers (same as website) */}
+          <Text style={styles.inputLabel}>
+            Previous Salary (Monthly ₹) {form.experience_type === 'Experienced' ? '*' : '(Optional for Freshers)'}
+          </Text>
+          <TextInput
+            style={[styles.textInput, form.experience_type === 'Fresher' && { opacity: 0.6 }]}
+            placeholder={form.experience_type === 'Fresher' ? 'Not applicable for Freshers' : 'e.g. 25,000'}
+            placeholderTextColor={colors.textLight}
+            value={form.experience_type === 'Fresher' ? '' : form.previous_salary}
+            onChangeText={(v) => setField('previous_salary', v)}
+            keyboardType="numeric"
+            editable={form.experience_type !== 'Fresher'}
+          />
+          <FormSelect
+            label="Available for Immediate Joining?"
+            value={form.immediate_joining}
+            options={IMMEDIATE_JOINING_OPTIONS}
+            onSelect={(v) => {
+              setField('immediate_joining', v);
+              if (v === 'Yes') setField('notice_period_days', '0');
+            }}
+            required
+          />
+          {form.immediate_joining === 'No' && (
             <>
-              <Text style={styles.inputLabel}>Expected Salary (Monthly ₹)</Text>
-              <TextInput style={styles.textInput} placeholder="e.g. 25,000" placeholderTextColor={colors.textLight} value={form.expected_salary} onChangeText={(v) => setField('expected_salary', v)} keyboardType="numeric" />
+              <Text style={styles.inputLabel}>Notice Period (Days) *</Text>
+              <TextInput style={styles.textInput} placeholder="e.g. 15" placeholderTextColor={colors.textLight} value={form.notice_period_days} onChangeText={(v) => setField('notice_period_days', v)} keyboardType="number-pad" />
             </>
           )}
+          <FormSelect
+            label="Comfortable with job location?"
+            value={form.comfortable_with_location}
+            options={LOCATION_OPTIONS}
+            onSelect={(v) => setField('comfortable_with_location', v)}
+            required
+          />
+          <FormSelect
+            label="Do you have relevant experience?"
+            value={form.relevant_experience}
+            options={RELEVANT_EXPERIENCE_OPTIONS}
+            onSelect={(v) => setField('relevant_experience', v)}
+            required
+          />
 
           {/* 5. HR & Source */}
           <Text style={styles.sectionTitle}>5. HR & Source</Text>
@@ -802,7 +1039,7 @@ export default function CareersScreen() {
             }}
             required
           />
-          {(form.selected_hr === 'Other HR / Reference' || form.selected_hr === 'Other' || form.how_did_you_hear === 'Employee Reference') && (
+          {(form.selected_hr === 'Other HR / Reference' || form.selected_hr === 'Other' || form.how_did_you_hear === 'Employee Reference' || form.how_did_you_hear === 'Other') && (
             <>
               <Text style={styles.inputLabel}>
                 {form.how_did_you_hear === 'Employee Reference' ? 'Referring Employee Name / Reference Details *' : 'HR Name / Reference Details *'}

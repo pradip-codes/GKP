@@ -232,29 +232,45 @@ export default function RegisterScreen() {
     }
   };
 
-  // ── WELCOME SCREEN ──
+  // ── WELCOME SCREEN (same layout as website PartnerRegister welcome step) ──
   if (showWelcome) {
     return (
       <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
-        <ScrollView contentContainerStyle={styles.welcomeScroll}>
-          <Image
-            source={require('../../assets/images/offerbanner.png')}
-            style={styles.welcomeBg}
-            resizeMode="cover"
-          />
-          <View style={styles.welcomeOverlay}>
+        <View style={[styles.welcomePage, { backgroundColor: colors.bg }]}>
+          {/* Logo */}
+          <View style={styles.welcomeLogoWrap}>
             <Image
               source={require('../../assets/images/logo.png')}
               style={styles.welcomeLogo}
               resizeMode="contain"
             />
-            <Text style={[styles.welcomeTitle, { color: colors.text }]}>
-              Welcome to GharKaPaisa
-            </Text>
-            <Text style={[styles.welcomeSubtitle, { color: colors.textMid }]}>
-              Your journey to financial success starts here. Register as a partner and start earning commissions today.
-            </Text>
+          </View>
 
+          {/* Header text */}
+          <View style={styles.welcomeHeader}>
+            <Text style={[styles.welcomeTitle, { color: colors.text }]}>
+              Welcome to{' '}
+              <Text style={{ color: colors.primary }}>GharKaPaisa</Text>
+            </Text>
+            <Text style={[styles.welcomeSubtitle, { color: colors.textLight }]}>
+              India's Trusted Financial Partner Platform
+            </Text>
+            <Text style={[styles.welcomeDesc, { color: colors.textMid }]}>
+              Start earning by offering Credit Cards, Loans, Insurance and Financial Services to your customers.
+            </Text>
+          </View>
+
+          {/* Illustration — same asset as website welcome step */}
+          <View style={styles.welcomeIllustration}>
+            <Image
+              source={require('../../assets/images/welcome-pg-bg.webp')}
+              style={styles.welcomeIllustrationImg}
+              resizeMode="contain"
+            />
+          </View>
+
+          {/* Bottom actions */}
+          <View style={styles.welcomeActions}>
             <TouchableOpacity
               style={[styles.welcomePrimaryBtn, { backgroundColor: colors.primary }]}
               onPress={() => setShowWelcome(false)}
@@ -273,7 +289,7 @@ export default function RegisterScreen() {
               </Text>
             </TouchableOpacity>
           </View>
-        </ScrollView>
+        </View>
       </SafeAreaView>
     );
   }
@@ -285,7 +301,7 @@ export default function RegisterScreen() {
         <ScrollView contentContainerStyle={styles.successScroll}>
           <View style={[styles.successCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.successIconCircle}>
-              <Text style={{ fontSize: 40 }}>🎉</Text>
+              <Icon name="check-circle" size={40} color={colors.primary} />
             </View>
             <Text style={[styles.successTitle, { color: colors.text }]}>Welcome to GharKaPaisa!</Text>
             <Text style={[styles.successSubtitle, { color: colors.textMid }]}>
@@ -352,7 +368,7 @@ export default function RegisterScreen() {
           <View style={[styles.formCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.badgeRow}>
               <View style={styles.partnerBadge}>
-                <Text style={styles.partnerBadgeText}>Partner Program 🚀</Text>
+                <Text style={styles.partnerBadgeText}>Partner Program</Text>
               </View>
             </View>
 
@@ -388,7 +404,7 @@ export default function RegisterScreen() {
                         ]}
                       >
                         {isCompleted ? (
-                          <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '900' }}>✓</Text>
+                          <Icon name="check" size={12} color="#FFF" />
                         ) : (
                           <Text
                             style={[
@@ -435,7 +451,7 @@ export default function RegisterScreen() {
             {/* Error Banner */}
             {errorMsg && (
               <View style={styles.errorBanner}>
-                <Text style={{ fontSize: 14 }}>⚠️</Text>
+                <Icon name="alert-circle" size={14} color={colors.error} />
                 <Text style={styles.errorBannerText}>{errorMsg}</Text>
               </View>
             )}
@@ -509,7 +525,7 @@ export default function RegisterScreen() {
                       secureTextEntry={!showPassword}
                     />
                     <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={{ padding: 6 }}>
-                      <Text style={{ fontSize: 14 }}>{showPassword ? '👁️' : '🙈'}</Text>
+                      <Icon name={showPassword ? 'eye' : 'eye-off'} size={15} color={colors.textLight} />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -526,7 +542,7 @@ export default function RegisterScreen() {
                       secureTextEntry={!showConfirmPassword}
                     />
                     <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={{ padding: 6 }}>
-                      <Text style={{ fontSize: 14 }}>{showConfirmPassword ? '👁️' : '🙈'}</Text>
+                      <Icon name={showConfirmPassword ? 'eye' : 'eye-off'} size={15} color={colors.textLight} />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -649,7 +665,7 @@ export default function RegisterScreen() {
                     <Text style={[styles.dropdownText, { color: form.bankName ? colors.text : colors.textLight }]}>
                       {form.bankName || 'Select your bank'}
                     </Text>
-                    <Text style={{ fontSize: 14, color: colors.textLight }}>▼</Text>
+                    <Icon name="chevron-down" size={14} color={colors.textLight} />
                   </TouchableOpacity>
                 </View>
 
@@ -759,7 +775,7 @@ export default function RegisterScreen() {
                       },
                     ]}
                   >
-                    {form.termsAgreed && <Text style={{ color: '#FFF', fontSize: 11, fontWeight: '900' }}>✓</Text>}
+                    {form.termsAgreed && <Icon name="check" size={11} color="#FFF" />}
                   </View>
                   <Text style={[styles.termsText, { color: colors.textMid }]}>
                     I confirm that the details provided are accurate and I agree to the{' '}
@@ -815,7 +831,7 @@ export default function RegisterScreen() {
               <View style={styles.modalHeader}>
                 <Text style={[styles.modalTitle, { color: colors.text }]}>Select Bank</Text>
                 <TouchableOpacity onPress={() => setBankDropdownVisible(false)}>
-                  <Text style={{ fontSize: 20, color: colors.text }}>✕</Text>
+                  <Icon name="close" size={18} color={colors.text} />
                 </TouchableOpacity>
               </View>
 
@@ -835,7 +851,7 @@ export default function RegisterScreen() {
                     activeOpacity={0.7}
                   >
                     <Text style={[styles.bankOptionText, { color: colors.text }]}>{bank}</Text>
-                    {form.bankName === bank && <Text style={{ color: colors.primary, fontSize: 16 }}>✓</Text>}
+                    {form.bankName === bank && <Icon name="check" size={16} color={colors.primary} />}
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -851,41 +867,57 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
   },
-  welcomeScroll: {
-    flexGrow: 1,
-  },
-  welcomeBg: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    width: '100%',
-    height: '100%',
-  },
-  welcomeOverlay: {
+  welcomePage: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 28,
+  },
+  welcomeLogoWrap: {
+    alignItems: 'center',
+    marginBottom: 20,
   },
   welcomeLogo: {
-    width: 180,
-    height: 50,
-    marginBottom: 24,
+    width: 170,
+    height: 46,
   },
-  welcomeTitle: {
-    fontSize: 28,
-    fontWeight: '900',
-    textAlign: 'center',
+  welcomeHeader: {
+    alignItems: 'center',
     marginBottom: 12,
   },
-  welcomeSubtitle: {
-    fontSize: 15,
+  welcomeTitle: {
+    fontSize: 24,
+    fontWeight: '900',
     textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 32,
+    marginBottom: 6,
+  },
+  welcomeSubtitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  welcomeDesc: {
+    fontSize: 12.5,
+    lineHeight: 18,
+    textAlign: 'center',
+    paddingHorizontal: 8,
+  },
+  welcomeIllustration: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  welcomeIllustrationImg: {
+    width: '100%',
+    height: '100%',
+    maxHeight: 320,
+  },
+  welcomeActions: {
+    width: '100%',
+    alignItems: 'center',
   },
   welcomePrimaryBtn: {
     flexDirection: 'row',
@@ -909,6 +941,7 @@ const styles = StyleSheet.create({
   welcomeLoginLink: {
     fontSize: 14,
     fontWeight: '700',
+    marginTop: 14,
   },
   navBar: {
     height: 56,

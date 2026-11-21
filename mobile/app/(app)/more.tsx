@@ -13,6 +13,42 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { spacing } from '../../theme/spacing';
+import { Icon } from '../../components/Icon';
+
+// Which roles may see each menu item (SUPER_ADMIN always sees everything)
+const ITEM_ROLES: Record<string, string[]> = {
+  // Core operations
+  'op-queue': ['EMPLOYEE', 'ADMIN'],
+  'leads': ['PARTNER', 'TEAM_MEMBER', 'EMPLOYEE', 'ADMIN'],
+  'team': ['PARTNER', 'TEAM_MEMBER', 'ADMIN'],
+  // Financials & products
+  'employee-credit-cards': ['EMPLOYEE', 'ADMIN'],
+  'employee-loan-on-card': ['EMPLOYEE', 'ADMIN'],
+  'employee-smart-emi': ['EMPLOYEE', 'ADMIN'],
+  'referrals': ['EMPLOYEE', 'ADMIN'],
+  'wallet': ['PARTNER', 'TEAM_MEMBER', 'EMPLOYEE', 'ADMIN'],
+  'incentives': ['EMPLOYEE', 'ADMIN'],
+  'employee-incentives': ['EMPLOYEE', 'ADMIN'],
+  'reports': ['EMPLOYEE', 'ADMIN'],
+  'whatsapp': ['EMPLOYEE', 'ADMIN'],
+  // Account & support
+  'share-tracking': ['PARTNER', 'TEAM_MEMBER', 'EMPLOYEE', 'ADMIN'],
+  'vault': ['PARTNER', 'TEAM_MEMBER', 'ADMIN'],
+  'partner-kyc': ['PARTNER', 'TEAM_MEMBER', 'ADMIN'],
+  'employee-sales-report': ['EMPLOYEE', 'ADMIN'],
+  'employee-onboarding': ['EMPLOYEE', 'HR', 'ADMIN'],
+  'hr-dashboard': ['HR', 'ADMIN'],
+  // Role panels
+  'admin-dashboard': ['ADMIN'],
+  'admin-partners': ['ADMIN'],
+  'admin-withdrawals': ['ADMIN'],
+  'hr-candidates': ['HR', 'ADMIN'],
+  'attendance': ['EMPLOYEE', 'ADMIN'],
+  'employee-dashboard': ['EMPLOYEE'],
+  'partner-dashboard': ['PARTNER', 'TEAM_MEMBER'],
+  'team-dashboard': ['TEAM_MEMBER'],
+  'super-admin-hub': ['SUPER_ADMIN'],
+};
 
 interface MenuItem {
   id: string;
@@ -28,26 +64,35 @@ export default function MoreScreen() {
   const { userRole, userDesignation, logout } = useAuth();
   const { colors, isDark } = useTheme();
 
+  // ── Role-based visibility (mirrors website role layouts) ──
+  // SUPER_ADMIN bypasses all filters and sees everything.
+  const role = (userRole || '').toUpperCase();
+  const canSee = (id: string) => {
+    if (role === 'SUPER_ADMIN') return true;
+    const allowed = ITEM_ROLES[id];
+    return !allowed || allowed.includes(role);
+  };
+
   const coreOperations: MenuItem[] = [
     {
       id: 'op-queue',
       title: 'Operational Queue Desk',
       subtitle: 'Review & process assigned applications queue',
-      icon: '💼',
+      icon: 'briefcase',
       route: '/(app)/op-queue'
     },
     {
       id: 'leads',
       title: 'Leads & CRM',
       subtitle: 'Manage card, loan, & insurance direct leads',
-      icon: '📈',
+      icon: 'trending-up',
       route: '/(app)/leads'
     },
     {
       id: 'team',
       title: 'Team & Staff',
       subtitle: 'Overview of team members & active assignments',
-      icon: '👥',
+      icon: 'people',
       route: '/(app)/employee-team'
     }
   ];
@@ -57,63 +102,63 @@ export default function MoreScreen() {
       id: 'products',
       title: 'Products Portfolio',
       subtitle: 'Explore credit cards, loans, insurance & bank products',
-      icon: '💳',
+      icon: 'card',
       route: '/(app)/products'
     },
     {
       id: 'employee-credit-cards',
       title: 'Credit Cards Hub',
       subtitle: 'Bank-wise cards, reward perks & digital apply journeys',
-      icon: '💳',
+      icon: 'card',
       route: '/(app)/employee-credit-cards'
     },
     {
       id: 'employee-loan-on-card',
       title: 'Loan on Credit Card',
       subtitle: 'Insta cash credit & jumbo pre-approved loans',
-      icon: '🪙',
+      icon: 'cash',
       route: '/(app)/employee-loan-on-card'
     },
     {
       id: 'employee-smart-emi',
       title: 'Smart EMI on Card',
       subtitle: 'Convert credit card purchases into flexible EMIs',
-      icon: '🔄',
+      icon: 'refresh',
       route: '/(app)/employee-smart-emi'
     },
     {
       id: 'referrals',
       title: 'Referral Products & Links',
       subtitle: 'Product referral links & employee commission codes',
-      icon: '🔗',
+      icon: 'link',
       route: '/(app)/employee-referrals'
     },
     {
       id: 'wallet',
       title: 'Wallet & Payouts',
       subtitle: 'View earnings balance, commissions, & settlement history',
-      icon: '💰',
+      icon: 'wallet',
       route: '/(app)/wallet'
     },
     {
       id: 'incentives',
       title: 'Incentives & Rewards',
       subtitle: 'Personal performance target & incentive tracker',
-      icon: '🎁',
+      icon: 'gift',
       route: '/(app)/employee-incentives'
     },
     {
       id: 'reports',
       title: 'Operational Reports',
       subtitle: 'Analytical summaries & daily performance breakdown',
-      icon: '📊',
+      icon: 'analytics',
       route: '/(app)/reports'
     },
     {
       id: 'whatsapp',
       title: 'WhatsApp Business',
       subtitle: 'Dispatch official reports & user updates via WhatsApp',
-      icon: '💬',
+      icon: 'logo-whatsapp',
       route: '/(app)/whatsapp'
     }
   ];
@@ -123,136 +168,207 @@ export default function MoreScreen() {
       id: 'travel-utilities',
       title: 'Travel & Utilities',
       subtitle: 'Process bill payments, recharges, tickets & earn margin',
-      icon: '⚡',
+      icon: 'flash',
       route: '/(app)/travel-utilities'
     },
     {
       id: 'marketing',
       title: 'Marketing & Creatives',
       subtitle: 'Share branded posters, story banners & WhatsApp flyers',
-      icon: '📢',
+      icon: 'megaphone',
       route: '/(app)/marketing'
     },
     {
       id: 'training',
       title: 'Training & Learning Hub',
       subtitle: 'Product pitch walkthroughs & sales certification',
-      icon: '🎓',
+      icon: 'school',
       route: '/(app)/training'
     },
     {
       id: 'share-tracking',
       title: 'Share Link Tracking',
       subtitle: 'Live traffic clicks, conversion stats & leads',
-      icon: '📈',
+      icon: 'trending-up',
       route: '/(app)/share-tracking'
     },
     {
       id: 'vault',
       title: 'Partner Document Vault',
       subtitle: 'Secure encrypted compliance & agreement storage',
-      icon: '🗄️',
+      icon: 'archive',
       route: '/(app)/vault'
     },
     {
       id: 'partner-kyc',
       title: 'Partner KYC Centre',
       subtitle: 'Verify PAN & bank details for instant payouts',
-      icon: '🛡️',
+      icon: 'shield',
       route: '/(app)/partner-kyc'
     },
     {
       id: 'employee-incentives',
       title: 'Employee Incentives',
       subtitle: 'Monthly incentive tiers, target meters & bonus ledger',
-      icon: '🎁',
+      icon: 'gift',
       route: '/(app)/employee-incentives'
     },
     {
       id: 'employee-sales-report',
       title: 'Daily Sales Report',
       subtitle: 'Submit bank-wise daily cards sold with remarks',
-      icon: '📝',
+      icon: 'document-text',
       route: '/(app)/employee-sales-report'
     },
     {
       id: 'employee-onboarding',
       title: 'Employee Joining & KYC',
       subtitle: 'Complete onboarding form & verification tracker',
-      icon: '📋',
+      icon: 'clipboard',
       route: '/(app)/employee-onboarding'
     },
     {
       id: 'hr-dashboard',
       title: 'HR Recruitment Desk',
       subtitle: 'Candidate interview scheduling & talent pipeline',
-      icon: '👔',
+      icon: 'id-card',
       route: '/(app)/hr-dashboard'
-    },
-    {
-      id: 'super-admin-hub',
-      title: 'Super Admin Control Center',
-      subtitle: 'Master control center for all platform operations',
-      icon: '👑',
-      route: '/(app)/super-admin'
     },
     {
       id: 'support',
       title: 'Support Tickets',
       subtitle: 'Connect to support desk & manage open tickets',
-      icon: '🎧',
+      icon: 'headset',
       route: '/(app)/support'
     },
     {
       id: 'settings',
       title: 'App Settings',
       subtitle: 'Customize notification preferences & theme',
-      icon: '⚙️',
+      icon: 'settings',
       route: '/(app)/settings'
     },
     {
       id: 'profile',
       title: 'User Profile',
       subtitle: 'View personal details & designation info',
-      icon: '👤',
+      icon: 'person',
       route: '/(app)/profile'
     },
     {
       id: 'security',
       title: 'Security & Password',
       subtitle: 'Manage password, PIN & account security',
-      icon: '🔒',
+      icon: 'lock',
       route: '/(app)/security'
     }
   ];
 
-  const renderSection = (title: string, items: MenuItem[]) => (
+  // Role-specific panel shortcuts — each role sees only its own dashboards
+  const panelLinks: MenuItem[] = [
+    {
+      id: 'super-admin-hub',
+      title: 'Super Admin Control Center',
+      subtitle: 'Master control center for all platform operations',
+      icon: 'star',
+      route: '/(app)/super-admin'
+    },
+    {
+      id: 'admin-dashboard',
+      title: 'Admin Dashboard',
+      subtitle: 'Partner, KYC & withdrawal overview',
+      icon: 'shield',
+      route: '/(app)/admin-dashboard'
+    },
+    {
+      id: 'admin-partners',
+      title: 'Partner Management',
+      subtitle: 'Review & manage partner accounts',
+      icon: 'people',
+      route: '/(app)/admin-partners'
+    },
+    {
+      id: 'admin-withdrawals',
+      title: 'Withdrawal Requests',
+      subtitle: 'Approve or reject partner payouts',
+      icon: 'cash',
+      route: '/(app)/admin-withdrawals'
+    },
+    {
+      id: 'hr-dashboard',
+      title: 'HR Recruitment Desk',
+      subtitle: 'Candidate interviews & talent pipeline',
+      icon: 'id-card',
+      route: '/(app)/hr-dashboard'
+    },
+    {
+      id: 'hr-candidates',
+      title: 'HR Candidates',
+      subtitle: 'Interview, select & onboard candidates',
+      icon: 'clipboard',
+      route: '/(app)/hr-candidates'
+    },
+    {
+      id: 'employee-dashboard',
+      title: 'My Employee Dashboard',
+      subtitle: 'Personal workspace & earnings overview',
+      icon: 'person',
+      route: '/(app)/employee-dashboard'
+    },
+    {
+      id: 'partner-dashboard',
+      title: 'Partner Dashboard',
+      subtitle: 'Referral business & commission overview',
+      icon: 'storefront',
+      route: '/(app)/partner-dashboard'
+    },
+    {
+      id: 'team-dashboard',
+      title: 'Team Dashboard',
+      subtitle: 'Downline team performance',
+      icon: 'people',
+      route: '/(app)/team-dashboard'
+    },
+    {
+      id: 'attendance',
+      title: 'My Attendance',
+      subtitle: 'Check-in, tasks & daily report',
+      icon: 'location',
+      route: '/(app)/attendance'
+    },
+  ];
+
+  const renderSection = (title: string, items: MenuItem[]) => {
+    const visible = items.filter((item) => canSee(item.id));
+    if (visible.length === 0) return null;
+    return (
     <View style={styles.sectionContainer} key={title}>
       <Text style={[styles.sectionHeader, { color: colors.textLight }]}>{title}</Text>
       <View style={[styles.cardGroup, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        {items.map((item, idx) => (
+        {visible.map((item, idx) => (
           <TouchableOpacity
             key={item.id}
             style={[
               styles.menuRow,
               { borderBottomColor: colors.border },
-              idx === items.length - 1 && styles.noBorder,
+              idx === visible.length - 1 && styles.noBorder,
             ]}
             onPress={() => router.push(item.route as any)}
           >
             <View style={[styles.iconCircle, { backgroundColor: colors.bg, borderColor: colors.border }]}>
-              <Text style={styles.iconText}>{item.icon}</Text>
+              <Icon name={item.icon} size={18} color={colors.primary} />
             </View>
             <View style={styles.menuInfo}>
               <Text style={[styles.menuTitle, { color: colors.text }]}>{item.title}</Text>
               <Text style={[styles.menuSubtitle, { color: colors.textLight }]}>{item.subtitle}</Text>
             </View>
-            <Text style={[styles.chevron, { color: colors.textLight }]}>›</Text>
+            <Icon name="chevron-right" size={16} color={colors.textLight} />
           </TouchableOpacity>
         ))}
       </View>
     </View>
-  );
+    );
+  };
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
@@ -268,6 +384,9 @@ export default function MoreScreen() {
             </View>
           </View>
         </View>
+
+        {/* Your Role Panel */}
+        {renderSection('Your Panel', panelLinks)}
 
         {/* Priority 1: Core Operations */}
         {renderSection('Priority 1: Core Operations', coreOperations)}

@@ -20,6 +20,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { Icon } from '../../components/Icon';
+import { router } from 'expo-router';
 
 export default function SettingsScreen() {
   const { isSuperAdmin } = useAuth();
@@ -203,33 +204,70 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* App Version Info */}
-        <View style={styles.infoBox}>
-          <Text style={[styles.infoTitle, { color: colors.text }]}>GharKaPaisa Mobile</Text>
-          <Text style={[styles.infoText, { color: colors.textLight }]}>Version 2.4.0 • Enterprise Workspace</Text>
+        {/* Security Section */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textLight }]}>Security</Text>
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <TouchableOpacity
+              style={styles.row}
+              onPress={() => router.push('/(app)/security' as any)}
+            >
+              <View style={styles.rowTextGroup}>
+                <Text style={[styles.rowTitle, { color: colors.text }]}>Security & Login</Text>
+                <Text style={[styles.rowSub, { color: colors.textLight }]}>
+                  Change password, biometrics & active sessions
+                </Text>
+              </View>
+              <Icon name="chevron-right" size={18} color={colors.textLight} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Account Section */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textLight }]}>Account</Text>
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <TouchableOpacity
-              style={styles.dangerButton}
-              onPress={() => Alert.alert(
-                'Delete Account',
-                'Are you sure you want to delete your account? This action cannot be undone.',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Delete', style: 'destructive', onPress: () => {
-                    Alert.alert('Request Submitted', 'Your account deletion request has been submitted.');
-                  }}
-                ]
-              )}
-            >
-              <Icon name="trash-2" size={20} color={colors.error} />
-              <Text style={styles.dangerButtonText}>Delete Account</Text>
+            <TouchableOpacity style={styles.row} onPress={() => router.push('/(app)/profile' as any)}>
+              <View style={styles.rowTextGroup}>
+                <Text style={[styles.rowTitle, { color: colors.text }]}>Profile</Text>
+                <Text style={[styles.rowSub, { color: colors.textLight }]}>Update personal & partner details</Text>
+              </View>
+              <Icon name="chevron-right" size={18} color={colors.textLight} />
             </TouchableOpacity>
+            <View style={[styles.row, styles.borderTop, { borderTopColor: colors.border }]}>
+              <View style={styles.rowTextGroup}>
+                <Text style={[styles.rowTitle, { color: colors.text }]}>Wallet</Text>
+                <Text style={[styles.rowSub, { color: colors.textLight }]}>Balance, transactions & withdrawals</Text>
+              </View>
+              <TouchableOpacity onPress={() => router.push('/(app)/wallet' as any)}>
+                <Icon name="chevron-right" size={18} color={colors.textLight} />
+              </TouchableOpacity>
+            </View>
+            <View style={[styles.row, styles.borderTop, { borderTopColor: colors.border }]}>
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 }}
+                onPress={() => Alert.alert(
+                  'Delete Account',
+                  'Are you sure you want to delete your account? This action cannot be undone.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Delete', style: 'destructive', onPress: () => {
+                      Alert.alert('Request Submitted', 'Your account deletion request has been submitted.');
+                    }}
+                  ]
+                )}
+              >
+                <Icon name="trash" size={18} color={colors.error} />
+                <Text style={{ fontSize: 14, fontWeight: '600', color: colors.error }}>Delete Account</Text>
+              </TouchableOpacity>
+            </View>
           </View>
+        </View>
+
+        {/* App Version Info */}
+        <View style={styles.infoBox}>
+          <Text style={[styles.infoTitle, { color: colors.text }]}>GharKaPaisa Mobile</Text>
+          <Text style={[styles.infoText, { color: colors.textLight }]}>Version 2.4.0 • Enterprise Workspace</Text>
         </View>
       </ScrollView>
     </SafeAreaView>

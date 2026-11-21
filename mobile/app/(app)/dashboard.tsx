@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -10,12 +10,13 @@ import { Card } from '../../components/Card';
 import { Button } from '../../components/Button';
 import { StatusBadge } from '../../components/StatusBadge';
 import { ThemeToggle } from '../../components/ThemeToggle';
+import { Icon } from '../../components/Icon';
 import PartnerDashboardScreen from './partner-dashboard';
 import TeamDashboardScreen from './team-dashboard';
 import EmployeeDashboardScreen from './employee-dashboard';
 
 export default function DashboardScreen() {
-  const { user, userRole, userDesignation, reloadUser } = useAuth();
+  const { user, userRole, userDesignation, reloadUser, logout } = useAuth();
   const { colors, isDark } = useTheme();
   const [refreshing, setRefreshing] = React.useState(false);
 
@@ -59,7 +60,20 @@ export default function DashboardScreen() {
             {userDesignation ? <Text style={[styles.designationText, { color: colors.textMid }]}> • {userDesignation}</Text> : null}
           </View>
         </View>
-        <ThemeToggle size="sm" />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <ThemeToggle size="sm" />
+          <TouchableOpacity
+            style={styles.logoutBtn}
+            onPress={async () => {
+              await logout();
+              router.replace('/(auth)/login');
+            }}
+            activeOpacity={0.7}
+          >
+            <Icon name="log-out" size={15} color={colors.error} />
+            <Text style={[styles.logoutText, { color: colors.error }]}>Logout</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Role-Specific Overview Banner */}
@@ -214,5 +228,20 @@ const styles = StyleSheet.create({
   },
   actionBtn: {
     marginTop: spacing.xs,
+  },
+  logoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.error,
+    backgroundColor: colors.bg,
+  },
+  logoutText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
   },
 });
