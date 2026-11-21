@@ -53,10 +53,6 @@ router.put('/:id/bank-status', requireApprovedPartnerOrAdmin, appCtrl.updateBank
 router.patch('/:id/bank-status', requireApprovedPartnerOrAdmin, appCtrl.updateBankProcessingStatus);
 router.post('/:id/bank-status', requireApprovedPartnerOrAdmin, appCtrl.updateBankProcessingStatus);
 
-router.put('/:id/call-status', requireApprovedPartnerOrAdmin, appCtrl.updateCallStatus);
-router.patch('/:id/call-status', requireApprovedPartnerOrAdmin, appCtrl.updateCallStatus);
-router.post('/:id/call-status', requireApprovedPartnerOrAdmin, appCtrl.updateCallStatus);
-
 router.put('/:id/status', requireApprovedPartnerOrAdmin, appCtrl.updateStatus);
 router.patch('/:id/status', requireApprovedPartnerOrAdmin, appCtrl.updateStatus);
 router.patch('/:id/process-type', authorize('ADMIN', 'SUPER_ADMIN'), appCtrl.updateProcessType);

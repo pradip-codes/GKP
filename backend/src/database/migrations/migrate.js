@@ -5179,14 +5179,6 @@ const migrate = async () => {
     logger.error('Notification Preferences extend migration error note:', notifPrefErr.message);
   }
 
-  // Call Status & Customer Interest Migration
-  try {
-    const { migrateCallStatusCustomerInterest } = require('./migrate_call_status_customer_interest');
-    await migrateCallStatusCustomerInterest();
-  } catch (callStatusErr) {
-    logger.error('Call Status & Customer Interest migration error note:', callStatusErr.message);
-  }
-
   if (require.main === module) {
     process.exit(0);
   }
