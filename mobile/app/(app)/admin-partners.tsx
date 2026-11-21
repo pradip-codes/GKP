@@ -5,7 +5,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import apiClient from '../../services/api';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
-import { Video } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
 
 interface Partner {
   id: string;
@@ -34,6 +34,13 @@ interface KycDocument {
   signed_url?: string;
   verification_status?: string;
   rejection_reason?: string;
+}
+
+function KycVideoPlayer({ uri }: { uri: string }) {
+  const player = useVideoPlayer(uri ? { uri } : null, (p) => {
+    p.loop = false;
+  });
+  return <VideoView player={player} style={styles.videoPlayer} contentFit="contain" nativeControls />;
 }
 
 export default function AdminPartnersScreen() {
@@ -516,12 +523,7 @@ export default function AdminPartnersScreen() {
             </TouchableOpacity>
           </View>
           {videoUrl ? (
-            <Video
-              source={{ uri: videoUrl }}
-              style={styles.videoPlayer}
-              useNativeControls
-              resizeMode="contain"
-            />
+            <KycVideoPlayer uri={videoUrl} />
           ) : (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color={colors.primary} />

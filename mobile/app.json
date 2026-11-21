@@ -10,7 +10,8 @@
       "expo-router",
       "expo-secure-store",
       "expo-sharing",
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-video"
     ],
     "splash": {
       "image": "./assets/splash-icon.png",
