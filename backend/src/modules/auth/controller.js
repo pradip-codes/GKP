@@ -217,7 +217,18 @@ const sendOtp = async (req, res, next) => {
       userQuery += ` AND role = $4`;
       queryParams.push(reqRole);
     }
-    const { rows: [user] } = await query(userQuery, queryParams);
+    const { rows: matchedUsers } = await query(userQuery, queryParams);
+    // Same contact can map to multiple role accounts — prefer the account whose
+    // email/mobile directly matches the entered identity.
+    const isEmailIdentity = identity.includes('@');
+    const [user] = matchedUsers.sort((a, b) => {
+      const score = (u) => {
+        if (isEmailIdentity) return String(u.email || '').toLowerCase() === String(identity).toLowerCase() ? 1 : 0;
+        const m = String(u.mobile || '').replace(/\D/g, '');
+        return m === cleanMobile || m === `91${cleanMobile}` ? 1 : 0;
+      };
+      return score(b) - score(a);
+    });
 
     if (!user || (!user.email && !user.mobile)) {
       return error(res, 'No account found with this email or mobile number', 404);
@@ -464,7 +475,13 @@ const login = async (req, res, next) => {
       userQuery += ` AND role = $3`;
       queryParams.push(reqRole);
     }
-    const { rows: [user] } = await query(userQuery, queryParams);
+    const { rows: matchedUsers } = await query(userQuery, queryParams);
+    // Same email/mobile can map to multiple role accounts — prefer the most
+    // recently active account instead of an arbitrary row.
+    const [user] = matchedUsers.sort((a, b) =>
+      new Date(b.last_login || 0) - new Date(a.last_login || 0) ||
+      new Date(b.created_at || 0) - new Date(a.created_at || 0)
+    );
 
     if (!user) { await security.recordFailedLogin(null, req, 'unknown_account'); return error(res, 'No account found with this email or mobile', 401); }
     if (isLocked(user)) return error(res, 'Account is temporarily locked. Try again later.', 423);
@@ -628,7 +645,12 @@ const loginWithMsg91 = async (req, res, next) => {
       userQuery += ` AND role = $2`;
       queryParams.push(reqRole);
     }
-    const { rows: [user] } = await query(userQuery, queryParams);
+    const { rows: matchedUsers } = await query(userQuery, queryParams);
+    // Same mobile can map to multiple role accounts — prefer the most recently active.
+    const [user] = matchedUsers.sort((a, b) =>
+      new Date(b.last_login || 0) - new Date(a.last_login || 0) ||
+      new Date(b.created_at || 0) - new Date(a.created_at || 0)
+    );
 
     if (!user) { await security.recordFailedLogin(null, req, 'unknown_account'); return error(res, 'No account found with this mobile number', 401); }
     if (isLocked(user)) return error(res, 'Account is temporarily locked. Try again later.', 423);
@@ -1187,28 +1209,33 @@ const loginPassword = async (req, res, next) => {
       userQuery += ` AND role = $3`;
       queryParams.push(reqRole);
     }
-    const { rows: [user] } = await query(userQuery, queryParams);
+    const { rows: matchedUsers } = await query(userQuery, queryParams);
 
-    if (!user) { await security.recordFailedLogin(null, req, 'unknown_account'); return error(res, 'No account found with this email or mobile', 401); }
+    if (!matchedUsers.length) { await security.recordFailedLogin(null, req, 'unknown_account'); return error(res, 'No account found with this email or mobile', 401); }
 
-    // Enforce OTP login if failed password attempts reach 3 or more
-    if ((user.failed_login_attempts || 0) >= 3) {
-      return res.status(403).json({
-        success: false,
-        require_otp: true,
-        message: 'Maximum password attempts reached. Please log in using OTP.'
-      });
+    // The same email/mobile can belong to multiple role accounts (e.g. EMPLOYEE + PARTNER).
+    // Verify the password against every match instead of trusting rows[0].
+    let user = null;
+    let sawOtpGatedMatch = false;
+    let sawLockedMatch = false;
+    for (const candidate of matchedUsers) {
+      if (!candidate.password_hash) continue;
+      const ok = await bcrypt.compare(password, candidate.password_hash);
+      if (!ok) continue;
+      if ((candidate.failed_login_attempts || 0) >= 3) { sawOtpGatedMatch = true; continue; }
+      if (isLocked(candidate)) { sawLockedMatch = true; continue; }
+      user = candidate;
+      break;
     }
 
-    if (isLocked(user)) return error(res, 'Account is temporarily locked. Try again later.', 423);
-
-    if (!user.password_hash) return error(res, 'Password login not enabled for this account', 401);
-
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) {
-      const updated = await security.recordFailedLogin(user, req, 'invalid_password');
-      const attempts = updated?.failed_login_attempts || ((user.failed_login_attempts || 0) + 1);
-      if (attempts >= 3) {
+    if (!user) {
+      let maxAttempts = 0;
+      for (const u of matchedUsers) {
+        const updated = await security.recordFailedLogin(u, req, 'invalid_password');
+        maxAttempts = Math.max(maxAttempts, updated?.failed_login_attempts || (u.failed_login_attempts || 0) + 1);
+      }
+      if (sawLockedMatch) return error(res, 'Account is temporarily locked. Try again later.', 423);
+      if (sawOtpGatedMatch || maxAttempts >= 3) {
         return res.status(403).json({
           success: false,
           require_otp: true,
@@ -1218,6 +1245,7 @@ const loginPassword = async (req, res, next) => {
       return error(res, 'Invalid credentials', 401);
     }
 
+    if (!user.password_hash) return error(res, 'Password login not enabled for this account', 401);
 
     if (user.is_active === false || user.status === 'inactive') return error(res, 'Your account has been deactivated. Please contact administrator.', 403);
     if (user.status === 'suspended') return error(res, 'Your account has been suspended. Please contact support.', 403);

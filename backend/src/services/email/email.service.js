@@ -638,6 +638,101 @@ const sendCandidateAssignedToHrEmail = async ({ hrEmail, hrName, candidateName, 
   });
 };
 
+/**
+ * Send professional "not selected" email to a candidate after HR rejects them.
+ * Mentions that their profile is removed and invites them to apply for future openings.
+ */
+const sendCandidateRejectionEmail = async ({ candidateEmail, candidateName, referenceCode, targetRole, rejectionReason }) => {
+  if (!candidateEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(candidateEmail).trim())) {
+    logger.warn('[EMAIL] Cannot send candidate rejection email: invalid candidate email');
+    return;
+  }
+
+  const careersUrl = `${process.env.FRONTEND_URL || 'https://gharkapaisa.in'}/careers`;
+  const firstName = (candidateName || '').trim().split(/\s+/)[0] || 'Candidate';
+  const reasonText = rejectionReason && String(rejectionReason).trim() !== 'Not meeting selection criteria'
+    ? String(rejectionReason).trim()
+    : '';
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    </head>
+    <body style="margin:0; padding:0; background:#f4f7fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f7fa; padding: 40px 20px;">
+        <tr>
+          <td align="center">
+            <table width="100%" cellpadding="0" cellspacing="0" style="max-width:540px; background:#ffffff; border-radius:16px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); overflow:hidden;">
+
+              <!-- Header -->
+              <tr>
+                <td style="background: linear-gradient(135deg, #0d9488, #0f766e); padding: 32px 40px; text-align: center;">
+                  <h1 style="margin:0; color:#ffffff; font-size:24px; font-weight:800; letter-spacing:-0.5px;">GharKaPaisa</h1>
+                  <p style="margin:6px 0 0 0; color:rgba(255,255,255,0.85); font-size:13px; font-weight:500;">Career Application Update</p>
+                </td>
+              </tr>
+
+              <!-- Body -->
+              <tr>
+                <td style="padding: 36px 40px 20px;">
+                  <h2 style="margin:0 0 12px 0; color:#1a202c; font-size:18px; font-weight:700;">Dear ${firstName},</h2>
+                  <p style="margin:0 0 16px 0; color:#4a5568; font-size:14px; line-height:1.6;">
+                    Thank you for your interest in joining the GharKaPaisa team${targetRole ? ` for the <strong>${targetRole}</strong> role` : ''} and for taking the time to complete your application.
+                  </p>
+                  <p style="margin:0 0 16px 0; color:#4a5568; font-size:14px; line-height:1.6;">
+                    After careful review of your profile and interview, we regret to inform you that we will not be moving forward with your application at this time.
+                  </p>
+                  ${reasonText ? `
+                  <div style="background:#fffbeb; border-left:4px solid #f59e0b; border-radius:8px; padding:14px 16px; margin:20px 0;">
+                    <p style="margin:0 0 6px 0; font-size:12px; font-weight:800; color:#92400e; text-transform:uppercase; letter-spacing:0.5px;">Feedback from our team</p>
+                    <p style="margin:0; font-size:13.5px; color:#78350f; line-height:1.6;">${reasonText}</p>
+                  </div>` : ''}
+                  <p style="margin:0 0 16px 0; color:#4a5568; font-size:14px; line-height:1.6;">
+                    We genuinely appreciate the effort you put into your application and wish you the very best in your job search. This decision is never easy, and it does not reflect on your potential.
+                  </p>
+                  <p style="margin:0 0 8px 0; color:#4a5568; font-size:14px; line-height:1.6;">
+                    <strong>We encourage you to apply again</strong> whenever new opportunities open up — we review every application carefully and would be glad to consider your profile for future roles.
+                  </p>
+
+                  <!-- CTA Button -->
+                  <div style="text-align:center; margin: 28px 0 12px 0;">
+                    <a href="${careersUrl}" target="_blank" style="display:inline-block; background:#0d9488; color:#ffffff; font-size:15px; font-weight:700; text-decoration:none; padding: 14px 32px; border-radius:8px; box-shadow: 0 4px 12px rgba(13,148,136,0.35);">View Current Openings</a>
+                  </div>
+                  <p style="margin:16px 0 0 0; color:#718096; font-size:12px; line-height:1.6; text-align:center;">
+                    Your application reference: <span style="font-family:monospace; font-weight:700; color:#0f766e;">${referenceCode || 'N/A'}</span><br/>
+                    For any questions, reply to this email or contact us at <a href="mailto:hr@gharkapaisa.in" style="color:#0d9488; text-decoration:none;">hr@gharkapaisa.in</a>
+                  </p>
+                </td>
+              </tr>
+
+              <!-- Footer -->
+              <tr>
+                <td style="padding: 20px 40px 28px; border-top: 1px solid #edf2f7; text-align: center;">
+                  <p style="margin:0; color:#a0aec0; font-size:11px;">
+                    &copy; ${new Date().getFullYear()} GharKaPaisa &middot; All rights reserved<br/>
+                    <a href="https://gharkapaisa.in" style="color:#0d9488; text-decoration:none;">gharkapaisa.in</a>
+                  </p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+
+  return sendEmail({
+    to: candidateEmail,
+    subject: `Update on your GharKaPaisa application${referenceCode ? ` (${referenceCode})` : ''}`,
+    html,
+    text: `Dear ${firstName},\n\nThank you for your interest in joining GharKaPaisa${targetRole ? ` for the ${targetRole} role` : ''}. After careful review, we regret to inform you that we will not be moving forward with your application at this time.${reasonText ? `\n\nFeedback: ${reasonText}` : ''}\n\nWe encourage you to apply again when new opportunities open up. View openings: ${careersUrl}\n\nBest regards,\nGharKaPaisa HR Team`
+  });
+};
+
 const sendContactQueryEmail = async ({ fullName, mobile, description }) => {
   const supportEmail = 'support@gharkapaisa.in';
   const html = `
@@ -791,6 +886,7 @@ module.exports = {
   sendTeamInvitationEmail,
   sendEmployeeInvitationEmail,
   sendCandidateAssignedToHrEmail,
+  sendCandidateRejectionEmail,
   sendContactQueryEmail,
   maskMobileLast6,
   sendLeadApplicationCreatedEmail

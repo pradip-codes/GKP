@@ -4,7 +4,7 @@ const { query } = require('../../config/database');
 const jwtAuth = require('../../middleware/authentication/jwtAuth.middleware');
 const roleCheck = require('../../middleware/authorization/role.middleware');
 const bcrypt = require('bcryptjs');
-const { sendEmployeeInvitationEmail, sendCandidateAssignedToHrEmail } = require('../../services/email/email.service');
+const { sendEmployeeInvitationEmail, sendCandidateAssignedToHrEmail, sendCandidateRejectionEmail } = require('../../services/email/email.service');
 const { sendSms, sendEmployeeInviteSms } = require('../../services/sms/sms.service');
 const logger = require('../../config/logger');
 const { getSignedDownloadUrl } = require('../../services/aws/s3.service');
@@ -422,24 +422,71 @@ router.post('/candidates/:id/select', async (req, res, next) => {
   }
 });
 
-// POST /api/v1/hr/candidates/:id/reject — Reject candidate
+// POST /api/v1/hr/candidates/:id/reject — Reject candidate, purge their data & notify by email
 router.post('/candidates/:id/reject', async (req, res, next) => {
   try {
     const { id } = req.params;
     const { rejection_reason } = req.body;
+    const reason = rejection_reason || 'Not meeting selection criteria';
 
-    const { rows } = await query(
-      `UPDATE employee_candidates 
-       SET interview_status = 'REJECTED', rejection_reason = $1, rejection_date = NOW(), updated_at = NOW()
-       WHERE id = $2 RETURNING *`,
-      [rejection_reason || 'Not meeting selection criteria', id]
-    );
-
-    if (rows.length === 0) {
+    const candRes = await query(`SELECT * FROM employee_candidates WHERE id = $1`, [id]);
+    if (candRes.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Candidate not found' });
     }
+    const candidate = candRes.rows[0];
 
-    res.json({ success: true, message: 'Candidate status updated to Rejected', data: rows[0] });
+    // Purge all candidate-related records (auto-provisioned user/employee shell included).
+    // Each step is isolated so a FK/reference miss doesn't block the rest.
+    const empRows = await query(`SELECT id FROM employees WHERE candidate_id = $1`, [id]).catch(() => ({ rows: [] }));
+    const empIds = empRows.rows.map(r => r.id);
+
+    if (empIds.length) {
+      await query(`DELETE FROM employee_onboarding_checklist WHERE employee_id = ANY($1)`, [empIds]).catch(e => logger.warn('Reject cleanup checklist:', e.message));
+      await query(`DELETE FROM employees WHERE candidate_id = $1`, [id]).catch(e => logger.warn('Reject cleanup employees:', e.message));
+    }
+
+    // Remove the auto-created shell user account (only EMPLOYEE role rows created by registration).
+    // Clear likely FK dependents first so the user delete doesn't fail on references.
+    const shellUser = await query(
+      `SELECT id FROM users WHERE role = 'EMPLOYEE' AND (employee_id = $1 OR (mobile = $2 AND LOWER(email) = LOWER($3))) LIMIT 1`,
+      [candidate.reference_code, candidate.mobile_number, candidate.email_id]
+    ).catch(() => ({ rows: [] }));
+    const shellUserId = shellUser.rows[0]?.id;
+
+    if (shellUserId) {
+      for (const tbl of ['refresh_tokens', 'security_alerts', 'notifications', 'device_tokens', 'notification_preferences', 'attendance_verification_sessions']) {
+        await query(`DELETE FROM ${tbl} WHERE user_id = $1`, [shellUserId]).catch(() => {});
+      }
+      await query(`DELETE FROM users WHERE id = $1 AND role = 'EMPLOYEE'`, [shellUserId])
+        .catch(e => logger.warn('Reject cleanup users:', e.message));
+    }
+
+    // Clear any stored OTP verification rows for this candidate's contacts
+    await query(
+      `DELETE FROM otp_verifications WHERE identity IN ($1, $2, $3, $4, $5, $6)`,
+      [
+        candidate.mobile_number, `mobile_${String(candidate.mobile_number).replace(/\D/g, '').slice(-10)}`,
+        candidate.email_id, `email_${String(candidate.email_id).trim().toLowerCase()}`,
+        candidate.mobile_number && `91${String(candidate.mobile_number).replace(/\D/g, '').slice(-10)}`,
+        `mobile_91${String(candidate.mobile_number).replace(/\D/g, '').slice(-10)}`
+      ].filter(Boolean)
+    ).catch(() => {});
+
+    // Finally remove the candidate record itself
+    await query(`DELETE FROM employee_candidates WHERE id = $1`, [id]);
+
+    // Send professional "not selected" email asynchronously
+    if (candidate.email_id) {
+      sendCandidateRejectionEmail({
+        candidateEmail: candidate.email_id,
+        candidateName: candidate.full_name,
+        referenceCode: candidate.reference_code,
+        targetRole: candidate.target_role || candidate.current_designation,
+        rejectionReason: reason
+      }).catch(e => logger.warn(`[REJECT-EMAIL] Failed to send rejection email to ${candidate.email_id}: ${e.message}`));
+    }
+
+    res.json({ success: true, message: 'Candidate rejected. Profile data removed and notification email sent.', data: { id, reference_code: candidate.reference_code } });
   } catch (err) {
     next(err);
   }

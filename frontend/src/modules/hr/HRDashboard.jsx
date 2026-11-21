@@ -231,6 +231,21 @@ export default function HRDashboard() {
     }
   };
 
+  const handleRejectCandidate = async (cand) => {
+    const reason = window.prompt(`Reject candidate ${cand.full_name} (${cand.reference_code})?\n\nEnter reason for rejection (optional):`, 'Not meeting selection criteria');
+    if (reason === null) return; // cancelled
+    if (!window.confirm(`Are you sure? This will permanently remove ${cand.full_name}'s application and all related data, and send them a rejection email.`)) return;
+    try {
+      const res = await api.post(`/hr/candidates/${cand.id}/reject`, { rejection_reason: reason || 'Not meeting selection criteria' });
+      if (res.data.success) {
+        alert('Candidate rejected. Their profile has been removed and a notification email has been sent.');
+        fetchHRData();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Rejection failed');
+    }
+  };
+
   const handleFeedbackSubmit = async (e) => {
     e.preventDefault();
     if (!interviewModal) return;
@@ -495,6 +510,14 @@ export default function HRDashboard() {
                                   style={{ background: C.teal, color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
                                 >
                                   <FaUserCheck /> Select & Give EMP ID
+                                </button>
+                              )}
+                              {!isSuperAdmin && (
+                                <button 
+                                  onClick={() => handleRejectCandidate(cand)}
+                                  style={{ background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                >
+                                  <FaTimesCircle /> Reject
                                 </button>
                               )}
                             </div>
