@@ -583,6 +583,7 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: 'Interview registration submitted successfully',
+      reference_code: registeredCand.reference_code,
       data: {
         id: registeredCand.id,
         reference_code: registeredCand.reference_code,

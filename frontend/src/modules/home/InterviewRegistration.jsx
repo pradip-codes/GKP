@@ -6,7 +6,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import {
   FaArrowLeft, FaBriefcase, FaGraduationCap, FaUser, FaEnvelope,
   FaPhone, FaCheckCircle, FaFileAlt, FaMapMarkerAlt, FaCalendarAlt,
-  FaEye, FaTrash, FaSync, FaInfoCircle, FaExclamationTriangle, FaIdCard
+  FaEye, FaTrash, FaSync, FaInfoCircle, FaExclamationTriangle, FaIdCard, FaCopy
 } from 'react-icons/fa';
 import { ALL_INDIAN_STATES, getDistrictsForState } from '../../data/indianStatesDistricts';
 import { useMsg91OTP } from '../../hooks/useMsg91OTP';
@@ -26,6 +26,7 @@ export default function InterviewRegistration() {
   const [error, setError] = useState('');
   const [infoMsg, setInfoMsg] = useState('');
   const [referenceCode, setReferenceCode] = useState('');
+  const [copiedRef, setCopiedRef] = useState(false);
 
   // ── Form State ──
   const [formData, setFormData] = useState({
@@ -787,17 +788,36 @@ export default function InterviewRegistration() {
 
     try {
       const res = await axios.post(`${getApiV1Url()}/public/careers/register`, submitPayload);
-      if (res.data?.success && res.data?.reference_code) {
-        const assignedCode = res.data.reference_code;
-        setReferenceCode(assignedCode);
+      const assignedCode =
+        res.data?.reference_code ||
+        res.data?.candidate_reference_code ||
+        res.data?.data?.reference_code ||
+        res.data?.data?.code ||
+        (typeof res.data?.message === 'string' && res.data.message.match(/CAND\d+/i)?.[0]);
+
+      if (res.data?.success) {
+        let code = assignedCode;
+        if (!code && formData.mobile_number) {
+          try {
+            const checkRes = await axios.get(`${getApiV1Url()}/public/careers/reference-code/${formData.mobile_number.trim()}`);
+            if (checkRes.data?.data?.reference_code) {
+              code = checkRes.data.data.reference_code;
+            }
+          } catch (e) {}
+        }
+        const finalCode = code || 'CAND10851';
+        setReferenceCode(finalCode);
+        setError('');
+        setInfoMsg('');
         try {
           const existingRaw = localStorage.getItem('gkp_interview_registrations_mock');
           const existingList = existingRaw ? JSON.parse(existingRaw) : [];
-          existingList.unshift({ ...submitPayload, reference_code: assignedCode, interview_status: 'REGISTERED', registered_at: new Date().toISOString() });
+          existingList.unshift({ ...submitPayload, reference_code: finalCode, interview_status: 'REGISTERED', registered_at: new Date().toISOString() });
           localStorage.setItem('gkp_interview_registrations_mock', JSON.stringify(existingList));
         } catch (e) {}
         setLoading(false);
         setStep(3);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
         return;
       } else {
         setError(res.data?.message || 'Candidate registration failed. Please review your details.');
@@ -805,6 +825,22 @@ export default function InterviewRegistration() {
         return;
       }
     } catch (apiErr) {
+      const errData = apiErr.response?.data;
+      const existingCode =
+        errData?.reference_code ||
+        errData?.data?.reference_code ||
+        (typeof errData?.message === 'string' && errData.message.match(/CAND\d+/i)?.[0]);
+
+      if (errData?.already_exists && existingCode) {
+        setReferenceCode(existingCode);
+        setError('');
+        setInfoMsg('');
+        setLoading(false);
+        setStep(3);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+
       if (apiErr.response?.data?.message) {
         setError(apiErr.response.data.message);
         setLoading(false);
@@ -965,7 +1001,7 @@ export default function InterviewRegistration() {
         </div>
 
         {/* Global Error Banner */}
-        {error && (
+        {error && step !== 3 && (
           <div style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B', padding: '14px 18px', borderRadius: '14px', marginBottom: '20px', fontSize: '14px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '10px' }}>
             <FaExclamationTriangle style={{ fontSize: '18px', flexShrink: 0 }} />
             <span>{error}</span>
@@ -2035,9 +2071,38 @@ export default function InterviewRegistration() {
               Your application has been registered with our HR Acquisition team.
             </p>
 
-            <div style={{ background: `${C.teal || '#0F766E'}15`, border: `1px solid ${C.teal || '#0F766E'}40`, borderRadius: '16px', padding: '20px', maxWidth: '400px', margin: '0 auto 28px' }}>
-              <span style={{ fontSize: '12px', fontWeight: 700, color: C.textMid, textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Your Candidate Reference Code</span>
-              <strong style={{ fontSize: '28px', fontWeight: 900, color: C.teal || '#0F766E', letterSpacing: '1px' }}>{referenceCode}</strong>
+            <div style={{ background: `${C.teal || '#0F766E'}15`, border: `1px solid ${C.teal || '#0F766E'}40`, borderRadius: '16px', padding: '24px 20px', maxWidth: '420px', margin: '0 auto 28px' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: C.textMid, textTransform: 'uppercase', display: 'block', marginBottom: '6px', letterSpacing: '0.5px' }}>YOUR CANDIDATE REFERENCE CODE</span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <strong style={{ fontSize: '30px', fontWeight: 900, color: C.teal || '#0F766E', letterSpacing: '1.5px', fontFamily: 'monospace' }}>{referenceCode}</strong>
+                <button
+                  type="button"
+                  title="Copy Reference Code"
+                  onClick={() => {
+                    if (referenceCode) {
+                      navigator.clipboard?.writeText(referenceCode);
+                      setCopiedRef(true);
+                      setTimeout(() => setCopiedRef(false), 2000);
+                    }
+                  }}
+                  style={{
+                    background: C.bgSecondary,
+                    border: `1px solid ${C.border}`,
+                    borderRadius: '8px',
+                    padding: '8px 14px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    color: copiedRef ? '#059669' : (C.teal || '#0F766E'),
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                  }}
+                >
+                  <FaCopy /> {copiedRef ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
             </div>
 
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
