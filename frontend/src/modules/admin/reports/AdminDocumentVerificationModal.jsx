@@ -492,7 +492,25 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
   const [declineCode, setDeclineCode] = useState(initialPrimaryDecline);
   const [declineRemark, setDeclineRemark] = useState(sanitizeVal(application?.decline_remark) || sanitizeVal(application?.physical_details?.decline_remark) || '');
   const [secondaryDeclineRemark, setSecondaryDeclineRemark] = useState(sanitizeVal(application?.secondary_decline_description) || sanitizeVal(application?.physical_details?.secondary_decline_description) || '');
-  const [queryableRemark, setQueryableRemark] = useState(sanitizeVal(application?.queryable_remark) || sanitizeVal(application?.physical_details?.queryable_remark) || 'None');
+  const normalizeQueryableRemark = (val) => {
+    if (!val) return 'NOT REQUIRED';
+    const s = String(val).trim().toUpperCase();
+    if (s === 'PHYSICAL PENDING' || s === 'PHYSICAL SOLVED' || s === 'DIGITAL PENDING' || s === 'DIGITAL SOLVED' || s === 'NOT REQUIRED') {
+      return s;
+    }
+    if (s === 'PHYSICAL') return 'PHYSICAL PENDING';
+    if (s === 'DIGITAL') return 'DIGITAL PENDING';
+    if (s === 'NONE' || s === 'NA' || s === 'N/A' || s === '') return 'NOT REQUIRED';
+    if (s === 'COMPLETE' || s === 'COMPLETED' || s === 'COMPLETE DIGITAL JOURNEY') return 'DIGITAL SOLVED';
+    return val;
+  };
+
+  const [queryableRemark, setQueryableRemark] = useState(
+    normalizeQueryableRemark(
+      sanitizeVal(application?.queryable_remark) ||
+      sanitizeVal(application?.physical_details?.queryable_remark)
+    )
+  );
   const [queryableSalesRemark, setQueryableSalesRemark] = useState(sanitizeVal(application?.queryable_sales_remark) || sanitizeVal(application?.physical_details?.queryable_sales_remark) || '');
   const [digitalRemark, setDigitalRemark] = useState(sanitizeVal(application?.digital_remark) || sanitizeVal(application?.physical_details?.digital_remark) || 'None');
   const [addressType, setAddressType] = useState(
@@ -765,7 +783,12 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
         setDeclineCode(fetchedPrimaryDecline);
         setDeclineRemark(sanitizeVal(app.decline_remark) || sanitizeVal(pd.decline_remark) || sanitizeVal(app.decline_description) || sanitizeVal(pd.decline_description) || '');
         setSecondaryDeclineRemark(sanitizeVal(app.secondary_decline_description) || sanitizeVal(pd.secondary_decline_description) || '');
-        setQueryableRemark(sanitizeVal(app.queryable_remark) || sanitizeVal(pd.queryable_remark) || 'None');
+        setQueryableRemark(
+          normalizeQueryableRemark(
+            sanitizeVal(app.queryable_remark) ||
+            sanitizeVal(pd.queryable_remark)
+          )
+        );
         setQueryableSalesRemark(sanitizeVal(app.queryable_sales_remark) || sanitizeVal(pd.queryable_sales_remark) || '');
         setDigitalRemark(sanitizeVal(app.digital_remark) || sanitizeVal(pd.digital_remark) || 'None');
         setAddressType(
@@ -916,7 +939,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           decline_description: getHdfcDeclineCodeInfo(declineCode)?.type || (declineCode === 'None' ? 'None' : (declineRemark || undefined)),
           curing_designation: getHdfcCuringDesignation(declineCode) || undefined,
           decline_remark: declineRemark || (declineCode === 'CIBIL decline' ? 'CIBIL decline' : undefined),
-          queryable_remark: queryableRemark || 'None',
+          queryable_remark: queryableRemark || 'NOT REQUIRED',
           queryable_sales_remark: queryableSalesRemark || undefined,
           digital_remark: digitalRemark || 'None',
           address_type: addressType || 'Current Address',
@@ -1054,7 +1077,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           secondary_decline_description: secondaryCodeInfo?.type || (effSecondaryCode === 'None' ? 'None' : (secondaryDeclineRemark || undefined)),
           secondary_curing_designation: secondaryCuringDesig || undefined,
           decline_remark: declineRemark || (effPrimaryCode === 'CIBIL decline' ? 'CIBIL decline' : undefined),
-          queryable_remark: queryableRemark,
+          queryable_remark: queryableRemark || 'NOT REQUIRED',
           queryable_sales_remark: queryableSalesRemark,
           digital_remark: digitalRemark,
           address_type: addressType || 'Current Address',
@@ -3498,49 +3521,89 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                             />
                           </div>
 
-                          {/* 3. CUREBAL REMARK */}
+                          {/* 3. CUREABLE REMARK */}
                           <div>
-                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>3. CUREBAL REMARK</label>
+                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>3. CUREABLE REMARK</label>
                             <select
                               disabled={!canEditRemark}
-                              value={queryableRemark || 'None'}
+                              value={queryableRemark || 'NOT REQUIRED'}
                               onChange={(e) => {
                                 const val = e.target.value;
                                 setQueryableRemark(val);
-                                if (val === 'Complete Digital Journey' || val === 'Complete' || val === 'Completed') {
+                                if (val === 'DIGITAL SOLVED') {
                                   setDigitalRemark('Completed');
                                 }
                               }}
                               style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
                             >
-                              <option value="None">None</option>
-                              <option value="Digital">Digital</option>
-                              <option value="Physical">Physical</option>
-                              <option value="Not Required">Not Required</option>
-                              <option value="Complete">Complete</option>
-                              <option value="Complete Digital Journey">Complete Digital Journey</option>
-                              {queryableRemark && !['None', 'Digital', 'Physical', 'Not Required', 'Complete', 'Complete Digital Journey', ''].includes(queryableRemark) && (
+                              <option value="PHYSICAL PENDING">PHYSICAL PENDING</option>
+                              <option value="PHYSICAL SOLVED">PHYSICAL SOLVED</option>
+                              <option value="DIGITAL PENDING">DIGITAL PENDING</option>
+                              <option value="DIGITAL SOLVED">DIGITAL SOLVED</option>
+                              <option value="NOT REQUIRED">NOT REQUIRED</option>
+                              {queryableRemark && !['PHYSICAL PENDING', 'PHYSICAL SOLVED', 'DIGITAL PENDING', 'DIGITAL SOLVED', 'NOT REQUIRED'].includes(queryableRemark) && (
                                 <option value={queryableRemark}>{queryableRemark}</option>
                               )}
                             </select>
                           </div>
 
-                          {/* 4. ADDRESS */}
+                          {/* 4. ADDRESS BUTTONS */}
                           <div>
                             <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>4. ADDRESS</label>
-                            <select
-                              disabled={!canEditRemark}
-                              value={addressType || 'Current Address'}
-                              onChange={(e) => setAddressType(e.target.value)}
-                              style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
-                            >
-                              <option value="Current Address">Current Address</option>
-                              <option value="Office Address">Office Address</option>
-                            </select>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                              <button
+                                type="button"
+                                disabled={!canEditRemark}
+                                onClick={() => setAddressType('Current Address')}
+                                style={{
+                                  padding: '10px 12px',
+                                  borderRadius: '8px',
+                                  fontSize: '12px',
+                                  fontWeight: 800,
+                                  cursor: !canEditRemark ? 'not-allowed' : 'pointer',
+                                  border: (addressType === 'Current Address' || !addressType || String(addressType).toLowerCase().includes('current')) ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                                  background: (addressType === 'Current Address' || !addressType || String(addressType).toLowerCase().includes('current')) ? '#eff6ff' : (!canEditRemark ? '#f8fafc' : '#ffffff'),
+                                  color: (addressType === 'Current Address' || !addressType || String(addressType).toLowerCase().includes('current')) ? '#1d4ed8' : '#64748b',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '6px',
+                                  boxShadow: (addressType === 'Current Address' || !addressType || String(addressType).toLowerCase().includes('current')) ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
+                                  transition: 'all 0.15s ease'
+                                }}
+                              >
+                                {(addressType === 'Current Address' || !addressType || String(addressType).toLowerCase().includes('current')) && <CheckCircle size={14} color="#1d4ed8" />}
+                                CURRENT ADDRESS
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!canEditRemark}
+                                onClick={() => setAddressType('Office Address')}
+                                style={{
+                                  padding: '10px 12px',
+                                  borderRadius: '8px',
+                                  fontSize: '12px',
+                                  fontWeight: 800,
+                                  cursor: !canEditRemark ? 'not-allowed' : 'pointer',
+                                  border: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                                  background: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '#eff6ff' : (!canEditRemark ? '#f8fafc' : '#ffffff'),
+                                  color: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '#1d4ed8' : '#64748b',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '6px',
+                                  boxShadow: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
+                                  transition: 'all 0.15s ease'
+                                }}
+                              >
+                                {(addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) && <CheckCircle size={14} color="#1d4ed8" />}
+                                OFFICE ADDRESS
+                              </button>
+                            </div>
                           </div>
 
-                          {/* 5. DIGITAL QUERY DETAILS (AVAILABLE FOR DIGITAL, PHYSICAL, NOT REQUIRED, AND COMPLETE) */}
-                          {Boolean(isCurableOperator || ['digital', 'physical', 'not required', 'complete', 'complete digital journey', 'completed'].includes(String(queryableRemark || '').toLowerCase().trim())) && (
+                          {/* 5. DIGITAL QUERY DETAILS (AVAILABLE FOR DIGITAL, PHYSICAL, NOT REQUIRED) */}
+                          {Boolean(isCurableOperator || ['digital pending', 'digital solved', 'physical pending', 'physical solved', 'not required', 'digital', 'physical'].includes(String(queryableRemark || '').toLowerCase().trim())) && (
                             <div style={{ gridColumn: '1 / -1', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '14px', marginTop: '4px' }}>
                               <div style={{ fontWeight: 800, color: '#1e40af', fontSize: '13px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <Sparkles size={16} /> Digital Journey Query Details
@@ -3552,7 +3615,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                                     disabled={!canEditRemark}
                                     onClick={() => {
                                       setDigitalRemark('Completed');
-                                      setQueryableRemark('Complete Digital Journey');
+                                      setQueryableRemark('DIGITAL SOLVED');
                                       alert('Digital journey marked as Completed!');
                                     }}
                                     style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 800, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center' }}
@@ -3582,7 +3645,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                                       const val = e.target.value;
                                       setDigitalRemark(val);
                                       if (val === 'Completed' || val === 'Complete') {
-                                        setQueryableRemark('Complete Digital Journey');
+                                        setQueryableRemark('DIGITAL SOLVED');
                                       }
                                     }}
                                     style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
@@ -3725,6 +3788,18 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                           🔒 Fill Bank App No. to reveal PAN
                         </span>
                       )}
+                    </div>
+                    <div>
+                      <span style={{ color: '#64748b', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' }}>Cureable Remark: </span>
+                      <strong style={{ color: '#0284c7', background: '#eff6ff', padding: '2px 8px', borderRadius: '4px', border: '1px solid #bfdbfe' }}>
+                        {queryableRemark || 'NOT REQUIRED'}
+                      </strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#64748b', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' }}>Address: </span>
+                      <strong style={{ color: '#1d4ed8', background: '#eff6ff', padding: '2px 8px', borderRadius: '4px', border: '1px solid #bfdbfe' }}>
+                        {addressType ? String(addressType).toUpperCase() : 'CURRENT ADDRESS'}
+                      </strong>
                     </div>
                   </div>
                   
@@ -4065,6 +4140,86 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                           <option value="Yes">Yes</option>
                           <option value="No">No</option>
                         </select>
+                      </div>
+
+                      {/* CUREABLE REMARK */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>CUREABLE REMARK</label>
+                        <select
+                          disabled={!canEditFinal}
+                          value={queryableRemark || 'NOT REQUIRED'}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setQueryableRemark(val);
+                            if (val === 'DIGITAL SOLVED') {
+                              setDigitalRemark('Completed');
+                            }
+                          }}
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                        >
+                          <option value="PHYSICAL PENDING">PHYSICAL PENDING</option>
+                          <option value="PHYSICAL SOLVED">PHYSICAL SOLVED</option>
+                          <option value="DIGITAL PENDING">DIGITAL PENDING</option>
+                          <option value="DIGITAL SOLVED">DIGITAL SOLVED</option>
+                          <option value="NOT REQUIRED">NOT REQUIRED</option>
+                        </select>
+                      </div>
+
+                      {/* ADDRESS SELECTION BUTTONS */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                          ADDRESS
+                        </label>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                          <button
+                            type="button"
+                            disabled={!canEditFinal}
+                            onClick={() => setAddressType('Current Address')}
+                            style={{
+                              padding: '10px 12px',
+                              borderRadius: '8px',
+                              fontSize: '12px',
+                              fontWeight: 800,
+                              cursor: !canEditFinal ? 'not-allowed' : 'pointer',
+                              border: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                              background: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '#eff6ff' : (!canEditFinal ? '#f8fafc' : '#ffffff'),
+                              color: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '#1d4ed8' : '#64748b',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '6px',
+                              boxShadow: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            {(!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) && <CheckCircle size={14} color="#1d4ed8" />}
+                            CURRENT ADDRESS
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!canEditFinal}
+                            onClick={() => setAddressType('Office Address')}
+                            style={{
+                              padding: '10px 12px',
+                              borderRadius: '8px',
+                              fontSize: '12px',
+                              fontWeight: 800,
+                              cursor: !canEditFinal ? 'not-allowed' : 'pointer',
+                              border: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                              background: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '#eff6ff' : (!canEditFinal ? '#f8fafc' : '#ffffff'),
+                              color: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '#1d4ed8' : '#64748b',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '6px',
+                              boxShadow: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            {(addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) && <CheckCircle size={14} color="#1d4ed8" />}
+                            OFFICE ADDRESS
+                          </button>
+                        </div>
                       </div>
 
                       {/* USER REMARK */}
@@ -4505,6 +4660,86 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                       />
                     </div>
                   )}
+
+                  {/* CUREABLE REMARK */}
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>CUREABLE REMARK</label>
+                    <select
+                      disabled={!canEditFinal}
+                      value={queryableRemark || 'NOT REQUIRED'}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setQueryableRemark(val);
+                        if (val === 'DIGITAL SOLVED') {
+                          setDigitalRemark('Completed');
+                        }
+                      }}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditFinal ? '#f8fafc' : '#fff', fontWeight: 700 }}
+                    >
+                      <option value="PHYSICAL PENDING">PHYSICAL PENDING</option>
+                      <option value="PHYSICAL SOLVED">PHYSICAL SOLVED</option>
+                      <option value="DIGITAL PENDING">DIGITAL PENDING</option>
+                      <option value="DIGITAL SOLVED">DIGITAL SOLVED</option>
+                      <option value="NOT REQUIRED">NOT REQUIRED</option>
+                    </select>
+                  </div>
+
+                  {/* ADDRESS SELECTION BUTTONS */}
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                      ADDRESS
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <button
+                        type="button"
+                        disabled={!canEditFinal}
+                        onClick={() => setAddressType('Current Address')}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          fontSize: '12px',
+                          fontWeight: 800,
+                          cursor: !canEditFinal ? 'not-allowed' : 'pointer',
+                          border: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                          background: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '#eff6ff' : (!canEditFinal ? '#f8fafc' : '#ffffff'),
+                          color: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '#1d4ed8' : '#64748b',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          boxShadow: (!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        {(!addressType || addressType === 'Current Address' || (addressType && String(addressType).toLowerCase().includes('current'))) && <CheckCircle size={14} color="#1d4ed8" />}
+                        CURRENT ADDRESS
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!canEditFinal}
+                        onClick={() => setAddressType('Office Address')}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          fontSize: '12px',
+                          fontWeight: 800,
+                          cursor: !canEditFinal ? 'not-allowed' : 'pointer',
+                          border: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                          background: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '#eff6ff' : (!canEditFinal ? '#f8fafc' : '#ffffff'),
+                          color: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '#1d4ed8' : '#64748b',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          boxShadow: (addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        {(addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'))) && <CheckCircle size={14} color="#1d4ed8" />}
+                        OFFICE ADDRESS
+                      </button>
+                    </div>
+                  </div>
 
                   {/* 3. USER REMARK */}
                   <div style={{ gridColumn: '1 / -1' }}>

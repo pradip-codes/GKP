@@ -2377,7 +2377,7 @@ const listApplications = async (req, res, next) => {
           COALESCE(NULLIF(a.secondary_curing_designation, ''), NULLIF(pad.secondary_curing_designation, '')) as secondary_curing_designation,
           COALESCE(NULLIF(a.address_type, ''), NULLIF(a.curing_address_type, ''), NULLIF(pad.address_type, ''), NULLIF(pad.curing_address_type, ''), 'Current Address') as address_type,
           COALESCE(NULLIF(a.address_type, ''), NULLIF(a.curing_address_type, ''), NULLIF(pad.address_type, ''), NULLIF(pad.curing_address_type, ''), 'Current Address') as curing_address_type,
-          COALESCE(NULLIF(a.queryable_remark, ''), NULLIF(pad.queryable_remark, ''), 'None') as queryable_remark,
+          COALESCE(NULLIF(a.queryable_remark, ''), NULLIF(pad.queryable_remark, ''), 'NOT REQUIRED') as queryable_remark,
           COALESCE(NULLIF(a.queryable_sales_remark, ''), NULLIF(pad.queryable_sales_remark, '')) as queryable_sales_remark,
           COALESCE(NULLIF(a.digital_remark, ''), NULLIF(pad.digital_remark, ''), 'None') as digital_remark,
           COALESCE(NULLIF(a.decline_remark, ''), NULLIF(pad.decline_remark, '')) as decline_remark,

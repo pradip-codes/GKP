@@ -9,16 +9,27 @@ console.log('Test 1: Verify AdminDocumentVerificationModal contains all 4 requir
 const modalPath = path.resolve(__dirname, '../../../frontend/src/modules/admin/reports/AdminDocumentVerificationModal.jsx');
 const modalContent = fs.readFileSync(modalPath, 'utf8');
 
-// 1.1 Complete & Complete Digital Journey in Cureable Remark
-assert.ok(modalContent.includes('<option value="Complete">Complete</option>'), 'Must include Complete option');
-assert.ok(modalContent.includes('<option value="Complete Digital Journey">Complete Digital Journey</option>'), 'Must include Complete Digital Journey option');
-assert.ok(modalContent.includes("setQueryableRemark('Complete Digital Journey')"), 'Must update Cureable Remark on Complete Digital Journey');
+// 1.1 Remove Complete & Complete Digital Journey, and show only the 5 options
+assert.ok(!modalContent.includes('<option value="Complete">Complete</option>'), 'Must NOT include Complete option in Cureable Remark');
+assert.ok(!modalContent.includes('<option value="Complete Digital Journey">Complete Digital Journey</option>'), 'Must NOT include Complete Digital Journey option in Cureable Remark');
+assert.ok(modalContent.includes('<option value="PHYSICAL PENDING">PHYSICAL PENDING</option>'), 'Must include PHYSICAL PENDING option');
+assert.ok(modalContent.includes('<option value="PHYSICAL SOLVED">PHYSICAL SOLVED</option>'), 'Must include PHYSICAL SOLVED option');
+assert.ok(modalContent.includes('<option value="DIGITAL PENDING">DIGITAL PENDING</option>'), 'Must include DIGITAL PENDING option');
+assert.ok(modalContent.includes('<option value="DIGITAL SOLVED">DIGITAL SOLVED</option>'), 'Must include DIGITAL SOLVED option');
+assert.ok(modalContent.includes('<option value="NOT REQUIRED">NOT REQUIRED</option>'), 'Must include NOT REQUIRED option');
 
-// 1.2 Address field
-assert.ok(modalContent.includes('4. ADDRESS'), 'Must render ADDRESS label');
-assert.ok(modalContent.includes('<option value="Current Address">Current Address</option>'), 'Must include Current Address option');
-assert.ok(modalContent.includes('<option value="Office Address">Office Address</option>'), 'Must include Office Address option');
+// 1.2 Address selectable buttons: CURRENT ADDRESS and OFFICE ADDRESS
+assert.ok(modalContent.includes('CURRENT ADDRESS'), 'Must render CURRENT ADDRESS button');
+assert.ok(modalContent.includes('OFFICE ADDRESS'), 'Must render OFFICE ADDRESS button');
+assert.ok(modalContent.includes("onClick={() => setAddressType('Current Address')}"), 'Must allow selecting Current Address');
+assert.ok(modalContent.includes("onClick={() => setAddressType('Office Address')}"), 'Must allow selecting Office Address');
 assert.ok(modalContent.includes('addressType'), 'Must use addressType state');
+
+// 1.3 Final Form displays and saves Cureable Remark & Address
+assert.ok(modalContent.includes('Cureable Remark: '), 'Final form must display Cureable Remark in summary');
+assert.ok(modalContent.includes('Address: '), 'Final form must display Address in summary');
+assert.ok(modalContent.includes("queryable_remark: queryableRemark || 'NOT REQUIRED'"), 'Must save queryable_remark');
+assert.ok(modalContent.includes("address_type: addressType || 'Current Address'"), 'Must save address_type');
 
 // 1.3 Save Remarks & Stage moves to Cured & Approved
 assert.ok(modalContent.includes("payload.status = 'approved'"), 'Must set status to approved for curable operator');
