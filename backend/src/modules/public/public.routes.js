@@ -65,6 +65,10 @@ router.post('/verify-mobile', async (req, res, next) => {
         message: `This mobile number is already registered as a candidate with Reference Code: ${candidateCheck.rows[0].reference_code}.`
       });
     }
+
+    if (req.body?.check_only) {
+      return res.json({ success: true, message: 'Mobile number is eligible for registration.' });
+    }
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpHash = hashOtp(otp);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min

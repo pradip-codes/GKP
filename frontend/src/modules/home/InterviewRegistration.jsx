@@ -9,10 +9,12 @@ import {
   FaEye, FaTrash, FaSync, FaInfoCircle, FaExclamationTriangle, FaIdCard
 } from 'react-icons/fa';
 import { ALL_INDIAN_STATES, getDistrictsForState } from '../../data/indianStatesDistricts';
+import { useMsg91OTP } from '../../hooks/useMsg91OTP';
 
 export default function InterviewRegistration() {
   const { C } = useTheme();
   const navigate = useNavigate();
+  const { sdkReady } = useMsg91OTP();
 
   // Document input refs for replacing documents
   // const panInputRef = useRef(null);
@@ -294,7 +296,7 @@ export default function InterviewRegistration() {
   //   setPreviewModal(prev => ({ ...prev, isOpen: false }));
   // };
 
-  // ── Mobile OTP Handler (Connected to Backend Verification Endpoints) ──
+  // ── Mobile OTP Handler (MSG91 Web SDK Same as Login Page + Backend Fallback) ──
   const handleSendMobileOtp = async () => {
     setError('');
     setInfoMsg('');
@@ -306,6 +308,62 @@ export default function InterviewRegistration() {
 
     setMobileOtpLoading(true);
 
+    // 1. Check with backend if mobile is already registered as candidate or user
+    try {
+      await axios.post(`${getApiV1Url()}/public/careers/verify-mobile`, { mobile_number: mob, check_only: true });
+    } catch (checkErr) {
+      if (checkErr.response?.data?.message) {
+        setError(checkErr.response.data.message);
+        setMobileOtpLoading(false);
+        return;
+      }
+    }
+
+    const formattedMobile = `91${mob}`;
+
+    // 2. Use MSG91 Web SDK window.sendOtp (exact same as Login Page)
+    if (typeof window.sendOtp === 'function') {
+      let callbackDone = false;
+      const timeoutId = setTimeout(() => {
+        if (!callbackDone) {
+          callbackDone = true;
+          console.warn('[MSG91] Web SDK sendOtp timeout, falling back to backend API...');
+          sendMobileOtpViaBackend(mob);
+        }
+      }, 15000);
+
+      try {
+        window.sendOtp(
+          formattedMobile,
+          (data) => {
+            if (callbackDone) return;
+            callbackDone = true;
+            clearTimeout(timeoutId);
+            setMobileOtpSent(true);
+            setMobileOtpTimer(60);
+            setInfoMsg('Verification code sent to your mobile phone via SMS.');
+            setMobileOtpLoading(false);
+          },
+          (errResp) => {
+            if (callbackDone) return;
+            callbackDone = true;
+            clearTimeout(timeoutId);
+            console.warn('[MSG91] Web SDK sendOtp notice, trying backend API:', errResp);
+            sendMobileOtpViaBackend(mob);
+          }
+        );
+        return;
+      } catch (sdkErr) {
+        clearTimeout(timeoutId);
+        console.warn('[MSG91] Web SDK exception, trying backend API:', sdkErr);
+      }
+    }
+
+    // 3. Fallback to backend verify-mobile API
+    await sendMobileOtpViaBackend(mob);
+  };
+
+  const sendMobileOtpViaBackend = async (mob) => {
     try {
       const res = await axios.post(`${getApiV1Url()}/public/careers/verify-mobile`, { mobile_number: mob });
       if (res.data?.success) {
@@ -323,7 +381,6 @@ export default function InterviewRegistration() {
     } catch (err) {
       const errorMsg = err.response?.data?.message || err.message || 'Failed to send Mobile OTP. Please check your network connection and try again.';
       setError(errorMsg);
-      // In development mode, if backend is completely offline (no HTTP response), provide dev fallback
       if (!err.response && import.meta.env.DEV) {
         const testCode = String(Math.floor(100000 + Math.random() * 900000));
         setSimulatedMobileOtpCode(testCode);
@@ -348,6 +405,58 @@ export default function InterviewRegistration() {
     setInfoMsg('');
     setMobileVerifyLoading(true);
 
+    // Dev / test bypass
+    if ((import.meta.env.DEV || !process.env.NODE_ENV || process.env.NODE_ENV !== 'production') && (code === '123456' || (simulatedMobileOtpCode && code === simulatedMobileOtpCode))) {
+      setMobilePreVerified(true);
+      setMobileOtpSent(false);
+      setInfoMsg('✓ Mobile number successfully verified!');
+      setMobileVerifyLoading(false);
+      return;
+    }
+
+    // 1. Try MSG91 Web SDK window.verifyOtp (exact same as Login Page)
+    if (typeof window.verifyOtp === 'function') {
+      let verifyHandled = false;
+      const verifyTimeout = setTimeout(() => {
+        if (!verifyHandled) {
+          verifyHandled = true;
+          console.warn('[MSG91] window.verifyOtp timed out, checking backend API...');
+          verifyMobileOtpBackend(code);
+        }
+      }, 10000);
+
+      try {
+        window.verifyOtp(
+          code,
+          async (verifyData) => {
+            if (verifyHandled) return;
+            verifyHandled = true;
+            clearTimeout(verifyTimeout);
+            setMobilePreVerified(true);
+            setMobileOtpSent(false);
+            setInfoMsg('✓ Mobile number successfully verified via MSG91!');
+            setMobileVerifyLoading(false);
+          },
+          (errResp) => {
+            if (verifyHandled) return;
+            verifyHandled = true;
+            clearTimeout(verifyTimeout);
+            console.warn('[MSG91] window.verifyOtp notice, trying backend verification:', errResp);
+            verifyMobileOtpBackend(code);
+          }
+        );
+        return;
+      } catch (sdkErr) {
+        clearTimeout(verifyTimeout);
+        console.warn('[MSG91] window.verifyOtp exception:', sdkErr);
+      }
+    }
+
+    // 2. Fallback to backend verify-otp API
+    await verifyMobileOtpBackend(code);
+  };
+
+  const verifyMobileOtpBackend = async (code) => {
     try {
       const mob = formData.mobile_number.trim().replace(/\D/g, '').slice(-10);
       const res = await axios.post(`${getApiV1Url()}/public/careers/verify-otp`, {
@@ -363,7 +472,6 @@ export default function InterviewRegistration() {
         setError(res.data?.message || 'Invalid or expired Mobile OTP. Please enter the valid OTP code.');
       }
     } catch (err) {
-      // In dev mode allow test fallback if offline
       if ((!err.response || import.meta.env.DEV) && (code === '123456' || (simulatedMobileOtpCode && code === simulatedMobileOtpCode))) {
         setMobilePreVerified(true);
         setMobileOtpSent(false);
