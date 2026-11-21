@@ -311,9 +311,11 @@ export default function InterviewRegistration() {
       if (res.data?.success) {
         setMobileOtpSent(true);
         setMobileOtpTimer(60);
-        setInfoMsg(res.data.message || 'Verification OTP sent to your Mobile number!');
         if (res.data.debug_otp) {
           setSimulatedMobileOtpCode(String(res.data.debug_otp));
+          setInfoMsg(`Verification OTP sent to your Mobile number! (Test code: ${res.data.debug_otp})`);
+        } else {
+          setInfoMsg(res.data.message || 'Verification OTP sent to your Mobile number!');
         }
       } else {
         setError(res.data?.message || 'Failed to send OTP to mobile. Please try again.');
@@ -391,9 +393,11 @@ export default function InterviewRegistration() {
       if (res.data?.success) {
         setEmailOtpSent(true);
         setEmailOtpTimer(60);
-        setInfoMsg(res.data.message || `Verification OTP sent to ${em}`);
         if (res.data.debug_otp) {
           setSimulatedEmailOtpCode(String(res.data.debug_otp));
+          setInfoMsg(`Verification OTP sent to ${em}! (Test code: ${res.data.debug_otp})`);
+        } else {
+          setInfoMsg(res.data.message || `Verification OTP sent to ${em}`);
         }
       } else {
         setError(res.data?.message || 'Failed to send OTP to email. Please try again.');
@@ -985,6 +989,29 @@ export default function InterviewRegistration() {
                   >
                     {mobilePreVerified ? '✓ Verified' : mobileOtpSent ? (mobileOtpTimer > 0 ? `Resend in ${mobileOtpTimer}s` : 'Resend OTP') : (mobileOtpLoading ? 'Sending...' : 'Send OTP')}
                   </button>
+                  {mobilePreVerified && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobilePreVerified(false);
+                        setMobileOtpSent(false);
+                        setMobileOtp('');
+                        setInfoMsg('');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#6B7280',
+                        fontSize: '11px',
+                        textDecoration: 'underline',
+                        cursor: 'pointer',
+                        padding: '0 4px',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      Change
+                    </button>
+                  )}
                 </div>
 
                 {/* Inline Mobile OTP Input */}
@@ -1064,6 +1091,29 @@ export default function InterviewRegistration() {
                   >
                     {emailPreVerified ? '✓ Verified' : emailOtpSent ? (emailOtpTimer > 0 ? `Resend in ${emailOtpTimer}s` : 'Resend OTP') : (emailOtpLoading ? 'Sending...' : 'Send OTP')}
                   </button>
+                  {emailPreVerified && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmailPreVerified(false);
+                        setEmailOtpSent(false);
+                        setEmailOtp('');
+                        setInfoMsg('');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#6B7280',
+                        fontSize: '11px',
+                        textDecoration: 'underline',
+                        cursor: 'pointer',
+                        padding: '0 4px',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      Change
+                    </button>
+                  )}
                 </div>
 
                 {/* Inline Email OTP Input */}

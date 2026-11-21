@@ -107,9 +107,16 @@ const sendSmsOtp = async (mobile, otp) => {
         }
       );
 
-      return response.data;
+      const otpPayload = response.data || {};
+      const otpFailed = otpPayload.type === 'error' || otpPayload.hasError || otpPayload.code === '401' || otpPayload.message && /error|fail/i.test(String(otpPayload.message));
+      if (otpFailed) {
+        console.warn('[MSG91 OTP] API returned error payload:', JSON.stringify({ type: otpPayload.type, message: otpPayload.message, code: otpPayload.code }));
+        throw new Error(otpPayload.message || 'MSG91 OTP API error');
+      }
+      return otpPayload;
     } catch (err) {
-      // Intentionally omit URL/credentials from log
+      // Log sanitized error (no authkey/URL) so OTP delivery failures are visible
+      console.warn('[MSG91 OTP] Send failed, falling back to SMS API:', err.response?.data ? JSON.stringify(err.response.data).slice(0, 300) : err.message);
     }
   }
 

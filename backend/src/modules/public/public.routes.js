@@ -81,11 +81,30 @@ router.post('/verify-mobile', async (req, res, next) => {
       logger.warn(`OTP DB insert warning: ${dbErr.message}`);
     }
     
-    await sendSmsOtp(cleanMob, otp).catch(err => {
-      logger.warn(`Mobile OTP SMS send failed: ${err.message}`);
+    let smsDelivered = false;
+    try {
+      const smsResult = await sendSmsOtp(cleanMob, otp);
+      smsDelivered = smsResult !== false;
+      if (!smsDelivered) {
+        logger.warn(`[CAREERS OTP] MSG91 SMS not delivered for mobile ending ${cleanMob.slice(-4)}`);
+      }
+    } catch (smsErr) {
+      logger.error(`[CAREERS OTP] SMS send failed for mobile ending ${cleanMob.slice(-4)}: ${smsErr.message}`);
+    }
+
+    if (!smsDelivered && process.env.NODE_ENV === 'production') {
+      return res.status(502).json({
+        success: false,
+        message: 'Unable to deliver OTP SMS to this mobile number right now. Please verify the number or try again shortly.'
+      });
+    }
+
+    res.json({
+      success: true,
+      sms_delivered: smsDelivered,
+      message: 'OTP sent to mobile number',
+      debug_otp: process.env.NODE_ENV !== 'production' ? otp : undefined
     });
-    
-    res.json({ success: true, message: 'OTP sent to mobile number', debug_otp: process.env.NODE_ENV !== 'production' ? otp : undefined });
   } catch (err) {
     logger.error('Verify mobile error:', err);
     res.status(500).json({ success: false, message: 'Failed to process mobile OTP request. Please try again.' });
