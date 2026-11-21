@@ -3221,11 +3221,104 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                         </div>
                       )}
 
-                      {/* WHEN CARD APPROVAL IS DECLINE */}
-                      {(String(cardApprovalStage || '').toLowerCase().includes('decline') || String(finalStatus || '').toLowerCase().includes('decline') || String(finalStatus || '').toLowerCase().includes('reject')) && (
+                      {/* WHEN CARD APPROVAL IS DECLINE OR OPENED BY CURABLE OPERATOR */}
+                      {(isCurableOperator || String(cardApprovalStage || '').toLowerCase().includes('decline') || String(finalStatus || '').toLowerCase().includes('decline') || String(finalStatus || '').toLowerCase().includes('reject')) && (
                         <>
                           {/* 1. DECLINE CODE */}
-                          {isHdfcCcApp ? (
+                          {isCurableOperator ? (
+                            <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                              <div>
+                                <label style={{ fontSize: '12px', fontWeight: 800, color: '#dc2626', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
+                                  <AlertTriangle size={14} /> 1. DECLINE CODE {isHdfcCcApp ? '(HDFC CREDIT CARD)' : ''}
+                                </label>
+                                <input
+                                  type="text"
+                                  readOnly
+                                  disabled
+                                  value={declineCode && declineCode !== 'None' ? declineCode : (primaryDeclineCode && primaryDeclineCode !== 'None' ? primaryDeclineCode : (application?.decline_code || application?.physical_details?.decline_code || application?.primary_decline_code || 'None'))}
+                                  style={{
+                                    width: '100%',
+                                    padding: '11px 14px',
+                                    borderRadius: '8px',
+                                    border: '1.5px solid #ef4444',
+                                    fontSize: '13px',
+                                    background: '#fef2f2',
+                                    fontWeight: 700,
+                                    color: '#1e293b',
+                                    cursor: 'not-allowed'
+                                  }}
+                                />
+                              </div>
+
+                              {/* READ-ONLY ALLOCATED CURING TEAM BANNER */}
+                              {(() => {
+                                const effCode = declineCode && declineCode !== 'None' ? declineCode : (primaryDeclineCode && primaryDeclineCode !== 'None' ? primaryDeclineCode : (application?.decline_code || application?.physical_details?.decline_code || application?.primary_decline_code || 'None'));
+                                if (!effCode || effCode === 'None') return null;
+                                const codeInfo = getHdfcDeclineCodeInfo(effCode);
+                                const curingDesig = codeInfo?.designation || getHdfcCuringDesignation(effCode);
+                                const isCibil = String(effCode).trim().toUpperCase() === 'CIBIL DECLINE';
+                                const badgeInfo = CURING_DESIGNATION_BADGES[curingDesig] || (isCibil ? {
+                                  bg: '#fef2f2',
+                                  border: '#fca5a5',
+                                  text: '#991b1b',
+                                  pillBg: '#dc2626',
+                                  label: 'Non-Curable (CIBIL Decline)'
+                                } : {
+                                  bg: '#f1f5f9',
+                                  border: '#cbd5e1',
+                                  text: '#475569',
+                                  pillBg: '#64748b',
+                                  label: 'Unassigned Curing'
+                                });
+
+                                return (
+                                  <div style={{
+                                    background: badgeInfo.bg,
+                                    border: `1.5px solid ${badgeInfo.border}`,
+                                    borderRadius: '10px',
+                                    padding: '12px 16px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '6px'
+                                  }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{ fontSize: '12px', fontWeight: 800, color: '#334155', textTransform: 'uppercase' }}>
+                                          Allocated Curing Team:
+                                        </span>
+                                        <span style={{
+                                          background: badgeInfo.pillBg,
+                                          color: '#ffffff',
+                                          padding: '3px 12px',
+                                          borderRadius: '20px',
+                                          fontSize: '12px',
+                                          fontWeight: 800,
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '4px'
+                                        }}>
+                                          🛡️ {badgeInfo.label}
+                                        </span>
+                                      </div>
+                                      <span style={{ fontSize: '12px', fontWeight: 800, color: '#64748b' }}>
+                                        Code: <strong style={{ color: badgeInfo.text, fontFamily: 'monospace' }}>{effCode}</strong>
+                                      </span>
+                                    </div>
+                                    <div style={{ fontSize: '12.5px', fontWeight: 700, color: badgeInfo.text }}>
+                                      Description: {codeInfo?.type || declineRemark || '—'}
+                                    </div>
+                                    <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 600 }}>
+                                      {isCibil ? (
+                                        <span>ℹ️ Application is marked as <strong>CIBIL Decline</strong> and does not route to curing operators.</span>
+                                      ) : (
+                                        <span>ℹ️ Application will automatically route to <strong>{badgeInfo.label}</strong> operators in the Admin panel.</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          ) : isHdfcCcApp ? (
                             <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                               <div>
                                 <label style={{ fontSize: '12px', fontWeight: 800, color: '#dc2626', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', textTransform: 'uppercase' }}>
@@ -3367,15 +3460,15 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                             </div>
                           )}
 
-                          {/* 2. DECLINE REMARK */}
+                          {/* 2. CALLING REMARK */}
                           <div>
-                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#dc2626', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>2. DECLINE REMARK</label>
+                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#dc2626', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>2. CALLING REMARK</label>
                             <input
                               type="text"
                               disabled={!canEditRemark}
                               value={declineRemark}
                               onChange={(e) => setDeclineRemark(e.target.value)}
-                              placeholder="Enter Decline Remark"
+                              placeholder="Enter Calling Remark"
                               style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff' }}
                             />
                           </div>
