@@ -495,6 +495,13 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
   const [queryableRemark, setQueryableRemark] = useState(sanitizeVal(application?.queryable_remark) || sanitizeVal(application?.physical_details?.queryable_remark) || 'None');
   const [queryableSalesRemark, setQueryableSalesRemark] = useState(sanitizeVal(application?.queryable_sales_remark) || sanitizeVal(application?.physical_details?.queryable_sales_remark) || '');
   const [digitalRemark, setDigitalRemark] = useState(sanitizeVal(application?.digital_remark) || sanitizeVal(application?.physical_details?.digital_remark) || 'None');
+  const [addressType, setAddressType] = useState(
+    sanitizeVal(application?.address_type) ||
+    sanitizeVal(application?.curing_address_type) ||
+    sanitizeVal(application?.physical_details?.address_type) ||
+    sanitizeVal(application?.physical_details?.curing_address_type) ||
+    'Current Address'
+  );
 
   const [appcodeStatus, setAppcodeStatus] = useState(sanitizeVal(application?.appcode_status) || sanitizeVal(application?.physical_details?.appcode_status));
   const [softApprovalStatus, setSoftApprovalStatus] = useState(sanitizeVal(application?.soft_approval_status) || sanitizeVal(application?.physical_details?.soft_approval_status));
@@ -761,6 +768,13 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
         setQueryableRemark(sanitizeVal(app.queryable_remark) || sanitizeVal(pd.queryable_remark) || 'None');
         setQueryableSalesRemark(sanitizeVal(app.queryable_sales_remark) || sanitizeVal(pd.queryable_sales_remark) || '');
         setDigitalRemark(sanitizeVal(app.digital_remark) || sanitizeVal(pd.digital_remark) || 'None');
+        setAddressType(
+          sanitizeVal(app.address_type) ||
+          sanitizeVal(app.curing_address_type) ||
+          sanitizeVal(pd.address_type) ||
+          sanitizeVal(pd.curing_address_type) ||
+          'Current Address'
+        );
         setInProcessStage(sanitizeVal(app.in_process_stage) || sanitizeVal(pd.in_process_stage) || 'None');
         if (realAppFileGenerated) setAppFileGenerated(realAppFileGenerated);
         if (app.decline_reason || pd.decline_reason) setDeclineReason(app.decline_reason || pd.decline_reason);
@@ -905,6 +919,8 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           queryable_remark: queryableRemark || 'None',
           queryable_sales_remark: queryableSalesRemark || undefined,
           digital_remark: digitalRemark || 'None',
+          address_type: addressType || 'Current Address',
+          curing_address_type: addressType || 'Current Address',
           appcode_status: appcodeStatus || 'None',
           soft_approval_status: softApprovalStatus || 'None',
           iqa_stage: iqaStage || 'None',
@@ -949,7 +965,10 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           final_loan_disbursed: finalLoanDisbursed,
           final_loan_tenure: finalLoanTenure
         };
-        if (isOpsOrAdmin && !['approved', 'rejected', 'sanctioned'].includes(String(currentStatus).toLowerCase())) {
+        if (isCurableOperator) {
+          payload.status = 'approved';
+          payload.final_status = 'Approved';
+        } else if (isOpsOrAdmin && !['approved', 'rejected', 'sanctioned'].includes(String(currentStatus).toLowerCase())) {
           payload.status = 'operational_verified';
         }
       } else if (formType === 'final') {
@@ -1038,6 +1057,8 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           queryable_remark: queryableRemark,
           queryable_sales_remark: queryableSalesRemark,
           digital_remark: digitalRemark,
+          address_type: addressType || 'Current Address',
+          curing_address_type: addressType || 'Current Address',
           bank_remark: effectiveRemarkToSave,
           decline_reason: declineReason || offerDeclineReason || declineRemark || effectiveRemarkToSave,
           user_remark: userRemarkToSave,
@@ -1086,11 +1107,15 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
 
       const res = await api.put(`/applications/${application.id}/verification`, payload);
       if (res?.data?.success) {
+        if (isCurableOperator && formType === 'remark') {
+          setCurrentStatus('approved');
+          setFinalStatus('Approved');
+        }
         alert(`Application details saved successfully!`);
         try {
           await fetchData();
         } catch (_) {}
-        if (onRefresh) onRefresh();
+        if (onRefresh) onRefresh(isCurableOperator && formType === 'remark' ? 'approved' : undefined);
       }
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to update application details');
@@ -3479,21 +3504,43 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                             <select
                               disabled={!canEditRemark}
                               value={queryableRemark || 'None'}
-                              onChange={(e) => setQueryableRemark(e.target.value)}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setQueryableRemark(val);
+                                if (val === 'Complete Digital Journey' || val === 'Complete' || val === 'Completed') {
+                                  setDigitalRemark('Completed');
+                                }
+                              }}
                               style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
                             >
                               <option value="None">None</option>
                               <option value="Digital">Digital</option>
                               <option value="Physical">Physical</option>
                               <option value="Not Required">Not Required</option>
-                              {queryableRemark && !['None', 'Digital', 'Physical', 'Not Required', ''].includes(queryableRemark) && (
+                              <option value="Complete">Complete</option>
+                              <option value="Complete Digital Journey">Complete Digital Journey</option>
+                              {queryableRemark && !['None', 'Digital', 'Physical', 'Not Required', 'Complete', 'Complete Digital Journey', ''].includes(queryableRemark) && (
                                 <option value={queryableRemark}>{queryableRemark}</option>
                               )}
                             </select>
                           </div>
 
-                          {/* 4. DIGITAL QUERY DETAILS (WHEN CUREBAL REMARK IS DIGITAL) */}
-                          {String(queryableRemark).toLowerCase() === 'digital' && (
+                          {/* 4. ADDRESS */}
+                          <div>
+                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>4. ADDRESS</label>
+                            <select
+                              disabled={!canEditRemark}
+                              value={addressType || 'Current Address'}
+                              onChange={(e) => setAddressType(e.target.value)}
+                              style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
+                            >
+                              <option value="Current Address">Current Address</option>
+                              <option value="Office Address">Office Address</option>
+                            </select>
+                          </div>
+
+                          {/* 5. DIGITAL QUERY DETAILS (AVAILABLE FOR DIGITAL, PHYSICAL, NOT REQUIRED, AND COMPLETE) */}
+                          {Boolean(isCurableOperator || ['digital', 'physical', 'not required', 'complete', 'complete digital journey', 'completed'].includes(String(queryableRemark || '').toLowerCase().trim())) && (
                             <div style={{ gridColumn: '1 / -1', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '14px', marginTop: '4px' }}>
                               <div style={{ fontWeight: 800, color: '#1e40af', fontSize: '13px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <Sparkles size={16} /> Digital Journey Query Details
@@ -3505,6 +3552,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                                     disabled={!canEditRemark}
                                     onClick={() => {
                                       setDigitalRemark('Completed');
+                                      setQueryableRemark('Complete Digital Journey');
                                       alert('Digital journey marked as Completed!');
                                     }}
                                     style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '8px', fontSize: '12.5px', fontWeight: 800, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center' }}
@@ -3530,7 +3578,13 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                                   <select
                                     disabled={!canEditRemark}
                                     value={digitalRemark || 'None'}
-                                    onChange={(e) => setDigitalRemark(e.target.value)}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setDigitalRemark(val);
+                                      if (val === 'Completed' || val === 'Complete') {
+                                        setQueryableRemark('Complete Digital Journey');
+                                      }
+                                    }}
                                     style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff', fontWeight: 600 }}
                                   >
                                     <option value="None">None</option>

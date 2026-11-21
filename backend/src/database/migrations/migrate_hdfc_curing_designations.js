@@ -30,7 +30,13 @@ const migrateHdfcCuringDesignations = async () => {
         ADD COLUMN IF NOT EXISTS primary_curing_designation VARCHAR(100),
         ADD COLUMN IF NOT EXISTS secondary_decline_code VARCHAR(100),
         ADD COLUMN IF NOT EXISTS secondary_decline_description TEXT,
-        ADD COLUMN IF NOT EXISTS secondary_curing_designation VARCHAR(100)
+        ADD COLUMN IF NOT EXISTS secondary_curing_designation VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS address_type VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS curing_address_type VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS queryable_remark VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS queryable_sales_remark TEXT,
+        ADD COLUMN IF NOT EXISTS digital_remark VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS decline_remark TEXT
     `);
 
     // 2. Ensure columns on physical_application_details table
@@ -44,7 +50,13 @@ const migrateHdfcCuringDesignations = async () => {
         ADD COLUMN IF NOT EXISTS primary_curing_designation VARCHAR(100),
         ADD COLUMN IF NOT EXISTS secondary_decline_code VARCHAR(100),
         ADD COLUMN IF NOT EXISTS secondary_decline_description TEXT,
-        ADD COLUMN IF NOT EXISTS secondary_curing_designation VARCHAR(100)
+        ADD COLUMN IF NOT EXISTS secondary_curing_designation VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS address_type VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS curing_address_type VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS queryable_remark VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS queryable_sales_remark TEXT,
+        ADD COLUMN IF NOT EXISTS digital_remark VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS decline_remark TEXT
     `);
 
     // 3. Create indexes for efficient filtering in listApplications

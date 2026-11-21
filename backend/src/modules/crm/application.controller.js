@@ -2287,7 +2287,7 @@ const listApplications = async (req, res, next) => {
       OR ($2::text = 'pending' AND combined.status IN ('pending', 'lead_created', 'new', 'draft', 'initiated', 'link_sent', 'confirmed', 'link_pending'))
       OR ($2::text = 'details_submitted' AND combined.status IN ('details_submitted', 'submitted', 'bank_form_submitted'))
       OR ($2::text = 'operational_verified' AND combined.status IN ('operational_verified', 'under_review', 'under review', 'verification', 'in_process', 'in_progress', 'vkyc_pending', 'vkyc_completed'))
-      OR ($2::text = 'approved' AND combined.status IN ('approved', 'sanctioned', 'super_admin_approved', 'disbursed'))
+      OR ($2::text = 'approved' AND (combined.status IN ('approved', 'sanctioned', 'super_admin_approved', 'disbursed') OR LOWER(COALESCE(combined.final_status, '')) = 'approved'))
       OR ($2::text = 'commission_received' AND combined.status IN ('commission_received', 'commission_released', 'released', 'credited', 'paid'))
       OR ($2::text = 'rejected' AND (
         (
@@ -2302,7 +2302,9 @@ const listApplications = async (req, res, next) => {
           OR (combined.decline_code IS NOT NULL AND TRIM(combined.decline_code) != '' AND UPPER(TRIM(combined.decline_code)) != 'NONE')
         )
         AND NOT (
-          combined.status IN ('cancelled', 'cancel', 'canceled')
+          combined.status IN ('approved', 'sanctioned', 'super_admin_approved', 'disbursed')
+          OR LOWER(COALESCE(combined.final_status, '')) = 'approved'
+          OR combined.status IN ('cancelled', 'cancel', 'canceled')
           OR LOWER(COALESCE(combined.status, '')) LIKE '%cancel%'
           OR LOWER(COALESCE(combined.final_status, '')) IN ('cancelled', 'cancel', 'canceled')
           OR LOWER(COALESCE(combined.final_status, '')) LIKE '%cancel%'
@@ -2310,9 +2312,15 @@ const listApplications = async (req, res, next) => {
         )
       ))
       OR ($2::text = 'declined' AND (
-        combined.status IN ('declined', 'decline')
-        OR LOWER(COALESCE(combined.final_status, '')) LIKE '%decline%'
-        OR (combined.decline_code IS NOT NULL AND TRIM(combined.decline_code) != '' AND UPPER(TRIM(combined.decline_code)) != 'NONE')
+        (
+          combined.status IN ('declined', 'decline')
+          OR LOWER(COALESCE(combined.final_status, '')) LIKE '%decline%'
+          OR (combined.decline_code IS NOT NULL AND TRIM(combined.decline_code) != '' AND UPPER(TRIM(combined.decline_code)) != 'NONE')
+        )
+        AND NOT (
+          combined.status IN ('approved', 'sanctioned', 'super_admin_approved', 'disbursed')
+          OR LOWER(COALESCE(combined.final_status, '')) = 'approved'
+        )
       ))
       OR ($2::text = 'cancelled' AND (combined.status IN ('cancelled', 'cancel', 'canceled') OR LOWER(COALESCE(combined.final_status, '')) LIKE '%cancel%'))
     )`;
@@ -2367,6 +2375,12 @@ const listApplications = async (req, res, next) => {
           COALESCE(NULLIF(a.secondary_decline_code, ''), NULLIF(pad.secondary_decline_code, '')) as secondary_decline_code,
           COALESCE(NULLIF(a.secondary_decline_description, ''), NULLIF(pad.secondary_decline_description, '')) as secondary_decline_description,
           COALESCE(NULLIF(a.secondary_curing_designation, ''), NULLIF(pad.secondary_curing_designation, '')) as secondary_curing_designation,
+          COALESCE(NULLIF(a.address_type, ''), NULLIF(a.curing_address_type, ''), NULLIF(pad.address_type, ''), NULLIF(pad.curing_address_type, ''), 'Current Address') as address_type,
+          COALESCE(NULLIF(a.address_type, ''), NULLIF(a.curing_address_type, ''), NULLIF(pad.address_type, ''), NULLIF(pad.curing_address_type, ''), 'Current Address') as curing_address_type,
+          COALESCE(NULLIF(a.queryable_remark, ''), NULLIF(pad.queryable_remark, ''), 'None') as queryable_remark,
+          COALESCE(NULLIF(a.queryable_sales_remark, ''), NULLIF(pad.queryable_sales_remark, '')) as queryable_sales_remark,
+          COALESCE(NULLIF(a.digital_remark, ''), NULLIF(pad.digital_remark, ''), 'None') as digital_remark,
+          COALESCE(NULLIF(a.decline_remark, ''), NULLIF(pad.decline_remark, '')) as decline_remark,
           a.last_operator_name,
           a.last_operator_role,
           a.last_operator_designation,
@@ -3141,7 +3155,16 @@ const getApplication = async (req, res, next) => {
       if (!isClean(app.disbursement_completed) && pd.disbursement_completed) app.disbursement_completed = pd.disbursement_completed;
       if (!isClean(app.disbursement_date) && pd.disbursement_date) app.disbursement_date = pd.disbursement_date;
       if (!isClean(app.disbursement_date) && (app.disbursal_date || pd.disbursal_date)) app.disbursement_date = app.disbursal_date || pd.disbursal_date;
+      if (!isClean(app.queryable_remark) && pd.queryable_remark) app.queryable_remark = pd.queryable_remark;
+      if (!isClean(app.queryable_sales_remark) && pd.queryable_sales_remark) app.queryable_sales_remark = pd.queryable_sales_remark;
+      if (!isClean(app.digital_remark) && pd.digital_remark) app.digital_remark = pd.digital_remark;
+      if (!isClean(app.decline_remark) && pd.decline_remark) app.decline_remark = pd.decline_remark;
+      if (!isClean(app.address_type) && pd.address_type) app.address_type = pd.address_type;
+      if (!isClean(app.curing_address_type) && (pd.curing_address_type || pd.address_type)) app.curing_address_type = pd.curing_address_type || pd.address_type;
     }
+
+    if (!app.address_type && app.curing_address_type) app.address_type = app.curing_address_type;
+    if (!app.curing_address_type && app.address_type) app.curing_address_type = app.address_type;
 
     if (!app.customer_loan_type && app.customer_loan_offer) app.customer_loan_type = app.customer_loan_offer;
     if (!app.disbursement_amount && app.disbursed_amount) app.disbursement_amount = app.disbursed_amount;
@@ -4856,6 +4879,12 @@ const updateApplicationDetails = async (req, res, next) => {
     const {
       bank_application_number,
       bank_ref_number,
+      address_type,
+      curing_address_type,
+      queryable_remark,
+      queryable_sales_remark,
+      digital_remark,
+      decline_remark,
       vkyc_status,
       vkyc_url,
       salary_slip_url,
@@ -5016,6 +5045,15 @@ const updateApplicationDetails = async (req, res, next) => {
     const isPanCheckerUser = ['PAN CHECKER', 'PAN_CHECKER'].includes(userDesignation) || ['PAN CHECKER', 'PAN_CHECKER'].includes(userRole);
     const isOpsOrAdmin = ['SUPER_ADMIN', 'ADMIN', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'OPERATIONS_HEAD', 'OPERATIONAL_HEAD', 'EMPLOYEE', 'TELECALLER', 'SALES_EXECUTIVE', 'MANAGER', 'TEAM_LEADER', 'FIELD_OPERATOR', 'PARTNER'].includes(userRole) || ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR'].includes(userDesignation) || !!req.user;
 
+    const curableDesignationSets = {
+      PHYSICAL_CURABLE: ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'],
+      DIGITAL_CURABLE: ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'],
+      EMAIL_CURABLE: ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'],
+    };
+    const isCurableOperatorLocal = Object.keys(curableDesignationSets).some(team =>
+      curableDesignationSets[team].includes(userDesignation) || curableDesignationSets[team].includes(userRole)
+    );
+
     const isSalesExecUserLocal = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
     if (isSalesExecUserLocal && app.sales_claimed_by && app.sales_claimed_by !== req.user?.id && !['ADMIN', 'SUPER_ADMIN'].includes(userRole)) {
       await client.query('ROLLBACK');
@@ -5028,7 +5066,7 @@ const updateApplicationDetails = async (req, res, next) => {
       return error(res, 'Marking application status as Approved or Rejected is reserved for Super Admin and Operations Head.', 403);
     }
     const isRestrictedApprovalStatus = ['approved', 'disbursed', 'commission_released', 'super_admin_approved'].includes((status || '').toLowerCase());
-    if (status && status !== app.status && isRestrictedApprovalStatus && !['SUPER_ADMIN', 'ADMIN', 'OPERATIONS_HEAD', 'OPERATIONAL_HEAD'].includes(userRole)) {
+    if (status && status !== app.status && isRestrictedApprovalStatus && !['SUPER_ADMIN', 'ADMIN', 'OPERATIONS_HEAD', 'OPERATIONAL_HEAD'].includes(userRole) && !isCurableOperatorLocal) {
       await client.query('ROLLBACK');
       return error(res, 'Marking application status as Approved is reserved for Super Admin and Operations Head.', 403);
     }
@@ -5743,6 +5781,56 @@ const updateApplicationDetails = async (req, res, next) => {
       } catch (curingErr) {
         await client.query('ROLLBACK TO SAVEPOINT pad_curing_sp').catch(err => logger.warn('Silent catch warning:', err.message));
         logger.warn('Failed to update decline_code/curing_designation on physical_application_details:', curingErr.message);
+      }
+    }
+
+    const effectiveQueryableRemark = req.body.queryable_remark !== undefined ? cleanStr(req.body.queryable_remark) : undefined;
+    const effectiveQueryableSalesRemark = req.body.queryable_sales_remark !== undefined ? cleanStr(req.body.queryable_sales_remark) : undefined;
+    const effectiveDigitalRemark = req.body.digital_remark !== undefined ? cleanStr(req.body.digital_remark) : undefined;
+    const effectiveDeclineRemark = req.body.decline_remark !== undefined ? cleanStr(req.body.decline_remark) : undefined;
+    const effectiveAddressType = (req.body.address_type !== undefined ? cleanStr(req.body.address_type) : cleanStr(req.body.curing_address_type)) || undefined;
+
+    if (effectiveQueryableRemark !== undefined || effectiveQueryableSalesRemark !== undefined || effectiveDigitalRemark !== undefined || effectiveDeclineRemark !== undefined || effectiveAddressType !== undefined) {
+      try {
+        await client.query('SAVEPOINT curing_remarks_sp');
+        await client.query(`
+          UPDATE applications SET
+            queryable_remark = COALESCE($1, queryable_remark),
+            queryable_sales_remark = COALESCE($2, queryable_sales_remark),
+            digital_remark = COALESCE($3, digital_remark),
+            decline_remark = COALESCE($4, decline_remark),
+            address_type = COALESCE($5, address_type),
+            curing_address_type = COALESCE($5, curing_address_type)
+          WHERE id = $6
+        `, [
+          effectiveQueryableRemark || null,
+          effectiveQueryableSalesRemark || null,
+          effectiveDigitalRemark || null,
+          effectiveDeclineRemark || null,
+          effectiveAddressType || null,
+          app.id
+        ]);
+        await client.query(`
+          UPDATE physical_application_details SET
+            queryable_remark = COALESCE($1, queryable_remark),
+            queryable_sales_remark = COALESCE($2, queryable_sales_remark),
+            digital_remark = COALESCE($3, digital_remark),
+            decline_remark = COALESCE($4, decline_remark),
+            address_type = COALESCE($5, address_type),
+            curing_address_type = COALESCE($5, curing_address_type)
+          WHERE application_id = $6
+        `, [
+          effectiveQueryableRemark || null,
+          effectiveQueryableSalesRemark || null,
+          effectiveDigitalRemark || null,
+          effectiveDeclineRemark || null,
+          effectiveAddressType || null,
+          app.id
+        ]);
+        await client.query('RELEASE SAVEPOINT curing_remarks_sp');
+      } catch (curRemErr) {
+        await client.query('ROLLBACK TO SAVEPOINT curing_remarks_sp').catch(err => logger.warn('Silent catch warning:', err.message));
+        logger.warn('Failed to update curing remark/address fields:', curRemErr.message);
       }
     }
 

@@ -527,14 +527,18 @@ export default function ManageApplications() {
     let s = String(app?.status || '').toLowerCase();
     let fs = String(app?.final_status || '').toLowerCase();
     if (s === 'commission_released') s = 'commission_received';
-    if (s.includes('reject') || fs.includes('reject') || s.includes('decline') || fs.includes('decline')) {
-      acc['rejected'] = (acc['rejected'] || 0) + 1;
-    }
-    if (s.includes('decline') || fs.includes('decline')) {
-      acc['declined'] = (acc['declined'] || 0) + 1;
-    }
-    if (s.includes('cancel') || fs.includes('cancel')) {
-      acc['cancelled'] = (acc['cancelled'] || 0) + 1;
+    if (s === 'approved' || fs === 'approved') {
+      acc['approved'] = (acc['approved'] || 0) + 1;
+    } else {
+      if (s.includes('reject') || fs.includes('reject') || s.includes('decline') || fs.includes('decline')) {
+        acc['rejected'] = (acc['rejected'] || 0) + 1;
+      }
+      if (s.includes('decline') || fs.includes('decline')) {
+        acc['declined'] = (acc['declined'] || 0) + 1;
+      }
+      if (s.includes('cancel') || fs.includes('cancel')) {
+        acc['cancelled'] = (acc['cancelled'] || 0) + 1;
+      }
     }
     acc[s] = (acc[s] || 0) + 1;
     return acc;
@@ -2060,7 +2064,12 @@ export default function ManageApplications() {
           application={verifyModalApp}
           initialTab={verifyModalTab}
           onClose={() => setVerifyModalApp(null)}
-          onRefresh={fetchApplications}
+          onRefresh={(newStatus) => {
+            if (isCurableOperatorUser || newStatus === 'approved') {
+              setStatus('approved');
+            }
+            fetchApplications();
+          }}
         />
       )}
 
