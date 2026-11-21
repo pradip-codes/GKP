@@ -3161,6 +3161,7 @@ const getApplication = async (req, res, next) => {
       if (!isClean(app.decline_remark) && pd.decline_remark) app.decline_remark = pd.decline_remark;
       if (!isClean(app.address_type) && pd.address_type) app.address_type = pd.address_type;
       if (!isClean(app.curing_address_type) && (pd.curing_address_type || pd.address_type)) app.curing_address_type = pd.curing_address_type || pd.address_type;
+      if (!isClean(app.curing_address) && pd.curing_address) app.curing_address = pd.curing_address;
     }
 
     if (!app.address_type && app.curing_address_type) app.address_type = app.curing_address_type;
@@ -5789,8 +5790,10 @@ const updateApplicationDetails = async (req, res, next) => {
     const effectiveDigitalRemark = req.body.digital_remark !== undefined ? cleanStr(req.body.digital_remark) : undefined;
     const effectiveDeclineRemark = req.body.decline_remark !== undefined ? cleanStr(req.body.decline_remark) : undefined;
     const effectiveAddressType = (req.body.address_type !== undefined ? cleanStr(req.body.address_type) : cleanStr(req.body.curing_address_type)) || undefined;
+    const effectiveAddressText = (req.body.curing_address !== undefined ? cleanStr(req.body.curing_address) : (req.body.manual_address !== undefined ? cleanStr(req.body.manual_address) : (req.body.address !== undefined ? cleanStr(req.body.address) : undefined))) || undefined;
+    const effectiveCompanyAddress = req.body.company_address !== undefined ? cleanStr(req.body.company_address) : undefined;
 
-    if (effectiveQueryableRemark !== undefined || effectiveQueryableSalesRemark !== undefined || effectiveDigitalRemark !== undefined || effectiveDeclineRemark !== undefined || effectiveAddressType !== undefined) {
+    if (effectiveQueryableRemark !== undefined || effectiveQueryableSalesRemark !== undefined || effectiveDigitalRemark !== undefined || effectiveDeclineRemark !== undefined || effectiveAddressType !== undefined || effectiveAddressText !== undefined || effectiveCompanyAddress !== undefined) {
       try {
         await client.query('SAVEPOINT curing_remarks_sp');
         await client.query(`
@@ -5800,14 +5803,18 @@ const updateApplicationDetails = async (req, res, next) => {
             digital_remark = COALESCE($3, digital_remark),
             decline_remark = COALESCE($4, decline_remark),
             address_type = COALESCE($5, address_type),
-            curing_address_type = COALESCE($5, curing_address_type)
-          WHERE id = $6
+            curing_address_type = COALESCE($5, curing_address_type),
+            address = COALESCE($6, address),
+            company_address = COALESCE($7, company_address)
+          WHERE id = $8
         `, [
           effectiveQueryableRemark || null,
           effectiveQueryableSalesRemark || null,
           effectiveDigitalRemark || null,
           effectiveDeclineRemark || null,
           effectiveAddressType || null,
+          effectiveAddressText || null,
+          effectiveCompanyAddress || null,
           app.id
         ]);
         await client.query(`
@@ -5817,16 +5824,24 @@ const updateApplicationDetails = async (req, res, next) => {
             digital_remark = COALESCE($3, digital_remark),
             decline_remark = COALESCE($4, decline_remark),
             address_type = COALESCE($5, address_type),
-            curing_address_type = COALESCE($5, curing_address_type)
-          WHERE application_id = $6
+            curing_address_type = COALESCE($5, curing_address_type),
+            address = COALESCE($6, address),
+            company_address = COALESCE($7, company_address)
+          WHERE application_id = $8
         `, [
           effectiveQueryableRemark || null,
           effectiveQueryableSalesRemark || null,
           effectiveDigitalRemark || null,
           effectiveDeclineRemark || null,
           effectiveAddressType || null,
+          effectiveAddressText || null,
+          effectiveCompanyAddress || null,
           app.id
         ]);
+        if (effectiveAddressText) {
+          await client.query(`UPDATE applications SET curing_address = $1 WHERE id = $2`, [effectiveAddressText, app.id]).catch(() => {});
+          await client.query(`UPDATE physical_application_details SET curing_address = $1 WHERE application_id = $2`, [effectiveAddressText, app.id]).catch(() => {});
+        }
         await client.query('RELEASE SAVEPOINT curing_remarks_sp');
       } catch (curRemErr) {
         await client.query('ROLLBACK TO SAVEPOINT curing_remarks_sp').catch(err => logger.warn('Silent catch warning:', err.message));

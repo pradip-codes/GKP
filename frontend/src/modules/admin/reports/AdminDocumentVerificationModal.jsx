@@ -521,6 +521,49 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
     'Current Address'
   );
 
+  const resolveCurrentAddr = (appData) => {
+    return (
+      sanitizeVal(appData?.curing_address && (!appData?.address_type || appData?.address_type === 'Current Address') ? appData?.curing_address : '') ||
+      sanitizeVal(appData?.address) ||
+      sanitizeVal(appData?.physical_details?.address) ||
+      [
+        appData?.address1 || appData?.physical_details?.address1,
+        appData?.address2 || appData?.physical_details?.address2,
+        appData?.landmark || appData?.physical_details?.landmark,
+        appData?.city || appData?.physical_details?.city,
+        appData?.state || appData?.physical_details?.state,
+        appData?.pincode || appData?.physical_details?.pincode
+      ].filter(Boolean).join(', ') ||
+      ''
+    );
+  };
+
+  const resolveOfficeAddr = (appData) => {
+    return (
+      sanitizeVal(appData?.curing_address && (appData?.address_type === 'Office Address') ? appData?.curing_address : '') ||
+      sanitizeVal(appData?.company_address) ||
+      sanitizeVal(appData?.office_address) ||
+      sanitizeVal(appData?.physical_details?.company_address) ||
+      sanitizeVal(appData?.physical_details?.office_address) ||
+      ''
+    );
+  };
+
+  const [currentAddressText, setCurrentAddressText] = useState(resolveCurrentAddr(application));
+  const [officeAddressText, setOfficeAddressText] = useState(resolveOfficeAddr(application));
+
+  const isOfficeSelected = addressType === 'Office Address' || (addressType && String(addressType).toLowerCase().includes('office'));
+  const activeAddressText = isOfficeSelected ? officeAddressText : currentAddressText;
+  const setActiveAddressText = (val) => {
+    if (isOfficeSelected) {
+      setOfficeAddressText(val);
+      setCompanyAddress(val);
+    } else {
+      setCurrentAddressText(val);
+      setAddress1(val);
+    }
+  };
+
   const [appcodeStatus, setAppcodeStatus] = useState(sanitizeVal(application?.appcode_status) || sanitizeVal(application?.physical_details?.appcode_status));
   const [softApprovalStatus, setSoftApprovalStatus] = useState(sanitizeVal(application?.soft_approval_status) || sanitizeVal(application?.physical_details?.soft_approval_status));
   const [vkycStage, setVkycStage] = useState(sanitizeVal(application?.vkyc_stage) || sanitizeVal(application?.vkyc_status) || sanitizeVal(application?.physical_details?.vkyc_stage));
@@ -798,6 +841,8 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           sanitizeVal(pd.curing_address_type) ||
           'Current Address'
         );
+        setCurrentAddressText(resolveCurrentAddr(app) || resolveCurrentAddr(pd) || '');
+        setOfficeAddressText(resolveOfficeAddr(app) || resolveOfficeAddr(pd) || '');
         setInProcessStage(sanitizeVal(app.in_process_stage) || sanitizeVal(pd.in_process_stage) || 'None');
         if (realAppFileGenerated) setAppFileGenerated(realAppFileGenerated);
         if (app.decline_reason || pd.decline_reason) setDeclineReason(app.decline_reason || pd.decline_reason);
@@ -944,6 +989,10 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           digital_remark: digitalRemark || 'None',
           address_type: addressType || 'Current Address',
           curing_address_type: addressType || 'Current Address',
+          address: isOfficeSelected ? (currentAddressText || address1 || '') : (activeAddressText || currentAddressText || ''),
+          company_address: isOfficeSelected ? (activeAddressText || officeAddressText || '') : (officeAddressText || companyAddress || ''),
+          curing_address: activeAddressText || '',
+          manual_address: activeAddressText || '',
           appcode_status: appcodeStatus || 'None',
           soft_approval_status: softApprovalStatus || 'None',
           iqa_stage: iqaStage || 'None',
@@ -1082,6 +1131,10 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           digital_remark: digitalRemark,
           address_type: addressType || 'Current Address',
           curing_address_type: addressType || 'Current Address',
+          address: isOfficeSelected ? (currentAddressText || address1 || '') : (activeAddressText || currentAddressText || ''),
+          company_address: isOfficeSelected ? (activeAddressText || officeAddressText || '') : (officeAddressText || companyAddress || ''),
+          curing_address: activeAddressText || '',
+          manual_address: activeAddressText || '',
           bank_remark: effectiveRemarkToSave,
           decline_reason: declineReason || offerDeclineReason || declineRemark || effectiveRemarkToSave,
           user_remark: userRemarkToSave,
@@ -3547,14 +3600,17 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                             </select>
                           </div>
 
-                          {/* 4. ADDRESS BUTTONS */}
+                          {/* 4. ADDRESS */}
                           <div>
                             <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>4. ADDRESS</label>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                               <button
                                 type="button"
                                 disabled={!canEditRemark}
-                                onClick={() => setAddressType('Current Address')}
+                                onClick={() => {
+                                  setAddressType('Current Address');
+                                  if (!currentAddressText && address1) setCurrentAddressText(address1);
+                                }}
                                 style={{
                                   padding: '10px 12px',
                                   borderRadius: '8px',
@@ -3578,7 +3634,10 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                               <button
                                 type="button"
                                 disabled={!canEditRemark}
-                                onClick={() => setAddressType('Office Address')}
+                                onClick={() => {
+                                  setAddressType('Office Address');
+                                  if (!officeAddressText && companyAddress) setOfficeAddressText(companyAddress);
+                                }}
                                 style={{
                                   padding: '10px 12px',
                                   borderRadius: '8px',
@@ -3600,6 +3659,24 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                                 OFFICE ADDRESS
                               </button>
                             </div>
+                            <textarea
+                              disabled={!canEditRemark}
+                              value={activeAddressText}
+                              onChange={(e) => setActiveAddressText(e.target.value)}
+                              placeholder={`Enter or edit ${isOfficeSelected ? 'Office Address' : 'Current Address'} details manually...`}
+                              rows={2}
+                              style={{
+                                width: '100%',
+                                marginTop: '8px',
+                                padding: '8px 12px',
+                                borderRadius: '8px',
+                                border: '1px solid #cbd5e1',
+                                fontSize: '13px',
+                                background: !canEditRemark ? '#f8fafc' : '#ffffff',
+                                fontWeight: 500,
+                                resize: 'vertical'
+                              }}
+                            />
                           </div>
 
                           {/* 5. DIGITAL QUERY DETAILS (AVAILABLE FOR DIGITAL, PHYSICAL, NOT REQUIRED) */}
@@ -3799,6 +3876,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                       <span style={{ color: '#64748b', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' }}>Address: </span>
                       <strong style={{ color: '#1d4ed8', background: '#eff6ff', padding: '2px 8px', borderRadius: '4px', border: '1px solid #bfdbfe' }}>
                         {addressType ? String(addressType).toUpperCase() : 'CURRENT ADDRESS'}
+                        {activeAddressText ? `: ${activeAddressText}` : ''}
                       </strong>
                     </div>
                   </div>
@@ -4165,7 +4243,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                         </select>
                       </div>
 
-                      {/* ADDRESS SELECTION BUTTONS */}
+                      {/* ADDRESS SELECTION BUTTONS & MANUAL TEXT INPUT */}
                       <div>
                         <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
                           ADDRESS
@@ -4174,7 +4252,10 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                           <button
                             type="button"
                             disabled={!canEditFinal}
-                            onClick={() => setAddressType('Current Address')}
+                            onClick={() => {
+                              setAddressType('Current Address');
+                              if (!currentAddressText && address1) setCurrentAddressText(address1);
+                            }}
                             style={{
                               padding: '10px 12px',
                               borderRadius: '8px',
@@ -4198,7 +4279,10 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                           <button
                             type="button"
                             disabled={!canEditFinal}
-                            onClick={() => setAddressType('Office Address')}
+                            onClick={() => {
+                              setAddressType('Office Address');
+                              if (!officeAddressText && companyAddress) setOfficeAddressText(companyAddress);
+                            }}
                             style={{
                               padding: '10px 12px',
                               borderRadius: '8px',
@@ -4220,6 +4304,24 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                             OFFICE ADDRESS
                           </button>
                         </div>
+                        <textarea
+                          disabled={!canEditFinal}
+                          value={activeAddressText}
+                          onChange={(e) => setActiveAddressText(e.target.value)}
+                          placeholder={`Enter or edit ${isOfficeSelected ? 'Office Address' : 'Current Address'} details manually...`}
+                          rows={2}
+                          style={{
+                            width: '100%',
+                            marginTop: '8px',
+                            padding: '8px 12px',
+                            borderRadius: '8px',
+                            border: '1px solid #cbd5e1',
+                            fontSize: '13px',
+                            background: !canEditFinal ? '#f8fafc' : '#ffffff',
+                            fontWeight: 500,
+                            resize: 'vertical'
+                          }}
+                        />
                       </div>
 
                       {/* USER REMARK */}
@@ -4684,7 +4786,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                     </select>
                   </div>
 
-                  {/* ADDRESS SELECTION BUTTONS */}
+                  {/* ADDRESS SELECTION BUTTONS & MANUAL TEXT INPUT */}
                   <div>
                     <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
                       ADDRESS
@@ -4693,7 +4795,10 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                       <button
                         type="button"
                         disabled={!canEditFinal}
-                        onClick={() => setAddressType('Current Address')}
+                        onClick={() => {
+                          setAddressType('Current Address');
+                          if (!currentAddressText && address1) setCurrentAddressText(address1);
+                        }}
                         style={{
                           padding: '10px 12px',
                           borderRadius: '8px',
@@ -4717,7 +4822,10 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                       <button
                         type="button"
                         disabled={!canEditFinal}
-                        onClick={() => setAddressType('Office Address')}
+                        onClick={() => {
+                          setAddressType('Office Address');
+                          if (!officeAddressText && companyAddress) setOfficeAddressText(companyAddress);
+                        }}
                         style={{
                           padding: '10px 12px',
                           borderRadius: '8px',
@@ -4739,6 +4847,24 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                         OFFICE ADDRESS
                       </button>
                     </div>
+                    <textarea
+                      disabled={!canEditFinal}
+                      value={activeAddressText}
+                      onChange={(e) => setActiveAddressText(e.target.value)}
+                      placeholder={`Enter or edit ${isOfficeSelected ? 'Office Address' : 'Current Address'} details manually...`}
+                      rows={2}
+                      style={{
+                        width: '100%',
+                        marginTop: '8px',
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid #cbd5e1',
+                        fontSize: '13px',
+                        background: !canEditFinal ? '#f8fafc' : '#ffffff',
+                        fontWeight: 500,
+                        resize: 'vertical'
+                      }}
+                    />
                   </div>
 
                   {/* 3. USER REMARK */}
