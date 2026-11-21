@@ -2367,6 +2367,8 @@ const listApplications = async (req, res, next) => {
           COALESCE(NULLIF(a.secondary_decline_code, ''), NULLIF(pad.secondary_decline_code, '')) as secondary_decline_code,
           COALESCE(NULLIF(a.secondary_decline_description, ''), NULLIF(pad.secondary_decline_description, '')) as secondary_decline_description,
           COALESCE(NULLIF(a.secondary_curing_designation, ''), NULLIF(pad.secondary_curing_designation, '')) as secondary_curing_designation,
+          COALESCE(NULLIF(a.call_status, ''), NULLIF(pad.call_status, '')) as call_status,
+          COALESCE(NULLIF(a.customer_interest, ''), NULLIF(pad.customer_interest, '')) as customer_interest,
           a.last_operator_name,
           a.last_operator_role,
           a.last_operator_designation,
@@ -3108,6 +3110,8 @@ const getApplication = async (req, res, next) => {
       if (!isClean(app.kyc_stage) && pd.kyc_stage) app.kyc_stage = pd.kyc_stage;
       if (!isClean(app.card_approval_stage) && pd.card_approval_stage) app.card_approval_stage = pd.card_approval_stage;
       if (!isClean(app.digital_card_issued) && pd.digital_card_issued) app.digital_card_issued = pd.digital_card_issued;
+      if (!isClean(app.call_status) && pd.call_status) app.call_status = pd.call_status;
+      if (!isClean(app.customer_interest) && pd.customer_interest) app.customer_interest = pd.customer_interest;
       if (!isClean(app.user_remark) && pd.user_remark) app.user_remark = pd.user_remark;
       if (!isClean(app.notes) && pd.user_remark) app.notes = pd.user_remark;
       const effUser = (app.user_remark && String(app.user_remark).trim() !== '' && String(app.user_remark).toUpperCase() !== 'NA' && String(app.user_remark).toUpperCase() !== 'N/A') ? String(app.user_remark).trim() : '';
@@ -5383,6 +5387,44 @@ const updateApplicationDetails = async (req, res, next) => {
       }
     }
 
+    if (req.body.call_status !== undefined || req.body.customer_interest !== undefined) {
+      try {
+        await client.query('SAVEPOINT call_status_sp');
+        const effCallStatus = cleanStr(req.body.call_status);
+        const effCustomerInterest = cleanStr(req.body.customer_interest);
+        await client.query(`
+          UPDATE applications SET
+            call_status = CASE WHEN $1::text IS NOT NULL THEN $1 ELSE call_status END,
+            customer_interest = CASE WHEN $2::text IS NOT NULL THEN $2 ELSE customer_interest END,
+            updated_at = NOW()
+          WHERE id = $3
+        `, [effCallStatus, effCustomerInterest, app.id]);
+
+        await client.query(`
+          UPDATE physical_application_details SET
+            call_status = CASE WHEN $1::text IS NOT NULL THEN $1 ELSE call_status END,
+            customer_interest = CASE WHEN $2::text IS NOT NULL THEN $2 ELSE customer_interest END,
+            updated_at = NOW()
+          WHERE application_id = $3
+        `, [effCallStatus, effCustomerInterest, app.id]).catch(() => null);
+
+        if (effCallStatus || effCustomerInterest) {
+          await logTimeline(
+            client,
+            app.id,
+            'call_status_updated',
+            'Call Outcome & Customer Feedback',
+            `Call outcome: ${effCallStatus || 'N/A'}, Customer interest: ${effCustomerInterest || 'N/A'}`,
+            req.user ? req.user.id : null
+          ).catch(() => null);
+        }
+        await client.query('RELEASE SAVEPOINT call_status_sp');
+      } catch (csErr) {
+        await client.query('ROLLBACK TO SAVEPOINT call_status_sp').catch(err => logger.warn('Silent catch warning:', err.message));
+        logger.warn('Failed to save call_status / customer_interest:', csErr.message);
+      }
+    }
+
     if (effectiveDeclineCode !== undefined || derivedCuringDesignation !== undefined || effectiveSecondaryDeclineCode !== undefined) {
       try {
         await client.query('SAVEPOINT curing_sp');
@@ -5812,6 +5854,103 @@ const updateApplicationDetails = async (req, res, next) => {
     await client.query('COMMIT');
     await invalidateApplicationsCache({ action: 'update_application_details', appId: updatedApp?.id || app?.id });
     return success(res, updatedApp, 'Application details updated successfully');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+};
+
+const updateCallStatus = async (req, res, next) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { call_status, customer_interest } = req.body;
+
+    let { rows: [app] } = await client.query(
+      `SELECT * FROM applications 
+       WHERE id::text = $1 OR app_number = $1 OR lead_id::text = $1 
+          OR tracking_token = $1 OR bank_application_number = $1 OR bank_ref_number = $1`,
+      [id]
+    );
+    let isLeadOnly = false;
+    if (!app) {
+      const { rows: [leadRec] } = await client.query(
+        `SELECT * FROM leads 
+         WHERE id::text = $1 OR lead_number = $1 OR application_id::text = $1 OR mobile = $1`,
+        [id]
+      );
+      if (leadRec) {
+        app = leadRec;
+        isLeadOnly = true;
+      }
+    }
+
+    if (!app) {
+      await client.query('ROLLBACK');
+      return notFound(res, 'Application or Lead record not found');
+    }
+
+    const userRole = (req.user?.role || '').toUpperCase();
+    if (['PARTNER', 'TEAM_MEMBER'].includes(userRole)) {
+      const { rows: [partner] } = await client.query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
+      if (!partner || app.partner_id !== partner.id) {
+        await client.query('ROLLBACK');
+        return forbidden(res, 'Access denied. You do not own this application.');
+      }
+    }
+
+    const cleanCallStatus = call_status !== undefined ? (String(call_status).trim() || null) : null;
+    const cleanCustomerInterest = customer_interest !== undefined ? (String(customer_interest).trim() || null) : null;
+
+    let updatedRecord = null;
+    if (isLeadOnly) {
+      const { rows: [upLead] } = await client.query(`
+        UPDATE leads SET
+          call_status = CASE WHEN $1::text IS NOT NULL THEN $1 ELSE call_status END,
+          customer_interest = CASE WHEN $2::text IS NOT NULL THEN $2 ELSE customer_interest END,
+          updated_at = NOW()
+        WHERE id = $3
+        RETURNING *
+      `, [cleanCallStatus, cleanCustomerInterest, app.id]);
+      updatedRecord = upLead;
+    } else {
+      const { rows: [upApp] } = await client.query(`
+        UPDATE applications SET
+          call_status = CASE WHEN $1::text IS NOT NULL THEN $1 ELSE call_status END,
+          customer_interest = CASE WHEN $2::text IS NOT NULL THEN $2 ELSE customer_interest END,
+          updated_at = NOW()
+        WHERE id = $3
+        RETURNING *
+      `, [cleanCallStatus, cleanCustomerInterest, app.id]);
+      updatedRecord = upApp;
+
+      await client.query(`
+        INSERT INTO physical_application_details (application_id, call_status, customer_interest, created_at, updated_at)
+        VALUES ($1, $2, $3, NOW(), NOW())
+        ON CONFLICT (application_id) DO UPDATE SET
+          call_status = CASE WHEN EXCLUDED.call_status IS NOT NULL THEN EXCLUDED.call_status ELSE physical_application_details.call_status END,
+          customer_interest = CASE WHEN EXCLUDED.customer_interest IS NOT NULL THEN EXCLUDED.customer_interest ELSE physical_application_details.customer_interest END,
+          updated_at = NOW()
+      `, [app.id, cleanCallStatus, cleanCustomerInterest]).catch(() => null);
+
+      if (cleanCallStatus || cleanCustomerInterest) {
+        await logTimeline(
+          client,
+          app.id,
+          'call_status_updated',
+          'Call Outcome & Customer Feedback',
+          `Call outcome: ${cleanCallStatus || 'N/A'}, Customer interest: ${cleanCustomerInterest || 'N/A'}`,
+          req.user ? req.user.id : null
+        ).catch(() => null);
+      }
+    }
+
+    await client.query('COMMIT');
+    await invalidateApplicationsCache({ action: 'update_call_status', appId: updatedRecord?.id || app.id }).catch(() => null);
+    return success(res, updatedRecord, 'Call status and customer interest updated successfully');
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);
@@ -8217,7 +8356,8 @@ module.exports = {
   claimApplicationRequest,
   getAssignableEmployees,
   assignApplicationToEmployee,
-  assignApplicationToSalesExecutive
+  assignApplicationToSalesExecutive,
+  updateCallStatus
 };
 
 

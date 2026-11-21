@@ -58,6 +58,21 @@ const PROCESS_STAGES = {
   ],
 };
 
+export const CALL_STATUS_OPTIONS = [
+  { value: '🔵 Ringing', label: '🔵 Ringing', color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
+  { value: '🔴 Not Answered', label: '🔴 Not Answered', color: '#dc2626', bg: '#fef2f2', border: '#fca5a5' },
+  { value: '🟠 Busy', label: '🟠 Busy', color: '#ea580c', bg: '#fff7ed', border: '#fdba74' },
+  { value: '⚫ Switched Off', label: '⚫ Switched Off', color: '#4b5563', bg: '#f3f4f6', border: '#d1d5db' },
+  { value: '🟢 Connected', label: '🟢 Connected', sub: '(recommended addition)', color: '#16a34a', bg: '#f0fdf4', border: '#86efac' }
+];
+
+export const CUSTOMER_INTEREST_OPTIONS = [
+  { value: '🔥 High Intent (Hot Lead)', label: '🔥 High Intent (Hot Lead)', color: '#dc2626', bg: '#fef2f2', border: '#fca5a5' },
+  { value: '🟡 Wants Details', label: '🟡 Wants Details', color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
+  { value: '📞 Callback Requested', label: '📞 Callback Requested', color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
+  { value: '❌ Not Interested', label: '❌ Not Interested', color: '#ef4444', bg: '#fef2f2', border: '#fca5a5' }
+];
+
 const getProcessStages = (processType) => {
   const pt = (processType || '').toLowerCase();
   return PROCESS_STAGES[pt] || PROCESS_STAGES.lead_punching;
@@ -230,6 +245,13 @@ export default function PartnerApplications() {
   const [viewApp, setViewApp] = useState(null);
   const [viewAppDetails, setViewAppDetails] = useState(null);
   const [loadingView, setLoadingView] = useState(false);
+  const [activeCallStatus, setActiveCallStatus] = useState('');
+  const [activeCustomerInterest, setActiveCustomerInterest] = useState('');
+  const [tempCallStatus, setTempCallStatus] = useState('');
+  const [tempCustomerInterest, setTempCustomerInterest] = useState('');
+  const [callStatusSaving, setCallStatusSaving] = useState(false);
+  const [callStatusSavedMsg, setCallStatusSavedMsg] = useState('');
+  const [showChangeStatusDropdown, setShowChangeStatusDropdown] = useState(false);
 
   // Track Modal State
   const [showTrackModal, setShowTrackModal] = useState(false);
@@ -353,10 +375,25 @@ export default function PartnerApplications() {
     setViewApp(app);
     setShowViewModal(true);
     setLoadingView(true);
+    const initialCall = app.call_status || app.physical_details?.call_status || '';
+    const initialInt = app.customer_interest || app.physical_details?.customer_interest || '';
+    setActiveCallStatus(initialCall);
+    setActiveCustomerInterest(initialInt);
+    setTempCallStatus(initialCall);
+    setTempCustomerInterest(initialInt);
+    setCallStatusSavedMsg('');
+    setShowChangeStatusDropdown(false);
     try {
       const res = await api.get(`/applications/${app.id}`);
       if (res.data?.success) {
-        setViewAppDetails(res.data.data);
+        const d = res.data.data;
+        setViewAppDetails(d);
+        const effCall = d.call_status || d.physical_details?.call_status || initialCall;
+        const effInt = d.customer_interest || d.physical_details?.customer_interest || initialInt;
+        setActiveCallStatus(effCall);
+        setActiveCustomerInterest(effInt);
+        setTempCallStatus(effCall);
+        setTempCustomerInterest(effInt);
       } else {
         setViewAppDetails(app);
       }
@@ -364,6 +401,50 @@ export default function PartnerApplications() {
       setViewAppDetails(app);
     } finally {
       setLoadingView(false);
+    }
+  };
+
+  const handleUpdateCallFeedback = async (newCallStatus, newCustomerInterest) => {
+    if (!viewApp?.id) return;
+    setCallStatusSaving(true);
+    setCallStatusSavedMsg('');
+    try {
+      const payload = {
+        call_status: newCallStatus !== undefined ? newCallStatus : (activeCallStatus || null),
+        customer_interest: newCustomerInterest !== undefined ? newCustomerInterest : (activeCustomerInterest || null)
+      };
+      let res = null;
+      try {
+        res = await api.put(`/applications/${viewApp.id}/call-status`, payload);
+      } catch (e1) {
+        res = await api.put(`/applications/${viewApp.id}`, payload);
+      }
+      if (res.data?.success || res.status === 200) {
+        const updated = res.data?.data || {};
+        const effCall = updated.call_status !== undefined ? updated.call_status : payload.call_status;
+        const effInt = updated.customer_interest !== undefined ? updated.customer_interest : payload.customer_interest;
+        setActiveCallStatus(effCall || '');
+        setActiveCustomerInterest(effInt || '');
+        setTempCallStatus(effCall || '');
+        setTempCustomerInterest(effInt || '');
+        setViewAppDetails(prev => ({ ...(prev || {}), call_status: effCall, customer_interest: effInt }));
+        setViewApp(prev => ({ ...(prev || {}), call_status: effCall, customer_interest: effInt }));
+        setApplications(prev => prev.map(a => {
+          if (a.id === viewApp.id || a.app_number === viewApp.app_number) {
+            return { ...a, call_status: effCall, customer_interest: effInt };
+          }
+          return a;
+        }));
+        setCallStatusSavedMsg('Status updated successfully!');
+        setTimeout(() => setCallStatusSavedMsg(''), 4000);
+      } else {
+        alert(res.data?.message || 'Failed to update call status');
+      }
+    } catch (err) {
+      console.error('Call status update error:', err);
+      alert(err.response?.data?.message || err.message || 'Failed to update status');
+    } finally {
+      setCallStatusSaving(false);
     }
   };
 
@@ -1177,6 +1258,21 @@ export default function PartnerApplications() {
                           </span>
                         </div>
 
+                        {(app.call_status || app.customer_interest) && (
+                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', margin: '2px 0 2px' }}>
+                            {app.call_status && (
+                              <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: isDark ? '#1e3a8a30' : '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}>
+                                {app.call_status}
+                              </span>
+                            )}
+                            {app.customer_interest && (
+                              <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: isDark ? '#78350f30' : '#fffbeb', color: '#d97706', border: '1px solid #fde68a' }}>
+                                {app.customer_interest}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
                         {app.assigned_to_name && (
                           <div style={{ margin: '2px 0' }}>
                             {app.assigned_to_user_id === user?.id || (user?.full_name && String(app.assigned_to_name).toLowerCase().trim() === String(user.full_name).toLowerCase().trim()) ? (
@@ -1305,6 +1401,20 @@ export default function PartnerApplications() {
                               <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 99, fontWeight: 800, background: badge.bg, color: badge.color, border: `1px solid ${badge.border}`, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                                 <BadgeIcon size={10} /> {badge.label}
                               </span>
+                              {(app.call_status || app.customer_interest) && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 }}>
+                                  {app.call_status && (
+                                    <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: isDark ? '#1e3a8a30' : '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', display: 'inline-block', width: 'fit-content' }}>
+                                      {app.call_status}
+                                    </span>
+                                  )}
+                                  {app.customer_interest && (
+                                    <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: isDark ? '#78350f30' : '#fffbeb', color: '#d97706', border: '1px solid #fde68a', display: 'inline-block', width: 'fit-content' }}>
+                                      {app.customer_interest}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </td>
                             <td style={{ padding: '12px 14px' }}>
                               <div style={{ fontWeight: 800, color: app.commission_amount > 0 ? '#10b981' : textMuted }}>₹{app.commission_amount || 0}</div>
@@ -1859,6 +1969,277 @@ export default function PartnerApplications() {
         else if (lowerFinalSt.includes('decline') || lowerFinalSt.includes('reject')) finalStatusColor = '#ef4444';
         else if (lowerFinalSt.includes('etq') || lowerFinalSt.includes('error') || lowerFinalSt.includes('pending')) finalStatusColor = '#f59e0b';
 
+        const renderBankRemarkSection = () => {
+          return (
+            <div style={{ gridColumn: 'span 2', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {/* Existing Bank Remark */}
+              <div>
+                <div style={{ color: textMuted, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  BANK REMARK
+                </div>
+                <div style={{ fontWeight: 700, color: textPrimary, marginTop: 4, padding: '8px 12px', background: isDark ? '#1e293b' : '#f8fafc', borderRadius: 8, border: `1px solid ${border}` }}>
+                  {bankRemarkVal}
+                </div>
+              </div>
+
+              {/* Call Status & Customer Interest Interactive Box */}
+              <div style={{
+                background: isDark ? '#0f172a' : '#f8fafc',
+                border: `1px solid ${isDark ? '#334155' : '#cbd5e1'}`,
+                borderRadius: 12,
+                padding: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${isDark ? '#1e293b' : '#e2e8f0'}`, paddingBottom: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Phone size={13} style={{ color: '#2563eb' }} />
+                    <span style={{ fontSize: 11, fontWeight: 800, color: textPrimary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      Call Status & Customer Engagement
+                    </span>
+                  </div>
+                  {callStatusSaving && (
+                    <span style={{ fontSize: 10, color: '#2563eb', display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 700 }}>
+                      <RefreshCw size={10} className="animate-spin" /> Saving...
+                    </span>
+                  )}
+                  {callStatusSavedMsg && (
+                    <span style={{ fontSize: 10, color: '#16a34a', fontWeight: 800 }}>
+                      ✓ {callStatusSavedMsg}
+                    </span>
+                  )}
+                </div>
+
+                {/* Two Main Sections / Buttons: A. Call Status & B. Customer Interest */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 10 }}>
+                  
+                  {/* Button / Control A: Call Status */}
+                  <div style={{
+                    background: isDark ? '#1e293b' : '#ffffff',
+                    border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}`,
+                    borderRadius: 10,
+                    padding: 10
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: textPrimary }}>A. Call Status</div>
+                      {activeCallStatus && (
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: isDark ? '#1e3a8a40' : '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}>
+                          {activeCallStatus}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 10, color: textMuted, marginBottom: 8 }}>
+                      Select the latest call outcome.
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {CALL_STATUS_OPTIONS.map((opt) => {
+                        const isSelected = activeCallStatus === opt.value || (activeCallStatus && opt.value.includes(activeCallStatus));
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => handleUpdateCallFeedback(opt.value, activeCustomerInterest)}
+                            disabled={callStatusSaving}
+                            title={`Set Call Status: ${opt.value}`}
+                            style={{
+                              padding: '5px 8px',
+                              borderRadius: 7,
+                              fontSize: 10,
+                              fontWeight: isSelected ? 800 : 600,
+                              cursor: callStatusSaving ? 'not-allowed' : 'pointer',
+                              border: isSelected ? `2px solid ${opt.color}` : `1px solid ${isDark ? '#4b5563' : '#d1d5db'}`,
+                              background: isSelected ? (isDark ? `${opt.color}25` : opt.bg) : (isDark ? '#0f172a' : '#f9fafb'),
+                              color: isSelected ? opt.color : textPrimary,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <span>{opt.label}</span>
+                            {opt.sub && <span style={{ fontSize: 9, opacity: 0.75 }}>{opt.sub}</span>}
+                            {isSelected && <Check size={11} style={{ color: opt.color }} />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Button / Control B: Customer Interest */}
+                  <div style={{
+                    background: isDark ? '#1e293b' : '#ffffff',
+                    border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}`,
+                    borderRadius: 10,
+                    padding: 10
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: textPrimary }}>B. Customer Interest</div>
+                      {activeCustomerInterest && (
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: isDark ? '#78350f40' : '#fffbeb', color: '#d97706', border: '1px solid #fde68a' }}>
+                          {activeCustomerInterest}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 10, color: textMuted, marginBottom: 8 }}>
+                      Select the customer's response after contact.
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {CUSTOMER_INTEREST_OPTIONS.map((opt) => {
+                        const isSelected = activeCustomerInterest === opt.value || (activeCustomerInterest && opt.value.includes(activeCustomerInterest));
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => handleUpdateCallFeedback(activeCallStatus, opt.value)}
+                            disabled={callStatusSaving}
+                            title={`Set Customer Interest: ${opt.value}`}
+                            style={{
+                              padding: '5px 8px',
+                              borderRadius: 7,
+                              fontSize: 10,
+                              fontWeight: isSelected ? 800 : 600,
+                              cursor: callStatusSaving ? 'not-allowed' : 'pointer',
+                              border: isSelected ? `2px solid ${opt.color}` : `1px solid ${isDark ? '#4b5563' : '#d1d5db'}`,
+                              background: isSelected ? (isDark ? `${opt.color}25` : opt.bg) : (isDark ? '#0f172a' : '#f9fafb'),
+                              color: isSelected ? opt.color : textPrimary,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <span>{opt.label}</span>
+                            {isSelected && <Check size={11} style={{ color: opt.color }} />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* Option to change status */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6, borderTop: `1px solid ${isDark ? '#1e293b' : '#e2e8f0'}`, paddingTop: 8 }}>
+                  <span style={{ fontSize: 10, color: textMuted }}>
+                    Change status via quick outcome buttons above or using dropdown selector below.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowChangeStatusDropdown(prev => !prev)}
+                    style={{
+                      padding: '5px 12px',
+                      borderRadius: 6,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      border: `1px solid #3b82f660`,
+                      background: isDark ? '#1e3a8a30' : '#eff6ff',
+                      color: '#2563eb',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5
+                    }}
+                  >
+                    <Phone size={11} /> Change Status {showChangeStatusDropdown ? '▲' : '▼'}
+                  </button>
+                </div>
+
+                {/* Dropdown Change Status Selector */}
+                {showChangeStatusDropdown && (
+                  <div style={{
+                    padding: 10,
+                    borderRadius: 8,
+                    background: isDark ? '#1e293b' : '#f1f5f9',
+                    border: `1px solid ${isDark ? '#334155' : '#cbd5e1'}`,
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                    gap: 10
+                  }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: textMuted, marginBottom: 3 }}>
+                        CALL STATUS:
+                      </label>
+                      <select
+                        value={tempCallStatus}
+                        onChange={(e) => setTempCallStatus(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          border: `1px solid ${border}`,
+                          background: isDark ? '#0f172a' : '#ffffff',
+                          color: textPrimary
+                        }}
+                      >
+                        <option value="">-- Select Call Status --</option>
+                        {CALL_STATUS_OPTIONS.map(o => (
+                          <option key={o.value} value={o.value}>{o.label} {o.sub || ''}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: textMuted, marginBottom: 3 }}>
+                        CUSTOMER INTEREST:
+                      </label>
+                      <select
+                        value={tempCustomerInterest}
+                        onChange={(e) => setTempCustomerInterest(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          border: `1px solid ${border}`,
+                          background: isDark ? '#0f172a' : '#ffffff',
+                          color: textPrimary
+                        }}
+                      >
+                        <option value="">-- Select Customer Interest --</option>
+                        {CUSTOMER_INTEREST_OPTIONS.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                      <button
+                        type="button"
+                        disabled={callStatusSaving || (!tempCallStatus && !tempCustomerInterest)}
+                        onClick={() => handleUpdateCallFeedback(tempCallStatus, tempCustomerInterest)}
+                        style={{
+                          width: '100%',
+                          padding: '7px 12px',
+                          borderRadius: 6,
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: callStatusSaving ? 'not-allowed' : 'pointer',
+                          border: 'none',
+                          background: '#2563eb',
+                          color: '#ffffff',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 5
+                        }}
+                      >
+                        {callStatusSaving ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
+                        Save Changes
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        };
+
         return (
           <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)', padding: 16 }}>
             <div style={{ width: '100%', maxWidth: 640, maxHeight: '90vh', overflowY: 'auto', background: cardBg, border: `1px solid ${border}`, borderRadius: 24, padding: 24, boxShadow: '0 24px 80px rgba(0,0,0,0.5)', animation: 'fadeIn 0.3s ease' }}>
@@ -2145,12 +2526,8 @@ export default function PartnerApplications() {
                             </div>
                           </div>
 
-                          <div style={{ gridColumn: 'span 2' }}>
-                            <div style={{ color: textMuted, fontSize: 10, fontWeight: 700 }}>BANK REMARK</div>
-                            <div style={{ fontWeight: 700, color: textPrimary, marginTop: 4 }}>
-                              {bankRemarkVal}
-                            </div>
-                          </div>
+                          {/* Bank Remark & Calling Feedback */}
+                          {renderBankRemarkSection()}
 
                           {(d.offer_decline_reason || pd.offer_decline_reason || declineReasonVal) && (
                             <div style={{ gridColumn: 'span 2' }}>
@@ -2233,12 +2610,8 @@ export default function PartnerApplications() {
                             </div>
                           </div>
 
-                          <div style={{ gridColumn: 'span 2' }}>
-                            <div style={{ color: textMuted, fontSize: 10, fontWeight: 700 }}>BANK REMARK</div>
-                            <div style={{ fontWeight: 700, color: textPrimary, marginTop: 4 }}>
-                              {bankRemarkVal}
-                            </div>
-                          </div>
+                          {/* Bank Remark & Calling Feedback */}
+                          {renderBankRemarkSection()}
 
                           {declineReasonVal && (
                             <div style={{ gridColumn: 'span 2' }}>
@@ -2316,12 +2689,8 @@ export default function PartnerApplications() {
                             </div>
                           </div>
 
-                          <div style={{ gridColumn: 'span 2' }}>
-                            <div style={{ color: textMuted, fontSize: 10, fontWeight: 700 }}>BANK REMARK</div>
-                            <div style={{ fontWeight: 700, color: textPrimary, marginTop: 4 }}>
-                              {bankRemarkVal}
-                            </div>
-                          </div>
+                          {/* Bank Remark & Calling Feedback */}
+                          {renderBankRemarkSection()}
 
                           {declineReasonVal && (
                             <div style={{ gridColumn: 'span 2' }}>
