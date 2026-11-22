@@ -204,31 +204,25 @@ body.no-scroll {
   overflow: hidden;
 }
 
-/* Premium Auth Buttons in Navbar — icon + label, animated */
+/* Premium Auth Buttons in Navbar — icon-only circular buttons, animated */
 .nav-auth-btn {
   border: none;
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
   position: relative;
-  height: 38px;
-  padding: 0 16px;
-  font-size: 13px;
-  font-weight: 700;
-  border-radius: 999px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   box-sizing: border-box;
   overflow: hidden;
+  flex: 0 0 auto;
 }
 
-.nav-btn-text {
-  display: inline;
-  letter-spacing: 0.2px;
-}
-
-/* Login — ghost button with border that fills on hover */
+/* Login — ghost circle with border that fills on hover */
 .nav-login-btn {
   background: transparent;
   color: inherit;
@@ -240,10 +234,10 @@ body.no-scroll {
   color: #0D6EFD;
   background: rgba(13, 110, 253, 0.08);
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(13, 110, 253, 0.18);
+  box-shadow: 0 6px 16px rgba(13, 110, 253, 0.22);
 }
 
-/* Register — gradient pill with animated shine sweep */
+/* Register — gradient circle with subtle shine sweep */
 .nav-register-btn {
   background: linear-gradient(135deg, #0D6EFD 0%, #7C3AED 100%);
   color: #ffffff;
@@ -266,21 +260,21 @@ body.no-scroll {
 
 .nav-register-btn:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 22px rgba(124, 58, 237, 0.4);
+  box-shadow: 0 8px 22px rgba(124, 58, 237, 0.45);
 }
 
 .nav-register-btn:hover::before {
   left: 130%;
 }
 
-/* Icon gets a subtle lift on hover */
+/* Icon styling with subtle lift on hover */
 .nav-auth-btn .nav-btn-icon {
   transition: transform 0.25s ease;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .nav-auth-btn:hover .nav-btn-icon {
-  transform: translateY(-1px) scale(1.12);
+  transform: scale(1.15);
 }
 
 @media (max-width: 768px) {
@@ -306,14 +300,22 @@ body.no-scroll {
     display: none !important;
   }
 
-  /* Mobile: show only the Register button — Login stays in the drawer */
+  /* Mobile: show both Login & Register as compact icon-only circular buttons */
   .nav-login-btn {
-    display: none !important;
+    display: inline-flex !important;
+    width: 36px;
+    height: 36px;
   }
 
   .nav-register-btn {
-    padding: 0 14px;
-    font-size: 12px;
+    display: inline-flex !important;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+  }
+
+  .nav-auth-btn .nav-btn-icon {
+    font-size: 14px;
   }
 
   .mobile-widgets {

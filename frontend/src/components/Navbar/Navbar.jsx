@@ -259,9 +259,9 @@ const Navbar = () => {
                 onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                 data-tooltip={t('nav.login', 'Login')}
                 aria-label={t('nav.login', 'Login')}
+                title={t('nav.login', 'Login')}
               >
                 <FaSignInAlt className="nav-btn-icon" />
-                <span className="nav-btn-text">{t('nav.login', 'Login')}</span>
               </button>
               <button 
                 id="nav-register-button"
@@ -269,9 +269,9 @@ const Navbar = () => {
                 className="nav-auth-btn nav-register-btn"
                 data-tooltip={t('nav.register', 'Register')}
                 aria-label={t('nav.register', 'Register')}
+                title={t('nav.register', 'Register')}
               >
                 <FaUserPlus className="nav-btn-icon" />
-                <span className="nav-btn-text">{t('nav.register', 'Register')}</span>
               </button>
             </>
           )}
