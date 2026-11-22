@@ -204,88 +204,83 @@ body.no-scroll {
   overflow: hidden;
 }
 
-/* Premium Auth Buttons in Navbar — icon-only, name revealed on hover */
+/* Premium Auth Buttons in Navbar — icon + label, animated */
 .nav-auth-btn {
   border: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 7px;
   position: relative;
-  width: 38px;
   height: 38px;
-  padding: 0;
+  padding: 0 16px;
   font-size: 13px;
   font-weight: 700;
-  border-radius: 50%;
-  transition: all 0.2s ease;
+  border-radius: 999px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   box-sizing: border-box;
+  overflow: hidden;
 }
 
-/* Button text is hidden — the tooltip shows the name on hover/focus */
 .nav-btn-text {
-  display: none;
+  display: inline;
+  letter-spacing: 0.2px;
 }
 
-/* Hover / focus tooltip showing the button name */
-.nav-auth-btn::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  background: #101828;
-  color: #ffffff;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
-  padding: 6px 10px;
-  border-radius: 6px;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s ease, transform 0.2s ease;
-  z-index: 1000;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
-}
-
-.nav-auth-btn::before {
-  content: "";
-  position: absolute;
-  bottom: calc(100% + 3px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  border: 5px solid transparent;
-  border-top-color: #101828;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s ease, transform 0.2s ease;
-  z-index: 1000;
-}
-
-.nav-auth-btn:hover::after,
-.nav-auth-btn:hover::before,
-.nav-auth-btn:focus-visible::after,
-.nav-auth-btn:focus-visible::before {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
+/* Login — ghost button with border that fills on hover */
 .nav-login-btn {
   background: transparent;
+  color: inherit;
+  border: 1.5px solid rgba(128, 128, 128, 0.35);
 }
 
-.nav-register-btn {
-  background: transparent;
+.nav-login-btn:hover {
+  border-color: #0D6EFD;
   color: #0D6EFD;
+  background: rgba(13, 110, 253, 0.08);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(13, 110, 253, 0.18);
+}
+
+/* Register — gradient pill with animated shine sweep */
+.nav-register-btn {
+  background: linear-gradient(135deg, #0D6EFD 0%, #7C3AED 100%);
+  color: #ffffff;
+  border: none;
+  box-shadow: 0 4px 14px rgba(13, 110, 253, 0.35);
+}
+
+.nav-register-btn::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -80%;
+  width: 55%;
+  height: 100%;
+  background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  transform: skewX(-20deg);
+  transition: left 0.55s ease;
+  pointer-events: none;
 }
 
 .nav-register-btn:hover {
-  background: rgba(13, 110, 253, 0.1);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 22px rgba(124, 58, 237, 0.4);
 }
 
-.nav-btn-icon {
-  font-size: 15px;
+.nav-register-btn:hover::before {
+  left: 130%;
+}
+
+/* Icon gets a subtle lift on hover */
+.nav-auth-btn .nav-btn-icon {
+  transition: transform 0.25s ease;
+  font-size: 14px;
+}
+
+.nav-auth-btn:hover .nav-btn-icon {
+  transform: translateY(-1px) scale(1.12);
 }
 
 @media (max-width: 768px) {
@@ -309,6 +304,16 @@ body.no-scroll {
 
   .desktop-widgets {
     display: none !important;
+  }
+
+  /* Mobile: show only the Register button — Login stays in the drawer */
+  .nav-login-btn {
+    display: none !important;
+  }
+
+  .nav-register-btn {
+    padding: 0 14px;
+    font-size: 12px;
   }
 
   .mobile-widgets {

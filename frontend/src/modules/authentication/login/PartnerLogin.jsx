@@ -36,7 +36,6 @@ import {
   UserRound,
   CreditCard,
   Check,
-  Phone,
   AlertCircle,
   X
 } from "lucide-react";
@@ -785,9 +784,6 @@ export default function PartnerLogin() {
                   <span>{t("login.account", "Account")}</span>
                 </h1>
 
-                <p className="login-description">
-                  {t("login.welcomeSubtitle", "Access your dashboard and manage your financial journey seamlessly")}
-                </p>
               </div>
 
               {/* SECURITY ILLUSTRATION */}
@@ -846,17 +842,9 @@ export default function PartnerLogin() {
             <form className="login-form" onSubmit={handleLoginSubmit}>
               {/* EMAIL / MOBILE */}
               {!(loginType === "otp" && otpSent) && (
-                <div className="form-group">
-                  <label className="form-label" htmlFor="emailOrMobile">
-                    {t("partner.emailOrMobile", "Email or Mobile Number")}
-                  </label>
-
+                <div className="form-group float-field">
                   <div className="input-wrapper">
-                    {/^[6-9]\d{9}$/.test(formData.identity.trim()) ? (
-                      <Phone className="input-icon" size={21} />
-                    ) : (
-                      <Mail className="input-icon" size={21} />
-                    )}
+                    <UserRound className="input-icon" size={21} />
 
                     <input
                       id="emailOrMobile"
@@ -864,21 +852,20 @@ export default function PartnerLogin() {
                       type="text"
                       value={formData.identity}
                       onChange={handleChange}
-                      placeholder={t("partner.enterEmailOrMobile", "Enter email or mobile number")}
+                      placeholder={t("partner.emailOrMobile", "Email or Mobile Number")}
                       className="form-input"
                       autoComplete="username"
                     />
+                    <label className="float-label" htmlFor="emailOrMobile">
+                      {t("partner.emailOrMobile", "Email or Mobile Number")}
+                    </label>
                   </div>
                 </div>
               )}
 
               {/* PASSWORD */}
               {loginType === "password" && (
-                <div className="form-group">
-                  <label className="form-label" htmlFor="password">
-                    {t("partner.password", "Password")}
-                  </label>
-
+                <div className="form-group float-field">
                   <div className="input-wrapper">
                     <Lock className="input-icon" size={21} />
 
@@ -888,10 +875,13 @@ export default function PartnerLogin() {
                       type={showPassword ? "text" : "password"}
                       value={formData.password}
                       onChange={handleChange}
-                      placeholder={t("partner.enterPassword", "Enter your password")}
+                      placeholder={t("partner.password", "Password")}
                       className="form-input password-input"
                       autoComplete="current-password"
                     />
+                    <label className="float-label" htmlFor="password">
+                      {t("partner.password", "Password")}
+                    </label>
 
                     <button
                       type="button"
@@ -1196,17 +1186,19 @@ export default function PartnerLogin() {
                   </div>
                 )}
 
-                <div className="form-group" style={{ marginBottom: "20px" }}>
-                  <label className="form-label">{t("partner.emailAddress", "Email Address")}</label>
+                <div className="form-group float-field" style={{ marginBottom: "20px" }}>
                   <div className="input-wrapper">
                     <Mail className="input-icon" size={20} />
                     <input
                       type="email"
                       value={forgotEmail}
                       onChange={(e) => setForgotEmail(e.target.value)}
-                      placeholder={t("partner.placeholders.email", "your.email@domain.com")}
+                      placeholder={t("partner.emailAddress", "Email Address")}
                       className="form-input"
                     />
+                    <label className="float-label">
+                      {t("partner.emailAddress", "Email Address")}
+                    </label>
                   </div>
                 </div>
 

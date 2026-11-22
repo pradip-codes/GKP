@@ -4,9 +4,12 @@ import { useAuthStore } from '../../app/store/authStore';
 import { 
   FaUsers, FaUserCheck, FaClock, FaTimesCircle, FaSearch, 
   FaFilter, FaStar, FaUserPlus, FaFileAlt, FaCheckCircle, FaPhone, FaEnvelope,
-  FaUserShield, FaTrash, FaBan, FaCheck, FaSync, FaEye, FaIdCard
+  FaUserShield, FaTrash, FaBan, FaCheck, FaSync, FaEye, FaIdCard, FaTimes,
+  FaArrowRight
 } from 'react-icons/fa';
 import api from '../../services/api';
+
+const MONO_FONT = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
 
 export default function HRDashboard() {
   const { C } = useTheme();
@@ -138,7 +141,6 @@ export default function HRDashboard() {
           designation: 'HR Manager',
           department: 'Human Resources'
         });
-        // Refresh HR list and switch to HR Accounts tab to show the new account
         fetchHRAccounts();
         setActiveTab('hr_team');
       }
@@ -222,7 +224,7 @@ export default function HRDashboard() {
       if (res.data.success) {
         const empId = res.data.data?.employee_id;
         const tempPass = res.data.data?.temp_password;
-        alert(`Candidate Selection Confirmed!\n\nEmployee ID: ${empId}\nTemporary Password: ${tempPass}\n\nAn invitation email and SMS with login credentials have been sent to ${selectedCandModal.full_name} (${selectedCandModal.mobile_number} / ${selectedCandModal.email_id}).`);
+        alert(`Candidate Selection Confirmed!\n\nEmployee ID: ${empId}\nTemporary Password: ${tempPass}\n\nCredentials dispatched to ${selectedCandModal.full_name}.`);
         setSelectedCandModal(null);
         fetchHRData();
       }
@@ -232,13 +234,13 @@ export default function HRDashboard() {
   };
 
   const handleRejectCandidate = async (cand) => {
-    const reason = window.prompt(`Reject candidate ${cand.full_name} (${cand.reference_code})?\n\nEnter reason for rejection (optional):`, 'Not meeting selection criteria');
-    if (reason === null) return; // cancelled
-    if (!window.confirm(`Are you sure? This will permanently remove ${cand.full_name}'s application and all related data, and send them a rejection email.`)) return;
+    const reason = window.prompt(`Reject candidate ${cand.full_name} (${cand.reference_code})?\n\nEnter reason for rejection:`, 'Not meeting selection criteria');
+    if (reason === null) return;
+    if (!window.confirm(`Are you sure you want to reject and archive ${cand.full_name}'s application? A formal notification email will be dispatched.`)) return;
     try {
       const res = await api.post(`/hr/candidates/${cand.id}/reject`, { rejection_reason: reason || 'Not meeting selection criteria' });
       if (res.data.success) {
-        alert('Candidate rejected. Their profile has been removed and a notification email has been sent.');
+        alert('Candidate record updated and notification email sent.');
         fetchHRData();
       }
     } catch (err) {
@@ -252,7 +254,7 @@ export default function HRDashboard() {
     try {
       const res = await api.post(`/hr/candidates/${interviewModal.id}/interview`, feedbackForm);
       if (res.data.success) {
-        alert('Interview Feedback Saved');
+        alert('Interview feedback recorded successfully.');
         setInterviewModal(null);
         fetchHRData();
       }
@@ -272,198 +274,349 @@ export default function HRDashboard() {
     );
   });
 
+  // Calm semantic status pill mapper
+  const renderStatusBadge = (status) => {
+    let bg = 'rgba(100, 116, 139, 0.08)';
+    let color = '#475569';
+    let border = 'rgba(100, 116, 139, 0.2)';
+    let label = status || 'REGISTERED';
+
+    if (status === 'SELECTED' || status === 'EMPLOYEE_CREATED') {
+      bg = '#ECFDF5';
+      color = '#065F46';
+      border = '#A7F3D0';
+      label = status === 'EMPLOYEE_CREATED' ? 'Onboarded' : 'Selected';
+    } else if (status === 'INTERVIEW_PENDING') {
+      bg = '#FFFBEB';
+      color = '#92400E';
+      border = '#FDE68A';
+      label = 'Interview Pending';
+    } else if (status === 'REJECTED') {
+      bg = '#FEF2F2';
+      color = '#991B1B';
+      border = '#FECACA';
+      label = 'Rejected';
+    } else if (status === 'REGISTERED') {
+      bg = '#EFF6FF';
+      color = '#1E40AF';
+      border = '#BFDBFE';
+      label = 'Registered';
+    }
+
+    return (
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          padding: '2px 8px',
+          borderRadius: '4px',
+          fontSize: '11px',
+          fontWeight: 600,
+          background: bg,
+          color: color,
+          border: `1px solid ${border}`,
+          whiteSpace: 'nowrap'
+        }}
+      >
+        {label}
+      </span>
+    );
+  };
+
   return (
-    <div style={{ background: C.bg, minHeight: '100vh', padding: '12px 16px 24px', fontFamily: "'Inter', sans-serif", color: C.text }}>
+    <div style={{ background: C.bg, minHeight: '100vh', padding: '24px 20px 48px', fontFamily: "'Inter', -apple-system, sans-serif", color: C.text }}>
       <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
         
-        {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+        {/* ── Screen Header ── */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '20px', flexWrap: 'wrap', gap: '16px' }}>
           <div>
-            <span style={{ fontSize: '11.5px', fontWeight: 700, color: C.teal, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              HR Management Portal
-            </span>
-            <h1 style={{ fontSize: '22px', fontWeight: 900, color: C.text, margin: 0 }}>HR Operations & Candidate Acquisition</h1>
+            <div style={{ fontSize: '12px', fontWeight: 600, color: C.textMid, marginBottom: '4px' }}>
+              HR Operations &amp; Candidate Acquisition
+            </div>
+            <h1 style={{ fontSize: '20px', fontWeight: 600, color: C.text, margin: 0, letterSpacing: '-0.01em' }}>
+              Candidate Pipeline
+            </h1>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <button 
               onClick={() => {
                 fetchHRData();
                 if (isSuperAdmin) fetchHRAccounts();
               }}
               style={{ 
-                background: C.bgSecondary, color: C.text, border: `1px solid ${C.border}`, 
-                padding: '8px 14px', borderRadius: '10px', fontSize: '13px', 
-                fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+                background: C.card, 
+                color: C.text, 
+                border: `1px solid ${C.border}`, 
+                padding: '7px 12px', 
+                borderRadius: '6px', 
+                fontSize: '13px', 
+                fontWeight: 500, 
+                cursor: 'pointer', 
+                display: 'inline-flex', 
+                alignItems: 'center', 
+                gap: '6px'
               }}
             >
-              <FaSync /> Refresh
+              <FaSync style={{ fontSize: '11px', color: C.textMid }} /> Refresh
             </button>
             {isSuperAdmin && (
               <button 
                 onClick={() => setCreateHRModalOpen(true)}
                 style={{ 
-                  background: C.employeePrimary || C.teal || '#0F766E', color: '#ffffff', border: 'none', 
-                  padding: '8px 16px', borderRadius: '10px', fontSize: '13px', 
-                  fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
-                  boxShadow: '0 4px 14px rgba(15,118,110,0.25)' 
+                  background: C.teal || '#0F766E', 
+                  color: '#ffffff', 
+                  border: 'none', 
+                  padding: '7px 14px', 
+                  borderRadius: '6px', 
+                  fontSize: '13px', 
+                  fontWeight: 600, 
+                  cursor: 'pointer', 
+                  display: 'inline-flex', 
+                  alignItems: 'center', 
+                  gap: '6px'
                 }}
               >
-                <FaUserPlus /> + Create HR Account
+                <FaUserPlus style={{ fontSize: '12px' }} /> Provision HR Account
               </button>
             )}
           </div>
         </div>
 
-        {/* Stats Cards Grid (Responsive Row Layout) */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', marginBottom: '12px' }}>
+        {/* ── Metric Summary Bar (Quiet Chrome, Tabular Figures) ── */}
+        <div 
+          style={{ 
+            display: 'grid', 
+            gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', 
+            gap: '8px', 
+            marginBottom: '20px' 
+          }}
+        >
           {[
-            { label: 'Total Applications', count: stats.total_candidates, icon: <FaUsers />, color: C.teal },
-            { label: 'Registered (New)', count: stats.registered, icon: <FaClock />, color: '#3B82F6' },
-            { label: 'Interview Pending', count: stats.interview_pending, icon: <FaClock />, color: '#F59E0B' },
-            { label: 'Selected', count: stats.selected, icon: <FaUserCheck />, color: '#10B981' },
-            { label: 'Rejected', count: stats.rejected, icon: <FaTimesCircle />, color: '#EF4444' },
-            { label: 'Employees Created', count: stats.converted, icon: <FaUserPlus />, color: '#8B5CF6' },
-            ...(isSuperAdmin ? [{ label: 'HR Team Accounts', count: hrAccounts.length, icon: <FaUserShield />, color: '#EC4899' }] : [])
+            { label: 'Applications', count: stats.total_candidates, hint: 'Total registered' },
+            { label: 'New Registered', count: stats.registered, hint: 'Initial review' },
+            { label: 'Interviewing', count: stats.interview_pending, hint: 'Awaiting review' },
+            { label: 'Selected', count: stats.selected, hint: 'Approved offer' },
+            { label: 'Rejected', count: stats.rejected, hint: 'Declined' },
+            { label: 'Onboarded', count: stats.converted, hint: 'Assigned EMP ID' },
+            ...(isSuperAdmin ? [{ label: 'HR Managers', count: hrAccounts.length, hint: 'Active accounts' }] : [])
           ].map((st, i) => (
-            <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '12px', padding: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div style={{ width: '34px', height: '34px', borderRadius: '10px', background: `${st.color}15`, color: st.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>
-                {st.icon}
+            <div 
+              key={i} 
+              style={{ 
+                background: C.card, 
+                border: `1px solid ${C.border}`, 
+                borderRadius: '8px', 
+                padding: '12px 14px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between'
+              }}
+            >
+              <span style={{ fontSize: '11px', fontWeight: 500, color: C.textMid }}>
+                {st.label}
+              </span>
+              <div 
+                style={{ 
+                  fontSize: '20px', 
+                  fontWeight: 600, 
+                  color: C.text, 
+                  fontFamily: MONO_FONT, 
+                  fontVariantNumeric: 'tabular-nums',
+                  margin: '4px 0 2px' 
+                }}
+              >
+                {st.count}
               </div>
-              <div style={{ minWidth: 0 }}>
-                <span style={{ fontSize: '10.5px', color: C.textMid, fontWeight: 700, display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{st.label}</span>
-                <div style={{ fontSize: '18px', fontWeight: 900, color: C.text }}>{st.count}</div>
-              </div>
+              <span style={{ fontSize: '10px', color: C.textMid, opacity: 0.85 }}>
+                {st.hint}
+              </span>
             </div>
           ))}
         </div>
 
-        {/* Navigation Tabs (Only for Super Admin; HR Panel defaults to Candidates view) */}
-        {isSuperAdmin ? (
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', borderBottom: `2px solid ${C.border}`, paddingBottom: '8px', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        {/* ── Navigation Tabs (Quiet Unterlined Bar) ── */}
+        {isSuperAdmin && (
+          <div style={{ display: 'flex', gap: '20px', marginBottom: '16px', borderBottom: `1px solid ${C.border}` }}>
             <button 
               onClick={() => setActiveTab('candidates')}
               style={{
-                padding: '10px 20px',
-                fontSize: '15px',
-                fontWeight: 800,
+                padding: '8px 0 10px',
+                fontSize: '13px',
+                fontWeight: activeTab === 'candidates' ? 600 : 500,
                 color: activeTab === 'candidates' ? (C.teal || '#0F766E') : C.textMid,
-                borderBottom: activeTab === 'candidates' ? `3px solid ${C.teal || '#0F766E'}` : '3px solid transparent',
+                borderBottom: activeTab === 'candidates' ? `2px solid ${C.teal || '#0F766E'}` : '2px solid transparent',
                 background: 'transparent',
-                border: 'none',
+                borderTop: 'none',
+                borderLeft: 'none',
+                borderRight: 'none',
                 cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
+                marginBottom: '-1px'
               }}
             >
-              <FaUsers /> Candidate Applications ({stats.total_candidates})
+              Candidate Pipeline ({stats.total_candidates})
             </button>
             
             <button 
               onClick={() => setActiveTab('hr_team')}
               style={{
-                padding: '10px 20px',
-                fontSize: '15px',
-                fontWeight: 800,
+                padding: '8px 0 10px',
+                fontSize: '13px',
+                fontWeight: activeTab === 'hr_team' ? 600 : 500,
                 color: activeTab === 'hr_team' ? (C.teal || '#0F766E') : C.textMid,
-                borderBottom: activeTab === 'hr_team' ? `3px solid ${C.teal || '#0F766E'}` : '3px solid transparent',
+                borderBottom: activeTab === 'hr_team' ? `2px solid ${C.teal || '#0F766E'}` : '2px solid transparent',
                 background: 'transparent',
-                border: 'none',
+                borderTop: 'none',
+                borderLeft: 'none',
+                borderRight: 'none',
                 cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
+                marginBottom: '-1px'
               }}
             >
-              <FaUserShield /> HR Managers & Team ({hrAccounts.length})
+              HR Personnel Directory ({hrAccounts.length})
             </button>
-          </div>
-        ) : (
-          <div style={{ marginBottom: '20px', borderBottom: `2px solid ${C.border}`, paddingBottom: '12px' }}>
-            <h3 style={{ fontSize: '18px', fontWeight: 900, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <FaUsers style={{ color: C.teal }} /> Candidates List & Employee ID Allocation
-            </h3>
           </div>
         )}
 
-        {/* ── TAB 1: Candidate Applications ── */}
+        {/* ══════════════════════════════════════════════════════════════════
+            TAB 1: Candidate Applications Pipeline
+           ══════════════════════════════════════════════════════════════════ */}
         {activeTab === 'candidates' && (
           <>
-            {/* Filters & Search Toolbar */}
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '20px', padding: '20px', marginBottom: '24px', display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', gap: '12px', flex: 1, minWidth: '280px' }}>
-                <div style={{ position: 'relative', flex: 1 }}>
-                  <FaSearch style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: C.textMid }} />
-                  <input 
-                    type="text" 
-                    placeholder="Search candidate by name, mobile, reference code..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    style={{ width: '100%', padding: '10px 14px 10px 40px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', fontSize: '14px', color: C.text, outline: 'none' }}
-                  />
-                </div>
+            {/* Filter & Search Bar */}
+            <div 
+              style={{ 
+                background: C.card, 
+                border: `1px solid ${C.border}`, 
+                borderRadius: '8px', 
+                padding: '12px 14px', 
+                marginBottom: '16px', 
+                display: 'flex', 
+                gap: '12px', 
+                flexWrap: 'wrap', 
+                alignItems: 'center', 
+                justifyContent: 'space-between' 
+              }}
+            >
+              <div style={{ position: 'relative', flex: 1, minWidth: '260px' }}>
+                <FaSearch style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: C.textMid, fontSize: '12px' }} />
+                <input 
+                  type="text" 
+                  placeholder="Search by candidate name, mobile, reference code..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  style={{ 
+                    width: '100%', 
+                    padding: '8px 12px 8px 34px', 
+                    background: C.bgSecondary, 
+                    border: `1px solid ${C.border}`, 
+                    borderRadius: '6px', 
+                    fontSize: '13px', 
+                    color: C.text, 
+                    outline: 'none',
+                    boxSizing: 'border-box'
+                  }}
+                />
               </div>
 
-              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                <FaFilter style={{ color: C.textMid }} />
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', color: C.textMid, fontWeight: 500 }}>Status:</span>
                 <select 
                   value={statusFilter} 
                   onChange={(e) => setStatusFilter(e.target.value)}
-                  style={{ padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', fontSize: '14px', color: C.text, outline: 'none' }}
+                  style={{ 
+                    padding: '7px 10px', 
+                    background: C.bgSecondary, 
+                    border: `1px solid ${C.border}`, 
+                    borderRadius: '6px', 
+                    fontSize: '13px', 
+                    color: C.text, 
+                    outline: 'none',
+                    cursor: 'pointer'
+                  }}
                 >
-                  <option value="">All Statuses</option>
+                  <option value="">All Applications</option>
                   <option value="REGISTERED">Registered</option>
                   <option value="INTERVIEW_PENDING">Interview Pending</option>
                   <option value="SELECTED">Selected</option>
                   <option value="REJECTED">Rejected</option>
-                  <option value="EMPLOYEE_CREATED">Employee Created</option>
+                  <option value="EMPLOYEE_CREATED">Onboarded</option>
                 </select>
               </div>
             </div>
 
-            {/* Candidate List Table */}
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '20px', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.02)' }}>
+            {/* Candidate Table */}
+            <div 
+              style={{ 
+                background: C.card, 
+                border: `1px solid ${C.border}`, 
+                borderRadius: '8px', 
+                overflow: 'hidden' 
+              }}
+            >
               {candLoading ? (
-                <div style={{ padding: '40px', textAlign: 'center', color: C.textMid }}>Loading candidate records...</div>
+                <div style={{ padding: '36px', textAlign: 'center', color: C.textMid, fontSize: '13px' }}>
+                  Loading candidate directory...
+                </div>
               ) : candidates.length === 0 ? (
-                <div style={{ padding: '40px', textAlign: 'center', color: C.textMid }}>No candidates found matching criteria.</div>
+                <div style={{ padding: '36px', textAlign: 'center', color: C.textMid, fontSize: '13px' }}>
+                  No candidate records match the current filter.
+                </div>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
                     <thead>
-                      <tr style={{ background: C.bgSecondary, borderBottom: `1px solid ${C.border}`, color: C.textMid, fontWeight: 700 }}>
-                        <th style={{ padding: '14px 20px' }}>Ref Code</th>
-                        <th style={{ padding: '14px 20px' }}>Candidate Name</th>
-                        <th style={{ padding: '14px 20px' }}>Contact</th>
-                        <th style={{ padding: '14px 20px' }}>Qualification</th>
-                        <th style={{ padding: '14px 20px' }}>Experience</th>
-                        {isSuperAdmin && <th style={{ padding: '14px 20px' }}>Assigned HR</th>}
-                        <th style={{ padding: '14px 20px' }}>Status</th>
-                        <th style={{ padding: '14px 20px', textAlign: 'right' }}>Actions</th>
+                      <tr style={{ background: C.bgSecondary, borderBottom: `1px solid ${C.border}`, color: C.textMid, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        <th style={{ padding: '10px 16px', fontWeight: 600 }}>Reference</th>
+                        <th style={{ padding: '10px 16px', fontWeight: 600 }}>Candidate</th>
+                        <th style={{ padding: '10px 16px', fontWeight: 600 }}>Contact Details</th>
+                        <th style={{ padding: '10px 16px', fontWeight: 600 }}>Qualification</th>
+                        <th style={{ padding: '10px 16px', fontWeight: 600 }}>Experience</th>
+                        {isSuperAdmin && <th style={{ padding: '10px 16px', fontWeight: 600 }}>Assigned HR</th>}
+                        <th style={{ padding: '10px 16px', fontWeight: 600 }}>Status</th>
+                        <th style={{ padding: '10px 16px', fontWeight: 600, textAlign: 'right' }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {candidates.map((cand) => (
-                        <tr key={cand.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                          <td style={{ padding: '14px 20px', fontWeight: 800, color: C.teal }}>{cand.reference_code}</td>
-                          <td style={{ padding: '14px 20px', fontWeight: 700, color: C.text }}>{cand.full_name}</td>
-                          <td style={{ padding: '14px 20px', color: C.textMid }}>
-                            <div>{cand.mobile_number}</div>
-                            <div style={{ fontSize: '12px' }}>{cand.email_id}</div>
+                        <tr 
+                          key={cand.id} 
+                          style={{ borderBottom: `1px solid ${C.border}` }}
+                        >
+                          <td style={{ padding: '12px 16px', fontFamily: MONO_FONT, fontWeight: 600, color: C.teal || '#0F766E' }}>
+                            {cand.reference_code}
                           </td>
-                          <td style={{ padding: '14px 20px' }}>{cand.highest_qualification}</td>
-                          <td style={{ padding: '14px 20px' }}>{cand.experience_type} ({cand.total_experience_years || 0} yrs)</td>
+                          <td style={{ padding: '12px 16px' }}>
+                            <div style={{ fontWeight: 600, color: C.text }}>{cand.full_name}</div>
+                            {cand.target_role && (
+                              <div style={{ fontSize: '11px', color: C.textMid }}>{cand.target_role}</div>
+                            )}
+                          </td>
+                          <td style={{ padding: '12px 16px', color: C.textMid }}>
+                            <div style={{ color: C.text, fontFamily: MONO_FONT, fontSize: '12px' }}>{cand.mobile_number}</div>
+                            <div style={{ fontSize: '11px' }}>{cand.email_id}</div>
+                          </td>
+                          <td style={{ padding: '12px 16px' }}>
+                            <div>{cand.highest_qualification || '—'}</div>
+                            {cand.passing_year && (
+                              <div style={{ fontSize: '11px', color: C.textMid }}>Passout: {cand.passing_year}</div>
+                            )}
+                          </td>
+                          <td style={{ padding: '12px 16px' }}>
+                            <div>{cand.experience_type || 'Fresher'}</div>
+                            {cand.total_experience_years ? (
+                              <div style={{ fontSize: '11px', color: C.textMid }}>{cand.total_experience_years} yrs</div>
+                            ) : null}
+                          </td>
                           {isSuperAdmin && (
-                            <td style={{ padding: '14px 20px' }}>
+                            <td style={{ padding: '12px 16px' }}>
                               <select
                                 value={cand.assigned_hr_id || ''}
                                 onChange={(e) => handleAssignHR(cand.id, e.target.value)}
                                 style={{
-                                  padding: '6px 10px',
-                                  borderRadius: '8px',
+                                  padding: '4px 8px',
+                                  borderRadius: '4px',
                                   fontSize: '12px',
-                                  fontWeight: 700,
                                   background: C.bgSecondary,
                                   border: `1px solid ${C.border}`,
                                   color: C.text,
@@ -479,45 +632,91 @@ export default function HRDashboard() {
                               </select>
                             </td>
                           )}
-                          <td style={{ padding: '14px 20px' }}>
-                            <span style={{ 
-                              padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: 800,
-                              background: cand.interview_status === 'SELECTED' || cand.interview_status === 'EMPLOYEE_CREATED' ? '#D1FAE5' : cand.interview_status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7',
-                              color: cand.interview_status === 'SELECTED' || cand.interview_status === 'EMPLOYEE_CREATED' ? '#065F46' : cand.interview_status === 'REJECTED' ? '#991B1B' : '#92400E'
-                            }}>
-                              {cand.interview_status}
-                            </span>
+                          <td style={{ padding: '12px 16px' }}>
+                            {renderStatusBadge(cand.interview_status)}
                           </td>
-                          <td style={{ padding: '14px 20px', textAlign: 'right' }}>
-                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                          <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                            <div style={{ display: 'inline-flex', gap: '6px', justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
                               <button 
                                 onClick={() => setViewCandModal(cand)}
-                                style={{ background: C.bgSecondary, color: C.text, border: `1px solid ${C.border}`, padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                title="Review candidate file"
+                                style={{ 
+                                  background: C.bgSecondary, 
+                                  color: C.text, 
+                                  border: `1px solid ${C.border}`, 
+                                  padding: '5px 9px', 
+                                  borderRadius: '4px', 
+                                  fontSize: '12px', 
+                                  fontWeight: 500, 
+                                  cursor: 'pointer', 
+                                  display: 'inline-flex', 
+                                  alignItems: 'center', 
+                                  gap: '4px' 
+                                }}
                               >
-                                <FaEye /> View Candidate
+                                <FaEye style={{ fontSize: '11px', color: C.textMid }} /> Review
                               </button>
                               {!isSuperAdmin && (
                                 <button 
                                   onClick={() => setInterviewModal(cand)}
-                                  style={{ background: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                  title="Enter interview evaluation"
+                                  style={{ 
+                                    background: C.card, 
+                                    color: C.text, 
+                                    border: `1px solid ${C.border}`, 
+                                    padding: '5px 9px', 
+                                    borderRadius: '4px', 
+                                    fontSize: '12px', 
+                                    fontWeight: 500, 
+                                    cursor: 'pointer', 
+                                    display: 'inline-flex', 
+                                    alignItems: 'center', 
+                                    gap: '4px' 
+                                  }}
                                 >
-                                  <FaStar /> Feedback
+                                  <FaStar style={{ fontSize: '11px', color: '#D97706' }} /> Feedback
                                 </button>
                               )}
-                              {!isSuperAdmin && (
+                              {!isSuperAdmin && cand.interview_status !== 'EMPLOYEE_CREATED' && (
                                 <button 
                                   onClick={() => handleOpenSelectModal(cand)}
-                                  style={{ background: C.teal, color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                  title="Allocate Employee ID and complete onboarding"
+                                  style={{ 
+                                    background: C.teal || '#0F766E', 
+                                    color: '#ffffff', 
+                                    border: 'none', 
+                                    padding: '5px 10px', 
+                                    borderRadius: '4px', 
+                                    fontSize: '12px', 
+                                    fontWeight: 600, 
+                                    cursor: 'pointer', 
+                                    display: 'inline-flex', 
+                                    alignItems: 'center', 
+                                    gap: '4px' 
+                                  }}
                                 >
-                                  <FaUserCheck /> Select & Give EMP ID
+                                  <FaUserCheck style={{ fontSize: '11px' }} /> Onboard
                                 </button>
                               )}
                               {!isSuperAdmin && (
                                 <button 
                                   onClick={() => handleRejectCandidate(cand)}
-                                  style={{ background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                  title="Archive application and dispatch rejection notification"
+                                  style={{ 
+                                    background: 'transparent', 
+                                    color: '#991B1B', 
+                                    border: '1px solid rgba(239, 68, 68, 0.3)', 
+                                    padding: '5px 8px', 
+                                    borderRadius: '4px', 
+                                    fontSize: '12px', 
+                                    fontWeight: 500, 
+                                    cursor: 'pointer', 
+                                    display: 'inline-flex', 
+                                    alignItems: 'center', 
+                                    gap: '4px' 
+                                  }}
                                 >
-                                  <FaTimesCircle /> Reject
+                                  <FaTimesCircle style={{ fontSize: '11px' }} /> Reject
                                 </button>
                               )}
                             </div>
@@ -532,106 +731,154 @@ export default function HRDashboard() {
           </>
         )}
 
-        {/* ── TAB 2: HR Team Accounts ── */}
+        {/* ══════════════════════════════════════════════════════════════════
+            TAB 2: HR Team Personnel Directory (Super Admin)
+           ══════════════════════════════════════════════════════════════════ */}
         {activeTab === 'hr_team' && (
           <>
-            {/* Search Toolbar */}
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '20px', padding: '20px', marginBottom: '24px', display: 'flex', gap: '16px', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ position: 'relative', flex: 1, maxWidth: '400px' }}>
-                <FaSearch style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: C.textMid }} />
+            <div 
+              style={{ 
+                background: C.card, 
+                border: `1px solid ${C.border}`, 
+                borderRadius: '8px', 
+                padding: '12px 14px', 
+                marginBottom: '16px', 
+                display: 'flex', 
+                gap: '16px', 
+                alignItems: 'center', 
+                justifyContent: 'space-between' 
+              }}
+            >
+              <div style={{ position: 'relative', flex: 1, maxWidth: '360px' }}>
+                <FaSearch style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: C.textMid, fontSize: '12px' }} />
                 <input 
                   type="text" 
-                  placeholder="Search HR account by name, email, mobile..."
+                  placeholder="Filter HR manager by name, email, employee ID..."
                   value={hrSearchTerm}
                   onChange={(e) => setHrSearchTerm(e.target.value)}
-                  style={{ width: '100%', padding: '10px 14px 10px 40px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', fontSize: '14px', color: C.text, outline: 'none' }}
+                  style={{ 
+                    width: '100%', 
+                    padding: '8px 12px 8px 34px', 
+                    background: C.bgSecondary, 
+                    border: `1px solid ${C.border}`, 
+                    borderRadius: '6px', 
+                    fontSize: '13px', 
+                    color: C.text, 
+                    outline: 'none',
+                    boxSizing: 'border-box'
+                  }}
                 />
               </div>
 
-              <div style={{ fontSize: '13px', fontWeight: 700, color: C.textMid }}>
-                Showing {filteredHRAccounts.length} HR Manager Accounts
+              <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 500 }}>
+                {filteredHRAccounts.length} Active Accounts
               </div>
             </div>
 
-            {/* HR Accounts List Table */}
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '20px', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.02)' }}>
+            {/* HR Accounts Table */}
+            <div 
+              style={{ 
+                background: C.card, 
+                border: `1px solid ${C.border}`, 
+                borderRadius: '8px', 
+                overflow: 'hidden' 
+              }}
+            >
               {hrLoading ? (
-                <div style={{ padding: '40px', textAlign: 'center', color: C.textMid }}>Loading HR Accounts directory...</div>
+                <div style={{ padding: '36px', textAlign: 'center', color: C.textMid, fontSize: '13px' }}>
+                  Loading HR directory...
+                </div>
               ) : filteredHRAccounts.length === 0 ? (
-                <div style={{ padding: '40px', textAlign: 'center', color: C.textMid }}>
-                  <p style={{ margin: '0 0 12px 0' }}>No HR Accounts found.</p>
+                <div style={{ padding: '36px', textAlign: 'center', color: C.textMid, fontSize: '13px' }}>
+                  <p style={{ margin: '0 0 12px 0' }}>No HR manager accounts found.</p>
                   <button 
                     onClick={() => setCreateHRModalOpen(true)}
-                    style={{ background: C.teal, color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 800, cursor: 'pointer' }}
+                    style={{ background: C.teal, color: '#fff', border: 'none', padding: '6px 14px', borderRadius: '4px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
                   >
-                    + Create First HR Account
+                    + Provision First HR Account
                   </button>
                 </div>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
                     <thead>
-                      <tr style={{ background: C.bgSecondary, borderBottom: `1px solid ${C.border}`, color: C.textMid, fontWeight: 700 }}>
-                        <th style={{ padding: '14px 20px' }}>HR Manager</th>
-                        <th style={{ padding: '14px 20px' }}>HR ID</th>
-                        <th style={{ padding: '14px 20px' }}>Contact Info</th>
-                        <th style={{ padding: '14px 20px' }}>Designation / Dept</th>
-                        <th style={{ padding: '14px 20px' }}>Status</th>
-                        <th style={{ padding: '14px 20px', textAlign: 'right' }}>Actions</th>
+                      <tr style={{ background: C.bgSecondary, borderBottom: `1px solid ${C.border}`, color: C.textMid, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        <th style={{ padding: '10px 16px', fontWeight: 600 }}>HR Manager</th>
+                        <th style={{ padding: '10px 16px', fontWeight: 600 }}>Employee ID</th>
+                        <th style={{ padding: '10px 16px', fontWeight: 600 }}>Contact Info</th>
+                        <th style={{ padding: '10px 16px', fontWeight: 600 }}>Designation / Department</th>
+                        <th style={{ padding: '10px 16px', fontWeight: 600 }}>Status</th>
+                        <th style={{ padding: '10px 16px', fontWeight: 600, textAlign: 'right' }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {filteredHRAccounts.map((hr) => (
                         <tr key={hr.id || hr._id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                          <td style={{ padding: '14px 20px' }}>
-                            <div style={{ fontWeight: 800, color: C.text }}>{hr.fullName || 'HR Manager'}</div>
-                            <span style={{ fontSize: '11px', fontWeight: 800, color: '#EC4899', background: '#FCE7F3', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase' }}>
+                          <td style={{ padding: '12px 16px' }}>
+                            <div style={{ fontWeight: 600, color: C.text }}>{hr.fullName || 'HR Manager'}</div>
+                            <span style={{ fontSize: '10px', color: C.textMid, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
                               {hr.role}
                             </span>
                           </td>
-                          <td style={{ padding: '14px 20px', fontFamily: 'monospace', fontWeight: 700, color: C.teal }}>
-                            {hr.employeeId || 'N/A'}
+                          <td style={{ padding: '12px 16px', fontFamily: MONO_FONT, fontWeight: 500, color: C.teal }}>
+                            {hr.employeeId || '—'}
                           </td>
-                          <td style={{ padding: '14px 20px', color: C.textMid }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><FaEnvelope style={{ fontSize: '12px' }} /> {hr.email}</div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', marginTop: '2px' }}><FaPhone style={{ fontSize: '11px' }} /> {hr.mobile}</div>
+                          <td style={{ padding: '12px 16px', color: C.textMid }}>
+                            <div style={{ color: C.text, fontSize: '12px' }}>{hr.email}</div>
+                            <div style={{ fontSize: '11px', fontFamily: MONO_FONT }}>{hr.mobile}</div>
                           </td>
-                          <td style={{ padding: '14px 20px' }}>
-                            <div style={{ fontWeight: 700, color: C.text }}>{hr.designation || 'HR Manager'}</div>
-                            <div style={{ fontSize: '12px', color: C.textMid }}>{hr.department || 'Human Resources'}</div>
+                          <td style={{ padding: '12px 16px' }}>
+                            <div>{hr.designation || 'HR Manager'}</div>
+                            <div style={{ fontSize: '11px', color: C.textMid }}>{hr.department || 'Human Resources'}</div>
                           </td>
-                          <td style={{ padding: '14px 20px' }}>
+                          <td style={{ padding: '12px 16px' }}>
                             {hr.status === 'active' || hr.isActive ? (
-                              <span style={{ padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: 800, background: '#D1FAE5', color: '#065F46' }}>
+                              <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, background: '#ECFDF5', color: '#065F46', border: '1px solid #A7F3D0' }}>
                                 Active
                               </span>
                             ) : (
-                              <span style={{ padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: 800, background: '#FEE2E2', color: '#991B1B' }}>
+                              <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, background: '#FEF2F2', color: '#991B1B', border: '1px solid #FECACA' }}>
                                 Suspended
                               </span>
                             )}
                           </td>
-                          <td style={{ padding: '14px 20px', textAlign: 'right' }}>
-                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                          <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                            <div style={{ display: 'inline-flex', gap: '6px', justifyContent: 'flex-end' }}>
                               <button 
                                 onClick={() => handleToggleHRBlock(hr.id || hr._id, hr.status)}
                                 style={{ 
-                                  background: C.bgSecondary, color: hr.status === 'active' ? '#EF4444' : '#10B981', 
-                                  border: `1px solid ${C.border}`, padding: '6px 12px', borderRadius: '8px', 
-                                  fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' 
+                                  background: C.bgSecondary, 
+                                  color: hr.status === 'active' ? '#991B1B' : '#065F46', 
+                                  border: `1px solid ${C.border}`, 
+                                  padding: '5px 9px', 
+                                  borderRadius: '4px', 
+                                  fontSize: '12px', 
+                                  fontWeight: 500, 
+                                  cursor: 'pointer', 
+                                  display: 'inline-flex', 
+                                  alignItems: 'center', 
+                                  gap: '4px' 
                                 }}
                               >
-                                {hr.status === 'active' ? <><FaBan /> Suspend</> : <><FaCheck /> Activate</>}
+                                {hr.status === 'active' ? <><FaBan style={{ fontSize: '10px' }} /> Suspend</> : <><FaCheck style={{ fontSize: '10px' }} /> Activate</>}
                               </button>
                               <button 
                                 onClick={() => handleDeleteHRAccount(hr.id || hr._id)}
                                 style={{ 
-                                  background: '#FEF2F2', color: '#EF4444', border: '1px solid #FCA5A5', 
-                                  padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, 
-                                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' 
+                                  background: 'transparent', 
+                                  color: '#991B1B', 
+                                  border: '1px solid rgba(239, 68, 68, 0.3)', 
+                                  padding: '5px 9px', 
+                                  borderRadius: '4px', 
+                                  fontSize: '12px', 
+                                  fontWeight: 500, 
+                                  cursor: 'pointer', 
+                                  display: 'inline-flex', 
+                                  alignItems: 'center', 
+                                  gap: '4px' 
                                 }}
                               >
-                                <FaTrash /> Delete
+                                <FaTrash style={{ fontSize: '10px' }} /> Delete
                               </button>
                             </div>
                           </td>
@@ -645,100 +892,99 @@ export default function HRDashboard() {
           </>
         )}
 
-        {/* Modal: View Candidate Details */}
+        {/* ══════════════════════════════════════════════════════════════════
+            MODAL 1: Candidate Review Drawer
+           ══════════════════════════════════════════════════════════════════ */}
         {viewCandModal && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}>
-            <div style={{ background: C.card, borderRadius: '24px', padding: '32px', width: '100%', maxWidth: '640px', maxHeight: '90vh', overflowY: 'auto', border: `1px solid ${C.border}`, boxShadow: '0 12px 40px rgba(0,0,0,0.2)' }}>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}>
+            <div style={{ background: C.card, borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '640px', maxHeight: '88vh', overflowY: 'auto', border: `1px solid ${C.border}`, boxShadow: '0 8px 30px rgba(0,0,0,0.12)' }}>
               
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', borderBottom: `1px solid ${C.border}`, paddingBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: `1px solid ${C.border}`, paddingBottom: '14px' }}>
                 <div>
-                  <span style={{ fontSize: '12px', fontWeight: 800, color: C.teal, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    Candidate Profile • {viewCandModal.reference_code}
-                  </span>
-                  <h2 style={{ fontSize: '22px', fontWeight: 900, color: C.text, margin: '4px 0 0 0' }}>{viewCandModal.full_name}</h2>
+                  <div style={{ fontSize: '11px', fontFamily: MONO_FONT, fontWeight: 600, color: C.teal || '#0F766E', letterSpacing: '0.02em' }}>
+                    {viewCandModal.reference_code}
+                  </div>
+                  <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '2px 0 0' }}>{viewCandModal.full_name}</h2>
                 </div>
-                <button onClick={() => setViewCandModal(null)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, width: '36px', height: '36px', borderRadius: '50%', cursor: 'pointer', fontWeight: 900 }}>✕</button>
+                <button 
+                  onClick={() => setViewCandModal(null)} 
+                  style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.textMid, width: '30px', height: '30px', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <FaTimes style={{ fontSize: '12px' }} />
+                </button>
               </div>
 
-              {/* Status & EMP ID Badge */}
-              <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
-                <span style={{ padding: '6px 14px', borderRadius: '20px', fontSize: '13px', fontWeight: 800, background: viewCandModal.interview_status === 'SELECTED' || viewCandModal.interview_status === 'EMPLOYEE_CREATED' ? '#D1FAE5' : viewCandModal.interview_status === 'REJECTED' ? '#FEE2E2' : '#FEF3C7', color: viewCandModal.interview_status === 'SELECTED' || viewCandModal.interview_status === 'EMPLOYEE_CREATED' ? '#065F46' : viewCandModal.interview_status === 'REJECTED' ? '#991B1B' : '#92400E' }}>
-                  Status: {viewCandModal.interview_status}
-                </span>
+              {/* Status Row */}
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', alignItems: 'center' }}>
+                {renderStatusBadge(viewCandModal.interview_status)}
                 {viewCandModal.employee_id && (
-                  <span style={{ padding: '6px 14px', borderRadius: '20px', fontSize: '13px', fontWeight: 800, background: '#EDE9FE', color: '#5B21B6' }}>
-                    Employee ID: {viewCandModal.employee_id}
+                  <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, background: C.bgSecondary, color: C.text, border: `1px solid ${C.border}`, fontFamily: MONO_FONT }}>
+                    ID: {viewCandModal.employee_id}
                   </span>
                 )}
               </div>
 
-              {/* Grid Info */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-                <div style={{ background: C.bgSecondary, padding: '14px', borderRadius: '12px' }}>
-                  <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 700 }}>Contact Info</div>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: C.text, marginTop: '4px' }}>📞 {viewCandModal.mobile_number}</div>
-                  <div style={{ fontSize: '13px', color: C.textMid }}>✉️ {viewCandModal.email_id}</div>
+              {/* Candidate Info Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+                <div style={{ background: C.bgSecondary, padding: '10px 12px', borderRadius: '6px', border: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 500 }}>Contact</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: C.text, marginTop: '2px', fontFamily: MONO_FONT }}>{viewCandModal.mobile_number}</div>
+                  <div style={{ fontSize: '12px', color: C.textMid }}>{viewCandModal.email_id}</div>
                 </div>
 
-                <div style={{ background: C.bgSecondary, padding: '14px', borderRadius: '12px' }}>
-                  <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 700 }}>Education & Qualification</div>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: C.text, marginTop: '4px' }}>{viewCandModal.highest_qualification}</div>
-                  <div style={{ fontSize: '13px', color: C.textMid }}>Passing Year: {viewCandModal.passing_year || 'N/A'}</div>
+                <div style={{ background: C.bgSecondary, padding: '10px 12px', borderRadius: '6px', border: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 500 }}>Qualification</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: C.text, marginTop: '2px' }}>{viewCandModal.highest_qualification || '—'}</div>
+                  <div style={{ fontSize: '12px', color: C.textMid }}>Passout: {viewCandModal.passing_year || 'N/A'}</div>
                 </div>
 
-                <div style={{ background: C.bgSecondary, padding: '14px', borderRadius: '12px' }}>
-                  <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 700 }}>Experience</div>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: C.text, marginTop: '4px' }}>{viewCandModal.experience_type} ({viewCandModal.total_experience_years || 0} yrs)</div>
-                  <div style={{ fontSize: '13px', color: C.textMid }}>Company: {viewCandModal.current_company || 'N/A'}</div>
-                  <div style={{ fontSize: '13px', color: C.textMid }}>Designation: {viewCandModal.current_designation || 'N/A'}</div>
+                <div style={{ background: C.bgSecondary, padding: '10px 12px', borderRadius: '6px', border: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 500 }}>Experience</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: C.text, marginTop: '2px' }}>{viewCandModal.experience_type || 'Fresher'} ({viewCandModal.total_experience_years || 0} yrs)</div>
+                  <div style={{ fontSize: '12px', color: C.textMid }}>Company: {viewCandModal.current_company || 'N/A'}</div>
                 </div>
 
-                <div style={{ background: C.bgSecondary, padding: '14px', borderRadius: '12px' }}>
-                  <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 700 }}>Salary Expectations</div>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: C.text, marginTop: '4px' }}>Expected Salary: {viewCandModal.expected_salary ? `₹${viewCandModal.expected_salary}` : 'N/A'}</div>
+                <div style={{ background: C.bgSecondary, padding: '10px 12px', borderRadius: '6px', border: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 500 }}>Salary Expectations</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: C.text, marginTop: '2px', fontFamily: MONO_FONT }}>
+                    {viewCandModal.expected_salary ? `₹${Number(viewCandModal.expected_salary).toLocaleString('en-IN')}` : 'Not specified'}
+                  </div>
                 </div>
 
-                <div style={{ background: C.bgSecondary, padding: '14px', borderRadius: '12px' }}>
-                  <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 700 }}>Joining & Location</div>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: C.text, marginTop: '4px' }}>Notice: {viewCandModal.notice_period_days ? `${viewCandModal.notice_period_days} days` : 'Immediate'}</div>
-                  <div style={{ fontSize: '13px', color: C.textMid }}>Immediate: {viewCandModal.immediate_joining ? 'Yes' : 'No'}</div>
+                <div style={{ background: C.bgSecondary, padding: '10px 12px', borderRadius: '6px', border: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 500 }}>Joining Availability</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: C.text, marginTop: '2px' }}>
+                    {viewCandModal.immediate_joining ? 'Immediate' : `${viewCandModal.notice_period_days || 0} days notice`}
+                  </div>
                 </div>
 
-                <div style={{ background: C.bgSecondary, padding: '14px', borderRadius: '12px' }}>
-                  <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 700 }}>Address</div>
-                  <div style={{ fontSize: '13px', color: C.text, marginTop: '4px' }}>{viewCandModal.current_address || 'N/A'}</div>
+                <div style={{ background: C.bgSecondary, padding: '10px 12px', borderRadius: '6px', border: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: '11px', color: C.textMid, fontWeight: 500 }}>Address</div>
+                  <div style={{ fontSize: '12px', color: C.text, marginTop: '2px' }}>{viewCandModal.current_address || '—'}</div>
                 </div>
               </div>
 
-              {/* Offered Appointment & Stipend Info (Read-Only) */}
-              <div style={{ background: C.bgSecondary, padding: '16px', borderRadius: '14px', marginBottom: '24px' }}>
-                <div style={{ fontSize: '13px', fontWeight: 800, color: C.teal, marginBottom: '6px' }}>
-                  Offered Appointment & Stipend Details (Read-Only)
+              {/* Offer Terms */}
+              <div style={{ background: C.bgSecondary, padding: '12px 14px', borderRadius: '6px', border: `1px solid ${C.border}`, marginBottom: '16px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: C.textMid, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px' }}>
+                  Terms &amp; Allocation
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginTop: '8px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px' }}>
                   <div>
-                    <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 700 }}>Offered Monthly Stipend/Salary</div>
-                    <div style={{ fontSize: '14px', fontWeight: 800, color: C.text, marginTop: '2px' }}>
-                      {viewCandModal.offered_salary || viewCandModal.expected_salary 
-                        ? `₹${viewCandModal.offered_salary || viewCandModal.expected_salary}` 
-                        : 'Not assigned yet'}
+                    <span style={{ fontSize: '11px', color: C.textMid }}>Offered Compensation:</span>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: C.text, fontFamily: MONO_FONT }}>
+                      {viewCandModal.offered_salary ? `₹${Number(viewCandModal.offered_salary).toLocaleString('en-IN')}` : 'Pending assignment'}
                     </div>
                   </div>
                   <div>
-                    <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 700 }}>Offered Designation</div>
-                    <div style={{ fontSize: '14px', fontWeight: 800, color: C.text, marginTop: '2px' }}>
-                      {viewCandModal.offered_designation || viewCandModal.target_role || viewCandModal.current_designation || 'Not assigned yet'}
+                    <span style={{ fontSize: '11px', color: C.textMid }}>Designation:</span>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: C.text }}>
+                      {viewCandModal.offered_designation || viewCandModal.target_role || 'Sales Executive'}
                     </div>
                   </div>
                   <div>
-                    <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 700 }}>Offered Department</div>
-                    <div style={{ fontSize: '14px', fontWeight: 800, color: C.text, marginTop: '2px' }}>
-                      {viewCandModal.offered_department || 'Sales & Distribution'}
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '12px', color: C.textMid, fontWeight: 700 }}>Assigned HR Manager</div>
-                    <div style={{ fontSize: '14px', fontWeight: 800, color: C.text, marginTop: '2px' }}>
+                    <span style={{ fontSize: '11px', color: C.textMid }}>Assigned HR:</span>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: C.text }}>
                       {viewCandModal.assigned_hr_name || viewCandModal.hr_name || 'Unassigned'}
                     </div>
                   </div>
@@ -747,48 +993,107 @@ export default function HRDashboard() {
 
               {/* Feedback History */}
               {viewCandModal.interview_feedback && (
-                <div style={{ background: C.bgSecondary, padding: '16px', borderRadius: '14px', marginBottom: '24px' }}>
-                  <div style={{ fontSize: '13px', fontWeight: 800, color: C.teal, marginBottom: '6px' }}>Interview Feedback & Rating</div>
-                  <div style={{ fontSize: '14px', fontWeight: 700 }}>Rating: ⭐ {viewCandModal.interview_rating || 0} / 5</div>
-                  <div style={{ fontSize: '13px', color: C.textMid, marginTop: '4px' }}>Remarks: "{viewCandModal.interview_feedback}"</div>
+                <div style={{ background: C.bgSecondary, padding: '12px 14px', borderRadius: '6px', border: `1px solid ${C.border}`, marginBottom: '16px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: C.textMid, marginBottom: '4px' }}>Interview Evaluation</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: C.text }}>Rating: {viewCandModal.interview_rating || 0} / 5</div>
+                  <div style={{ fontSize: '12px', color: C.textMid, marginTop: '2px', fontStyle: 'italic' }}>
+                    "{viewCandModal.interview_feedback}"
+                  </div>
                 </div>
               )}
 
               {/* Resume Document Link */}
               {viewCandModal.resume_url && (
-                <div style={{ marginBottom: '24px' }}>
-                  <a href={viewCandModal.resume_url} target="_blank" rel="noreferrer" style={{ background: C.teal, color: '#fff', padding: '10px 20px', borderRadius: '10px', textDecoration: 'none', fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                    <FaFileAlt /> View Resume Document
+                <div style={{ marginBottom: '20px' }}>
+                  <a 
+                    href={viewCandModal.resume_url} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    style={{ 
+                      background: C.bgSecondary, 
+                      color: C.teal || '#0F766E', 
+                      border: `1px solid ${C.border}`, 
+                      padding: '8px 14px', 
+                      borderRadius: '6px', 
+                      textDecoration: 'none', 
+                      fontSize: '12px', 
+                      fontWeight: 600, 
+                      display: 'inline-flex', 
+                      alignItems: 'center', 
+                      gap: '6px' 
+                    }}
+                  >
+                    <FaFileAlt style={{ fontSize: '12px' }} /> View Candidate Resume
                   </a>
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', borderTop: `1px solid ${C.border}`, paddingTop: '16px' }}>
-                <button onClick={() => setViewCandModal(null)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '10px 20px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}>Close</button>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', borderTop: `1px solid ${C.border}`, paddingTop: '14px' }}>
+                <button 
+                  onClick={() => setViewCandModal(null)} 
+                  style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '7px 14px', borderRadius: '6px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}
+                >
+                  Dismiss
+                </button>
                 {viewCandModal.interview_status !== 'EMPLOYEE_CREATED' && !isSuperAdmin && (
-                  <button onClick={() => { const cand = viewCandModal; setViewCandModal(null); handleOpenSelectModal(cand); }} style={{ background: C.teal, color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '10px', fontWeight: 800, cursor: 'pointer' }}>Select Candidate & Give EMP ID</button>
+                  <button 
+                    onClick={() => { 
+                      const cand = viewCandModal; 
+                      setViewCandModal(null); 
+                      handleOpenSelectModal(cand); 
+                    }} 
+                    style={{ background: C.teal || '#0F766E', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    Onboard Candidate
+                  </button>
                 )}
               </div>
             </div>
           </div>
         )}
 
-        {/* Modal: Select Candidate & Generate Employee ID */}
+        {/* ══════════════════════════════════════════════════════════════════
+            MODAL 2: Approve & Allocate Employee ID
+           ══════════════════════════════════════════════════════════════════ */}
         {selectedCandModal && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}>
-            <div style={{ background: C.card, borderRadius: '24px', padding: '32px', width: '100%', maxWidth: '500px', border: `1px solid ${C.border}` }}>
-              <h2 style={{ fontSize: '20px', fontWeight: 900, color: C.text, margin: '0 0 8px 0' }}>Select Candidate & Create Employee</h2>
-              <p style={{ fontSize: '14px', color: C.textMid, marginBottom: '20px' }}>Candidate: <strong>{selectedCandModal.full_name}</strong> ({selectedCandModal.reference_code})</p>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}>
+            <div style={{ background: C.card, borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '480px', border: `1px solid ${C.border}`, boxShadow: '0 8px 30px rgba(0,0,0,0.12)' }}>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: `1px solid ${C.border}`, paddingBottom: '12px' }}>
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600, color: C.text, margin: 0 }}>Candidate Selection &amp; Onboarding</h2>
+                  <div style={{ fontSize: '12px', color: C.textMid, marginTop: '2px' }}>
+                    {selectedCandModal.full_name} ({selectedCandModal.reference_code})
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setSelectedCandModal(null)} 
+                  style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.textMid, width: '28px', height: '28px', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <FaTimes style={{ fontSize: '11px' }} />
+                </button>
+              </div>
 
               <form onSubmit={handleSelectCandidateSubmit}>
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Offered Monthly Salary (₹) *</label>
-                  <input type="number" required value={selectionForm.offered_salary} onChange={(e) => setSelectionForm({ ...selectionForm, offered_salary: e.target.value })} placeholder="e.g. 25000" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} />
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Offered Monthly Compensation (₹) *</label>
+                  <input 
+                    type="number" 
+                    required 
+                    value={selectionForm.offered_salary} 
+                    onChange={(e) => setSelectionForm({ ...selectionForm, offered_salary: e.target.value })} 
+                    placeholder="e.g. 25000" 
+                    style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }} 
+                  />
                 </div>
 
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Designation *</label>
-                  <select value={selectionForm.offered_designation} onChange={(e) => setSelectionForm({ ...selectionForm, offered_designation: e.target.value })} style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Allocated Designation *</label>
+                  <select 
+                    value={selectionForm.offered_designation} 
+                    onChange={(e) => setSelectionForm({ ...selectionForm, offered_designation: e.target.value })} 
+                    style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }}
+                  >
                     <option value="TC">Telecaller (TC)</option>
                     <option value="Team Leader">Team Leader</option>
                     <option value="Manager">Manager</option>
@@ -796,112 +1101,194 @@ export default function HRDashboard() {
                   </select>
                 </div>
 
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Department *</label>
-                  <input type="text" required value={selectionForm.offered_department} onChange={(e) => setSelectionForm({ ...selectionForm, offered_department: e.target.value })} style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} />
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Department *</label>
+                  <input 
+                    type="text" 
+                    required 
+                    value={selectionForm.offered_department} 
+                    onChange={(e) => setSelectionForm({ ...selectionForm, offered_department: e.target.value })} 
+                    style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }} 
+                  />
                 </div>
 
-                <div style={{ marginBottom: '24px' }}>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Expected Joining Date</label>
-                  <input type="date" value={selectionForm.expected_joining_date} onChange={(e) => setSelectionForm({ ...selectionForm, expected_joining_date: e.target.value })} style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} />
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Expected Date of Joining</label>
+                  <input 
+                    type="date" 
+                    value={selectionForm.expected_joining_date} 
+                    onChange={(e) => setSelectionForm({ ...selectionForm, expected_joining_date: e.target.value })} 
+                    style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }} 
+                  />
                 </div>
 
-                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-                  <button type="button" onClick={() => setSelectedCandModal(null)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '10px 20px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
-                  <button type="submit" style={{ background: C.teal, color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '10px', fontWeight: 800, cursor: 'pointer' }}>Confirm Selection & Generate ID</button>
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', borderTop: `1px solid ${C.border}`, paddingTop: '14px' }}>
+                  <button 
+                    type="button" 
+                    onClick={() => setSelectedCandModal(null)} 
+                    style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '7px 14px', borderRadius: '6px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit" 
+                    style={{ background: C.teal || '#0F766E', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    Allocate EMP ID &amp; Provision
+                  </button>
                 </div>
               </form>
             </div>
           </div>
         )}
 
-        {/* Modal: Interview Feedback */}
+        {/* ══════════════════════════════════════════════════════════════════
+            MODAL 3: Interview Feedback
+           ══════════════════════════════════════════════════════════════════ */}
         {interviewModal && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}>
-            <div style={{ background: C.card, borderRadius: '24px', padding: '32px', width: '100%', maxWidth: '500px', border: `1px solid ${C.border}` }}>
-              <h2 style={{ fontSize: '20px', fontWeight: 900, color: C.text, margin: '0 0 8px 0' }}>Interview Feedback & Status</h2>
-              <p style={{ fontSize: '14px', color: C.textMid, marginBottom: '20px' }}>Candidate: <strong>{interviewModal.full_name}</strong> ({interviewModal.reference_code})</p>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}>
+            <div style={{ background: C.card, borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '480px', border: `1px solid ${C.border}`, boxShadow: '0 8px 30px rgba(0,0,0,0.12)' }}>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: `1px solid ${C.border}`, paddingBottom: '12px' }}>
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600, color: C.text, margin: 0 }}>Interview Evaluation</h2>
+                  <div style={{ fontSize: '12px', color: C.textMid, marginTop: '2px' }}>
+                    {interviewModal.full_name} ({interviewModal.reference_code})
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setInterviewModal(null)} 
+                  style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.textMid, width: '28px', height: '28px', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <FaTimes style={{ fontSize: '11px' }} />
+                </button>
+              </div>
 
               <form onSubmit={handleFeedbackSubmit}>
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Interview Status *</label>
-                  <select value={feedbackForm.interview_status} onChange={(e) => setFeedbackForm({ ...feedbackForm, interview_status: e.target.value })} style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Evaluation Stage *</label>
+                  <select 
+                    value={feedbackForm.interview_status} 
+                    onChange={(e) => setFeedbackForm({ ...feedbackForm, interview_status: e.target.value })} 
+                    style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }}
+                  >
                     <option value="REGISTERED">Registered</option>
                     <option value="INTERVIEW_PENDING">Interview Pending</option>
-                    <option value="SELECTED">Selected</option>
-                    <option value="REJECTED">Rejected</option>
+                    <option value="SELECTED">Selected for Offer</option>
+                    <option value="REJECTED">Declined / Rejected</option>
                   </select>
                 </div>
 
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Rating (1 - 5)</label>
-                  <input type="number" min="1" max="5" value={feedbackForm.interview_rating} onChange={(e) => setFeedbackForm({ ...feedbackForm, interview_rating: e.target.value })} style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} />
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Score (1 - 5)</label>
+                  <input 
+                    type="number" 
+                    min="1" 
+                    max="5" 
+                    value={feedbackForm.interview_rating} 
+                    onChange={(e) => setFeedbackForm({ ...feedbackForm, interview_rating: e.target.value })} 
+                    style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }} 
+                  />
                 </div>
 
-                <div style={{ marginBottom: '24px' }}>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Interview Feedback / Remarks</label>
-                  <textarea rows="3" value={feedbackForm.interview_feedback} onChange={(e) => setFeedbackForm({ ...feedbackForm, interview_feedback: e.target.value })} placeholder="Enter candidate interview feedback..." style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} />
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Evaluation Notes</label>
+                  <textarea 
+                    rows="3" 
+                    value={feedbackForm.interview_feedback} 
+                    onChange={(e) => setFeedbackForm({ ...feedbackForm, interview_feedback: e.target.value })} 
+                    placeholder="Enter interview evaluation notes and candidate observations..." 
+                    style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }} 
+                  />
                 </div>
 
-                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-                  <button type="button" onClick={() => setInterviewModal(null)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '10px 20px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
-                  <button type="submit" style={{ background: C.teal, color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '10px', fontWeight: 800, cursor: 'pointer' }}>Save Feedback</button>
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', borderTop: `1px solid ${C.border}`, paddingTop: '14px' }}>
+                  <button 
+                    type="button" 
+                    onClick={() => setInterviewModal(null)} 
+                    style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '7px 14px', borderRadius: '6px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit" 
+                    style={{ background: C.teal || '#0F766E', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    Save Notes
+                  </button>
                 </div>
               </form>
             </div>
           </div>
         )}
 
-        {/* ── MODAL: Create HR Account ── */}
+        {/* ══════════════════════════════════════════════════════════════════
+            MODAL 4: Provision HR Manager Account
+           ══════════════════════════════════════════════════════════════════ */}
         {createHRModalOpen && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}>
-            <div style={{ background: C.card, borderRadius: '24px', padding: '32px', width: '100%', maxWidth: '540px', border: `1px solid ${C.border}`, boxShadow: '0 8px 32px rgba(0,0,0,0.15)' }}>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}>
+            <div style={{ background: C.card, borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '520px', border: `1px solid ${C.border}`, boxShadow: '0 8px 30px rgba(0,0,0,0.12)' }}>
               
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: `1px solid ${C.border}`, paddingBottom: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: `1px solid ${C.border}`, paddingBottom: '12px' }}>
                 <div>
-                  <span style={{ fontSize: '12px', fontWeight: 800, color: C.teal, textTransform: 'uppercase' }}>Super Admin Operations</span>
-                  <h2 style={{ fontSize: '22px', fontWeight: 900, margin: 0, color: C.text }}>Create HR Manager Account</h2>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600, margin: 0, color: C.text }}>Provision HR Account</h2>
+                  <div style={{ fontSize: '12px', color: C.textMid, marginTop: '2px' }}>Administrative account for talent operations</div>
                 </div>
-                <button onClick={() => setCreateHRModalOpen(false)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, width: '36px', height: '36px', borderRadius: '50%', cursor: 'pointer', fontWeight: 900 }}>✕</button>
+                <button 
+                  onClick={() => setCreateHRModalOpen(false)} 
+                  style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.textMid, width: '28px', height: '28px', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <FaTimes style={{ fontSize: '11px' }} />
+                </button>
               </div>
 
               <form onSubmit={handleCreateHRSubmit}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', marginBottom: '16px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '12px', marginBottom: '16px' }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Full Name *</label>
-                    <input type="text" required value={hrForm.fullName} onChange={(e) => setHrForm({ ...hrForm, fullName: e.target.value })} placeholder="Enter full name" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} />
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Full Name *</label>
+                    <input type="text" required value={hrForm.fullName} onChange={(e) => setHrForm({ ...hrForm, fullName: e.target.value })} placeholder="Full name" style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }} />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Email Address *</label>
-                    <input type="email" required value={hrForm.email} onChange={(e) => setHrForm({ ...hrForm, email: e.target.value })} placeholder="hr@example.com" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} />
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Corporate Email *</label>
+                    <input type="email" required value={hrForm.email} onChange={(e) => setHrForm({ ...hrForm, email: e.target.value })} placeholder="hr@gharkapaisa.in" style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }} />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Mobile Number *</label>
-                    <input type="tel" required value={hrForm.mobile} onChange={(e) => setHrForm({ ...hrForm, mobile: e.target.value })} placeholder="10 Digit Mobile" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} />
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Mobile Number *</label>
+                    <input type="tel" required value={hrForm.mobile} onChange={(e) => setHrForm({ ...hrForm, mobile: e.target.value })} placeholder="10-digit mobile" style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }} />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Designation *</label>
-                    <input type="text" required value={hrForm.designation} onChange={(e) => setHrForm({ ...hrForm, designation: e.target.value })} placeholder="e.g. HR Manager / Executive" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} />
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Designation *</label>
+                    <input type="text" required value={hrForm.designation} onChange={(e) => setHrForm({ ...hrForm, designation: e.target.value })} placeholder="HR Manager" style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }} />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Password *</label>
-                    <input type="password" required value={hrForm.password} onChange={(e) => setHrForm({ ...hrForm, password: e.target.value })} placeholder="••••••••" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} />
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Initial Password *</label>
+                    <input type="password" required value={hrForm.password} onChange={(e) => setHrForm({ ...hrForm, password: e.target.value })} placeholder="••••••••" style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }} />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Confirm Password *</label>
-                    <input type="password" required value={hrForm.confirmPassword} onChange={(e) => setHrForm({ ...hrForm, confirmPassword: e.target.value })} placeholder="••••••••" style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text }} />
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Confirm Password *</label>
+                    <input type="password" required value={hrForm.confirmPassword} onChange={(e) => setHrForm({ ...hrForm, confirmPassword: e.target.value })} placeholder="••••••••" style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }} />
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px' }}>
-                  <button type="button" onClick={() => setCreateHRModalOpen(false)} style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '10px 20px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
-                  <button type="submit" disabled={createLoading} style={{ background: C.employeePrimary || C.teal || '#0F766E', color: '#fff', border: 'none', padding: '10px 24px', borderRadius: '10px', fontWeight: 800, cursor: 'pointer' }}>
-                    {createLoading ? 'Provisioning...' : 'Provision HR Account'}
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', borderTop: `1px solid ${C.border}`, paddingTop: '14px' }}>
+                  <button 
+                    type="button" 
+                    onClick={() => setCreateHRModalOpen(false)} 
+                    style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '7px 14px', borderRadius: '6px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit" 
+                    disabled={createLoading} 
+                    style={{ background: C.teal || '#0F766E', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    {createLoading ? 'Provisioning...' : 'Provision Account'}
                   </button>
                 </div>
               </form>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -25,9 +25,30 @@ import {
   requestMobileChange,
   verifyMobileChange,
 } from '../../services/auth.service';
+import { fetchPartnerProfile } from '../../services/partner.service';
 
 export default function ProfileScreen() {
   const { user, userRole, logout, reloadUser } = useAuth();
+  const [partner, setPartner] = useState<any>(null);
+
+  const isPartnerRole = userRole === 'PARTNER' || userRole === 'TEAM_MEMBER';
+
+  useEffect(() => {
+    if (!isPartnerRole) return;
+    fetchPartnerProfile()
+      .then((res: any) => {
+        const data = res?.data || res;
+        if (data && (data.id || data.partner_code)) setPartner(data);
+      })
+      .catch(() => {});
+  }, [isPartnerRole]);
+
+  const displayName = partner
+    ? `${partner.first_name || ''} ${partner.last_name || ''}`.trim() || user?.full_name || user?.name || 'User Profile'
+    : user?.full_name || user?.name || 'User Profile';
+  const displayEmail = partner?.email || user?.email || 'N/A';
+  const displayMobile = partner?.mobile || user?.mobile || 'N/A';
+  const displayInitial = (displayName || 'U')[0].toUpperCase();
 
   // Profile Edit State
   const [fullName, setFullName] = useState(user?.full_name || user?.name || '');
@@ -176,9 +197,10 @@ export default function ProfileScreen() {
       {/* Header Avatar Section */}
       <View style={styles.avatarSection}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{(user?.full_name || user?.email || 'U')[0].toUpperCase()}</Text>
+          <Text style={styles.avatarText}>{displayInitial}</Text>
         </View>
-        <Text style={styles.name}>{user?.full_name || user?.name || 'User Profile'}</Text>
+        <Text style={styles.name}>{displayName}</Text>
+        {partner?.partner_code ? <Text style={styles.partnerCode}>{partner.partner_code}</Text> : null}
         <StatusBadge status={userRole || 'User'} />
       </View>
 
@@ -214,7 +236,7 @@ export default function ProfileScreen() {
         <View style={styles.contactRow}>
           <View style={styles.contactInfo}>
             <Text style={styles.label}>Email Address</Text>
-            <Text style={styles.val}>{user?.email || 'N/A'}</Text>
+            <Text style={styles.val}>{displayEmail}</Text>
           </View>
           <TouchableOpacity style={styles.changeBtn} onPress={() => setEmailModalVisible(true)}>
             <Text style={styles.changeBtnText}>Change Email</Text>
@@ -224,7 +246,7 @@ export default function ProfileScreen() {
         <View style={styles.contactRow}>
           <View style={styles.contactInfo}>
             <Text style={styles.label}>Mobile Number</Text>
-            <Text style={styles.val}>{user?.mobile || 'N/A'}</Text>
+            <Text style={styles.val}>{displayMobile}</Text>
           </View>
           <TouchableOpacity style={styles.changeBtn} onPress={() => setMobileModalVisible(true)}>
             <Text style={styles.changeBtnText}>Change Mobile</Text>
@@ -241,10 +263,33 @@ export default function ProfileScreen() {
           <Text style={styles.valBold}>{userRole}</Text>
         </View>
 
-        {user?.partner_code ? (
+        {(partner?.partner_code || user?.partner_code) ? (
           <View style={styles.row}>
             <Text style={styles.label}>Partner Code:</Text>
-            <Text style={styles.valBold}>{user.partner_code}</Text>
+            <Text style={styles.valBold}>{partner?.partner_code || user?.partner_code}</Text>
+          </View>
+        ) : null}
+
+        {partner?.company_name ? (
+          <View style={styles.row}>
+            <Text style={styles.label}>Company:</Text>
+            <Text style={styles.val}>{partner.company_name}</Text>
+          </View>
+        ) : null}
+
+        {partner?.kyc_status ? (
+          <View style={styles.row}>
+            <Text style={styles.label}>KYC Status:</Text>
+            <Text style={styles.valBold}>{String(partner.kyc_status).replace(/_/g, ' ')}</Text>
+          </View>
+        ) : null}
+
+        {partner?.account_status || partner?.bank_name ? (
+          <View style={styles.row}>
+            <Text style={styles.label}>Payout Account:</Text>
+            <Text style={styles.val}>
+              {partner.bank_name ? `${partner.bank_name} · ` : ''}{partner.account_number || partner.ifsc_code || ''}
+            </Text>
           </View>
         ) : null}
 
@@ -264,7 +309,7 @@ export default function ProfileScreen() {
 
         <View style={styles.row}>
           <Text style={styles.label}>Account Status:</Text>
-          <Text style={styles.val}>{user?.status || 'Active'}</Text>
+          <Text style={styles.val}>{partner?.account_status || user?.status || 'Active'}</Text>
         </View>
       </Card>
 
@@ -428,6 +473,13 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.lg,
     fontWeight: typography.weights.bold,
     color: colors.text,
+    marginBottom: 4,
+  },
+  partnerCode: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.semibold,
+    color: colors.primary,
+    letterSpacing: 0.5,
     marginBottom: 4,
   },
   card: {

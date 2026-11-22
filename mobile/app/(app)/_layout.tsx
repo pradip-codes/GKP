@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Tabs, Redirect, useRouter, usePathname } from 'expo-router';
+import { Tabs, Redirect, useRouter, usePathname, useGlobalSearchParams } from 'expo-router';
 import { Text, View, StyleSheet, AppState, Modal, TouchableOpacity, ScrollView, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
@@ -39,6 +39,7 @@ export default function AppLayout() {
   const { isAuthenticated, isLoading, userRole, userDesignation } = useAuth();
   const { colors, isDark } = useTheme();
   const router = useRouter();
+  const routeParams = useGlobalSearchParams<{ category?: string }>();
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [partnerMenuOpen, setPartnerMenuOpen] = useState(false);
 
@@ -117,13 +118,13 @@ export default function AppLayout() {
   const hasDesignation = !!userDesignation;
 
   const roleHome = (() => {
-    if (role === 'SUPER_ADMIN') return '/(app)/super-admin';
-    if (role === 'ADMIN') return '/(app)/admin-dashboard';
-    if (role === 'HR') return '/(app)/hr-dashboard';
-    if (role === 'EMPLOYEE') return hasDesignation ? '/(app)/dashboard' : '/(app)/employee-dashboard';
-    if (role === 'TEAM_MEMBER') return '/(app)/team-dashboard';
-    if (role === 'PARTNER') return '/(app)/partner-dashboard';
-    return '/(app)/dashboard';
+    if (role === 'SUPER_ADMIN') return '/super-admin';
+    if (role === 'ADMIN') return '/admin-dashboard';
+    if (role === 'HR') return '/hr-dashboard';
+    if (role === 'EMPLOYEE') return hasDesignation ? '/dashboard' : '/employee-dashboard';
+    if (role === 'TEAM_MEMBER') return '/team-dashboard';
+    if (role === 'PARTNER') return '/partner-dashboard';
+    return '/dashboard';
   })();
 
   // Admin-side roles never land on the generic partner workspace dashboard
@@ -137,66 +138,66 @@ export default function AppLayout() {
     icon,
     badgeCount,
     active: pathname.includes(match || route),
-    onPress: () => router.replace(route as any),
+    onPress: () => router.navigate(route as any),
   });
 
-  const chatItem = dockItem('chat', 'Chat', 'chatbubble', '/(app)/messenger', '/messenger', unreadCount);
-  const moreItem = dockItem('more', 'More', 'menu', '/(app)/more', '/more');
+  const chatItem = dockItem('chat', 'Chat', 'chatbubble', '/messenger', '/messenger', unreadCount);
+  const moreItem = dockItem('more', 'More', 'menu', '/more', '/more');
 
   // Each role gets its own panel shortcuts — not one shared feature set
   const dockItems = (() => {
     switch (role) {
       case 'SUPER_ADMIN':
         return [
-          dockItem('panel', 'Panel', 'home', '/(app)/super-admin', '/super-admin'),
-          dockItem('staff', 'Staff', 'people', '/(app)/super-admin/employees', '/employees'),
-          dockItem('apps', 'Apps', 'document-text', '/(app)/super-admin/applications', '/applications'),
+          dockItem('panel', 'Panel', 'home', '/super-admin', '/super-admin'),
+          dockItem('staff', 'Staff', 'people', '/super-admin/employees', '/employees'),
+          dockItem('apps', 'Apps', 'document-text', '/super-admin/applications', '/applications'),
           chatItem,
           moreItem,
         ];
       case 'ADMIN':
         return [
-          dockItem('panel', 'Panel', 'home', '/(app)/admin-dashboard', '/admin-dashboard'),
-          dockItem('partners', 'Partners', 'people', '/(app)/admin-partners', '/admin-partners'),
-          dockItem('queue', 'Queue', 'briefcase', '/(app)/op-queue', '/op-queue'),
+          dockItem('panel', 'Panel', 'home', '/admin-dashboard', '/admin-dashboard'),
+          dockItem('partners', 'Partners', 'people', '/admin-partners', '/admin-partners'),
+          dockItem('queue', 'Queue', 'briefcase', '/op-queue', '/op-queue'),
           chatItem,
           moreItem,
         ];
       case 'HR':
         return [
-          dockItem('panel', 'Panel', 'home', '/(app)/hr-dashboard', '/hr-dashboard'),
-          dockItem('candidates', 'Candidates', 'id-card', '/(app)/hr-candidates', '/hr-candidates'),
-          dockItem('apps', 'Apps', 'document-text', '/(app)/applications', '/applications'),
+          dockItem('panel', 'Panel', 'home', '/hr-dashboard', '/hr-dashboard'),
+          dockItem('candidates', 'Candidates', 'id-card', '/hr-candidates', '/hr-candidates'),
+          dockItem('apps', 'Apps', 'document-text', '/applications', '/applications'),
           chatItem,
           moreItem,
         ];
       case 'EMPLOYEE':
         return [
           dockItem('panel', 'Panel', 'home', roleHome, hasDesignation ? '/dashboard' : '/employee-dashboard'),
-          dockItem('attendance', 'Attendance', 'location', '/(app)/attendance', '/attendance'),
-          dockItem('apps', 'Apps', 'document-text', '/(app)/applications', '/applications'),
+          dockItem('attendance', 'Attendance', 'location', '/attendance', '/attendance'),
+          dockItem('apps', 'Apps', 'document-text', '/applications', '/applications'),
           chatItem,
           moreItem,
         ];
       case 'TEAM_MEMBER':
         return [
-          dockItem('panel', 'Panel', 'home', '/(app)/team-dashboard', '/team-dashboard'),
-          dockItem('wallet', 'Wallet', 'wallet', '/(app)/wallet', '/wallet'),
-          dockItem('apps', 'Apps', 'document-text', '/(app)/applications', '/applications'),
+          dockItem('panel', 'Panel', 'home', '/team-dashboard', '/team-dashboard'),
+          dockItem('wallet', 'Wallet', 'wallet', '/wallet', '/wallet'),
+          dockItem('apps', 'Apps', 'document-text', '/applications', '/applications'),
           chatItem,
           moreItem,
         ];
       default: // PARTNER & others — custom dock: Dashboard, Applications, +Add Lead, Chat, More
         return [
-          dockItem('panel', 'Dashboard', 'home', '/(app)/partner-dashboard', '/partner-dashboard'),
-          dockItem('apps', 'Applications', 'document-text', '/(app)/applications', '/applications'),
+          dockItem('panel', 'Dashboard', 'home', '/partner-dashboard', '/partner-dashboard'),
+          dockItem('apps', 'Applications', 'document-text', '/applications', '/applications'),
           {
             id: 'add',
             label: 'Add Lead',
             icon: 'add',
             active: false,
             isCenter: true,
-            onPress: () => router.push('/(app)/add-lead' as any),
+            onPress: () => router.push('/add-lead' as any),
           },
           chatItem,
           {
@@ -337,14 +338,20 @@ export default function AppLayout() {
             </View>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
               {PARTNER_SIDEBAR_ITEMS.map((item) => {
-                const isActive = pathname.includes(item.match);
+                const itemCategory = item.route.includes('category=')
+                  ? item.route.split('category=')[1]
+                  : null;
+                const isActive = itemCategory
+                  ? pathname.includes('/products') && routeParams.category === itemCategory
+                  : pathname.includes(item.match);
                 return (
                   <TouchableOpacity
                     key={item.id}
                     style={[sidebarStyles.item, isActive && { backgroundColor: colors.primary + '12' }]}
                     onPress={() => {
                       setPartnerMenuOpen(false);
-                      router.push(item.route as any);
+                      // Navigate after the drawer finishes dismissing
+                      setTimeout(() => router.push(item.route as any), 300);
                     }}
                     activeOpacity={0.7}
                   >
@@ -364,28 +371,21 @@ export default function AppLayout() {
   );
 }
 
-// Partner sidebar features — labels only, mirrors the partner section of the More menu
+// Partner sidebar — mirrors the website PartnerLayout sidebar exactly
 const PARTNER_SIDEBAR_ITEMS: { id: string; label: string; icon: keyof typeof Ionicons.glyphMap; route: string; match: string }[] = [
-  { id: 'panel', label: 'Dashboard', icon: 'home', route: '/(app)/partner-dashboard', match: '/partner-dashboard' },
-  { id: 'products', label: 'Products', icon: 'grid', route: '/(app)/products', match: '/products' },
-  { id: 'leads', label: 'Leads & CRM', icon: 'trending-up', route: '/(app)/leads', match: '/leads' },
-  { id: 'applications', label: 'Applications', icon: 'document-text', route: '/(app)/applications', match: '/applications' },
-  { id: 'customers', label: 'Customers', icon: 'people', route: '/(app)/customers', match: '/customers' },
-  { id: 'add-lead', label: 'Add Lead', icon: 'person-add', route: '/(app)/add-lead', match: '/add-lead' },
-  { id: 'team', label: 'My Team', icon: 'people-circle', route: '/(app)/team', match: '/team' },
-  { id: 'wallet', label: 'Wallet', icon: 'wallet', route: '/(app)/wallet', match: '/wallet' },
-  { id: 'travel', label: 'Travel & Utilities', icon: 'airplane', route: '/(app)/travel-utilities', match: '/travel-utilities' },
-  { id: 'marketing', label: 'Marketing', icon: 'megaphone', route: '/(app)/marketing', match: '/marketing' },
-  { id: 'training', label: 'Training', icon: 'school', route: '/(app)/training', match: '/training' },
-  { id: 'share', label: 'Share Tracking', icon: 'share-social', route: '/(app)/share-tracking', match: '/share-tracking' },
-  { id: 'vault', label: 'Document Vault', icon: 'archive', route: '/(app)/vault', match: '/vault' },
-  { id: 'kyc', label: 'KYC Centre', icon: 'shield-checkmark', route: '/(app)/partner-kyc', match: '/partner-kyc' },
-  { id: 'referrals', label: 'Referrals', icon: 'git-branch', route: '/(app)/partner-referrals', match: '/partner-referrals' },
-  { id: 'support', label: 'Support', icon: 'headset', route: '/(app)/support', match: '/support' },
-  { id: 'notifications', label: 'Notifications', icon: 'notifications', route: '/(app)/notifications', match: '/notifications' },
-  { id: 'profile', label: 'Profile', icon: 'person-circle', route: '/(app)/profile', match: '/profile' },
-  { id: 'security', label: 'Security', icon: 'lock-closed', route: '/(app)/security', match: '/security' },
-  { id: 'settings', label: 'Settings', icon: 'settings', route: '/(app)/settings', match: '/settings' },
+  { id: 'panel', label: 'Dashboard', icon: 'home', route: '/partner-dashboard', match: '/partner-dashboard' },
+  { id: 'credit-cards', label: 'Credit Cards', icon: 'card', route: '/(app)/products?category=credit_card', match: '/products' },
+  { id: 'loan-on-card', label: 'Loan on Credit Card', icon: 'cash', route: '/(app)/products?category=loan_on_credit_card', match: '/products' },
+  { id: 'smart-emi', label: 'Smart EMI', icon: 'phone-portrait', route: '/(app)/products?category=smart_emi', match: '/products' },
+  { id: 'loans', label: 'Loans', icon: 'business', route: '/(app)/products?category=loans', match: '/products' },
+  { id: 'insurance', label: 'Insurance', icon: 'shield', route: '/(app)/products?category=insurance', match: '/products' },
+  { id: 'applications', label: 'Applications', icon: 'document-text', route: '/applications', match: '/applications' },
+  { id: 'customers', label: 'Customers', icon: 'people', route: '/customers', match: '/customers' },
+  { id: 'team', label: 'Manage Team', icon: 'people-circle', route: '/team', match: '/team' },
+  { id: 'reports', label: 'Reports', icon: 'stats-chart', route: '/reports', match: '/reports' },
+  { id: 'messenger', label: 'Messenger', icon: 'chatbubble', route: '/messenger', match: '/messenger' },
+  { id: 'support', label: 'Support', icon: 'headset', route: '/support', match: '/support' },
+  { id: 'settings', label: 'Settings', icon: 'settings', route: '/settings', match: '/settings' },
 ];
 
 const sidebarStyles = StyleSheet.create({

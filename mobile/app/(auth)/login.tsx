@@ -1,19 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
-  ActivityIndicator,
-  Alert,
-  Modal,
-  Image,
-  SafeAreaView,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert, Modal, Image, KeyboardAvoidingView, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
@@ -31,6 +18,7 @@ import {
   saveBiometricSession,
 } from '../../services/biometric.service';
 import { useAuth } from '../../contexts/AuthContext';
+import { FloatingInput } from '../../components/FloatingInput';
 
 export default function LoginScreen() {
   const { loginSession } = useAuth();
@@ -50,6 +38,8 @@ export default function LoginScreen() {
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [identityFocused, setIdentityFocused] = useState(false);
+  const [passwordFocused, setPasswordFocused] = useState(false);
 
   // Biometric Auth State
   const [biometricAvailable, setBiometricAvailable] = useState(false);
@@ -228,8 +218,6 @@ export default function LoginScreen() {
     }
   };
 
-  const isMobileNumber = /^[6-9]\d{9}$/.test(identity.trim());
-
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
       <KeyboardAvoidingView
@@ -284,10 +272,6 @@ export default function LoginScreen() {
             <Text style={[styles.loginTitle, { color: colors.text }]}>
               Login to Your{' '}
               <Text style={{ color: colors.primary }}>Account</Text>
-            </Text>
-
-            <Text style={[styles.loginSubtitle, { color: colors.textMid }]}>
-              Access your dashboard and manage your financial journey seamlessly
             </Text>
 
             {/* ── TABS SWITCHER: Password vs OTP ── */}
@@ -357,53 +341,42 @@ export default function LoginScreen() {
             <View style={styles.formArea}>
               {/* Email / Mobile Input */}
               {!(loginMode === 'otp' && otpSent) && (
-                <View style={styles.inputGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Email or Mobile Number</Text>
-                  <View style={[styles.inputWrapper, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
-                    <Icon name={isMobileNumber ? 'call' : 'mail'} size={16} color={colors.textLight} />
-                    <TextInput
-                      style={[styles.textInput, { color: colors.text }]}
-                      placeholder="Enter registered email or mobile"
-                      placeholderTextColor={colors.textLight}
-                      value={identity}
-                      onChangeText={(t) => {
-                        setIdentity(t);
-                        setErrorMsg(null);
-                      }}
-                      autoCapitalize="none"
-                      keyboardType="email-address"
-                    />
-                  </View>
-                </View>
+                <FloatingInput
+                  label="Email or Mobile Number"
+                  icon="person"
+                  value={identity}
+                  onChangeText={(t) => {
+                    setIdentity(t);
+                    setErrorMsg(null);
+                  }}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                />
               )}
 
               {/* Password Mode Fields */}
               {loginMode === 'password' && (
                 <>
-                  <View style={styles.inputGroup}>
-                    <View style={styles.labelRow}>
-                      <Text style={[styles.fieldLabel, { color: colors.text }]}>Password</Text>
+                  <View>
+                    <FloatingInput
+                      label="Password"
+                      icon="lock"
+                      value={password}
+                      onChangeText={(t) => {
+                        setPassword(t);
+                        setErrorMsg(null);
+                      }}
+                      secureTextEntry={!showPassword}
+                      autoCapitalize="none"
+                      rightElement={
+                        <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+                          <Icon name={showPassword ? 'eye' : 'eye-off'} size={15} color={colors.textLight} />
+                        </TouchableOpacity>
+                      }
+                    />
+                    <View style={{ alignItems: 'flex-end', marginTop: 6 }}>
                       <TouchableOpacity onPress={() => setForgotModalVisible(true)}>
                         <Text style={[styles.forgotLink, { color: colors.primary }]}>Forgot Password?</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    <View style={[styles.inputWrapper, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
-                      <Icon name="lock" size={16} color={colors.textLight} />
-                      <TextInput
-                        style={[styles.textInput, { color: colors.text }]}
-                        placeholder="Enter your account password"
-                        placeholderTextColor={colors.textLight}
-                        value={password}
-                        onChangeText={(t) => {
-                          setPassword(t);
-                          setErrorMsg(null);
-                        }}
-                        secureTextEntry={!showPassword}
-                        autoCapitalize="none"
-                      />
-                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
-                        <Icon name={showPassword ? 'eye' : 'eye-off'} size={15} color={colors.textLight} />
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -775,6 +748,30 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     height: 48,
+  },
+  floatWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 54,
+  },
+  floatInput: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
+    paddingVertical: 0,
+    marginLeft: 8,
+  },
+  floatLabel: {
+    position: 'absolute',
+    left: 38,
+    top: -8,
+    fontSize: 10,
+    fontWeight: '800',
+    paddingHorizontal: 5,
+    letterSpacing: 0.3,
   },
   textInput: {
     flex: 1,

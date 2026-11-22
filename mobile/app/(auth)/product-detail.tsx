@@ -1,19 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-  Image,
-  Share,
-  SafeAreaView,
-} from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Image, Share } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useTheme } from '../../contexts/ThemeContext';
-import { useAuth } from '../../contexts/AuthContext';
 import { Icon } from '../../components/Icon';
 import apiClient from '../../services/api';
 
@@ -23,10 +12,10 @@ interface ProductDetail {
   bank_name: string;
   category: string;
   description: string;
-  features?: string[];
-  benefits?: string[];
-  eligibility?: string[];
-  documents_required?: string[];
+  features?: Array<string | { title?: string; description?: string; name?: string }>;
+  benefits?: Array<string | { title?: string; description?: string; name?: string }>;
+  eligibility?: Array<string | { title?: string; description?: string; name?: string }>;
+  documents_required?: Array<string | { title?: string; description?: string; name?: string }>;
   image_url?: string;
   interest_rate?: string;
   annual_fee?: string;
@@ -36,6 +25,12 @@ interface ProductDetail {
   tenure?: string;
   faqs?: Array<{ question: string; answer: string }>;
 }
+
+const itemLabel = (item: string | { title?: string; description?: string; name?: string }): string => {
+  if (typeof item === 'string') return item;
+  if (!item || typeof item !== 'object') return '';
+  return item.title || item.name || item.description || '';
+};
 
 const bankLogos: Record<string, any> = {
   HDFC: require('../../assets/images/hdfc_bank.webp'),
@@ -54,7 +49,6 @@ const bankLogos: Record<string, any> = {
 export default function ProductDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { colors, isDark } = useTheme();
-  const { isAuthenticated } = useAuth();
 
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -138,18 +132,8 @@ export default function ProductDetailScreen() {
 
   const handleApply = () => {
     if (!product) return;
-    if (!isAuthenticated) {
-      Alert.alert(
-        'Sign In Required',
-        'Please sign in or create an account to start your direct card application.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Sign In', onPress: () => router.push('/(auth)/login') },
-        ]
-      );
-      return;
-    }
 
+    // Website parity: guests can apply — mobile OTP verification gates the flow
     router.push({
       pathname: '/(public)/apply',
       params: {
@@ -326,7 +310,7 @@ export default function ProductDetailScreen() {
                 {product.features?.map((f, i) => (
                   <View key={i} style={styles.checkRow}>
                     <Icon name="check-circle" size={16} color="#10B981" />
-                    <Text style={[styles.checkText, { color: colors.text }]}>{f}</Text>
+                    <Text style={[styles.checkText, { color: colors.text }]}>{itemLabel(f)}</Text>
                   </View>
                 ))}
               </View>
@@ -340,7 +324,7 @@ export default function ProductDetailScreen() {
                 {product.benefits?.map((b, i) => (
                   <View key={i} style={styles.checkRow}>
                     <Icon name="gift" size={16} color="#F59E0B" />
-                    <Text style={[styles.checkText, { color: colors.text }]}>{b}</Text>
+                    <Text style={[styles.checkText, { color: colors.text }]}>{itemLabel(b)}</Text>
                   </View>
                 ))}
               </View>
@@ -380,7 +364,7 @@ export default function ProductDetailScreen() {
                 {product.eligibility?.map((e, i) => (
                   <View key={i} style={styles.checkRow}>
                     <Icon name="user-check" size={16} color="#2563EB" />
-                    <Text style={[styles.checkText, { color: colors.text }]}>{e}</Text>
+                    <Text style={[styles.checkText, { color: colors.text }]}>{itemLabel(e)}</Text>
                   </View>
                 ))}
                 <Text style={[styles.tabSubHeading, { color: colors.text, marginTop: 14 }]}>
@@ -389,7 +373,7 @@ export default function ProductDetailScreen() {
                 {product.documents_required?.map((d, i) => (
                   <View key={i} style={styles.checkRow}>
                     <Icon name="file-text" size={16} color="#6B7280" />
-                    <Text style={[styles.checkText, { color: colors.text }]}>{d}</Text>
+                    <Text style={[styles.checkText, { color: colors.text }]}>{itemLabel(d)}</Text>
                   </View>
                 ))}
               </View>

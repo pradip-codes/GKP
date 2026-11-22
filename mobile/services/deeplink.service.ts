@@ -49,6 +49,10 @@ const sanitizeParam = (val?: string): string | null => {
 export const parseDeepLinkUrl = (url: string): DeepLinkRoute | null => {
   if (!url || typeof url !== 'string') return null;
 
+  // Ignore Expo/Metro dev-server URLs and LAN/localhost hosts — they are not app deep links
+  if (/^(exp|exps):\/\//.test(url)) return null;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)/.test(url)) return null;
+
   try {
     // Extract path and query parameters
     let pathAndQuery = url;

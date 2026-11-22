@@ -1,22 +1,10 @@
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
-  ActivityIndicator,
-  Alert,
-  Image,
-  SafeAreaView,
-  KeyboardAvoidingView,
-  Platform,
-  Modal,
-} from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, Modal } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
+import { FloatingInput } from '../../components/FloatingInput';
 import { registerUser } from '../../services/auth.service';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -463,21 +451,17 @@ export default function RegisterScreen() {
 
                 <View style={styles.twoColRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.fieldLabel, { color: colors.text }]}>First Name *</Text>
-                    <TextInput
-                      style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                      placeholder="e.g. Rahul"
-                      placeholderTextColor={colors.textLight}
+                    <FloatingInput
+                      label="First Name *"
+                      icon="person"
                       value={form.firstName}
                       onChangeText={(t) => updateField('firstName', t)}
                     />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.fieldLabel, { color: colors.text }]}>Last Name</Text>
-                    <TextInput
-                      style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                      placeholder="e.g. Sharma"
-                      placeholderTextColor={colors.textLight}
+                    <FloatingInput
+                      label="Last Name"
+                      icon="person"
                       value={form.lastName}
                       onChangeText={(t) => updateField('lastName', t)}
                     />
@@ -485,27 +469,21 @@ export default function RegisterScreen() {
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Mobile Number *</Text>
-                  <View style={[styles.inputWithPrefix, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
-                    <Text style={[styles.prefixText, { color: colors.textMid }]}>+91</Text>
-                    <TextInput
-                      style={[styles.textInputInPrefix, { color: colors.text }]}
-                      placeholder="9876543210"
-                      placeholderTextColor={colors.textLight}
-                      value={form.mobile}
-                      onChangeText={(t) => updateField('mobile', t)}
-                      keyboardType="number-pad"
-                      maxLength={10}
-                    />
-                  </View>
+                  <FloatingInput
+                    label="Mobile Number *"
+                    icon="call"
+                    prefix="+91"
+                    value={form.mobile}
+                    onChangeText={(t) => updateField('mobile', t)}
+                    keyboardType="number-pad"
+                    maxLength={10}
+                  />
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Email Address *</Text>
-                  <TextInput
-                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                    placeholder="name@example.com"
-                    placeholderTextColor={colors.textLight}
+                  <FloatingInput
+                    label="Email Address *"
+                    icon="mail"
                     value={form.email}
                     onChangeText={(t) => updateField('email', t)}
                     autoCapitalize="none"
@@ -514,45 +492,39 @@ export default function RegisterScreen() {
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Password (Min. 6 chars) *</Text>
-                  <View style={[styles.passwordWrap, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
-                    <TextInput
-                      style={[styles.passwordInput, { color: colors.text }]}
-                      placeholder="Create password"
-                      placeholderTextColor={colors.textLight}
-                      value={form.password}
-                      onChangeText={(t) => updateField('password', t)}
-                      secureTextEntry={!showPassword}
-                    />
-                    <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={{ padding: 6 }}>
-                      <Icon name={showPassword ? 'eye' : 'eye-off'} size={15} color={colors.textLight} />
-                    </TouchableOpacity>
-                  </View>
+                  <FloatingInput
+                    label="Password (Min. 6 chars) *"
+                    icon="lock"
+                    value={form.password}
+                    onChangeText={(t) => updateField('password', t)}
+                    secureTextEntry={!showPassword}
+                    rightElement={
+                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={{ padding: 6 }}>
+                        <Icon name={showPassword ? 'eye' : 'eye-off'} size={15} color={colors.textLight} />
+                      </TouchableOpacity>
+                    }
+                  />
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Confirm Password *</Text>
-                  <View style={[styles.passwordWrap, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
-                    <TextInput
-                      style={[styles.passwordInput, { color: colors.text }]}
-                      placeholder="Confirm password"
-                      placeholderTextColor={colors.textLight}
-                      value={form.confirmPassword}
-                      onChangeText={(t) => updateField('confirmPassword', t)}
-                      secureTextEntry={!showConfirmPassword}
-                    />
-                    <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={{ padding: 6 }}>
-                      <Icon name={showConfirmPassword ? 'eye' : 'eye-off'} size={15} color={colors.textLight} />
-                    </TouchableOpacity>
-                  </View>
+                  <FloatingInput
+                    label="Confirm Password *"
+                    icon="lock"
+                    value={form.confirmPassword}
+                    onChangeText={(t) => updateField('confirmPassword', t)}
+                    secureTextEntry={!showConfirmPassword}
+                    rightElement={
+                      <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={{ padding: 6 }}>
+                        <Icon name={showConfirmPassword ? 'eye' : 'eye-off'} size={15} color={colors.textLight} />
+                      </TouchableOpacity>
+                    }
+                  />
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Referral Code (Optional)</Text>
-                  <TextInput
-                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                    placeholder="e.g. GKP1234"
-                    placeholderTextColor={colors.textLight}
+                  <FloatingInput
+                    label="Referral Code (Optional)"
+                    icon="gift"
                     value={form.referralCode}
                     onChangeText={(t) => updateField('referralCode', t)}
                     autoCapitalize="characters"
@@ -598,22 +570,18 @@ export default function RegisterScreen() {
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Company / Agency Name</Text>
-                  <TextInput
-                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                    placeholder={form.companyType === 'individual' ? 'Optional for individuals' : 'e.g. Acme Financial Services'}
-                    placeholderTextColor={colors.textLight}
+                  <FloatingInput
+                    label="Company / Agency Name"
+                    icon="storefront"
                     value={form.companyName}
                     onChangeText={(t) => updateField('companyName', t)}
                   />
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Office / Current Address *</Text>
-                  <TextInput
-                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text, height: 70 }]}
-                    placeholder="Enter complete current or business address"
-                    placeholderTextColor={colors.textLight}
+                  <FloatingInput
+                    label="Office / Current Address *"
+                    icon="location"
                     value={form.currentAddress}
                     onChangeText={(t) => updateField('currentAddress', t)}
                     multiline
@@ -622,11 +590,9 @@ export default function RegisterScreen() {
 
                 <View style={styles.twoColRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.fieldLabel, { color: colors.text }]}>PIN Code *</Text>
-                    <TextInput
-                      style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                      placeholder="e.g. 400001"
-                      placeholderTextColor={colors.textLight}
+                    <FloatingInput
+                      label="PIN Code *"
+                      icon="map"
                       value={form.pincode}
                       onChangeText={(t) => updateField('pincode', t)}
                       keyboardType="number-pad"
@@ -634,11 +600,9 @@ export default function RegisterScreen() {
                     />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.fieldLabel, { color: colors.text }]}>City</Text>
-                    <TextInput
-                      style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                      placeholder="e.g. Mumbai"
-                      placeholderTextColor={colors.textLight}
+                    <FloatingInput
+                      label="City"
+                      icon="location"
                       value={form.city}
                       onChangeText={(t) => updateField('city', t)}
                     />
@@ -670,11 +634,9 @@ export default function RegisterScreen() {
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Account Number *</Text>
-                  <TextInput
-                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                    placeholder="Enter bank account number"
-                    placeholderTextColor={colors.textLight}
+                  <FloatingInput
+                    label="Account Number *"
+                    icon="wallet"
                     value={form.accountNumber}
                     onChangeText={(t) => updateField('accountNumber', t)}
                     keyboardType="number-pad"
@@ -682,11 +644,9 @@ export default function RegisterScreen() {
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Confirm Account Number</Text>
-                  <TextInput
-                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                    placeholder="Re-enter bank account number"
-                    placeholderTextColor={colors.textLight}
+                  <FloatingInput
+                    label="Confirm Account Number"
+                    icon="wallet"
                     value={form.confirmAccountNumber}
                     onChangeText={(t) => updateField('confirmAccountNumber', t)}
                     keyboardType="number-pad"
@@ -694,11 +654,9 @@ export default function RegisterScreen() {
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>IFSC Code *</Text>
-                  <TextInput
-                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                    placeholder="e.g. SBIN0001234"
-                    placeholderTextColor={colors.textLight}
+                  <FloatingInput
+                    label="IFSC Code *"
+                    icon="pricetag"
                     value={form.ifsc}
                     onChangeText={(t) => updateField('ifsc', t)}
                     autoCapitalize="characters"
@@ -706,11 +664,9 @@ export default function RegisterScreen() {
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Account Holder Name</Text>
-                  <TextInput
-                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                    placeholder="As printed on bank passbook/cheque"
-                    placeholderTextColor={colors.textLight}
+                  <FloatingInput
+                    label="Account Holder Name"
+                    icon="person"
                     value={form.accountHolderName}
                     onChangeText={(t) => updateField('accountHolderName', t)}
                   />
@@ -724,11 +680,9 @@ export default function RegisterScreen() {
                 <Text style={[styles.stepSectionHeading, { color: colors.text }]}>4. Identity & Verification</Text>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>PAN Card Number *</Text>
-                  <TextInput
-                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                    placeholder="e.g. ABCDE1234F"
-                    placeholderTextColor={colors.textLight}
+                  <FloatingInput
+                    label="PAN Card Number *"
+                    icon="id-card"
                     value={form.pan}
                     onChangeText={(t) => updateField('pan', t.toUpperCase())}
                     autoCapitalize="characters"
@@ -737,11 +691,9 @@ export default function RegisterScreen() {
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Aadhaar Card Number</Text>
-                  <TextInput
-                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                    placeholder="12-digit Aadhaar number"
-                    placeholderTextColor={colors.textLight}
+                  <FloatingInput
+                    label="Aadhaar Card Number"
+                    icon="finger-print"
                     value={form.aadhaar}
                     onChangeText={(t) => updateField('aadhaar', t)}
                     keyboardType="number-pad"
@@ -750,11 +702,9 @@ export default function RegisterScreen() {
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Team Code (Optional)</Text>
-                  <TextInput
-                    style={[styles.textInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.text }]}
-                    placeholder="Enter team code if you have one"
-                    placeholderTextColor={colors.textLight}
+                  <FloatingInput
+                    label="Team Code (Optional)"
+                    icon="people"
                     value={form.referralCode}
                     onChangeText={(t) => updateField('referralCode', t)}
                     autoCapitalize="characters"

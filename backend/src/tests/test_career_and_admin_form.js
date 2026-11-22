@@ -19,14 +19,14 @@ console.log('✓ backend/src/modules/super-admin/controller.js: createAdmin vali
 
 // 3. InterviewRegistration.jsx
 const interviewCode = fs.readFileSync('frontend/src/modules/home/InterviewRegistration.jsx', 'utf8');
-assert(interviewCode.includes('placeholder="First name"'), 'First name placeholder must exist');
-assert(interviewCode.includes('placeholder="Middle name"'), 'Middle name placeholder must exist');
-assert(interviewCode.includes('placeholder="Last name"'), 'Last name placeholder must exist');
+assert(interviewCode.includes('First Name'), 'First Name field must exist');
+assert(interviewCode.includes('Middle Name'), 'Middle Name field must exist');
+assert(interviewCode.includes('Last Name'), 'Last Name field must exist');
 assert(interviewCode.includes('<option value="Hrutika">Hrutika</option>'), 'Hrutika option must exist');
 assert(interviewCode.includes('<option value="Nandini">Nandini</option>'), 'Nandini option must exist');
 assert(interviewCode.includes('<option value="Riya">Riya</option>'), 'Riya option must exist');
 assert(interviewCode.includes('<option value="Other">Other</option>'), 'Other option must exist');
-assert(interviewCode.includes('placeholder="Enter name of HR"'), 'Enter name of HR placeholder must exist');
+assert(interviewCode.includes('hr_name'), 'HR name field must exist');
 assert(!interviewCode.includes('Number(String(code).trim())'), 'window.verifyOtp must not pass Number(code)');
 console.log('✓ InterviewRegistration.jsx: Name fields, Select HR options, and OTP verify fixes verified');
 

@@ -2,6 +2,7 @@ import React from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Platform, StatusBar as NativeStatusBar } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from '../contexts/AuthContext';
 import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
 import { useDeepLinking } from '../hooks/useDeepLinking';
@@ -34,9 +35,11 @@ function RootNavigation() {
 export default function RootLayout() {
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <RootNavigation />
-      </AuthProvider>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <RootNavigation />
+        </AuthProvider>
+      </SafeAreaProvider>
     </ThemeProvider>
   );
 }

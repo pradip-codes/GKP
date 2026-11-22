@@ -1,19 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Image,
-  Dimensions,
-  ActivityIndicator,
-  TextInput,
-  SafeAreaView,
-  Linking,
-  Animated,
-  Easing,
-} from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Dimensions, ActivityIndicator, TextInput, Linking, Animated, Easing } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
@@ -913,28 +900,46 @@ export default function HomeScreen() {
             active: false,
             onPress: () => router.push('/(public)/contact' as any),
           },
-        ].map((item) => (
-          <TouchableOpacity key={item.key} style={styles.bottomNavItem} onPress={item.onPress} activeOpacity={0.7}>
-            <View
-              style={[
-                styles.bottomNavIconBadge,
-                {
-                  backgroundColor: item.active ? item.color : `${item.color}14`,
-                  shadowColor: item.color,
-                  shadowOpacity: item.active ? 0.35 : 0,
-                  shadowRadius: 8,
-                  shadowOffset: { width: 0, height: 4 },
-                  elevation: item.active ? 5 : 0,
-                },
-              ]}
+        ].map((item) => {
+          const isLogin = item.key === 'login';
+          return (
+            <TouchableOpacity
+              key={item.key}
+              style={styles.bottomNavItem}
+              onPress={item.onPress}
+              activeOpacity={0.7}
             >
-              <Icon name={item.icon} size={19} color={item.active ? '#FFFFFF' : item.color} />
-            </View>
-            <Text style={[styles.bottomNavLabel, { color: item.active ? item.color : colors.textLight, fontWeight: item.active ? '800' : '500' }]}>
-              {item.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+              <View
+                style={[
+                  styles.bottomNavIconBadge,
+                  isLogin && styles.bottomNavLoginBadge,
+                  {
+                    backgroundColor: item.active ? item.color : isLogin ? '#7C3AED' : `${item.color}14`,
+                    shadowColor: item.color,
+                    shadowOpacity: item.active || isLogin ? 0.45 : 0,
+                    shadowRadius: isLogin ? 12 : 8,
+                    shadowOffset: { width: 0, height: isLogin ? 6 : 4 },
+                    elevation: item.active || isLogin ? 8 : 0,
+                  },
+                ]}
+              >
+                <Icon name={item.icon} size={isLogin ? 22 : 19} color={item.active || isLogin ? '#FFFFFF' : item.color} />
+                {isLogin && <View style={styles.bottomNavLoginRing} />}
+              </View>
+              <Text
+                style={[
+                  styles.bottomNavLabel,
+                  {
+                    color: isLogin ? '#7C3AED' : item.active ? item.color : colors.textLight,
+                    fontWeight: item.active || isLogin ? '800' : '500',
+                  },
+                ]}
+              >
+                {item.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
     </SafeAreaView>
   );
@@ -1502,5 +1507,23 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  bottomNavLoginBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    marginTop: -16,
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+  },
+  bottomNavLoginRing: {
+    position: 'absolute',
+    top: -5,
+    left: -5,
+    right: -5,
+    bottom: -5,
+    borderRadius: 29,
+    borderWidth: 2,
+    borderColor: 'rgba(124, 58, 237, 0.35)',
   },
 });

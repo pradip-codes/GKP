@@ -255,7 +255,6 @@ const Navbar = () => {
                 id="nav-login-button"
                 onClick={() => navigate('/login')}
                 className="nav-auth-btn nav-login-btn"
-                style={{ color: C.text }}
                 onMouseEnter={(e) => e.currentTarget.style.background = C.bgSecondary}
                 onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                 data-tooltip={t('nav.login', 'Login')}

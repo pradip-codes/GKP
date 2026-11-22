@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { getApiV1Url } from '../../config/api';
 import { useTheme } from '../../contexts/ThemeContext';
+import FloatingField from '../../components/FloatingField/FloatingField';
 import {
   FaArrowLeft, FaBriefcase, FaGraduationCap, FaUser, FaEnvelope,
   FaPhone, FaCheckCircle, FaFileAlt, FaMapMarkerAlt, FaCalendarAlt,
@@ -1074,44 +1075,38 @@ export default function InterviewRegistration() {
 
               {/* First Name */}
               <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>First Name *</label>
-                <input
+                <FloatingField label="First Name *" bg={C.card}
                   type="text"
                   name="first_name"
                   required
                   value={formData.first_name}
                   onChange={handleInputChange}
-                  placeholder="First name"
-                  style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                />
+                  style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                 />
               </div>
 
               {/* Middle Name */}
               <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Middle Name *</label>
-                <input
+                <FloatingField label="Middle Name *" bg={C.card}
                   type="text"
                   name="middle_name"
                   required
                   value={formData.middle_name}
                   onChange={handleInputChange}
-                  placeholder="Middle name"
-                  style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                />
+                  style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                 />
               </div>
 
               {/* Last Name */}
               <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Last Name *</label>
-                <input
+                <FloatingField label="Last Name *" bg={C.card}
                   type="text"
                   name="last_name"
                   required
                   value={formData.last_name}
                   onChange={handleInputChange}
-                  placeholder="Last name"
-                  style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                />
+                  style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                 />
               </div>
 
               {/* Mobile Number & Inline OTP */}
@@ -1120,9 +1115,11 @@ export default function InterviewRegistration() {
                 <div style={{ fontSize: '12px', fontWeight: 700, color: C.teal || '#0F766E', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <FaInfoCircle /> Please enter the mobile number linked with your Aadhaar card.
                 </div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Mobile Number *</label>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'stretch', width: '100%' }}>
-                  <input
+                  <FloatingField
+                    label="Mobile Number *"
+                    bg={C.card}
+                    wrapStyle={{ flex: 1, minWidth: 0 }}
                     type="tel"
                     name="mobile_number"
                     required
@@ -1130,8 +1127,7 @@ export default function InterviewRegistration() {
                     disabled={mobilePreVerified}
                     value={formData.mobile_number}
                     onChange={handleInputChange}
-                    placeholder="10 digit mobile number"
-                    style={{ flex: 1, minWidth: 0, width: '100%', padding: '10px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                    style={{ width: '100%', padding: '10px 12px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
                   />
                   <button
                     type="button"
@@ -1223,17 +1219,18 @@ export default function InterviewRegistration() {
 
               {/* Email ID & Inline OTP */}
               <div style={{ gridColumn: '1 / -1', minWidth: 0 }}>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Email ID *</label>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'stretch', width: '100%' }}>
-                  <input
+                  <FloatingField
+                    label="Email ID *"
+                    bg={C.card}
+                    wrapStyle={{ flex: 1, minWidth: 0 }}
                     type="email"
                     name="email_id"
                     required
                     disabled={emailPreVerified}
                     value={formData.email_id}
                     onChange={handleInputChange}
-                    placeholder="name@example.com"
-                    style={{ flex: 1, minWidth: 0, width: '100%', padding: '10px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                    style={{ width: '100%', padding: '10px 12px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
                   />
                   <button
                     type="button"
@@ -1325,22 +1322,21 @@ export default function InterviewRegistration() {
 
               {/* Date of Birth & Age Verification */}
               <div style={{ gridColumn: '1 / -1' }}>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>
+                <FloatingField label={<> 
                   Date of Birth * {currentAge !== null && !isUnder18 && !isFutureDob && (
                     <span style={{ color: '#059669', fontSize: '12px', fontWeight: 700, marginLeft: '6px' }}>
                       (Age: {currentAge} years)
                     </span>
                   )}
-                </label>
-                <input
+                 </>} bg={C.card}
                   type="date"
                   name="date_of_birth"
                   required
                   max={new Date().toISOString().split('T')[0]}
                   value={formData.date_of_birth}
                   onChange={handleInputChange}
-                  style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${isUnder18 || isFutureDob ? '#EF4444' : C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                />
+                  style={{ width: '100%', padding: '10px 14px', border: `1px solid ${isUnder18 || isFutureDob ? '#EF4444' : C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                 />
 
                 {/* Age Rejection Error */}
                 {isUnder18 && (
@@ -1364,44 +1360,38 @@ export default function InterviewRegistration() {
 
               {/* 1. Flat No. / House No. */}
               <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Flat No. / House No. *</label>
-                <input
+                <FloatingField label="Flat No. / House No. *" bg={C.card}
                   type="text"
                   name="address_flat_no"
                   required
                   value={formData.address_flat_no}
                   onChange={handleInputChange}
-                  placeholder="e.g. Flat 402 / House 12"
-                  style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                />
+                  style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                 />
               </div>
 
               {/* 2. Society / Apartment Name */}
               <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Society / Apartment Name *</label>
-                <input
+                <FloatingField label="Society / Apartment Name *" bg={C.card}
                   type="text"
                   name="address_society"
                   required
                   value={formData.address_society}
                   onChange={handleInputChange}
-                  placeholder="e.g. Green Valley Heights"
-                  style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                />
+                  style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                 />
               </div>
 
               {/* 3. Area / Landmark */}
               <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Area / Landmark *</label>
-                <input
+                <FloatingField label="Area / Landmark *" bg={C.card}
                   type="text"
                   name="address_area"
                   required
                   value={formData.address_area}
                   onChange={handleInputChange}
-                  placeholder="e.g. Near Metro Station / Main Road"
-                  style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                />
+                  style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                 />
               </div>
 
               {/* 4. State (Dropdown) */}
@@ -1449,30 +1439,26 @@ export default function InterviewRegistration() {
 
               {/* 6. City */}
               <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>City *</label>
-                <input
+                <FloatingField label="City *" bg={C.card}
                   type="text"
                   name="address_city"
                   required
                   value={formData.address_city}
                   onChange={handleInputChange}
-                  placeholder="Enter city / town"
-                  style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                />
+                  style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                 />
               </div>
 
               {/* 7. Pincode */}
               <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Pincode *</label>
-                <input
+                <FloatingField label="Pincode *" bg={C.card}
                   type="text"
                   name="pincode"
                   required
                   value={formData.pincode}
                   onChange={handleInputChange}
-                  placeholder="Enter Pincode"
-                  style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                />
+                  style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                 />
               </div>
 
             </div>
@@ -1534,16 +1520,14 @@ export default function InterviewRegistration() {
               {/* 12th Stream: Other Specification */}
               {formData.highest_qualification === '12th' && formData.twelfth_stream === 'Other' && (
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Specify Stream *</label>
-                  <input
+                  <FloatingField label="Specify Stream *" bg={C.card}
                     type="text"
                     name="twelfth_stream_other"
                     required
                     value={formData.twelfth_stream_other}
                     onChange={handleInputChange}
-                    placeholder="e.g. Vocational / General"
-                    style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                  />
+                    style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                   />
                 </div>
               )}
 
@@ -1574,16 +1558,14 @@ export default function InterviewRegistration() {
 
               {formData.highest_qualification === 'Graduate' && formData.degree_type === 'Other' && (
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Specify Degree Name *</label>
-                  <input
+                  <FloatingField label="Specify Degree Name *" bg={C.card}
                     type="text"
                     name="degree_other"
                     required
                     value={formData.degree_other}
                     onChange={handleInputChange}
-                    placeholder="e.g. BMS / BSW / BFA"
-                    style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                  />
+                    style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                   />
                 </div>
               )}
 
@@ -1614,16 +1596,14 @@ export default function InterviewRegistration() {
 
               {formData.highest_qualification === 'Diploma' && formData.diploma_type === 'Other' && (
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Specify Diploma Name *</label>
-                  <input
+                  <FloatingField label="Specify Diploma Name *" bg={C.card}
                     type="text"
                     name="diploma_other"
                     required
                     value={formData.diploma_other}
                     onChange={handleInputChange}
-                    placeholder="e.g. Diploma in Interior Design"
-                    style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                  />
+                    style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                   />
                 </div>
               )}
 
@@ -1654,16 +1634,14 @@ export default function InterviewRegistration() {
 
               {formData.highest_qualification === 'Post Graduate' && formData.degree_type === 'Other' && (
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Specify Post Graduate Degree *</label>
-                  <input
+                  <FloatingField label="Specify Post Graduate Degree *" bg={C.card}
                     type="text"
                     name="degree_other"
                     required
                     value={formData.degree_other}
                     onChange={handleInputChange}
-                    placeholder="e.g. MSW / MFA"
-                    style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                  />
+                    style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                   />
                 </div>
               )}
 
@@ -1695,16 +1673,14 @@ export default function InterviewRegistration() {
 
                   {formData.degree_type === 'Other' && (
                     <div>
-                      <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Specify Degree Name *</label>
-                      <input
+                      <FloatingField label="Specify Degree Name *" bg={C.card}
                         type="text"
                         name="degree_other"
                         required
                         value={formData.degree_other}
                         onChange={handleInputChange}
-                        placeholder="e.g. BMS / BSW / BFA"
-                        style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                      />
+                        style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                       />
                     </div>
                   )}
 
@@ -1829,79 +1805,68 @@ export default function InterviewRegistration() {
               {formData.experience_type === 'Experienced' && (
                 <>
                   <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Total Experience (Years) *</label>
-                    <input
+                    <FloatingField label="Total Experience (Years) *" bg={C.card}
                       type="number"
                       step="0.5"
                       name="total_experience_years"
                       required
                       value={formData.total_experience_years}
                       onChange={handleInputChange}
-                      placeholder="e.g. 2.5"
-                      style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                    />
+                      style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Current / Last Company *</label>
-                    <input
+                    <FloatingField label="Current / Last Company *" bg={C.card}
                       type="text"
                       name="current_company"
                       required
                       value={formData.current_company}
                       onChange={handleInputChange}
-                      placeholder="e.g. HDFC / Axis DSA"
-                      style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                    />
+                      style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Current / Last Designation *</label>
-                    <input
+                    <FloatingField label="Current / Last Designation *" bg={C.card}
                       type="text"
                       name="current_designation"
                       required
                       value={formData.current_designation}
                       onChange={handleInputChange}
-                      placeholder="e.g. Senior Executive"
-                      style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                    />
+                      style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Last Annual CTC (₹)</label>
-                    <input
+                    <FloatingField label="Last Annual CTC (₹)" bg={C.card}
                       type="text"
                       name="last_salary_ctc"
                       value={formData.last_salary_ctc}
                       onChange={handleInputChange}
-                      placeholder="e.g. 3,50,000"
-                      style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                    />
+                      style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                     />
                   </div>
                 </>
               )}
 
               {/* Previous Salary (Monthly ₹) - Replaces Expected Salary; Freshers not forced */}
               <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>
+                <FloatingField label={<> 
                   Previous Salary (Monthly ₹) {formData.experience_type === 'Experienced' ? '*' : '(Optional for Freshers)'}
-                </label>
-                <input
+                 </>} bg={C.card}
                   type="text"
                   name="previous_salary"
                   required={formData.experience_type === 'Experienced'}
                   disabled={formData.experience_type === 'Fresher'}
                   value={formData.experience_type === 'Fresher' ? '' : formData.previous_salary}
                   onChange={handleInputChange}
-                  placeholder={formData.experience_type === 'Fresher' ? 'Not applicable for Freshers' : 'e.g. 25,000'}
                   style={{
-                    width: '100%', padding: '10px 14px', background: C.bgSecondary,
-                    border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text,
+                    width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text,
                     boxSizing: 'border-box',
                     opacity: formData.experience_type === 'Fresher' ? 0.6 : 1
                   }}
-                />
+                 />
               </div>
 
               {/* Available for Immediate Joining? */}
@@ -1921,16 +1886,14 @@ export default function InterviewRegistration() {
               {/* Conditional Notice Period */}
               {!formData.immediate_joining && (
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Notice Period (Days) *</label>
-                  <input
+                  <FloatingField label="Notice Period (Days) *" bg={C.card}
                     type="number"
                     name="notice_period_days"
                     required
                     value={formData.notice_period_days}
                     onChange={handleInputChange}
-                    placeholder="e.g. 15"
-                    style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                  />
+                    style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                   />
                 </div>
               )}
 
@@ -2019,20 +1982,18 @@ export default function InterviewRegistration() {
               {/* Conditional Referring Employee / HR Detail text input */}
               {(formData.how_did_you_hear === 'Employee Reference' || formData.how_did_you_hear === 'Other' || formData.selected_hr === 'Other' || formData.selected_hr === 'Other HR / Reference') && (
                 <div style={{ marginTop: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>
+                  <FloatingField label={<> 
                     {formData.how_did_you_hear === 'Employee Reference'
                       ? 'Referring Employee Name / Employee ID *'
                       : 'HR Name / Reference Details *'}
-                  </label>
-                  <input
+                   </>} bg={C.card}
                     type="text"
                     name="hr_name"
                     required
                     value={formData.hr_name}
                     onChange={handleInputChange}
-                    placeholder="Enter name of HR"
-                    style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
-                  />
+                    style={{ width: '100%', padding: '10px 14px', border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
+                   />
                 </div>
               )}
             </div>

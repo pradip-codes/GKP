@@ -11,6 +11,7 @@ export interface ApplicationQueryParams {
   category?: string;
   period?: string;
   commission_status?: string;
+  scope?: string;
 }
 
 export const fetchApplications = async (params: ApplicationQueryParams = {}) => {
@@ -92,6 +93,40 @@ export const submitCustomerApplication = async (payload: {
     const res = await apiClient.post('/public/share/submit', payload).catch(async () => {
       return await apiClient.post('/applications', payload);
     });
+    return res.data;
+  } catch (err: any) {
+    throw err.response?.data || { success: false, message: 'Failed to submit application' };
+  }
+};
+
+// ── Public card application OTP flow (website parity) ──────────────────────
+export const sendCardApplicationOtp = async (mobile: string) => {
+  try {
+    const res = await apiClient.post('/card-applications/send-otp', { mobile });
+    return res.data;
+  } catch (err: any) {
+    throw err.response?.data || { success: false, message: 'Failed to send OTP' };
+  }
+};
+
+export const verifyCardApplicationOtp = async (mobile: string, otp: string) => {
+  try {
+    const res = await apiClient.post('/card-applications/verify-otp', { mobile, otp });
+    return res.data;
+  } catch (err: any) {
+    throw err.response?.data || { success: false, message: 'OTP verification failed' };
+  }
+};
+
+export const submitCardApplication = async (payload: {
+  customerName: string;
+  mobile: string;
+  bankName: string;
+  cardName: string;
+  category?: string;
+}) => {
+  try {
+    const res = await apiClient.post('/card-applications', payload);
     return res.data;
   } catch (err: any) {
     throw err.response?.data || { success: false, message: 'Failed to submit application' };

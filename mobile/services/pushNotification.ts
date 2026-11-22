@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Platform, NativeModules } from 'react-native';
 import notificationService from './notification.service';
 
 /**
@@ -7,6 +7,12 @@ import notificationService from './notification.service';
  */
 export const registerPushNotifications = async (): Promise<string | null> => {
   if (Platform.OS === 'web') return null;
+
+  // Skip silently when the Firebase native modules aren't compiled into the app
+  // (e.g. Expo Go or a dev build without google-services.json)
+  if (!NativeModules.RNFBAppModule) {
+    return null;
+  }
 
   try {
     // Dynamic import to prevent crash in non-native or unsupported runtimes

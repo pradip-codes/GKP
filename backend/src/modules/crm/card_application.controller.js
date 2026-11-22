@@ -1,6 +1,90 @@
 const { query } = require('../../config/database');
 const { success, created, error, paginate } = require('../../utils/response/response');
 const { getPaginationParams } = require('../../utils/helpers/helpers');
+const crypto = require('crypto');
+const { OTP_PEPPER } = require('../../config/jwt');
+const { sendSmsOtp } = require('../../services/otp/msg91.service');
+const logger = require('../../config/logger');
+
+const hashOtp = (otp) => crypto.createHmac('sha256', OTP_PEPPER || 'gkp-otp-secret-key').update(String(otp)).digest('hex');
+
+// POST /card-applications/send-otp — Send mobile OTP for public card application flow
+const sendApplicationOtp = async (req, res, next) => {
+  try {
+    const mobile = String(req.body.mobile || req.body.mobile_number || '').trim().replace(/\D/g, '').slice(-10);
+    if (!/^[6-9]\d{9}$/.test(mobile)) {
+      return error(res, 'Please provide a valid 10-digit mobile number', 400);
+    }
+
+    const otp = String(crypto.randomInt(100000, 1000000));
+    const otpHash = hashOtp(otp);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await query(`DELETE FROM otp_verifications WHERE identity IN ($1, $2, $3, $4)`, [
+      `cardapp_${mobile}`, `mobile_${mobile}`, mobile, `91${mobile}`
+    ]);
+    await query(`
+      INSERT INTO otp_verifications (identity, otp_hash, expires_at)
+      VALUES ($1, $2, $3), ($4, $2, $3)
+    `, [`cardapp_${mobile}`, otpHash, expiresAt, mobile]);
+
+    let smsDelivered = false;
+    try {
+      const smsResult = await sendSmsOtp(mobile, otp);
+      smsDelivered = smsResult !== false;
+    } catch (smsErr) {
+      logger.error(`[CARD-APP OTP] SMS send failed for mobile ending ${mobile.slice(-4)}: ${smsErr.message}`);
+    }
+
+    if (!smsDelivered && process.env.NODE_ENV === 'production') {
+      return res.status(502).json({
+        success: false,
+        message: 'Unable to deliver OTP SMS to this mobile number right now. Please try again shortly.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      sms_delivered: smsDelivered,
+      message: 'OTP sent to mobile number',
+      debug_otp: process.env.NODE_ENV !== 'production' ? otp : undefined
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /card-applications/verify-otp — Verify mobile OTP for public card application flow
+const verifyApplicationOtp = async (req, res, next) => {
+  try {
+    const mobile = String(req.body.mobile || req.body.mobile_number || '').trim().replace(/\D/g, '').slice(-10);
+    const otp = String(req.body.otp || '').trim();
+    if (!/^[6-9]\d{9}$/.test(mobile)) {
+      return error(res, 'Please provide a valid 10-digit mobile number', 400);
+    }
+    if (!/^\d{6}$/.test(otp)) {
+      return error(res, 'Please enter the 6-digit OTP', 400);
+    }
+
+    const otpHash = hashOtp(otp);
+    const { rows: [record] } = await query(
+      `SELECT id FROM otp_verifications WHERE identity IN ($1, $2, $3, $4) AND otp_hash = $5 AND expires_at > NOW()`,
+      [`cardapp_${mobile}`, `mobile_${mobile}`, mobile, `91${mobile}`, otpHash]
+    );
+
+    if (!record) {
+      return error(res, 'Invalid or expired OTP. Please try again.', 400);
+    }
+
+    await query(`DELETE FROM otp_verifications WHERE identity IN ($1, $2, $3, $4)`, [
+      `cardapp_${mobile}`, `mobile_${mobile}`, mobile, `91${mobile}`
+    ]);
+
+    return success(res, { mobile_verified: true }, 'Mobile number verified successfully');
+  } catch (err) {
+    next(err);
+  }
+};
 
 // Public & Admin route to submit verified card / loan / insurance application lead
 const submitApplication = async (req, res, next) => {
@@ -468,5 +552,7 @@ const updateApplicationStatus = async (req, res, next) => {
 module.exports = {
   submitApplication,
   listApplications,
-  updateApplicationStatus
+  updateApplicationStatus,
+  sendApplicationOtp,
+  verifyApplicationOtp
 };

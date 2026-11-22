@@ -450,6 +450,55 @@
   padding-right: 56px;
 }
 
+/* Floating-label fields: label sits inside as placeholder, floats onto the
+   top border on focus or when the field has a value */
+.float-field .form-input {
+  padding-top: 20px;
+  padding-bottom: 8px;
+}
+
+.float-field .form-input::placeholder {
+  color: transparent;
+}
+
+.float-label {
+  position: absolute;
+  left: 56px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 15px;
+  font-weight: 500;
+  color: #94a3b8;
+  background: #ffffff;
+  padding: 0 6px;
+  border-radius: 4px;
+  pointer-events: none;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.float-field .form-input:focus ~ .float-label,
+.float-field .form-input:not(:placeholder-shown) ~ .float-label {
+  top: -2px;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #2563eb;
+}
+
+.float-field .input-wrapper:focus-within .float-label {
+  color: #2563eb;
+}
+
+.float-field.no-icon .float-label {
+  left: 26px;
+}
+
+.float-field.no-icon .form-input {
+  padding-left: 20px;
+}
+
 .password-toggle {
   position: absolute;
   right: 16px;

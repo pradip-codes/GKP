@@ -10,12 +10,12 @@ import {
   Image,
   Linking,
   Dimensions,
-  Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
+import { PartnerTopBar } from '../../components/PartnerTopBar';
 import {
   fetchPartnerDashboard,
   fetchPartnerWallet,
@@ -241,7 +241,7 @@ export default function PartnerDashboardScreen() {
   const [offerBanners, setOfferBanners] = useState<any[]>([]);
   const [teamBanners, setTeamBanners] = useState<any[]>([]);
   const [leads, setLeads] = useState<any[]>([]);
-  const [profileMenuVisible, setProfileMenuVisible] = useState(false);
+
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
     try {
@@ -387,86 +387,8 @@ export default function PartnerDashboardScreen() {
         <RefreshControl refreshing={refreshing} onRefresh={() => loadDashboard(true)} colors={[colors.primary]} tintColor={colors.primary} />
       }
     >
-      {/* Navbar — logo left, profile menu right */}
-      <View style={[styles.navbar, { backgroundColor: isDark ? colors.card : '#FFFFFF', borderColor: colors.border }]}>
-        <View style={styles.navbarLeft}>
-          <Image source={require('../../assets/images/logo.png')} style={styles.navbarLogo} resizeMode="contain" />
-          <Text style={[styles.navbarBrand, { color: isDark ? colors.text : '#111827' }]}>GharKaPaisa</Text>
-        </View>
-        <TouchableOpacity
-          style={[styles.profileBtn, { backgroundColor: isDark ? colors.bg : '#F3F4F6' }]}
-          onPress={() => setProfileMenuVisible(true)}
-          activeOpacity={0.8}
-        >
-          <Icon name="person" size={20} color={colors.primary} />
-        </TouchableOpacity>
-      </View>
+      <PartnerTopBar name={partnerName} code={partnerCode} balance={walletBalance} />
 
-      {/* Profile dropdown menu */}
-      <Modal
-        visible={profileMenuVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setProfileMenuVisible(false)}
-      >
-        <TouchableOpacity style={styles.menuOverlay} activeOpacity={1} onPress={() => setProfileMenuVisible(false)}>
-          <View style={[styles.menuCard, { backgroundColor: isDark ? colors.card : '#FFFFFF', borderColor: colors.border }]}>
-            {/* Partner identity */}
-            <View style={styles.menuIdentity}>
-              <View style={[styles.menuAvatar, { backgroundColor: colors.primary + '15' }]}>
-                <Icon name="person" size={22} color={colors.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.menuName, { color: isDark ? colors.text : '#111827' }]} numberOfLines={1}>{partnerName}</Text>
-                {partnerCode ? <Text style={[styles.menuCode, { color: colors.textLight }]}>Partner Code: {partnerCode}</Text> : null}
-              </View>
-            </View>
-
-            {/* Available balance row */}
-            <View style={[styles.menuBalanceRow, { backgroundColor: isDark ? colors.bg : '#F8FAFC', borderColor: colors.border }]}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Icon name="wallet" size={16} color="#10B981" />
-                <Text style={[styles.menuBalanceLabel, { color: colors.textLight }]}>Available Balance</Text>
-              </View>
-              <Text style={[styles.menuBalanceValue, { color: isDark ? colors.text : '#111827' }]}>{walletBalance}</Text>
-            </View>
-
-            {/* Menu items */}
-            {[
-              { icon: 'person-circle', label: 'Profile', route: '/profile' },
-              { icon: 'settings', label: 'Settings', route: '/settings' },
-              { icon: 'wallet', label: 'Wallet', route: '/wallet' },
-            ].map((item) => (
-              <TouchableOpacity
-                key={item.label}
-                style={[styles.menuItem, { borderBottomColor: colors.border }]}
-                onPress={() => {
-                  setProfileMenuVisible(false);
-                  router.push(item.route as any);
-                }}
-                activeOpacity={0.7}
-              >
-                <Icon name={item.icon} size={18} color={colors.textMid || colors.textLight} />
-                <Text style={[styles.menuItemText, { color: isDark ? colors.text : '#111827' }]}>{item.label}</Text>
-                <Icon name="chevron-right" size={16} color={colors.textLight} />
-              </TouchableOpacity>
-            ))}
-
-            <TouchableOpacity
-              style={[styles.menuItem, styles.menuLogout]}
-              onPress={async () => {
-                setProfileMenuVisible(false);
-                await logout();
-                router.replace('/(auth)/login');
-              }}
-              activeOpacity={0.7}
-            >
-              <Icon name="log-out" size={18} color={colors.error} />
-              <Text style={[styles.menuItemText, { color: colors.error }]}>Logout</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
 
       {error ? (
         <View style={styles.errorBanner}>

@@ -10,7 +10,7 @@ import {
   RefreshControl,
   Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
@@ -26,6 +26,7 @@ import { spacing } from '../../theme/spacing';
 
 export default function ProductsScreen() {
   const router = useRouter();
+  const { category } = useLocalSearchParams<{ category?: string }>();
   const { user } = useAuth();
   const { colors, isDark } = useTheme();
 
@@ -46,10 +47,19 @@ export default function ProductsScreen() {
       if (isEmployee) {
         res = await fetchEmployeeProducts();
       } else {
-        res = await fetchProductsList();
+        res = await fetchProductsList(category ? { category } : {});
       }
 
-      const list = Array.isArray(res) ? res : res.data || res.products || [];
+      let list = Array.isArray(res) ? res : res.data || res.products || [];
+      // Employee endpoint ignores the category param — filter client-side only there.
+      // The partner /products API already applies category server-side (incl. loc_eoc mappings).
+      if (isEmployee && category) {
+        const cat = String(category).toLowerCase();
+        list = list.filter((p: any) =>
+          String(p.category || p.product_category || '').toLowerCase() === cat ||
+          String(p.category || p.product_category || '').toLowerCase().includes(cat)
+        );
+      }
       setProducts(list);
     } catch (err: any) {
       setError(err.message || 'Failed to load products list');
@@ -57,7 +67,7 @@ export default function ProductsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [isEmployee]);
+  }, [isEmployee, category]);
 
   useEffect(() => {
     loadProducts();
@@ -139,8 +149,12 @@ export default function ProductsScreen() {
       {/* Top Bar */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={{ flex: 1, paddingRight: 8 }}>
-          <Text style={[styles.title, { color: colors.text }]}>Products Catalog</Text>
-          <Text style={[styles.subtitle, { color: colors.textLight }]}>Authorized financial products & referral links</Text>
+          <Text style={[styles.title, { color: colors.text }]}>
+            {category ? `${String(category).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())} Products` : 'Products Catalog'}
+          </Text>
+          <Text style={[styles.subtitle, { color: colors.textLight }]}>
+            {category ? 'Filtered products for this category' : 'Authorized financial products & referral links'}
+          </Text>
         </View>
       </View>
 

@@ -4,6 +4,10 @@ const ctrl = require('./card_application.controller.js');
 const jwtAuth = require('../../middleware/authentication/jwtAuth.middleware.js');
 const roleCheck = require('../../middleware/authorization/role.middleware.js');
 
+// Public OTP endpoints for mobile/web card application verification
+router.post('/send-otp', ctrl.sendApplicationOtp);
+router.post('/verify-otp', ctrl.verifyApplicationOtp);
+
 // Public & Admin route to submit details after OTP verification or manual lead entry
 router.post('/', ctrl.submitApplication);
 

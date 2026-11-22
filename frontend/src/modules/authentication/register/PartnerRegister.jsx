@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Icons } from "../../../components/Icon/PartnerIcons";
+import FloatingField from "../../../components/FloatingField/FloatingField";
 import { useTheme, makeS } from "../../../contexts/ThemeContext";
 import { useMsg91OTP } from "../../../hooks/useMsg91OTP";
 import { registerPartner, lookupUser, sendRegistrationOtp, verifyRegistrationOtp, checkPreverifiedEmail } from "../../../services/auth.api.js";
@@ -1351,19 +1352,18 @@ export default function PartnerRegister() {
                   
                   {/* Full Name */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-full-name" style={S.label}>{t("onboarding.fullName", "Full Name")}</label>
-                    <div style={{ position: "relative" }}>
-                      <span style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.textLight, display: "flex" }}><Icons.User size={14} /></span>
-                      <input 
-                        type="text" 
-                        value={fullName}
-                        onChange={handleFullNameChange}
-                        placeholder={t("onboarding.fullNamePlaceholder", "Enter your full name")} 
-                        style={{ ...S.input, paddingLeft: "36px", paddingVertical: "10px" }}
-                        onFocus={e => (e.target.style.border = focusBorder)}
-                        onBlur={e => (e.target.style.border = `1.5px solid ${C.border}`)}
-                      />
-                    </div>
+                    <FloatingField
+                      label={t("onboarding.fullName", "Full Name")}
+                      icon={<Icons.User size={14} />}
+                      bg={C.card}
+                      type="text"
+                      value={fullName}
+                      onChange={handleFullNameChange}
+                      placeholder={t("onboarding.fullNamePlaceholder", "Enter your full name")}
+                      style={{ ...S.input, background: "transparent", paddingVertical: "10px" }}
+                      onFocus={e => (e.target.style.border = focusBorder)}
+                      onBlur={e => (e.target.style.border = `1.5px solid ${C.border}`)}
+                    />
                     {(fieldErrors.firstName || fieldErrors.lastName) && (
                       <div id="error-fullname-backend" style={{ color: C.red || '#ef4444', fontSize: '11px', marginTop: '2px', fontWeight: 600 }}>
                         {fieldErrors.firstName || fieldErrors.lastName}
@@ -1375,18 +1375,18 @@ export default function PartnerRegister() {
 
                   {/* Mobile & OTP */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-mobile" style={S.label}>{t("onboarding.mobileNumber", "Mobile Number")}</label>
                     <div style={{ display: "flex", gap: "8px", width: "100%", alignItems: "stretch" }}>
-                      <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
-                        <span style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.textLight, display: "flex" }}><Icons.phone size={14} /></span>
-                        <input
-                          type="tel"
-                          {...inputProps("mobile")}
-                          placeholder={t("onboarding.mobilePlaceholder", "10-digit Mobile Number")}
-                          style={{ ...S.input, paddingLeft: "36px", paddingVertical: "10px", width: "100%", minWidth: 0, boxSizing: "border-box" }}
-                          disabled={form.mobilePreVerified}
-                        />
-                      </div>
+                      <FloatingField
+                        label={t("onboarding.mobileNumber", "Mobile Number")}
+                        icon={<Icons.phone size={14} />}
+                        bg={C.card}
+                        wrapStyle={{ flex: 1, minWidth: 0 }}
+                        type="tel"
+                        {...inputProps("mobile")}
+                        placeholder={t("onboarding.mobilePlaceholder", "10-digit Mobile Number")}
+                        style={{ ...S.input, background: "transparent", paddingVertical: "10px", width: "100%", minWidth: 0, boxSizing: "border-box" }}
+                        disabled={form.mobilePreVerified}
+                      />
                       
                       <button
                         id="btn-send-mobile-otp"
@@ -1472,19 +1472,19 @@ export default function PartnerRegister() {
 
                   {/* Email & OTP */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-email" style={S.label}>{t("onboarding.emailAddress", "Email Address")}</label>
                     <div style={{ display: "flex", gap: "8px", width: "100%", alignItems: "stretch" }}>
-                      <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
-                        <span style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.textLight, display: "flex" }}><Icons.mail size={14} /></span>
-                        <input
-                          type="email"
-                          {...inputProps("email")}
-                          placeholder={t("onboarding.emailPlaceholder", "name@domain.com")}
-                          style={{ ...S.input, paddingLeft: "36px", paddingVertical: "10px", width: "100%", minWidth: 0, boxSizing: "border-box" }}
-                          disabled={form.emailPreVerified}
-                          autoComplete="email"
-                        />
-                      </div>
+                      <FloatingField
+                        label={t("onboarding.emailAddress", "Email Address")}
+                        icon={<Icons.mail size={14} />}
+                        bg={C.card}
+                        wrapStyle={{ flex: 1, minWidth: 0 }}
+                        type="email"
+                        {...inputProps("email")}
+                        placeholder={t("onboarding.emailPlaceholder", "name@domain.com")}
+                        style={{ ...S.input, background: "transparent", paddingVertical: "10px", width: "100%", minWidth: 0, boxSizing: "border-box" }}
+                        disabled={form.emailPreVerified}
+                        autoComplete="email"
+                      />
                       
                       <button
                         id="btn-send-email-otp"
@@ -1570,23 +1570,24 @@ export default function PartnerRegister() {
 
                   {/* Password */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-password" style={S.label}>{t("onboarding.password", "Password")}</label>
-                    <div style={{ position: "relative" }}>
-                      <span style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.textLight, display: "flex" }}><Icons.Lock size={14} /></span>
-                      <input 
-                        type={showPassword ? "text" : "password"} 
-                        placeholder={t("onboarding.passwordPlaceholder", "Choose password (min 8 chars)")} 
-                        {...inputProps("password")}
-                        style={{ ...S.input, paddingLeft: "36px", paddingRight: "36px", paddingVertical: "10px" }}
-                        autoComplete="new-password"
-                      />
-                      <span 
-                        onClick={() => setShowPassword(!showPassword)}
-                        style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", color: C.textLight, cursor: "pointer", display: "flex" }}
-                      >
-                        {showPassword ? <Icons.eyeOff size={14} /> : <Icons.eye size={14} />}
-                      </span>
-                    </div>
+                    <FloatingField
+                      label={t("onboarding.password", "Password")}
+                      icon={<Icons.Lock size={14} />}
+                      bg={C.card}
+                      type={showPassword ? "text" : "password"}
+                      placeholder={t("onboarding.passwordPlaceholder", "Choose password (min 8 chars)")}
+                      {...inputProps("password")}
+                      style={{ ...S.input, background: "transparent", paddingRight: "36px", paddingVertical: "10px" }}
+                      autoComplete="new-password"
+                      right={
+                        <span
+                          onClick={() => setShowPassword(!showPassword)}
+                          style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", color: C.textLight, cursor: "pointer", display: "flex" }}
+                        >
+                          {showPassword ? <Icons.eyeOff size={14} /> : <Icons.eye size={14} />}
+                        </span>
+                      }
+                    />
                     {fieldErrors.password && (
                       <div id="error-password-backend" style={{ color: C.red || '#ef4444', fontSize: '11px', marginTop: '2px', fontWeight: 600 }}>
                         {fieldErrors.password}
@@ -1596,23 +1597,24 @@ export default function PartnerRegister() {
 
                   {/* Confirm Password */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-confirm-password" style={S.label}>{t("onboarding.confirmPassword", "Confirm Password")}</label>
-                    <div style={{ position: "relative" }}>
-                      <span style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.textLight, display: "flex" }}><Icons.Lock size={14} /></span>
-                      <input 
-                        type={showConfirmPassword ? "text" : "password"} 
-                        placeholder={t("onboarding.confirmPasswordPlaceholder", "Repeat your password")} 
-                        {...inputProps("confirmPassword")}
-                        style={{ ...S.input, paddingLeft: "36px", paddingRight: "36px", paddingVertical: "10px" }}
-                        autoComplete="new-password"
-                      />
-                      <span 
-                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                        style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", color: C.textLight, cursor: "pointer", display: "flex" }}
-                      >
-                        {showConfirmPassword ? <Icons.eyeOff size={14} /> : <Icons.eye size={14} />}
-                      </span>
-                    </div>
+                    <FloatingField
+                      label={t("onboarding.confirmPassword", "Confirm Password")}
+                      icon={<Icons.Lock size={14} />}
+                      bg={C.card}
+                      type={showConfirmPassword ? "text" : "password"}
+                      placeholder={t("onboarding.confirmPasswordPlaceholder", "Repeat your password")}
+                      {...inputProps("confirmPassword")}
+                      style={{ ...S.input, background: "transparent", paddingRight: "36px", paddingVertical: "10px" }}
+                      autoComplete="new-password"
+                      right={
+                        <span
+                          onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                          style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", color: C.textLight, cursor: "pointer", display: "flex" }}
+                        >
+                          {showConfirmPassword ? <Icons.eyeOff size={14} /> : <Icons.eye size={14} />}
+                        </span>
+                      }
+                    />
                   </div>
 
 
@@ -1641,8 +1643,7 @@ export default function PartnerRegister() {
 
                   {/* Company Name */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-company-name" style={S.label}>{t("onboarding.companyName", "Company Name")}</label>
-                    <input {...inputProps("companyName")} placeholder={t("onboarding.companyNamePlaceholder", "Enter company / firm name")} style={{ ...S.input, paddingVertical: "10px" }} />
+                    <FloatingField label={t("onboarding.companyName", "Company Name")} bg={C.card} {...inputProps("companyName")} placeholder={t("onboarding.companyNamePlaceholder", "Enter company / firm name")} style={{ ...S.input, background: "transparent", paddingVertical: "10px" }} />
                     {fieldErrors.companyName && (
                       <div style={{ color: C.red || '#ef4444', fontSize: '11px', marginTop: '2px', fontWeight: 600 }}>
                         {fieldErrors.companyName}
@@ -1652,8 +1653,7 @@ export default function PartnerRegister() {
 
                   {/* Company Address */}
                   <div className="form-full-width" style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-company-address" style={S.label}>{t("onboarding.companyAddress", "Company Address")}</label>
-                    <input {...inputProps("currentAddress")} placeholder={t("onboarding.companyAddressPlaceholder", "Full business address")} style={{ ...S.input, paddingVertical: "10px" }} />
+                    <FloatingField label={t("onboarding.companyAddress", "Company Address")} bg={C.card} {...inputProps("currentAddress")} placeholder={t("onboarding.companyAddressPlaceholder", "Full business address")} style={{ ...S.input, background: "transparent", paddingVertical: "10px" }} />
                     {fieldErrors.currentAddress && (
                       <div style={{ color: C.red || '#ef4444', fontSize: '11px', marginTop: '2px', fontWeight: 600 }}>
                         {fieldErrors.currentAddress}
@@ -1663,8 +1663,7 @@ export default function PartnerRegister() {
 
                   {/* Pincode */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-pincode" style={S.label}>{t("onboarding.pincode", "Pincode")}</label>
-                    <input {...inputProps("pincode")} maxLength={6} placeholder={t("onboarding.pincodePlaceholder", "6-digit pincode")} style={{ ...S.input, paddingVertical: "10px" }} />
+                    <FloatingField label={t("onboarding.pincode", "Pincode")} bg={C.card} {...inputProps("pincode")} maxLength={6} placeholder={t("onboarding.pincodePlaceholder", "6-digit pincode")} style={{ ...S.input, background: "transparent", paddingVertical: "10px" }} />
                     {fieldErrors.pincode && (
                       <div style={{ color: C.red || '#ef4444', fontSize: '11px', marginTop: '2px', fontWeight: 600 }}>
                         {fieldErrors.pincode}
@@ -1674,8 +1673,7 @@ export default function PartnerRegister() {
 
                   {/* City / Region */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-city-region" style={S.label}>{t("onboarding.cityRegion", "City / Region")}</label>
-                    <input {...inputProps("businessLocation")} placeholder={t("onboarding.cityRegionPlaceholder", "e.g. Mumbai, Maharashtra")} style={{ ...S.input, paddingVertical: "10px" }} />
+                    <FloatingField label={t("onboarding.cityRegion", "City / Region")} bg={C.card} {...inputProps("businessLocation")} placeholder={t("onboarding.cityRegionPlaceholder", "e.g. Mumbai, Maharashtra")} style={{ ...S.input, background: "transparent", paddingVertical: "10px" }} />
                     {fieldErrors.businessLocation && (
                       <div style={{ color: C.red || '#ef4444', fontSize: '11px', marginTop: '2px', fontWeight: 600 }}>
                         {fieldErrors.businessLocation}
@@ -1685,8 +1683,7 @@ export default function PartnerRegister() {
 
                   {/* GST Number */}
                   <div className="form-full-width" style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-gst" style={S.label}>{t("onboarding.gstNumber", "GST Number (Optional)")}</label>
-                    <input {...inputProps("gst")} placeholder={t("onboarding.gstPlaceholder", "e.g. 27AAPFU0939F1ZV")} style={{ ...S.input, textTransform: "uppercase", paddingVertical: "10px" }} />
+                    <FloatingField label={t("onboarding.gstNumber", "GST Number (Optional)")} bg={C.card} {...inputProps("gst")} placeholder={t("onboarding.gstPlaceholder", "e.g. 27AAPFU0939F1ZV")} style={{ ...S.input, background: "transparent", textTransform: "uppercase", paddingVertical: "10px" }} />
                     {fieldErrors.gst && (
                       <div style={{ color: C.red || '#ef4444', fontSize: '11px', marginTop: '2px', fontWeight: 600 }}>
                         {fieldErrors.gst}
@@ -1701,8 +1698,7 @@ export default function PartnerRegister() {
                 <div className="form-grid-layout">
                   {/* Bank Name */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-bank-name" style={S.label}>{t("onboarding.bankName", "Bank Name")}</label>
-                    <input list="onboarding-bank-list" {...inputProps("bankName")} placeholder={t("onboarding.bankNamePlaceholder", "Search and select your bank")} style={{ ...S.input, paddingVertical: "10px" }} />
+                    <FloatingField label={t("onboarding.bankName", "Bank Name")} bg={C.card} list="onboarding-bank-list" {...inputProps("bankName")} placeholder={t("onboarding.bankNamePlaceholder", "Search and select your bank")} style={{ ...S.input, background: "transparent", paddingVertical: "10px" }} />
                     <datalist id="onboarding-bank-list">
                       {INDIA_BANKS.map(bank => <option key={bank} value={bank} />)}
                     </datalist>
@@ -1715,8 +1711,7 @@ export default function PartnerRegister() {
 
                   {/* Account Number */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-account-number" style={S.label}>{t("onboarding.accountNumber", "Account Number")}</label>
-                    <input {...inputProps("accountNumber")} placeholder={t("onboarding.accountNumberPlaceholder", "Enter settlement account number")} style={{ ...S.input, paddingVertical: "10px" }} />
+                    <FloatingField label={t("onboarding.accountNumber", "Account Number")} bg={C.card} {...inputProps("accountNumber")} placeholder={t("onboarding.accountNumberPlaceholder", "Enter settlement account number")} style={{ ...S.input, background: "transparent", paddingVertical: "10px" }} />
                     {fieldErrors.accountNumber && (
                       <div style={{ color: C.red || '#ef4444', fontSize: '11px', marginTop: '2px', fontWeight: 600 }}>
                         {fieldErrors.accountNumber}
@@ -1726,8 +1721,7 @@ export default function PartnerRegister() {
 
                   {/* IFSC Code */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-ifsc" style={S.label}>{t("onboarding.ifscCode", "IFSC Code")}</label>
-                    <input {...inputProps("ifsc")} placeholder={t("onboarding.ifscPlaceholder", "Enter 11-digit IFSC code")} style={{ ...S.input, textTransform: "uppercase", paddingVertical: "10px" }} />
+                    <FloatingField label={t("onboarding.ifscCode", "IFSC Code")} bg={C.card} {...inputProps("ifsc")} placeholder={t("onboarding.ifscPlaceholder", "Enter 11-digit IFSC code")} style={{ ...S.input, background: "transparent", textTransform: "uppercase", paddingVertical: "10px" }} />
                     {fieldErrors.ifsc && (
                       <div style={{ color: C.red || '#ef4444', fontSize: '11px', marginTop: '2px', fontWeight: 600 }}>
                         {fieldErrors.ifsc}
@@ -1737,8 +1731,7 @@ export default function PartnerRegister() {
 
                   {/* Account Holder Name */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-holder-name" style={S.label}>{t("onboarding.accountHolderName", "Account Holder Name")}</label>
-                    <input {...inputProps("accountHolderName")} placeholder={t("onboarding.accountHolderPlaceholder", "Name as per bank records")} style={{ ...S.input, paddingVertical: "10px" }} />
+                    <FloatingField label={t("onboarding.accountHolderName", "Account Holder Name")} bg={C.card} {...inputProps("accountHolderName")} placeholder={t("onboarding.accountHolderPlaceholder", "Name as per bank records")} style={{ ...S.input, background: "transparent", paddingVertical: "10px" }} />
                     {fieldErrors.accountHolderName && (
                       <div style={{ color: C.red || '#ef4444', fontSize: '11px', marginTop: '2px', fontWeight: 600 }}>
                         {fieldErrors.accountHolderName}
@@ -1753,8 +1746,7 @@ export default function PartnerRegister() {
                 <div className="form-grid-layout">
                   {/* PAN Number */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-pan" style={S.label}>{t("onboarding.panNumber", "PAN Number *")}</label>
-                    <input {...inputProps("pan")} placeholder={t("onboarding.panPlaceholder", "Enter 10-char PAN")} style={{ ...S.input, textTransform: "uppercase", paddingVertical: "10px" }} maxLength={10} />
+                    <FloatingField label={t("onboarding.panNumber", "PAN Number *")} bg={C.card} {...inputProps("pan")} placeholder={t("onboarding.panPlaceholder", "Enter 10-char PAN")} style={{ ...S.input, background: "transparent", textTransform: "uppercase", paddingVertical: "10px" }} maxLength={10} />
                     {fieldErrors.pan && (
                       <div style={{ color: C.red || '#ef4444', fontSize: '11px', marginTop: '2px', fontWeight: 600 }}>
                         {fieldErrors.pan}
@@ -1764,8 +1756,7 @@ export default function PartnerRegister() {
 
                   {/* Aadhaar Number */}
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label id="label-aadhaar" style={S.label}>{t("onboarding.aadhaarNumber", "Aadhaar Number (Optional)")}</label>
-                    <input {...inputProps("aadhaar")} placeholder={t("onboarding.aadhaarPlaceholder", "Enter 12-digit Aadhaar number")} style={{ ...S.input, paddingVertical: "10px" }} maxLength={12} />
+                    <FloatingField label={t("onboarding.aadhaarNumber", "Aadhaar Number (Optional)")} bg={C.card} {...inputProps("aadhaar")} placeholder={t("onboarding.aadhaarPlaceholder", "Enter 12-digit Aadhaar number")} style={{ ...S.input, background: "transparent", paddingVertical: "10px" }} maxLength={12} />
                     {fieldErrors.aadhaar && (
                       <div style={{ color: C.red || '#ef4444', fontSize: '11px', marginTop: '2px', fontWeight: 600 }}>
                         {fieldErrors.aadhaar}

@@ -1,18 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import {
-  Modal,
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  TextInput,
-  Image,
-  ActivityIndicator,
-  Alert,
-  SafeAreaView,
-  Dimensions,
-} from 'react-native';
+import { Modal, View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Image, ActivityIndicator, Alert, Dimensions } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { Icon } from './Icon';
 import { colors } from '../theme/colors';

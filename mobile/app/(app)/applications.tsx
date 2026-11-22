@@ -10,8 +10,9 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useAuth } from '../../contexts/AuthContext';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { colors } from '../../theme/colors';
@@ -19,6 +20,7 @@ import { typography } from '../../theme/typography';
 import { spacing } from '../../theme/spacing';
 import { Card, Input, Button, StatusBadge, LoadingState, ErrorState } from '../../components';
 import { fetchApplications, ApplicationQueryParams, fetchBanks, fetchProducts, exportApplicationsCSV } from '../../services/application.service';
+import { PartnerTopBar } from '../../components/PartnerTopBar';
 import { ApplicationItem } from '../../types';
 
 const STATUS_OPTIONS = [
@@ -52,6 +54,11 @@ const PERIOD_OPTIONS = [
 ];
 
 export default function ApplicationsScreen() {
+  const { user } = useAuth();
+  const { scope: scopeParam } = useLocalSearchParams<{ scope?: string }>();
+  const isPartnerRole = user?.role === 'PARTNER' || user?.role === 'TEAM_MEMBER';
+  const [appScope, setAppScope] = useState<string>(scopeParam === 'team' ? 'team' : 'my');
+
   const [applications, setApplications] = useState<ApplicationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -139,6 +146,7 @@ export default function ApplicationsScreen() {
         period: selectedPeriod !== 'all' ? selectedPeriod : undefined,
         bank_id: selectedBank || undefined,
         product_id: selectedProduct || undefined,
+        scope: isPartnerRole ? appScope : undefined,
       };
 
       try {
@@ -173,13 +181,13 @@ export default function ApplicationsScreen() {
         isFetchingRef.current = false;
       }
     },
-    [debouncedSearch, selectedStatus, selectedCategory, selectedPeriod]
+    [debouncedSearch, selectedStatus, selectedCategory, selectedPeriod, isPartnerRole, appScope]
   );
 
   // Trigger Reload on Filter / Debounced Search change
   useEffect(() => {
     loadData(1);
-  }, [debouncedSearch, selectedStatus, selectedCategory, selectedPeriod, selectedBank, selectedProduct]);
+  }, [debouncedSearch, selectedStatus, selectedCategory, selectedPeriod, selectedBank, selectedProduct, isPartnerRole, appScope]);
 
   // Pull-to-Refresh
   const handleRefresh = () => {
@@ -247,6 +255,7 @@ export default function ApplicationsScreen() {
         period: selectedPeriod !== 'all' ? selectedPeriod : undefined,
         bank_id: selectedBank || undefined,
         product_id: selectedProduct || undefined,
+        scope: isPartnerRole ? appScope : undefined,
       };
 
       const blob = await exportApplicationsCSV(params);
@@ -271,10 +280,7 @@ export default function ApplicationsScreen() {
     <TouchableOpacity
       activeOpacity={0.7}
       onPress={() =>
-        router.push({
-          pathname: '/(app)/application-details',
-          params: { id: item.id },
-        })
+        router.push(`/application-details?id=${item.id}` as any)
       }
     >
       <Card style={styles.card}>
@@ -338,6 +344,13 @@ export default function ApplicationsScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Same partner navbar as the partner panel */}
+      {isPartnerRole && (
+        <View style={{ paddingHorizontal: spacing.md, paddingTop: spacing.md }}>
+          <PartnerTopBar />
+        </View>
+      )}
+
       {/* Search & Filter Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Applications Queue</Text>
@@ -364,6 +377,24 @@ export default function ApplicationsScreen() {
             <Text style={styles.exportBtnText}>Export</Text>
           </TouchableOpacity>
         </View>
+
+        {/* My / Team scope toggle — same as website partner applications */}
+        {isPartnerRole && (
+          <View style={styles.scopeRow}>
+            {[
+              { key: 'my', label: user?.role === 'TEAM_MEMBER' ? 'My Applications' : 'My Applications' },
+              { key: 'team', label: 'Team Applications' },
+            ].map((opt) => (
+              <TouchableOpacity
+                key={opt.key}
+                style={[styles.scopeBtn, appScope === opt.key && styles.scopeBtnActive]}
+                onPress={() => setAppScope(opt.key)}
+              >
+                <Text style={[styles.scopeBtnText, appScope === opt.key && styles.scopeBtnTextActive]}>{opt.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
       </View>
 
       {/* Main Content Area */}
@@ -638,6 +669,32 @@ const styles = StyleSheet.create({
   exportBtnText: {
     fontSize: typography.sizes.xs,
     fontWeight: typography.weights.semibold,
+    color: '#FFF',
+  },
+  scopeRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  scopeBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+  },
+  scopeBtnActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  scopeBtnText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.semibold,
+    color: colors.textMid,
+  },
+  scopeBtnTextActive: {
     color: '#FFF',
   },
   listContent: {

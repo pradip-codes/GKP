@@ -23,6 +23,9 @@ import {
   fetchApplicationOperatorHistory,
   uploadCustomerDocument,
 } from '../../services/application.service';
+import apiClient from '../../services/api';
+import { useAuth } from '../../contexts/AuthContext';
+import { PartnerTopBar } from '../../components/PartnerTopBar';
 
 type SegmentTab = 'overview' | 'kyc' | 'timeline' | 'docs';
 
@@ -72,6 +75,8 @@ const maskMobile = (mobile?: string) => {
 
 export default function ApplicationDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { user } = useAuth();
+  const isPartnerRole = user?.role === 'PARTNER' || user?.role === 'TEAM_MEMBER';
 
   // State
   const [appData, setAppData] = useState<any | null>(null);
@@ -259,6 +264,13 @@ export default function ApplicationDetailsScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Same partner navbar as the partner panel */}
+      {isPartnerRole && (
+        <View style={{ paddingHorizontal: spacing.md, paddingTop: spacing.md }}>
+          <PartnerTopBar />
+        </View>
+      )}
+
       {/* Navigation & Application Compact Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
@@ -325,6 +337,38 @@ export default function ApplicationDetailsScreen() {
                 <Text style={styles.label}>PAN Number:</Text>
                 <Text style={styles.val}>{maskPan(appData.pan_number)}</Text>
               </View>
+
+              {(appData.date_of_birth || appData.dob || appData.customer_dob) ? (
+                <View style={styles.row}>
+                  <Text style={styles.label}>Date of Birth:</Text>
+                  <Text style={styles.val}>
+                    {new Date(appData.date_of_birth || appData.dob || appData.customer_dob).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </Text>
+                </View>
+              ) : null}
+
+              {(appData.mother_name || appData.customer_mother_name) ? (
+                <View style={styles.row}>
+                  <Text style={styles.label}>Mother's Name:</Text>
+                  <Text style={styles.val}>{appData.mother_name || appData.customer_mother_name}</Text>
+                </View>
+              ) : null}
+
+              {appData.gender ? (
+                <View style={styles.row}>
+                  <Text style={styles.label}>Gender:</Text>
+                  <Text style={styles.val}>{appData.gender}</Text>
+                </View>
+              ) : null}
+
+              {(appData.address || appData.customer_address) ? (
+                <View style={styles.row}>
+                  <Text style={styles.label}>Address:</Text>
+                  <Text style={[styles.val, { flex: 1, textAlign: 'right' }]} numberOfLines={2}>
+                    {appData.address || appData.customer_address}
+                  </Text>
+                </View>
+              ) : null}
 
               {appData.city || appData.state ? (
                 <View style={styles.row}>

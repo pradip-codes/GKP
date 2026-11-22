@@ -1,0 +1,72 @@
+/* Floating-label fields: label sits inside as placeholder, floats onto the
+   top border on focus or when the field has a value */
+
+.ff-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.ff-field .ff-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #94a3b8;
+  display: flex;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.ff-field .ff-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  outline: none;
+}
+
+.ff-field .ff-input:focus {
+  border-color: #0d6efd !important;
+}
+
+.ff-field .ff-input::placeholder {
+  color: transparent;
+}
+
+.ff-field .ff-label {
+  position: absolute;
+  left: 38px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #94a3b8;
+  background: var(--ff-bg, #ffffff);
+  padding: 0 5px;
+  border-radius: 4px;
+  pointer-events: none;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+  max-width: calc(100% - 60px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ff-field.no-icon .ff-label {
+  left: 14px;
+}
+
+.ff-field .ff-input:focus ~ .ff-label,
+.ff-field .ff-input:not(:placeholder-shown) ~ .ff-label {
+  top: 0;
+  transform: translateY(-50%);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #0d6efd;
+}
+
+.ff-field .ff-input:focus ~ .ff-label {
+  color: #0d6efd;
+}

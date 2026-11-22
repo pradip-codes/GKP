@@ -17,6 +17,7 @@ import { spacing } from '../../theme/spacing';
 import { Card } from '../../components/Card';
 import { Icon } from '../../components/Icon';
 import { Button } from '../../components/Button';
+import { FloatingInput } from '../../components/FloatingInput';
 import apiClient from '../../services/api';
 import { INDIAN_STATES, getDistrictsForState } from '../../data/indianStatesDistricts';
 
@@ -713,30 +714,9 @@ export default function CareersScreen() {
           {/* 1. Personal Details */}
           <Text style={styles.sectionTitle}>1. Personal Details & Contact Verification</Text>
 
-          <Text style={styles.inputLabel}>First Name *</Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Enter first name"
-            placeholderTextColor={colors.textLight}
-            value={form.first_name}
-            onChangeText={(v) => setField('first_name', v)}
-          />
-          <Text style={styles.inputLabel}>Middle Name *</Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Enter middle name"
-            placeholderTextColor={colors.textLight}
-            value={form.middle_name}
-            onChangeText={(v) => setField('middle_name', v)}
-          />
-          <Text style={styles.inputLabel}>Last Name *</Text>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Enter last name"
-            placeholderTextColor={colors.textLight}
-            value={form.last_name}
-            onChangeText={(v) => setField('last_name', v)}
-          />
+          <FloatingInput label="First Name *" icon="person" value={form.first_name} onChangeText={(v) => setField('first_name', v)} />
+          <FloatingInput label="Middle Name *" icon="person" value={form.middle_name} onChangeText={(v) => setField('middle_name', v)} />
+          <FloatingInput label="Last Name *" icon="person" value={form.last_name} onChangeText={(v) => setField('last_name', v)} />
 
           <Text style={styles.inputLabel}>Mobile Number *</Text>
           <View style={styles.otpRow}>
@@ -834,15 +814,7 @@ export default function CareersScreen() {
             />
           )}
 
-          <Text style={styles.inputLabel}>Date of Birth *</Text>
-          <TextInput
-            style={[styles.textInput, ageInvalid && { borderColor: '#FCA5A5' }]}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor={colors.textLight}
-            value={form.date_of_birth}
-            onChangeText={(v) => setField('date_of_birth', v)}
-            maxLength={10}
-          />
+          <FloatingInput label="Date of Birth *" icon="calendar" value={form.date_of_birth} onChangeText={(v) => setField('date_of_birth', v)} maxLength={10} />
           {dobIsFuture && (
             <Text style={styles.warnText}>⚠️ Date of Birth cannot be in the future.</Text>
           )}
@@ -858,12 +830,9 @@ export default function CareersScreen() {
 
           {/* 2. Address */}
           <Text style={styles.sectionTitle}>2. Current Residential Address</Text>
-          <Text style={styles.inputLabel}>Flat No. / House No. *</Text>
-          <TextInput style={styles.textInput} placeholder="Flat 402 / House 12" placeholderTextColor={colors.textLight} value={form.address_flat_no} onChangeText={(v) => setField('address_flat_no', v)} />
-          <Text style={styles.inputLabel}>Society / Apartment Name *</Text>
-          <TextInput style={styles.textInput} placeholder="Green Valley Heights" placeholderTextColor={colors.textLight} value={form.address_society} onChangeText={(v) => setField('address_society', v)} />
-          <Text style={styles.inputLabel}>Area / Landmark *</Text>
-          <TextInput style={styles.textInput} placeholder="Near Metro Station / Main Road" placeholderTextColor={colors.textLight} value={form.address_area} onChangeText={(v) => setField('address_area', v)} />
+          <FloatingInput label="Flat No. / House No. *" icon="location" value={form.address_flat_no} onChangeText={(v) => setField('address_flat_no', v)} />
+          <FloatingInput label="Society / Apartment Name *" icon="location" value={form.address_society} onChangeText={(v) => setField('address_society', v)} />
+          <FloatingInput label="Area / Landmark *" icon="location" value={form.address_area} onChangeText={(v) => setField('address_area', v)} />
           <FormSelect
             label="State"
             value={form.address_state}
@@ -884,10 +853,8 @@ export default function CareersScreen() {
             required
             disabled={!form.address_state}
           />
-          <Text style={styles.inputLabel}>City / Town *</Text>
-          <TextInput style={styles.textInput} placeholder="e.g. Pune" placeholderTextColor={colors.textLight} value={form.address_city} onChangeText={(v) => setField('address_city', v)} />
-          <Text style={styles.inputLabel}>Pincode *</Text>
-          <TextInput style={styles.textInput} placeholder="e.g. 411001" placeholderTextColor={colors.textLight} value={form.pincode} onChangeText={(v) => setField('pincode', v.replace(/\D/g, '').slice(0, 6))} keyboardType="number-pad" maxLength={6} />
+          <FloatingInput label="City / Town *" icon="location" value={form.address_city} onChangeText={(v) => setField('address_city', v)} />
+          <FloatingInput label="Pincode *" icon="map" value={form.pincode} onChangeText={(v) => setField('pincode', v.replace(/\D/g, '').slice(0, 6))} keyboardType="number-pad" maxLength={6} />
 
           {/* 3. Education */}
           <Text style={styles.sectionTitle}>3. Education</Text>
@@ -913,7 +880,7 @@ export default function CareersScreen() {
             <>
               <FormSelect label="Stream" value={form.twelfth_stream} options={TWELFTH_STREAMS} onSelect={(v) => { setField('twelfth_stream', v); setField('twelfth_stream_other', ''); }} required />
               {form.twelfth_stream === 'Other' && (
-                <TextInput style={styles.textInput} placeholder="Specify stream" placeholderTextColor={colors.textLight} value={form.twelfth_stream_other} onChangeText={(v) => setField('twelfth_stream_other', v)} />
+                <FloatingInput label="Specify Stream" icon="pricetag" value={form.twelfth_stream_other} onChangeText={(v) => setField('twelfth_stream_other', v)} />
               )}
             </>
           )}
@@ -921,7 +888,7 @@ export default function CareersScreen() {
             <>
               <FormSelect label="Degree Type" value={form.degree_type} options={degreeOptions} onSelect={(v) => { setField('degree_type', v); setField('degree_other', ''); }} required />
               {form.degree_type === 'Other' && (
-                <TextInput style={styles.textInput} placeholder="Specify degree" placeholderTextColor={colors.textLight} value={form.degree_other} onChangeText={(v) => setField('degree_other', v)} />
+                <FloatingInput label="Specify Degree" icon="pricetag" value={form.degree_other} onChangeText={(v) => setField('degree_other', v)} />
               )}
             </>
           )}
@@ -929,7 +896,7 @@ export default function CareersScreen() {
             <>
               <FormSelect label="Diploma Type" value={form.diploma_type} options={DIPLOMA_TYPES} onSelect={(v) => { setField('diploma_type', v); setField('diploma_other', ''); }} required />
               {form.diploma_type === 'Other' && (
-                <TextInput style={styles.textInput} placeholder="Specify Diploma Name" placeholderTextColor={colors.textLight} value={form.diploma_other} onChangeText={(v) => setField('diploma_other', v)} />
+                <FloatingInput label="Specify Diploma Name" icon="pricetag" value={form.diploma_other} onChangeText={(v) => setField('diploma_other', v)} />
               )}
             </>
           )}
@@ -937,7 +904,7 @@ export default function CareersScreen() {
             <>
               <FormSelect label="Degree Type" value={form.degree_type} options={degreeOptions} onSelect={(v) => { setField('degree_type', v); setField('degree_other', ''); }} required />
               {form.degree_type === 'Other' && (
-                <TextInput style={styles.textInput} placeholder="Specify degree" placeholderTextColor={colors.textLight} value={form.degree_other} onChangeText={(v) => setField('degree_other', v)} />
+                <FloatingInput label="Specify Degree" icon="pricetag" value={form.degree_other} onChangeText={(v) => setField('degree_other', v)} />
               )}
             </>
           )}
@@ -973,24 +940,16 @@ export default function CareersScreen() {
           />
           {form.experience_type === 'Experienced' && (
             <>
-              <Text style={styles.inputLabel}>Total Experience (Years) *</Text>
-              <TextInput style={styles.textInput} placeholder="e.g. 2.5" placeholderTextColor={colors.textLight} value={form.total_experience_years} onChangeText={(v) => setField('total_experience_years', v)} keyboardType="decimal-pad" />
-              <Text style={styles.inputLabel}>Current / Last Company *</Text>
-              <TextInput style={styles.textInput} placeholder="e.g. HDFC / Axis DSA" placeholderTextColor={colors.textLight} value={form.current_company} onChangeText={(v) => setField('current_company', v)} />
-              <Text style={styles.inputLabel}>Current / Last Designation *</Text>
-              <TextInput style={styles.textInput} placeholder="e.g. Senior Executive" placeholderTextColor={colors.textLight} value={form.current_designation} onChangeText={(v) => setField('current_designation', v)} />
-              <Text style={styles.inputLabel}>Last Annual CTC (₹)</Text>
-              <TextInput style={styles.textInput} placeholder="e.g. 3,50,000" placeholderTextColor={colors.textLight} value={form.last_salary_ctc} onChangeText={(v) => setField('last_salary_ctc', v)} keyboardType="numeric" />
+              <FloatingInput label="Total Experience (Years) *" icon="briefcase" value={form.total_experience_years} onChangeText={(v) => setField('total_experience_years', v)} keyboardType="decimal-pad" />
+              <FloatingInput label="Current / Last Company *" icon="storefront" value={form.current_company} onChangeText={(v) => setField('current_company', v)} />
+              <FloatingInput label="Current / Last Designation *" icon="person" value={form.current_designation} onChangeText={(v) => setField('current_designation', v)} />
+              <FloatingInput label="Last Annual CTC (₹)" icon="cash" value={form.last_salary_ctc} onChangeText={(v) => setField('last_salary_ctc', v)} keyboardType="numeric" />
             </>
           )}
           {/* Previous Salary (Monthly ₹) — required for Experienced, disabled for Freshers (same as website) */}
-          <Text style={styles.inputLabel}>
-            Previous Salary (Monthly ₹) {form.experience_type === 'Experienced' ? '*' : '(Optional for Freshers)'}
-          </Text>
-          <TextInput
-            style={[styles.textInput, form.experience_type === 'Fresher' && { opacity: 0.6 }]}
-            placeholder={form.experience_type === 'Fresher' ? 'Not applicable for Freshers' : 'e.g. 25,000'}
-            placeholderTextColor={colors.textLight}
+          <FloatingInput
+            label={form.experience_type === 'Experienced' ? 'Previous Salary (Monthly ₹) *' : 'Previous Salary (Monthly ₹)'}
+            icon="cash"
             value={form.experience_type === 'Fresher' ? '' : form.previous_salary}
             onChangeText={(v) => setField('previous_salary', v)}
             keyboardType="numeric"
@@ -1008,8 +967,7 @@ export default function CareersScreen() {
           />
           {form.immediate_joining === 'No' && (
             <>
-              <Text style={styles.inputLabel}>Notice Period (Days) *</Text>
-              <TextInput style={styles.textInput} placeholder="e.g. 15" placeholderTextColor={colors.textLight} value={form.notice_period_days} onChangeText={(v) => setField('notice_period_days', v)} keyboardType="number-pad" />
+              <FloatingInput label="Notice Period (Days) *" icon="time" value={form.notice_period_days} onChangeText={(v) => setField('notice_period_days', v)} keyboardType="number-pad" />
             </>
           )}
           <FormSelect
@@ -1041,13 +999,9 @@ export default function CareersScreen() {
           />
           {(form.selected_hr === 'Other HR / Reference' || form.selected_hr === 'Other' || form.how_did_you_hear === 'Employee Reference' || form.how_did_you_hear === 'Other') && (
             <>
-              <Text style={styles.inputLabel}>
-                {form.how_did_you_hear === 'Employee Reference' ? 'Referring Employee Name / Reference Details *' : 'HR Name / Reference Details *'}
-              </Text>
-              <TextInput
-                style={styles.textInput}
-                placeholder={form.how_did_you_hear === 'Employee Reference' ? 'Enter referring employee name / ID' : 'Enter HR name / reference details'}
-                placeholderTextColor={colors.textLight}
+              <FloatingInput
+                label={form.how_did_you_hear === 'Employee Reference' ? 'Referring Employee Name / Reference Details *' : 'HR Name / Reference Details *'}
+                icon="person"
                 value={form.hr_name}
                 onChangeText={(v) => setField('hr_name', v)}
               />

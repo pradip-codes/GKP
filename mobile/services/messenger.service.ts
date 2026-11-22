@@ -1,4 +1,20 @@
-import apiClient from './api';
+import apiClient, { API_BASE_URL } from './api';
+
+export interface MessengerParticipant {
+  id: string;
+  user_id?: string;
+  full_name: string;
+  email?: string;
+  mobile?: string;
+  role?: string;
+  profile_photo?: string;
+  avatar_url?: string;
+  partner_code?: string;
+  employee_code?: string;
+  last_active_at?: string;
+  last_logout_at?: string;
+  last_login?: string;
+}
 
 export interface MessengerConversation {
   id: string;
@@ -6,8 +22,18 @@ export interface MessengerConversation {
   name?: string;
   title?: string;
   description?: string;
+  avatar_url?: string;
+  application_id?: string;
+  application_number?: string;
+  application_status?: string;
   is_pinned?: boolean;
+  is_muted?: boolean;
+  is_starred?: boolean;
+  is_archived?: boolean;
+  participant_role?: string;
   unread_count?: number;
+  last_message_at?: string;
+  last_message_text?: string;
   last_message?: {
     id: string;
     message_text?: string;
@@ -15,14 +41,9 @@ export interface MessengerConversation {
     created_at: string;
     sender_name?: string;
   };
-  other_user?: {
-    id: string;
-    full_name: string;
-    email: string;
-    role: string;
-    partner_code?: string;
-    employee_id?: string;
-  };
+  other_user?: MessengerParticipant;
+  other_participants?: MessengerParticipant[];
+  participants?: MessengerParticipant[];
   created_at: string;
   updated_at: string;
 }
@@ -53,6 +74,17 @@ export interface MessengerMessage {
     file_size?: string;
   }>;
   is_edited?: boolean;
+  edited_at?: string;
+  deleted_at?: string | null;
+  reply_to?: {
+    id: string;
+    sender_id: string;
+    sender_name?: string;
+    message_text?: string;
+  } | null;
+  reads?: Array<{ user_id: string; read_at: string }>;
+  is_read?: boolean;
+  sender_role?: string;
   created_at: string;
 }
 
@@ -83,7 +115,37 @@ export function maskSensitiveData(text: string | null | undefined): string {
 
 export const getConversations = async (filter = 'ALL', search = ''): Promise<MessengerConversation[]> => {
   const res = await apiClient.get('/messenger/conversations', { params: { filter, search } });
-  return res.data?.data || [];
+  const rows: any[] = res.data?.data || [];
+  return rows.map((c) => {
+    const others: MessengerParticipant[] = c.other_participants || c.participants || [];
+    const otherUser = others[0];
+    const normalized: MessengerConversation = {
+      ...c,
+      other_user: otherUser,
+      other_participants: others,
+      last_message_at: c.last_message_at || c.updated_at || c.created_at,
+    };
+    // Resolve display name the same way the website does
+    if (c.conversation_type === 'APPLICATION') {
+      normalized.name = c.name || `Application #${c.application_number || ''}`.trim();
+      normalized.title = normalized.name;
+    } else if (c.conversation_type === 'DIRECT') {
+      normalized.name = otherUser?.full_name || c.name || 'Direct Chat';
+      normalized.title = normalized.name;
+    } else {
+      normalized.name = c.name || (c.conversation_type === 'DEPARTMENT' ? 'Department Channel' : 'Group Chat');
+      normalized.title = normalized.name;
+    }
+    // Backend returns flattened last_message_* fields; synthesize last_message object
+    if (!normalized.last_message && c.last_message_text !== undefined) {
+      normalized.last_message = {
+        id: c.last_message_id || '',
+        message_text: c.last_message_text,
+        created_at: c.last_message_at || c.updated_at || c.created_at,
+      };
+    }
+    return normalized;
+  });
 };
 
 export const getContacts = async (query = ''): Promise<MessengerContact[]> => {
@@ -115,6 +177,7 @@ export const sendMessage = async (data: {
   conversation_id: string;
   message_text?: string;
   message_type?: string;
+  reply_to_message_id?: string;
   attachments?: any[];
 }): Promise<MessengerMessage> => {
   const res = await apiClient.post('/messenger/messages', data);
@@ -193,6 +256,41 @@ export const leaveGroup = async (conversationId: string): Promise<boolean> => {
 export const deleteConversation = async (conversationId: string): Promise<boolean> => {
   const res = await apiClient.delete(`/messenger/conversations/${conversationId}`);
   return res.data?.success || false;
+};
+
+export const editMessage = async (messageId: string, messageText: string): Promise<MessengerMessage> => {
+  const res = await apiClient.put(`/messenger/messages/${messageId}`, { message_text: messageText });
+  return res.data?.data;
+};
+
+export const deleteMessage = async (messageId: string): Promise<boolean> => {
+  const res = await apiClient.delete(`/messenger/messages/${messageId}`);
+  return res.data?.success !== false;
+};
+
+export const getGroupMembers = async (conversationId: string): Promise<any[]> => {
+  const res = await apiClient.get(`/messenger/conversations/${conversationId}/members`);
+  return res.data?.data || [];
+};
+
+export const addGroupMembers = async (conversationId: string, userIds: string[]): Promise<boolean> => {
+  const res = await apiClient.post(`/messenger/conversations/${conversationId}/members`, { user_ids: userIds });
+  return res.data?.success !== false;
+};
+
+export const removeGroupMember = async (conversationId: string, userId: string): Promise<boolean> => {
+  const res = await apiClient.delete(`/messenger/conversations/${conversationId}/members/${userId}`);
+  return res.data?.success !== false;
+};
+
+/** Resolve a possibly-relative messenger media URL to an absolute URL */
+export const resolveMediaUrl = (url?: string | null): string | undefined => {
+  if (!url) return undefined;
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file://') || url.startsWith('data:')) {
+    return url;
+  }
+  const origin = API_BASE_URL.replace(/\/api\/v1\/?$/, '');
+  return `${origin}${url.startsWith('/') ? '' : '/'}${url}`;
 };
 
 export const getUnreadCount = async (): Promise<number> => {
