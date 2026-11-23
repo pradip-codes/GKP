@@ -245,7 +245,17 @@ async function getSettings(req, res, next) {
       return error(res, 'Access denied', 403);
     }
     const config = await service.getWhatsAppConfig();
-    return success(res, config, 'WhatsApp settings retrieved');
+    // Never expose raw secrets to the client — return presence + last4 only
+    const masked = {
+      ...config,
+      apiToken: undefined,
+      appSecret: undefined,
+      has_access_token: Boolean(config.apiToken),
+      access_token_last4: config.apiToken ? String(config.apiToken).slice(-4) : null,
+      has_app_secret: Boolean(config.appSecret),
+      app_secret_last4: config.appSecret ? String(config.appSecret).slice(-4) : null,
+    };
+    return success(res, masked, 'WhatsApp settings retrieved');
   } catch (err) {
     next(err);
   }
@@ -265,7 +275,10 @@ async function updateSettings(req, res, next) {
       waba_id,
       meta_app_id,
       webhook_verify_token,
-      mock_mode
+      mock_mode,
+      access_token,
+      app_secret,
+      api_version
     } = req.body;
 
     const { rows: [updated] } = await query(`
@@ -278,6 +291,9 @@ async function updateSettings(req, res, next) {
         meta_app_id = COALESCE($5, meta_app_id),
         webhook_verify_token = COALESCE($6, webhook_verify_token),
         mock_mode = COALESCE($7, mock_mode),
+        access_token = COALESCE(NULLIF($9, ''), access_token),
+        app_secret = COALESCE(NULLIF($10, ''), app_secret),
+        api_version = COALESCE(NULLIF($11, ''), api_version),
         updated_by = $8,
         updated_at = NOW()
       WHERE id = (SELECT id FROM whatsapp_settings LIMIT 1)
@@ -290,8 +306,17 @@ async function updateSettings(req, res, next) {
       meta_app_id,
       webhook_verify_token,
       mock_mode,
-      req.user.id
+      req.user.id,
+      access_token,
+      app_secret,
+      api_version
     ]);
+
+    // Strip secrets from the response
+    if (updated) {
+      delete updated.access_token;
+      delete updated.app_secret;
+    }
 
     return success(res, updated, 'WhatsApp settings updated successfully');
   } catch (err) {

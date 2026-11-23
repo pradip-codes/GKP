@@ -22,7 +22,8 @@ async function getWhatsAppConfig() {
   const appId = process.env.WHATSAPP_APP_ID || process.env.META_APP_ID || dbConfig.meta_app_id || null;
   const apiToken = process.env.WHATSAPP_ACCESS_TOKEN || process.env.META_WHATSAPP_TOKEN || dbConfig.access_token || null;
   const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN || process.env.META_WEBHOOK_VERIFY_TOKEN || dbConfig.webhook_verify_token || 'gharkapaisa_meta_webhook_secret_2026';
-  const apiVersion = process.env.WHATSAPP_API_VERSION || process.env.META_API_VERSION || 'v19.0';
+  const apiVersion = process.env.WHATSAPP_API_VERSION || process.env.META_API_VERSION || dbConfig.api_version || 'v19.0';
+  const appSecret = process.env.WHATSAPP_APP_SECRET || process.env.META_APP_SECRET || dbConfig.app_secret || null;
   const phoneNumber = process.env.WHATSAPP_PHONE_NUMBER || process.env.META_PHONE_NUMBER || dbConfig.phone_number || '+91 92703 19438';
 
   return {
@@ -32,6 +33,7 @@ async function getWhatsAppConfig() {
     wabaId,
     appId,
     apiToken,
+    appSecret,
     verifyToken,
     apiVersion,
     isLive: Boolean(apiToken) && Boolean(phoneNumberId),

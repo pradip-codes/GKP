@@ -59,6 +59,12 @@ const migrateWhatsApp = async () => {
       );
     `);
 
+    // 3b. Credential columns — allow Super Admin to connect WhatsApp from the panel
+    // without needing server .env access. Secrets are masked by the API before returning.
+    await query(`ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS access_token TEXT`);
+    await query(`ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS app_secret TEXT`);
+    await query(`ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS api_version VARCHAR(20) DEFAULT 'v19.0'`);
+
     // Ensure default row exists
     const { rows: settingRows } = await query(`SELECT id FROM whatsapp_settings LIMIT 1`);
     if (settingRows.length === 0) {

@@ -58,8 +58,14 @@ async function handleWebhookEvent(req, res) {
     const body = req.body;
     logger.info('[WhatsApp Webhook] Received Meta payload:', JSON.stringify(body));
 
-    // Verify webhook signature for security
-    const webhookSecret = process.env.WHATSAPP_APP_SECRET || process.env.META_APP_SECRET;
+    // Verify webhook signature for security (env first, then panel-configured app secret)
+    let webhookSecret = process.env.WHATSAPP_APP_SECRET || process.env.META_APP_SECRET;
+    if (!webhookSecret) {
+      try {
+        const { rows } = await query(`SELECT app_secret FROM whatsapp_settings LIMIT 1`);
+        webhookSecret = rows[0]?.app_secret || null;
+      } catch (e) {}
+    }
     const signature = req.headers['x-hub-signature-256'];
 
     if (webhookSecret && signature) {
