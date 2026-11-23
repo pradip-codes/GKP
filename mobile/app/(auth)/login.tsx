@@ -35,6 +35,9 @@ export default function LoginScreen() {
   const [otpSent, setOtpSent] = useState(false);
   const [maskedIdentity, setMaskedIdentity] = useState('');
   const [timer, setTimer] = useState(0);
+  // Progressive lockout: after 3 wrong passwords → 2-min cooldown → OTP required
+  const [otpRequired, setOtpRequired] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -76,6 +79,31 @@ export default function LoginScreen() {
     return () => clearInterval(interval);
   }, [timer]);
 
+  // Login-attempt cooldown countdown (2-minute lock after 3 failed passwords)
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const t = setTimeout(() => setCooldownSeconds((c) => Math.max(0, c - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [cooldownSeconds]);
+
+  const formatCooldown = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+  // Shared handler for progressive-lockout responses from /auth/login-password
+  const handlePasswordLoginError = (data: any) => {
+    if (data?.require_otp || data?.code === 'OTP_REQUIRED' || data?.code === 'LOGIN_COOLDOWN') {
+      setOtpRequired(true);
+      setLoginMode('otp');
+      if (data?.retry_after_seconds) setCooldownSeconds(Math.ceil(data.retry_after_seconds));
+      setErrorMsg(data?.message || 'Too many attempts. Please login using OTP.');
+      return;
+    }
+    if (data?.attempts_left != null) {
+      setErrorMsg(`${data?.message || 'Invalid credentials'} — ${data.attempts_left} attempt${data.attempts_left === 1 ? '' : 's'} remaining`);
+      return;
+    }
+    setErrorMsg(data?.message || 'Login failed. Please check your credentials.');
+  };
+
   const resolveRoleRedirect = (user: any) => {
     const role = (user?.role || '').toUpperCase();
     const designation = user?.designation || '';
@@ -116,10 +144,10 @@ export default function LoginScreen() {
         }
         resolveRoleRedirect(res.user);
       } else {
-        setErrorMsg(res?.message || 'Invalid email/mobile or password');
+        handlePasswordLoginError(res);
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'Login failed. Please check your credentials.');
+      handlePasswordLoginError(err);
     } finally {
       setLoading(false);
     }
@@ -128,6 +156,10 @@ export default function LoginScreen() {
   const handleSendOtp = async () => {
     if (!identity.trim()) {
       setErrorMsg('Please enter your email or mobile number to receive OTP');
+      return;
+    }
+    if (cooldownSeconds > 0) {
+      setErrorMsg(`Too many attempts. Please wait ${formatCooldown(cooldownSeconds)} before requesting OTP.`);
       return;
     }
 
@@ -348,6 +380,8 @@ export default function LoginScreen() {
                   onChangeText={(t) => {
                     setIdentity(t);
                     setErrorMsg(null);
+                    setOtpRequired(false);
+                    setCooldownSeconds(0);
                   }}
                   autoCapitalize="none"
                   keyboardType="email-address"
@@ -385,11 +419,16 @@ export default function LoginScreen() {
                   <TouchableOpacity
                     style={[styles.submitBtn, { backgroundColor: colors.primary }]}
                     onPress={handlePasswordLogin}
-                    disabled={loading}
+                    disabled={loading || otpRequired}
                     activeOpacity={0.85}
                   >
                     {loading ? (
                       <ActivityIndicator size="small" color="#FFF" />
+                    ) : otpRequired ? (
+                      <>
+                        <Icon name="shield" size={15} color="#FFF" />
+                        <Text style={styles.submitBtnText}>OTP Verification Required</Text>
+                      </>
                     ) : (
                       <>
                         <Text style={styles.submitBtnText}>Sign In to Account</Text>
@@ -397,6 +436,14 @@ export default function LoginScreen() {
                       </>
                     )}
                   </TouchableOpacity>
+
+                  {otpRequired && (
+                    <TouchableOpacity onPress={() => setLoginMode('otp')} style={{ alignItems: 'center', marginTop: 4 }}>
+                      <Text style={{ fontSize: 12.5, fontWeight: '700', color: colors.primary }}>
+                        Switch to OTP login →
+                      </Text>
+                    </TouchableOpacity>
+                  )}
 
                   {/* Biometric Quick Login Button */}
                   {biometricAvailable && hasSavedBiometric && (
@@ -418,15 +465,28 @@ export default function LoginScreen() {
               {/* OTP Mode Fields */}
               {loginMode === 'otp' && (
                 <>
+                  {otpRequired && (
+                    <View style={[styles.otpInfoBox, { backgroundColor: '#F59E0B15', borderColor: '#F59E0B40' }]}>
+                      <Icon name="shield" size={14} color="#F59E0B" />
+                      <Text style={{ flex: 1, fontSize: 12, fontWeight: '700', color: '#B45309' }}>
+                        Password attempts exceeded — please verify with OTP to continue.
+                      </Text>
+                    </View>
+                  )}
                   {!otpSent ? (
                     <TouchableOpacity
                       style={[styles.submitBtn, { backgroundColor: colors.primary, marginTop: 12 }]}
                       onPress={handleSendOtp}
-                      disabled={loading}
+                      disabled={loading || cooldownSeconds > 0}
                       activeOpacity={0.85}
                     >
                       {loading ? (
                         <ActivityIndicator size="small" color="#FFF" />
+                      ) : cooldownSeconds > 0 ? (
+                        <>
+                          <Icon name="time" size={15} color="#FFF" />
+                          <Text style={styles.submitBtnText}>Wait {formatCooldown(cooldownSeconds)}</Text>
+                        </>
                       ) : (
                         <>
                           <Text style={styles.submitBtnText}>Send Verification OTP</Text>
