@@ -484,7 +484,8 @@ const login = async (req, res, next) => {
     );
 
     if (!user) { await security.recordFailedLogin(null, req, 'unknown_account'); return error(res, 'No account found with this email or mobile', 401); }
-    if (isLocked(user)) return error(res, 'Account is temporarily locked. Try again later.', 423);
+    // Password lockouts/cooldowns do not block OTP verification — OTP is the designated recovery path.
+    // Permanent/administrative blocks are handled by status check below.
 
 
     if (user.is_active === false || user.status === 'inactive') return error(res, 'Your account has been deactivated. Please contact administrator.', 403);
@@ -533,6 +534,12 @@ const login = async (req, res, next) => {
     // Generate Refresh Token
     const refreshToken = await generateAndSaveRefreshToken(user.id, req, req.body.rememberMe !== false);
     await security.resetFailures(user.id);
+    const matchedIds = matchedUsers.map(u => u.id);
+    await query(
+      `UPDATE users SET failed_login_attempts = 0, locked_until = NULL, updated_at = NOW() 
+       WHERE id = ANY($1::uuid[])`,
+      [matchedIds]
+    ).catch(() => {});
     await security.detectSuspiciousLogin(user.id, req);
     await security.loginRecord(user.id, req, 'success');
     await security.audit(user.id, 'login_success', req);
@@ -653,7 +660,8 @@ const loginWithMsg91 = async (req, res, next) => {
     );
 
     if (!user) { await security.recordFailedLogin(null, req, 'unknown_account'); return error(res, 'No account found with this mobile number', 401); }
-    if (isLocked(user)) return error(res, 'Account is temporarily locked. Try again later.', 423);
+    // Password lockouts/cooldowns do not block OTP verification — OTP is the designated recovery path.
+    // Permanent/administrative blocks are handled by status check below.
     if (user.is_active === false || user.status === 'inactive') return error(res, 'Your account has been deactivated. Please contact administrator.', 403);
     if (user.status === 'suspended') return error(res, 'Your account has been suspended. Please contact support.', 403);
     if (user.status === 'blocked') return error(res, 'Your account has been blocked by the administrator. Please contact support.', 403);
@@ -695,6 +703,12 @@ const loginWithMsg91 = async (req, res, next) => {
     );
     const refreshToken = await generateAndSaveRefreshToken(user.id, req, req.body.rememberMe !== false);
     await security.resetFailures(user.id);
+    const matchedIds = matchedUsers.map(u => u.id);
+    await query(
+      `UPDATE users SET failed_login_attempts = 0, locked_until = NULL, updated_at = NOW() 
+       WHERE id = ANY($1::uuid[])`,
+      [matchedIds]
+    ).catch(() => {});
     await security.detectSuspiciousLogin(user.id, req);
     await security.loginRecord(user.id, req, 'success');
     await security.audit(user.id, 'login_success', req);
@@ -1196,88 +1210,85 @@ const register = async (req, res, next) => {
 const loginPassword = async (req, res, next) => {
   try {
     logger.info("LOGIN PASSWORD API HIT", { identity: req.body?.identity });
-    const { identity, password } = req.body;
+    const rawIdentity = String(req.body.identity || '').trim();
+    const identity = normalizeIdentity(rawIdentity);
+    const { password } = req.body;
     if (!identity || !password) return error(res, 'Identity and password required', 400);
     if (password.length > 128) return error(res, 'Password cannot exceed 128 characters', 400);
 
     let reqRole = String(req.body.role || '').toUpperCase().trim();
     if (reqRole === 'SUPERADMIN') reqRole = 'SUPER_ADMIN';
 
-    let userQuery = `SELECT * FROM users WHERE (LOWER(email) = LOWER($1) OR mobile = $2)`;
-    let queryParams = [identity, identity];
+    // Support flexible mobile lookup: clean 10-digit, 91..., or +91...
+    const rawDigits = rawIdentity.replace(/\D/g, '');
+    const cleanMobile = rawDigits.length === 12 && rawDigits.startsWith('91') ? rawDigits.slice(2) : rawDigits;
+
+    let userQuery = `
+      SELECT * FROM users 
+      WHERE (LOWER(email) = LOWER($1) OR mobile = $1 OR mobile = $2 OR mobile = $3)
+    `;
+    let queryParams = [identity, cleanMobile, `+91${cleanMobile}`];
     if (reqRole) {
-      userQuery += ` AND role = $3`;
+      userQuery += ` AND role = $4`;
       queryParams.push(reqRole);
     }
     const { rows: matchedUsers } = await query(userQuery, queryParams);
 
-    if (!matchedUsers.length) { await security.recordFailedLogin(null, req, 'unknown_account'); return error(res, 'No account found with this email or mobile', 401); }
+    if (!matchedUsers.length) {
+      await security.recordFailedLogin(null, req, 'unknown_account');
+      return error(res, 'No account found with this email or mobile', 401);
+    }
 
-    // The same email/mobile can belong to multiple role accounts (e.g. EMPLOYEE + PARTNER).
-    // Verify the password against every match instead of trusting rows[0].
+    // Check if the account is currently in an active cooldown / lockout
+    const activeLockedMatch = matchedUsers.find(u => isLocked(u));
+    if (activeLockedMatch) {
+      const secs = Math.max(1, Math.ceil((new Date(activeLockedMatch.locked_until) - Date.now()) / 1000));
+      return res.status(429).json({
+        success: false,
+        code: 'LOGIN_COOLDOWN',
+        require_otp: true,
+        retry_after_seconds: secs,
+        locked_until: activeLockedMatch.locked_until,
+        message: `Too many failed attempts. Please wait ${Math.ceil(secs / 60)} minute(s) or login using OTP.`
+      });
+    }
+
+    // Verify password against matched accounts
     let user = null;
-    let sawOtpGatedMatch = false;
-    let sawLockedMatch = false;
     for (const candidate of matchedUsers) {
       if (!candidate.password_hash) continue;
       const ok = await bcrypt.compare(password, candidate.password_hash);
-      if (!ok) continue;
-      if ((candidate.failed_login_attempts || 0) >= 3) { sawOtpGatedMatch = true; continue; }
-      if (isLocked(candidate)) { sawLockedMatch = true; continue; }
-      user = candidate;
-      break;
+      if (ok) {
+        user = candidate;
+        break;
+      }
     }
 
     if (!user) {
-      // Progressive lockout flow:
-      //  - attempts 1-2 wrong        → 401 Invalid credentials
-      //  - attempt 3 wrong           → 2-minute cooldown (429 + retry_after), then OTP-only
-      //  - while cooling down        → 429 with remaining seconds + require_otp
-      //  - after cooldown, attempts>=3 → 403 require_otp (password disabled until OTP success resets count)
-      const lockedMatch = matchedUsers.find(u => isLocked(u));
-      const otpGatedMatch = matchedUsers.find(u => (u.failed_login_attempts || 0) >= 3);
-
-      if (lockedMatch) {
-        const secs = Math.max(1, Math.ceil((new Date(lockedMatch.locked_until) - Date.now()) / 1000));
-        return res.status(429).json({
-          success: false,
-          code: 'LOGIN_COOLDOWN',
-          require_otp: true,
-          retry_after_seconds: secs,
-          locked_until: lockedMatch.locked_until,
-          message: `Too many failed attempts. Please wait ${Math.ceil(secs / 60)} minute(s) or login using OTP.`
-        });
-      }
-      if (otpGatedMatch || sawOtpGatedMatch) {
-        return res.status(403).json({
-          success: false,
-          code: 'OTP_REQUIRED',
-          require_otp: true,
-          message: 'Maximum password attempts reached. Please log in using OTP.'
-        });
-      }
-
+      const matchedIds = matchedUsers.map(u => u.id);
       let maxAttempts = 0;
       for (const u of matchedUsers) {
         const updated = await security.recordFailedLogin(u, req, 'invalid_password');
         maxAttempts = Math.max(maxAttempts, updated?.failed_login_attempts || (u.failed_login_attempts || 0) + 1);
       }
-      if (sawLockedMatch) return error(res, 'Account is temporarily locked. Try again later.', 423);
+
       if (maxAttempts >= 3) {
-        // Short 2-minute cooldown before OTP verification is offered
+        // Progressive 2-minute cooldown targeted strictly to matched user IDs
         await query(
           `UPDATE users SET locked_until = NOW() + INTERVAL '2 minutes'
-           WHERE failed_login_attempts >= 3
-             AND (locked_until IS NULL OR locked_until < NOW() + INTERVAL '2 minutes')`
+           WHERE id = ANY($1::uuid[])`,
+          [matchedIds]
         ).catch(() => {});
+
         return res.status(429).json({
           success: false,
           code: 'LOGIN_COOLDOWN',
           require_otp: true,
           retry_after_seconds: 120,
-          message: 'Too many failed attempts. Please wait 2 minutes or login using OTP.'
+          message: 'Maximum password attempts reached. Please log in using OTP or wait 2 minutes.'
         });
       }
+
       return res.status(401).json({
         success: false,
         code: 'INVALID_CREDENTIALS',
@@ -1313,6 +1324,12 @@ const loginPassword = async (req, res, next) => {
     // Generate Refresh Token
     const refreshToken = await generateAndSaveRefreshToken(user.id, req, req.body.rememberMe !== false);
     await security.resetFailures(user.id);
+    const matchedIds = matchedUsers.map(u => u.id);
+    await query(
+      `UPDATE users SET failed_login_attempts = 0, locked_until = NULL, updated_at = NOW() 
+       WHERE id = ANY($1::uuid[])`,
+      [matchedIds]
+    ).catch(() => {});
     await security.detectSuspiciousLogin(user.id, req);
     await security.loginRecord(user.id, req, 'success');
     await security.audit(user.id, 'login_success', req);
