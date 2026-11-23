@@ -11,6 +11,7 @@ import { PartnerDock } from '../../components/PartnerDock';
 import { PartnerTopBar } from '../../components/PartnerTopBar';
 import { EmployeeTopBar } from '../../components/EmployeeTopBar';
 import { SuperAdminTopBar, SuperAdminNavDrawer } from '../../components/SuperAdminTopBar';
+import { PanelTopBar, PanelNavDrawer, ADMIN_NAV_SECTIONS, HR_NAV_SECTIONS } from '../../components/PanelChrome';
 import { notificationService } from '../../services/notification.service';
 import { typography } from '../../theme/typography';
 import { getUnreadCount } from '../../services/messenger.service';
@@ -51,6 +52,7 @@ export default function AppLayout() {
   const [partnerMenuOpen, setPartnerMenuOpen] = useState(false);
   const [employeeMenuOpen, setEmployeeMenuOpen] = useState(false);
   const [superAdminMenuOpen, setSuperAdminMenuOpen] = useState(false);
+  const [panelMenuOpen, setPanelMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!partnerMenuOpen) return;
@@ -81,6 +83,16 @@ export default function AppLayout() {
     const handler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => handler.remove();
   }, [superAdminMenuOpen]);
+
+  useEffect(() => {
+    if (!panelMenuOpen) return;
+    const backAction = () => {
+      setPanelMenuOpen(false);
+      return true;
+    };
+    const handler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => handler.remove();
+  }, [panelMenuOpen]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -330,6 +342,30 @@ export default function AppLayout() {
           />
         </View>
       )}
+      {/* Admin navbar — mirrors the website AdminLayout mobile header */}
+      {role === 'ADMIN' && (
+        <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+          <PanelTopBar
+            brand="Admin Panel"
+            subtitle="Operations"
+            onMenuPress={() => setPanelMenuOpen(true)}
+            messengerUnread={unreadCount}
+            notificationUnread={notificationUnread}
+          />
+        </View>
+      )}
+      {/* HR navbar — mirrors the website HR view of AdminLayout */}
+      {role === 'HR' && (
+        <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+          <PanelTopBar
+            brand="HR Panel"
+            subtitle="Human Resources"
+            onMenuPress={() => setPanelMenuOpen(true)}
+            messengerUnread={unreadCount}
+            notificationUnread={notificationUnread}
+          />
+        </View>
+      )}
       <Tabs
         backBehavior="history"
         screenOptions={{
@@ -503,6 +539,25 @@ export default function AppLayout() {
       {/* Super Admin navigation drawer — mirrors website sidebar categories */}
       {role === 'SUPER_ADMIN' && (
         <SuperAdminNavDrawer visible={superAdminMenuOpen} onClose={() => setSuperAdminMenuOpen(false)} />
+      )}
+      {/* Admin / HR navigation drawers — mirror website AdminLayout sidebar */}
+      {role === 'ADMIN' && (
+        <PanelNavDrawer
+          visible={panelMenuOpen}
+          onClose={() => setPanelMenuOpen(false)}
+          sections={ADMIN_NAV_SECTIONS}
+          brand="Admin Panel"
+          subtitle="Operations"
+        />
+      )}
+      {role === 'HR' && (
+        <PanelNavDrawer
+          visible={panelMenuOpen}
+          onClose={() => setPanelMenuOpen(false)}
+          sections={HR_NAV_SECTIONS}
+          brand="HR Panel"
+          subtitle="Human Resources"
+        />
       )}
 
       {/* Employee feature sidebar — mirrors the website EmployeeLayout nav */}
