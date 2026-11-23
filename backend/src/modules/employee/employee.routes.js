@@ -1856,7 +1856,7 @@ async function getMonthlyIncentiveReportData(employeeId, targetYear, targetMonth
 
   const deptAssignRes = await query(`
     SELECT bank_id FROM employee_bank_assignments WHERE employee_id = $1
-  `, [employeeId]);
+  `, [employeeId]).catch(() => ({ rows: [] }));
   const deptBankIds = new Set(deptAssignRes.rows.map(r => r.bank_id));
 
   const rulesRes = await query(`
@@ -1865,7 +1865,7 @@ async function getMonthlyIncentiveReportData(employeeId, targetYear, targetMonth
       AND start_date <= $2::date
       AND end_date >= $3::date
       AND status = 'ACTIVE'
-  `, [employeeId, endDateStr, startDateStr]);
+  `, [employeeId, endDateStr, startDateStr]).catch(() => ({ rows: [] }));
 
   const bankRuleMap = {};
   rulesRes.rows.forEach(r => {

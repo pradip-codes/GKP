@@ -4781,6 +4781,20 @@ const migrate = async () => {
   }
 
   try {
+    const migrateEmployeeBonusDepartments = require('./migrate_employee_bonus_departments');
+    await migrateEmployeeBonusDepartments();
+  } catch (bonusMigErr) {
+    logger.error('Failed to run Employee Bonus & Department migration:', bonusMigErr.message);
+  }
+
+  try {
+    const migrateHdfcCardChannelLinks = require('./migrate_hdfc_card_channel_links');
+    await migrateHdfcCardChannelLinks();
+  } catch (hdfcMigErr) {
+    logger.error('Failed to run HDFC card channel links migration:', hdfcMigErr.message);
+  }
+
+  try {
     const migrateChatbotSystem = require('./migrate_chatbot');
     await migrateChatbotSystem();
   } catch (chatbotMigErr) {
