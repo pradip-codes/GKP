@@ -1396,8 +1396,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg,
-    // Clear the floating bottom dock so the composer/list aren't hidden behind it
-    paddingBottom: 100,
   },
   listHeader: {
     backgroundColor: '#0F172A',

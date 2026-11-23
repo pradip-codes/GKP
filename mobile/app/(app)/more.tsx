@@ -32,16 +32,38 @@ const ITEM_ROLES: Record<string, string[]> = {
   'employee-sales-report': ['EMPLOYEE', 'ADMIN'],
   'employee-onboarding': ['EMPLOYEE', 'HR', 'ADMIN'],
   'hr-dashboard': ['HR', 'ADMIN'],
+  'hr-payroll': ['HR', 'ADMIN'],
   // Role panels
   'admin-dashboard': ['ADMIN'],
   'admin-partners': ['ADMIN'],
   'admin-withdrawals': ['ADMIN'],
+  'admin-designation-rules': ['ADMIN', 'SUPER_ADMIN'],
   'hr-candidates': ['HR', 'ADMIN'],
   'attendance': ['EMPLOYEE', 'ADMIN'],
   'employee-dashboard': ['EMPLOYEE'],
+  'employee-payroll': ['EMPLOYEE', 'HR', 'ADMIN'],
   'partner-dashboard': ['PARTNER', 'TEAM_MEMBER'],
   'team-dashboard': ['TEAM_MEMBER'],
   'super-admin-hub': ['SUPER_ADMIN'],
+  // Admin CMS & operations (website /admin/* parity)
+  'admin-banks': ['ADMIN'],
+  'admin-products-cms': ['ADMIN'],
+  'admin-product-links': ['ADMIN'],
+  'admin-commissions': ['ADMIN'],
+  'admin-commission-rules': ['ADMIN'],
+  'admin-banners': ['ADMIN'],
+  'admin-sections': ['ADMIN'],
+  'admin-contests': ['ADMIN'],
+  'admin-wallet': ['ADMIN'],
+  'admin-reports': ['ADMIN'],
+  'admin-bulk-sms': ['ADMIN'],
+  'admin-whatsapp': ['ADMIN'],
+  'admin-view-messages': ['ADMIN'],
+  'admin-announcements': ['ADMIN'],
+  'admin-support': ['ADMIN'],
+  'admin-audit-logs': ['ADMIN'],
+  'admin-referral-analytics': ['ADMIN'],
+  'admin-applications-tracking': ['ADMIN'],
 };
 
 interface MenuItem {
@@ -215,6 +237,13 @@ export default function MoreScreen() {
       route: '/(app)/employee-sales-report'
     },
     {
+      id: 'employee-payroll',
+      title: 'Payroll & Salary',
+      subtitle: 'My salary, payslips, documents & PF summary',
+      icon: 'wallet',
+      route: '/(app)/employee-payroll'
+    },
+    {
       id: 'employee-onboarding',
       title: 'Employee Joining & KYC',
       subtitle: 'Complete onboarding form & verification tracker',
@@ -227,6 +256,13 @@ export default function MoreScreen() {
       subtitle: 'Candidate interview scheduling & talent pipeline',
       icon: 'id-card',
       route: '/(app)/hr-dashboard'
+    },
+    {
+      id: 'hr-payroll',
+      title: 'HR Payroll Console',
+      subtitle: 'Generate payroll, approve payslips & salary structures',
+      icon: 'cash',
+      route: '/(app)/hr-payroll'
     },
     {
       id: 'support',
@@ -289,6 +325,13 @@ export default function MoreScreen() {
       route: '/(app)/admin-withdrawals'
     },
     {
+      id: 'admin-designation-rules',
+      title: 'Designation Rules Audit',
+      subtitle: 'RBAC matrix, rules catalog & conflicts',
+      icon: 'shield',
+      route: '/(app)/admin-designation-rules'
+    },
+    {
       id: 'hr-dashboard',
       title: 'HR Recruitment Desk',
       subtitle: 'Candidate interviews & talent pipeline',
@@ -330,6 +373,27 @@ export default function MoreScreen() {
       icon: 'location',
       route: '/(app)/attendance'
     },
+  ];
+
+  const adminOps: MenuItem[] = [
+    { id: 'admin-applications-tracking', title: 'Applications Tracking', subtitle: 'All card, loan & insurance applications', icon: 'document-text', route: '/(app)/super-admin/applications' },
+    { id: 'admin-banks', title: 'Manage Banks', subtitle: 'Bank catalog, categories & partner links', icon: 'business', route: '/(app)/super-admin/banks' },
+    { id: 'admin-products-cms', title: 'Products CMS', subtitle: 'Create & manage financial product listings', icon: 'grid', route: '/(app)/product-management' },
+    { id: 'admin-product-links', title: 'Product & Employee Links', subtitle: 'Direct links assigned to employees & partners', icon: 'link', route: '/(app)/product-links' },
+    { id: 'admin-commissions', title: 'Manage Commissions', subtitle: 'Commission payouts & approval workflow', icon: 'cash', route: '/(app)/manage-commissions' },
+    { id: 'admin-commission-rules', title: 'Commission Rules', subtitle: 'Rule engine for payout calculations', icon: 'options', route: '/(app)/commission-rules' },
+    { id: 'admin-wallet', title: 'Wallet & Settlements', subtitle: 'Platform wallet, ledger & withdrawals', icon: 'wallet', route: '/(app)/super-admin/wallet' },
+    { id: 'admin-reports', title: 'Reports', subtitle: 'Operational & financial report exports', icon: 'stats-chart', route: '/(app)/super-admin/reports' },
+    { id: 'admin-banners', title: 'Banners', subtitle: 'Homepage & in-app banner management', icon: 'image', route: '/(app)/super-admin/banners' },
+    { id: 'admin-sections', title: 'Homepage Sections', subtitle: 'Landing page section ordering & content', icon: 'file-tray', route: '/(app)/super-admin/sections' },
+    { id: 'admin-contests', title: 'Contest Manager', subtitle: 'Sales contests, targets & rewards', icon: 'trophy', route: '/(app)/super-admin/contests' },
+    { id: 'admin-bulk-sms', title: 'Bulk SMS', subtitle: 'Campaign SMS dispatch & delivery logs', icon: 'chatbox', route: '/(app)/bulk-sms-dashboard' },
+    { id: 'admin-whatsapp', title: 'WhatsApp Business', subtitle: 'Official WhatsApp messaging channel', icon: 'logo-whatsapp', route: '/(app)/whatsapp' },
+    { id: 'admin-view-messages', title: 'View Messages', subtitle: 'Inbound message monitoring', icon: 'mail', route: '/(app)/view-messages' },
+    { id: 'admin-announcements', title: 'Announcements', subtitle: 'Broadcast notices to users', icon: 'megaphone', route: '/(app)/super-admin/announcements' },
+    { id: 'admin-support', title: 'Support Tickets', subtitle: 'User support ticket management', icon: 'help-circle', route: '/(app)/super-admin/support' },
+    { id: 'admin-audit-logs', title: 'Audit Logs', subtitle: 'System activity & change trail', icon: 'time', route: '/(app)/super-admin/audit-logs' },
+    { id: 'admin-referral-analytics', title: 'Referral Analytics', subtitle: 'Referral funnel & conversion stats', icon: 'analytics', route: '/(app)/referral-analytics' },
   ];
 
   const renderSection = (title: string, items: MenuItem[]) => {
@@ -390,6 +454,9 @@ export default function MoreScreen() {
 
         {/* Priority 3: Account & Support */}
         {renderSection('Priority 3: Support & Settings', accountSupport)}
+
+        {/* Admin CMS & Operations (website /admin/* parity) */}
+        {renderSection('Administration & CMS', adminOps)}
 
         {/* Log Out */}
         <TouchableOpacity style={styles.logoutBtn} onPress={logout}>

@@ -1713,7 +1713,48 @@ const uploadCheque = async (req, res, next) => {
     if (!partnerId) return error(res, 'Partner profile not found', 404);
 
     const file = getUploadedFile(req);
-    if (!file) return error(res, 'File is required', 400);
+    const { account_number, ifsc_code, bank_name, account_holder_name } = req.body || {};
+
+    if (!file && !(account_number || ifsc_code || bank_name || account_holder_name)) {
+      return error(res, 'Cancelled cheque file or bank details are required', 400);
+    }
+
+    // Persist bank details to partner_bank_details (account number is encrypted at rest)
+    if (account_number || ifsc_code || bank_name || account_holder_name) {
+      const { encrypt } = require('../../utils/helpers/crypto');
+      const { rows: [existingBank] } = await query(
+        `SELECT id FROM partner_bank_details WHERE partner_id = $1 LIMIT 1`,
+        [partnerId]
+      );
+
+      const sets = [];
+      const vals = [];
+      let idx = 1;
+      // Ignore masked values (e.g. "******1234") echoed back from the client
+      if (account_number && !String(account_number).includes('*')) {
+        sets.push(`account_number = $${idx++}`);
+        vals.push(encrypt(String(account_number).trim()));
+      }
+      if (ifsc_code) { sets.push(`ifsc_code = $${idx++}`); vals.push(String(ifsc_code).trim().toUpperCase()); }
+      if (bank_name) { sets.push(`bank_name = $${idx++}`); vals.push(String(bank_name).trim()); }
+      if (account_holder_name) { sets.push(`account_holder_name = $${idx++}`); vals.push(String(account_holder_name).trim()); }
+      sets.push(`updated_at = NOW()`);
+
+      if (existingBank) {
+        vals.push(existingBank.id);
+        await query(`UPDATE partner_bank_details SET ${sets.join(', ')} WHERE id = $${idx}`, vals);
+      } else if (account_number && !String(account_number).includes('*')) {
+        // Insert requires all NOT NULL columns — only possible with a real account number
+        await query(`
+          INSERT INTO partner_bank_details (partner_id, bank_name, account_number, ifsc_code, account_holder_name)
+          VALUES ($1, $2, $3, $4, $5)
+        `, [partnerId, bank_name || 'Bank', vals[0], ifsc_code ? String(ifsc_code).trim().toUpperCase() : '', account_holder_name || 'Partner']);
+      }
+    }
+
+    if (!file) {
+      return success(res, {}, 'Bank details saved successfully');
+    }
 
     const { url, key } = await uploadToS3(file.buffer, file.originalname, `kyc/${partnerId}`);
 
@@ -1870,8 +1911,35 @@ const getKycDetails = async (req, res, next) => {
     if (!partnerId) return error(res, 'Partner profile not found', 404);
 
     const { rows: [partner] } = await query(`
-      SELECT kyc_status, kyc_rejection_reason, rejection_reason, kyc_submitted_at, kyc_reviewed_at FROM partner_profiles WHERE id = $1
+      SELECT pp.kyc_status, pp.kyc_rejection_reason, pp.rejection_reason, pp.kyc_submitted_at, pp.kyc_reviewed_at,
+             pp.first_name, pp.last_name, pp.partner_code, pp.company_name, pp.company_type,
+             pp.current_address, pp.pincode, pp.business_location, pp.gst_number, pp.pan_number,
+             u.email, u.mobile
+      FROM partner_profiles pp
+      JOIN users u ON u.id = pp.user_id
+      WHERE pp.id = $1
     `, [partnerId]);
+
+    const { rows: [bankDetails] } = await query(`
+      SELECT bank_name, account_number, ifsc_code, account_holder_name, is_verified
+      FROM partner_bank_details WHERE partner_id = $1
+    `, [partnerId]);
+
+    let bank = null;
+    if (bankDetails) {
+      const { decrypt } = require('../../utils/helpers/crypto');
+      let accountNumber = bankDetails.account_number;
+      try { accountNumber = decrypt(accountNumber); } catch (e) { /* already plain */ }
+      const len = String(accountNumber || '').length;
+      bank = {
+        bank_name: bankDetails.bank_name,
+        ifsc_code: bankDetails.ifsc_code,
+        account_holder_name: bankDetails.account_holder_name,
+        is_verified: bankDetails.is_verified,
+        // Masked — clients must not echo this back as a real account number
+        account_number: len > 4 ? '*'.repeat(len - 4) + String(accountNumber).slice(-4) : '*'.repeat(len),
+      };
+    }
 
     const { rows: documents } = await query(`
       SELECT id, doc_type, doc_number, file_url, s3_key, verification_status, verified, uploaded_at 
@@ -1890,6 +1958,8 @@ const getKycDetails = async (req, res, next) => {
       rejection_reason: partner?.kyc_rejection_reason || partner?.rejection_reason || null,
       kyc_submitted_at: partner?.kyc_submitted_at,
       kyc_reviewed_at: partner?.kyc_reviewed_at,
+      partner: partner || null,
+      bank_details: bank,
       documents,
       video
     });

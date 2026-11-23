@@ -23,6 +23,12 @@ import { spacing } from '../../theme/spacing';
 
 export default function TeamScreen() {
   const { user } = useAuth();
+  const isTeamMember = (user?.role || '').toUpperCase() === 'TEAM_MEMBER';
+
+  // Team Member upgrade flow — mirrors website PartnerTeam.jsx isTeamMember view
+  const [upgradeStatus, setUpgradeStatus] = useState<string | null>(null);
+  const [upgradeLoading, setUpgradeLoading] = useState(false);
+  const [upgradeMsg, setUpgradeMsg] = useState('');
 
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [teamSummary, setTeamSummary] = useState<any>(null);
@@ -66,9 +72,37 @@ export default function TeamScreen() {
     }
   }, []);
 
+  const checkUpgradeStatus = useCallback(async () => {
+    try {
+      const res = await apiClient.get('/team/upgrade-status');
+      const status = res.data?.data?.status || res.data?.data || res.data?.status || null;
+      setUpgradeStatus(typeof status === 'string' ? status.toUpperCase() : status?.upgrade_status?.toUpperCase?.() || null);
+    } catch {
+      setUpgradeStatus(null);
+    }
+  }, []);
+
+  const handleRequestUpgrade = async () => {
+    try {
+      setUpgradeLoading(true);
+      setUpgradeMsg('');
+      await apiClient.post('/team/upgrade-request', {});
+      setUpgradeStatus('PENDING');
+      setUpgradeMsg('Upgrade request submitted successfully.');
+    } catch (err: any) {
+      setUpgradeMsg(err.response?.data?.message || 'Failed to submit upgrade request');
+    } finally {
+      setUpgradeLoading(false);
+    }
+  };
+
   useEffect(() => {
+    if (isTeamMember) {
+      checkUpgradeStatus();
+      return;
+    }
     loadTeamData();
-  }, [loadTeamData]);
+  }, [loadTeamData, isTeamMember, checkUpgradeStatus]);
 
   const handleAddMember = async () => {
     // Validation
@@ -157,6 +191,66 @@ export default function TeamScreen() {
       </View>
     );
   };
+
+  // ── Team Member view — mirrors website PartnerTeam.jsx isTeamMember branch ──
+  if (isTeamMember) {
+    return (
+      <ScrollView style={styles.container} contentContainerStyle={{ padding: spacing.md }}>
+        <View style={styles.tmCard}>
+          <View style={styles.tmHeaderRow}>
+            <View style={styles.tmIconWrap}>
+              <Text style={{ fontSize: 24 }}>⭐</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.tmTitle}>Team Member Portal</Text>
+              <Text style={styles.tmSubtitle}>You are registered as a Team Member</Text>
+            </View>
+          </View>
+
+          <View style={styles.tmInfoCard}>
+            <Text style={styles.tmInfoTitle}>What you can do:</Text>
+            <Text style={styles.tmInfoLine}>• Sell products directly and earn product commissions.</Text>
+            <Text style={styles.tmInfoLine}>
+              • Refer new partners and earn <Text style={{ color: '#10B981', fontWeight: '700' }}>₹500 bonus</Text> after 3 approvals.
+            </Text>
+            <Text style={styles.tmInfoLine}>• Track applications and wallet earnings in real time.</Text>
+          </View>
+
+          <View style={styles.tmUpgradeCard}>
+            <Text style={styles.tmUpgradeTitle}>Upgrade to Partner</Text>
+            <Text style={styles.tmUpgradeText}>
+              Build your own team network, manage downline partners, and earn multi-tier override commissions.
+            </Text>
+            {upgradeStatus === 'PENDING' ? (
+              <View style={styles.tmPendingBox}>
+                <Text style={styles.tmPendingText}>⏳ Upgrade request is under review by Super Admin.</Text>
+              </View>
+            ) : upgradeStatus === 'APPROVED' ? (
+              <View style={styles.tmApprovedBox}>
+                <Text style={styles.tmApprovedText}>✅ Upgrade approved! Please refresh your session.</Text>
+              </View>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={[styles.tmUpgradeBtn, upgradeLoading && { opacity: 0.6 }]}
+                  onPress={handleRequestUpgrade}
+                  disabled={upgradeLoading}
+                  activeOpacity={0.8}
+                >
+                  {upgradeLoading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.tmUpgradeBtnText}>🚀 Request Partner Upgrade</Text>
+                  )}
+                </TouchableOpacity>
+                {!!upgradeMsg && <Text style={styles.tmUpgradeMsg}>{upgradeMsg}</Text>}
+              </>
+            )}
+          </View>
+        </View>
+      </ScrollView>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -548,5 +642,121 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.sm,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  // Team Member portal styles (website PartnerTeam.jsx isTeamMember view)
+  tmCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  tmHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    marginBottom: 24,
+  },
+  tmIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: colors.primary + '20',
+    borderWidth: 1,
+    borderColor: colors.primary + '40',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  tmTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.text,
+  },
+  tmSubtitle: {
+    fontSize: 13,
+    color: colors.textLight,
+    marginTop: 4,
+  },
+  tmInfoCard: {
+    backgroundColor: '#F8FAFF',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+  },
+  tmInfoTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 12,
+  },
+  tmInfoLine: {
+    fontSize: 13,
+    color: colors.textLight,
+    lineHeight: 22,
+  },
+  tmUpgradeCard: {
+    backgroundColor: '#F0F4FF',
+    borderWidth: 1,
+    borderColor: colors.primary + '30',
+    borderRadius: 16,
+    padding: 24,
+  },
+  tmUpgradeTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.primary,
+    marginBottom: 8,
+  },
+  tmUpgradeText: {
+    fontSize: 13,
+    color: colors.textLight,
+    lineHeight: 22,
+    marginBottom: 20,
+  },
+  tmUpgradeBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+  },
+  tmUpgradeBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  tmUpgradeMsg: {
+    fontSize: 12,
+    color: colors.textLight,
+    marginTop: 8,
+  },
+  tmPendingBox: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#F59E0B15',
+    borderWidth: 1,
+    borderColor: '#F59E0B40',
+  },
+  tmPendingText: {
+    color: '#F59E0B',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  tmApprovedBox: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#10B98115',
+    borderWidth: 1,
+    borderColor: '#10B98140',
+  },
+  tmApprovedText: {
+    color: '#10B981',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

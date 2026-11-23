@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, Image } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, Image, BackHandler } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -39,20 +39,30 @@ export function PartnerTopBar({ name, code, balance }: PartnerTopBarProps) {
       .catch(() => setWalletBalance('₹0'));
   }, [balance]);
 
+  useEffect(() => {
+    if (!menuVisible) return;
+    const backAction = () => {
+      setMenuVisible(false);
+      return true;
+    };
+    const handler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => handler.remove();
+  }, [menuVisible]);
+
   const partnerName = name || user?.full_name || user?.name || 'Partner';
   const partnerCode = code || user?.partner_code || '';
 
   const menuItems = [
-    { icon: 'person-circle', label: 'Profile Hub', route: '/profile' },
-    { icon: 'shield-checkmark', label: 'KYC Centre', route: '/partner-kyc' },
-    { icon: 'megaphone', label: 'Marketing Center', route: '/marketing' },
-    { icon: 'school', label: 'Training Academy', route: '/training' },
-    { icon: 'wallet', label: 'Wallet', route: '/wallet' },
-    { icon: 'git-branch', label: 'Refers', route: '/partner-referrals' },
-    { icon: 'notifications', label: 'Notifications', route: '/notifications' },
-    ...(user?.role === 'TEAM_MEMBER' ? [] : [{ icon: 'people-circle', label: 'Manage Team', route: '/team' }]),
-    { icon: 'headset', label: 'Support Center', route: '/support' },
-    { icon: 'settings', label: 'Settings', route: '/settings' },
+    { icon: 'person-circle', label: 'Profile Hub', route: '/(app)/profile' },
+    { icon: 'shield-checkmark', label: 'KYC Centre', route: '/(app)/partner-kyc' },
+    { icon: 'megaphone', label: 'Marketing Center', route: '/(app)/marketing' },
+    { icon: 'school', label: 'Training Academy', route: '/(app)/training' },
+    { icon: 'wallet', label: 'Wallet', route: '/(app)/wallet' },
+    { icon: 'git-branch', label: 'Refers', route: '/(app)/partner-referrals' },
+    { icon: 'notifications', label: 'Notifications', route: '/(app)/notifications' },
+    ...(user?.role === 'TEAM_MEMBER' ? [] : [{ icon: 'people-circle', label: 'Manage Team', route: '/(app)/team' }]),
+    { icon: 'headset', label: 'Support Center', route: '/(app)/support' },
+    { icon: 'settings', label: 'Settings', route: '/(app)/settings' },
   ] as { icon: string; label: string; route: string }[];
 
   return (
@@ -73,7 +83,7 @@ export function PartnerTopBar({ name, code, balance }: PartnerTopBarProps) {
       </View>
 
       {/* Profile dropdown menu */}
-      <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
+      <Modal visible={menuVisible} transparent animationType="none" onRequestClose={() => setMenuVisible(false)}>
         <View style={styles.menuOverlay}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setMenuVisible(false)} />
           <View style={[styles.menuCard, { backgroundColor: isDark ? themeColors.card : '#FFFFFF', borderColor: themeColors.border }]}>
@@ -104,9 +114,7 @@ export function PartnerTopBar({ name, code, balance }: PartnerTopBarProps) {
                 style={[styles.menuItem, { borderBottomColor: themeColors.border }]}
                 onPress={() => {
                   setMenuVisible(false);
-                  // Navigate only after the modal finishes dismissing —
-                  // pushing in the same tick gets swallowed on Android.
-                  setTimeout(() => router.push(item.route as any), 300);
+                  router.push(item.route as any);
                 }}
                 activeOpacity={0.7}
               >
@@ -120,10 +128,8 @@ export function PartnerTopBar({ name, code, balance }: PartnerTopBarProps) {
               style={[styles.menuItem, styles.menuLogout]}
               onPress={async () => {
                 setMenuVisible(false);
-                setTimeout(async () => {
-                  await logout();
-                  router.replace('/(auth)/login');
-                }, 300);
+                await logout();
+                router.replace('/(auth)/login');
               }}
               activeOpacity={0.7}
             >

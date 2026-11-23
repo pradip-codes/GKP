@@ -48,7 +48,14 @@ export default function PartnerKycScreen() {
       if (res?.success && res.data) {
         setKycData(res.data);
         const panDoc = res.data.documents?.find((d: any) => d.doc_type === 'pan');
-        if (panDoc?.doc_number) setPanNumber(panDoc.doc_number);
+        setPanNumber(panDoc?.doc_number || res.data.partner?.pan_number || '');
+        const bank = res.data.bank_details;
+        if (bank) {
+          setAccountHolderName(bank.account_holder_name || '');
+          setAccountNumber(bank.account_number || '');
+          setIfscCode(bank.ifsc_code || '');
+          setBankName(bank.bank_name || '');
+        }
       }
     } catch (e) {
       // Fallback
@@ -125,7 +132,7 @@ export default function PartnerKycScreen() {
         name: 'kyc_verification_video.mp4',
       } as any);
 
-      await apiClient.post('/partner/kyc/video', formData, {
+      await apiClient.post('/partner/kyc/upload-video', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       Alert.alert('Success', 'Video uploaded successfully for face verification.');
@@ -180,6 +187,10 @@ export default function PartnerKycScreen() {
   };
 
   const handleFinalSubmit = async () => {
+    if (uploadedCount < 3) {
+      Alert.alert('Incomplete KYC', 'Please upload all 3 items first: PAN Card, Cancelled Cheque / Bank Proof, and Verification Video.');
+      return;
+    }
     try {
       setSubmitting(true);
       const res = await submitPartnerKycFinal();
@@ -192,8 +203,36 @@ export default function PartnerKycScreen() {
     }
   };
 
-  const kycStatus = (kycData?.kyc_status || 'draft').toUpperCase();
-  const isApproved = kycStatus === 'APPROVED';
+  const kycStatus = (kycData?.kyc_status || 'draft').toLowerCase();
+  const isApproved = kycStatus === 'approved';
+  const isUnderReview = kycStatus === 'under_review';
+  const isRejected = kycStatus === 'rejected';
+  const rejectionReason = kycData?.rejection_reason;
+
+  const getDoc = (type: string) => kycData?.documents?.find((d: any) => d.doc_type === type);
+  const docStatus = (type: string) => {
+    const doc = getDoc(type);
+    if (!doc) return 'missing';
+    return doc.verification_status || 'pending';
+  };
+  const videoUploaded = !!kycData?.video;
+  const videoStatus = kycData?.video?.verification_status || (videoUploaded ? 'pending' : 'missing');
+  const uploadedCount = [docStatus('pan'), docStatus('cancelled_cheque'), videoStatus].filter((s) => s !== 'missing').length;
+
+  const statusMeta: Record<string, { label: string; bg: string; fg: string }> = {
+    approved: { label: 'Approved', bg: '#DCFCE7', fg: '#059669' },
+    pending: { label: 'Pending Review', bg: '#FEF3C7', fg: '#D97706' },
+    rejected: { label: 'Rejected', bg: '#FEE2E2', fg: '#DC2626' },
+    missing: { label: 'Not Uploaded', bg: '#F1F5F9', fg: '#94A3B8' },
+  };
+  const StatusChip = ({ status }: { status: string }) => {
+    const meta = statusMeta[status] || statusMeta.missing;
+    return (
+      <View style={{ backgroundColor: meta.bg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+        <Text style={{ fontSize: 10, fontWeight: '700', color: meta.fg }}>{meta.label}</Text>
+      </View>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -216,17 +255,23 @@ export default function PartnerKycScreen() {
         </View>
 
         {/* Status Card - Website Style */}
-        <View style={[styles.statusCard, isApproved ? styles.statusCardApproved : styles.statusCardPending]}>
+        <View style={[styles.statusCard, isApproved ? styles.statusCardApproved : isRejected ? styles.statusCardRejected : styles.statusCardPending]}>
           <View style={styles.statusRow}>
-            <View style={[styles.statusIconBg, isApproved ? { backgroundColor: '#DCFCE7' } : { backgroundColor: '#FEF3C7' }]}>
-              <Icon name={isApproved ? 'check-circle' : 'clock'} size={20} color={isApproved ? '#059669' : '#D97706'} />
+            <View style={[styles.statusIconBg, { backgroundColor: isApproved ? '#DCFCE7' : isRejected ? '#FEE2E2' : '#FEF3C7' }]}>
+              <Icon name={isApproved ? 'check-circle' : isRejected ? 'alert-circle' : 'clock'} size={20} color={isApproved ? '#059669' : isRejected ? '#DC2626' : '#D97706'} />
             </View>
             <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.statusHeading}>KYC Status: {kycStatus}</Text>
+              <Text style={styles.statusHeading}>
+                {isApproved ? 'KYC Approved' : isUnderReview ? 'KYC Under Review' : isRejected ? 'KYC Rejected' : 'KYC Pending'}
+              </Text>
               <Text style={styles.statusDescription}>
                 {isApproved
                   ? 'Your account is verified. You have full access to withdrawals & payouts.'
-                  : 'Submit your PAN card and bank details below for compliance approval.'}
+                  : isUnderReview
+                  ? 'Your documents have been submitted and are pending compliance team approval.'
+                  : isRejected
+                  ? `Reason: ${rejectionReason || 'Document needs correction'}. Please re-upload the rejected items below.`
+                  : `Submit your PAN card, bank details and verification video — ${uploadedCount} of 3 items uploaded.`}
               </Text>
             </View>
           </View>
@@ -239,6 +284,8 @@ export default function PartnerKycScreen() {
               <Text style={styles.stepNumText}>1</Text>
             </View>
             <Text style={styles.sectionTitle}>PAN Card Verification</Text>
+            <View style={{ flex: 1 }} />
+            <StatusChip status={docStatus('pan')} />
           </View>
 
           <View style={styles.inputGroup}>
@@ -277,6 +324,8 @@ export default function PartnerKycScreen() {
               <Text style={styles.stepNumText}>2</Text>
             </View>
             <Text style={styles.sectionTitle}>Bank Account & Payout Details</Text>
+            <View style={{ flex: 1 }} />
+            <StatusChip status={docStatus('cancelled_cheque')} />
           </View>
 
           <View style={styles.inputGroup}>
@@ -349,11 +398,22 @@ export default function PartnerKycScreen() {
               <Text style={styles.stepNumText}>3</Text>
             </View>
             <Text style={styles.sectionTitle}>Face Verification Video</Text>
+            <View style={{ flex: 1 }} />
+            <StatusChip status={videoStatus} />
           </View>
 
           <Text style={styles.inputDescription}>
             Upload a short video (max 30 seconds) of yourself holding your PAN card for identity verification.
           </Text>
+
+          {videoUploaded && !videoUri && (
+            <View style={styles.videoUploadedNote}>
+              <Icon name="check-circle" size={16} color="#059669" />
+              <Text style={styles.videoUploadedText}>
+                Verification video already uploaded{kycData?.video?.video_duration ? ` (${kycData.video.video_duration}s)` : ''} — status: {videoStatus}
+              </Text>
+            </View>
+          )}
 
           <TouchableOpacity style={styles.uploadBtn} onPress={handlePickVideo}>
             <Icon name="video" size={16} color={colors.primary} />
@@ -447,6 +507,10 @@ const styles = StyleSheet.create({
   statusCardPending: {
     backgroundColor: '#FFFBEB',
     borderColor: '#FDE68A',
+  },
+  statusCardRejected: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
   },
   statusRow: {
     flexDirection: 'row',
@@ -573,6 +637,23 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: typography.sizes.sm,
     fontWeight: '800',
+  },
+  videoUploadedNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: spacing.xs,
+  },
+  videoUploadedText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#065F46',
+    fontWeight: '600',
   },
   btnDisabled: {
     opacity: 0.6,

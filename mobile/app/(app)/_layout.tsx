@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Tabs, Redirect, useRouter, usePathname, useGlobalSearchParams } from 'expo-router';
-import { Text, View, StyleSheet, AppState, Modal, TouchableOpacity, ScrollView, Image } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Text, View, StyleSheet, AppState, Modal, TouchableOpacity, ScrollView, Image, BackHandler } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { LoadingState } from '../../components/LoadingState';
 import { MinimalDock } from '../../components/MinimalDock';
 import { PartnerDock } from '../../components/PartnerDock';
+import { PartnerTopBar } from '../../components/PartnerTopBar';
+import { EmployeeTopBar } from '../../components/EmployeeTopBar';
 import { typography } from '../../theme/typography';
 import { getUnreadCount } from '../../services/messenger.service';
 import { getMessengerSocket } from '../../services/messengerSocket';
@@ -36,12 +39,34 @@ const TabIcon = ({ label, focused, badgeCount }: { label: string; focused: boole
 };
 
 export default function AppLayout() {
-  const { isAuthenticated, isLoading, userRole, userDesignation } = useAuth();
+  const { isAuthenticated, isLoading, userRole, userDesignation, user } = useAuth();
   const { colors, isDark } = useTheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const routeParams = useGlobalSearchParams<{ category?: string }>();
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [partnerMenuOpen, setPartnerMenuOpen] = useState(false);
+  const [employeeMenuOpen, setEmployeeMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!partnerMenuOpen) return;
+    const backAction = () => {
+      setPartnerMenuOpen(false);
+      return true;
+    };
+    const handler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => handler.remove();
+  }, [partnerMenuOpen]);
+
+  useEffect(() => {
+    if (!employeeMenuOpen) return;
+    const backAction = () => {
+      setEmployeeMenuOpen(false);
+      return true;
+    };
+    const handler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => handler.remove();
+  }, [employeeMenuOpen]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -122,7 +147,8 @@ export default function AppLayout() {
     if (role === 'ADMIN') return '/admin-dashboard';
     if (role === 'HR') return '/hr-dashboard';
     if (role === 'EMPLOYEE') return hasDesignation ? '/dashboard' : '/employee-dashboard';
-    if (role === 'TEAM_MEMBER') return '/team-dashboard';
+    // Website PartnerLogin routes TEAM_MEMBER to /partner/dashboard
+    if (role === 'TEAM_MEMBER') return '/partner-dashboard';
     if (role === 'PARTNER') return '/partner-dashboard';
     return '/dashboard';
   })();
@@ -130,6 +156,11 @@ export default function AppLayout() {
   // Admin-side roles never land on the generic partner workspace dashboard
   if (pathname === '/dashboard' && ['SUPER_ADMIN', 'ADMIN', 'HR'].includes(role)) {
     return <Redirect href={roleHome as any} />;
+  }
+
+  // Website PartnerLayout blocks TEAM_MEMBER from Manage Team and Reports
+  if (role === 'TEAM_MEMBER' && (pathname === '/team' || pathname === '/reports' || pathname.startsWith('/team/') || pathname.startsWith('/reports/'))) {
+    return <Redirect href={'/partner-dashboard' as any} />;
   }
 
   const dockItem = (id: string, label: string, icon: string, route: string, match?: string, badgeCount?: number) => ({
@@ -177,27 +208,26 @@ export default function AppLayout() {
           dockItem('attendance', 'Attendance', 'location', '/attendance', '/attendance'),
           dockItem('apps', 'Apps', 'document-text', '/applications', '/applications'),
           chatItem,
-          moreItem,
+          {
+            id: 'menu',
+            label: 'More',
+            icon: 'menu',
+            active: false,
+            onPress: () => setEmployeeMenuOpen(true),
+          },
         ];
-      case 'TEAM_MEMBER':
+      // TEAM_MEMBER uses the same partner dock as PARTNER (website parity)
+      default: // PARTNER, TEAM_MEMBER & others — custom dock: Dashboard, Applications, +Add Lead, Chat, More
         return [
-          dockItem('panel', 'Panel', 'home', '/team-dashboard', '/team-dashboard'),
-          dockItem('wallet', 'Wallet', 'wallet', '/wallet', '/wallet'),
-          dockItem('apps', 'Apps', 'document-text', '/applications', '/applications'),
-          chatItem,
-          moreItem,
-        ];
-      default: // PARTNER & others — custom dock: Dashboard, Applications, +Add Lead, Chat, More
-        return [
-          dockItem('panel', 'Dashboard', 'home', '/partner-dashboard', '/partner-dashboard'),
-          dockItem('apps', 'Applications', 'document-text', '/applications', '/applications'),
+          dockItem('panel', 'Dashboard', 'home', '/(app)/partner-dashboard', '/partner-dashboard'),
+          dockItem('apps', 'Applications', 'document-text', '/(app)/applications', '/applications'),
           {
             id: 'add',
             label: 'Add Lead',
             icon: 'add',
             active: false,
             isCenter: true,
-            onPress: () => router.push('/add-lead' as any),
+            onPress: () => router.push('/(app)/add-lead' as any),
           },
           chatItem,
           {
@@ -211,9 +241,59 @@ export default function AppLayout() {
     }
   })();
 
+  // Bottom clearance so the floating dock never covers screen content
+  const dockClearance = insets.bottom + 104;
+  const showPartnerNav = role === 'PARTNER' || role === 'TEAM_MEMBER';
+  const showEmployeeNav = role === 'EMPLOYEE';
+
+  // Employee approval state + manager/TL — mirrors website EmployeeLayout
+  const empUser = user as any;
+  const empStatus = (empUser?.employee_status || empUser?.activation_status || user?.status || '').toUpperCase();
+  const empApproved = !empStatus || empStatus === 'APPROVED' || empStatus === 'ACTIVE';
+  const isManagerOrTL = ['Manager', 'Team Leader'].includes(userDesignation) || ['ADMIN', 'SUPER_ADMIN'].includes(role);
+
+  // Employee sidebar — mirrors the website EmployeeLayout navItems exactly
+  const employeeSidebarItems: { id: string; label: string; icon: keyof typeof Ionicons.glyphMap; route: string; match: string }[] = empApproved ? [
+    { id: 'dashboard', label: 'Dashboard', icon: 'grid', route: roleHome, match: hasDesignation ? '/dashboard' : '/employee-dashboard' },
+    { id: 'attendance', label: 'My Attendance', icon: 'calendar', route: '/(app)/attendance', match: '/attendance' },
+    { id: 'credit-cards', label: 'Credit Cards', icon: 'card', route: '/(app)/employee-credit-cards', match: '/employee-credit-cards' },
+    { id: 'loan-on-card', label: 'Loan on Credit Card', icon: 'cash', route: '/(app)/employee-loan-on-card', match: '/employee-loan-on-card' },
+    { id: 'smart-emi', label: 'Smart EMI on Credit Card', icon: 'phone-portrait', route: '/(app)/employee-smart-emi', match: '/employee-smart-emi' },
+    { id: 'loans', label: 'Loans', icon: 'business', route: '/(app)/employee-loans', match: '/employee-loans' },
+    { id: 'insurance', label: 'Insurance', icon: 'shield', route: '/(app)/employee-insurance', match: '/employee-insurance' },
+    { id: 'sales-reports', label: 'Sales Reports', icon: 'document-text', route: '/(app)/employee-sales-report', match: '/employee-sales-report' },
+    { id: 'applications', label: 'My Applications', icon: 'albums', route: '/(app)/applications', match: '/applications' },
+    { id: 'messenger', label: 'Messenger', icon: 'chatbubble', route: '/(app)/messenger', match: '/messenger' },
+    { id: 'contests', label: 'Contests', icon: 'trophy', route: '/(app)/employee-contests', match: '/employee-contests' },
+    { id: 'incentives', label: 'My Incentives', icon: 'gift', route: '/(app)/employee-incentives', match: '/employee-incentives' },
+    { id: 'salary', label: 'My Salary', icon: 'cash', route: '/(app)/employee-payroll?tab=salary', match: '/employee-payroll' },
+    { id: 'payslip', label: 'Payslip', icon: 'receipt', route: '/(app)/employee-payroll?tab=payslips', match: '/employee-payroll' },
+    { id: 'documents', label: 'Documents & Reports', icon: 'folder', route: '/(app)/employee-payroll?tab=documents', match: '/employee-payroll' },
+    ...(isManagerOrTL ? [{ id: 'team', label: 'My Team Architecture', icon: 'people' as const, route: '/(app)/employee-team', match: '/employee-team' }] : []),
+    { id: 'settings', label: 'Settings & Preferences', icon: 'settings', route: '/(app)/employee-settings', match: '/employee-settings' },
+  ] : [
+    { id: 'dashboard', label: 'Dashboard', icon: 'grid', route: roleHome, match: hasDesignation ? '/dashboard' : '/employee-dashboard' },
+    { id: 'onboarding', label: 'Employee Onboarding & KYC', icon: 'checkmark-circle', route: '/(app)/employee-onboarding', match: '/employee-onboarding' },
+    { id: 'profile', label: 'Employee Profile', icon: 'person', route: '/(app)/employee-profile', match: '/profile' },
+    { id: 'settings', label: 'Settings & Preferences', icon: 'settings', route: '/(app)/employee-settings', match: '/employee-settings' },
+  ];
+
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, paddingBottom: dockClearance }}>
+      {/* Partner navbar — shown on every partner panel page */}
+      {showPartnerNav && (
+        <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+          <PartnerTopBar />
+        </View>
+      )}
+      {/* Employee navbar — shown on every employee panel page */}
+      {showEmployeeNav && (
+        <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+          <EmployeeTopBar onMenuPress={() => setEmployeeMenuOpen(true)} unreadCount={unreadCount} isManager={isManagerOrTL} />
+        </View>
+      )}
       <Tabs
+        backBehavior="history"
         screenOptions={{
           headerShown: false,
           tabBarStyle: { display: 'none' },
@@ -265,127 +345,184 @@ export default function AppLayout() {
       />
 
       {/* Hidden Auxiliary Screens */}
-      <Tabs.Screen name="support" options={{ href: null }} />
-      <Tabs.Screen name="settings" options={{ href: null }} />
-      <Tabs.Screen name="notifications" options={{ href: null }} />
-      <Tabs.Screen name="profile" options={{ href: null }} />
-      <Tabs.Screen name="application-details" options={{ href: null }} />
-      <Tabs.Screen name="leads" options={{ href: null }} />
-      <Tabs.Screen name="lead-details" options={{ href: null }} />
-      <Tabs.Screen name="customer-details" options={{ href: null }} />
-      <Tabs.Screen name="op-queue" options={{ href: null }} />
-      <Tabs.Screen name="partner-dashboard" options={{ href: null }} />
-      <Tabs.Screen name="team-dashboard" options={{ href: null }} />
-      <Tabs.Screen name="add-lead" options={{ href: null }} />
-      <Tabs.Screen name="products" options={{ href: null }} />
-      <Tabs.Screen name="team" options={{ href: null }} />
-      <Tabs.Screen name="wallet" options={{ href: null }} />
-      <Tabs.Screen name="finance-buddy" options={{ href: null }} />
-      <Tabs.Screen name="whatsapp" options={{ href: null }} />
-      <Tabs.Screen name="reports" options={{ href: null }} />
-      <Tabs.Screen name="travel-utilities" options={{ href: null }} />
-      <Tabs.Screen name="partner-kyc" options={{ href: null }} />
-      <Tabs.Screen name="marketing" options={{ href: null }} />
-      <Tabs.Screen name="training" options={{ href: null }} />
-      <Tabs.Screen name="vault" options={{ href: null }} />
-      <Tabs.Screen name="share-tracking" options={{ href: null }} />
-      <Tabs.Screen name="super-admin" options={{ href: null }} />
-      <Tabs.Screen name="employee-team" options={{ href: null }} />
-      <Tabs.Screen name="employee-referrals" options={{ href: null }} />
-      <Tabs.Screen name="employee-incentives" options={{ href: null }} />
-      <Tabs.Screen name="employee-sales-report" options={{ href: null }} />
-      <Tabs.Screen name="employee-onboarding" options={{ href: null }} />
-      <Tabs.Screen name="hr-dashboard" options={{ href: null }} />
-      <Tabs.Screen name="security" options={{ href: null }} />
-      <Tabs.Screen name="work" options={{ href: null }} />
-      <Tabs.Screen name="attendance" options={{ href: null }} />
+      <Tabs.Screen name="support" />
+      <Tabs.Screen name="settings" />
+      <Tabs.Screen name="notifications" />
+      <Tabs.Screen name="profile" />
+      <Tabs.Screen name="application-details" />
+      <Tabs.Screen name="leads" />
+      <Tabs.Screen name="lead-details" />
+      <Tabs.Screen name="customer-details" />
+      <Tabs.Screen name="op-queue" />
+      <Tabs.Screen name="partner-dashboard" />
+      <Tabs.Screen name="team-dashboard" />
+      <Tabs.Screen name="add-lead" />
+      <Tabs.Screen name="products" />
+      <Tabs.Screen name="team" />
+      <Tabs.Screen name="wallet" />
+      <Tabs.Screen name="finance-buddy" />
+      <Tabs.Screen name="whatsapp" />
+      <Tabs.Screen name="reports" />
+      <Tabs.Screen name="travel-utilities" />
+      <Tabs.Screen name="partner-kyc" />
+      <Tabs.Screen name="marketing" />
+      <Tabs.Screen name="training" />
+      <Tabs.Screen name="vault" />
+      <Tabs.Screen name="share-tracking" />
+      <Tabs.Screen name="super-admin" />
+      <Tabs.Screen name="employee-team" />
+      <Tabs.Screen name="employee-referrals" />
+      <Tabs.Screen name="employee-incentives" />
+      <Tabs.Screen name="employee-sales-report" />
+      <Tabs.Screen name="employee-onboarding" />
+      <Tabs.Screen name="hr-dashboard" />
+      <Tabs.Screen name="hr-payroll" />
+      <Tabs.Screen name="admin-designation-rules" />
+      <Tabs.Screen name="security" />
+      <Tabs.Screen name="work" />
+      <Tabs.Screen name="attendance" />
       
       {/* Missing High-Priority Screens from Audit */}
-      <Tabs.Screen name="category-overview" options={{ href: null }} />
-      <Tabs.Screen name="product-management" options={{ href: null }} />
-      <Tabs.Screen name="product-links" options={{ href: null }} />
-      <Tabs.Screen name="admin-partners" options={{ href: null }} />
-      <Tabs.Screen name="admin-withdrawals" options={{ href: null }} />
-      <Tabs.Screen name="admin-dashboard" options={{ href: null }} />
-      <Tabs.Screen name="view-messages" options={{ href: null }} />
-      <Tabs.Screen name="referral-analytics" options={{ href: null }} />
-      <Tabs.Screen name="bulk-sms-dashboard" options={{ href: null }} />
-      <Tabs.Screen name="manage-commissions" options={{ href: null }} />
-      <Tabs.Screen name="commission-rules" options={{ href: null }} />
-      <Tabs.Screen name="hr-candidates" options={{ href: null }} />
-      <Tabs.Screen name="partner-referrals" options={{ href: null }} />
-      <Tabs.Screen name="employee-credit-cards" options={{ href: null }} />
-      <Tabs.Screen name="employee-loan-on-card" options={{ href: null }} />
-      <Tabs.Screen name="employee-smart-emi" options={{ href: null }} />
+      <Tabs.Screen name="category-overview" />
+      <Tabs.Screen name="product-management" />
+      <Tabs.Screen name="product-links" />
+      <Tabs.Screen name="admin-partners" />
+      <Tabs.Screen name="admin-withdrawals" />
+      <Tabs.Screen name="admin-dashboard" />
+      <Tabs.Screen name="view-messages" />
+      <Tabs.Screen name="referral-analytics" />
+      <Tabs.Screen name="bulk-sms-dashboard" />
+      <Tabs.Screen name="manage-commissions" />
+      <Tabs.Screen name="commission-rules" />
+      <Tabs.Screen name="hr-candidates" />
+      <Tabs.Screen name="partner-referrals" />
+      <Tabs.Screen name="employee-credit-cards" />
+      <Tabs.Screen name="employee-loans" />
+      <Tabs.Screen name="employee-insurance" />
+      <Tabs.Screen name="employee-loan-on-card" />
+      <Tabs.Screen name="employee-smart-emi" />
+      <Tabs.Screen name="card-comparison" />
+      <Tabs.Screen name="eligibility-checker" />
+      <Tabs.Screen name="employee-contests" />
+      <Tabs.Screen name="employee-dashboard" />
+      <Tabs.Screen name="employee-settings" />
+      <Tabs.Screen name="employee-profile" />
+      <Tabs.Screen name="employee-payroll" />
+      <Tabs.Screen name="loan-calculator" />
+      <Tabs.Screen name="partner-settings" />
       </Tabs>
-      {role === 'PARTNER' || !['SUPER_ADMIN', 'ADMIN', 'HR', 'EMPLOYEE', 'TEAM_MEMBER'].includes(role) ? (
+      {!['SUPER_ADMIN', 'ADMIN', 'HR', 'EMPLOYEE'].includes(role) ? (
         <PartnerDock items={dockItems as any} />
       ) : (
         <MinimalDock items={dockItems} />
       )}
 
       {/* Partner feature sidebar — hamburger menu, labels only */}
-      <Modal visible={partnerMenuOpen} transparent animationType="slide" onRequestClose={() => setPartnerMenuOpen(false)}>
-        <View style={sidebarStyles.overlay}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setPartnerMenuOpen(false)} />
-          <View style={[sidebarStyles.drawer, { backgroundColor: isDark ? colors.card : '#FFFFFF', borderColor: colors.border }]}>
-            <View style={[sidebarStyles.drawerHeader, { borderBottomColor: colors.border }]}>
-              <Image source={require('../../assets/images/logo.png')} style={sidebarStyles.drawerLogo} resizeMode="contain" />
-              <Text style={[sidebarStyles.drawerTitle, { color: isDark ? colors.text : '#111827' }]}>GharKaPaisa</Text>
-              <TouchableOpacity onPress={() => setPartnerMenuOpen(false)} style={sidebarStyles.closeBtn}>
-                <Ionicons name="close" size={22} color={isDark ? colors.text : '#111827'} />
-              </TouchableOpacity>
+      {partnerMenuOpen && (
+        <View style={[StyleSheet.absoluteFill, { zIndex: 10000 }]}>
+          <View style={sidebarStyles.overlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setPartnerMenuOpen(false)} />
+            <View style={[sidebarStyles.drawer, { backgroundColor: isDark ? colors.card : '#FFFFFF', borderColor: colors.border }]}>
+              <View style={[sidebarStyles.drawerHeader, { borderBottomColor: colors.border }]}>
+                <Image source={require('../../assets/images/logo.png')} style={sidebarStyles.drawerLogo} resizeMode="contain" />
+                <Text style={[sidebarStyles.drawerTitle, { color: isDark ? colors.text : '#111827' }]}>GharKaPaisa</Text>
+                <TouchableOpacity onPress={() => setPartnerMenuOpen(false)} style={sidebarStyles.closeBtn}>
+                  <Ionicons name="close" size={22} color={isDark ? colors.text : '#111827'} />
+                </TouchableOpacity>
+              </View>
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+                {PARTNER_SIDEBAR_ITEMS.filter((item) => !(role === 'TEAM_MEMBER' && ['team', 'reports'].includes(item.id))).map((item) => {
+                  const itemCategory = item.route.includes('category=')
+                    ? item.route.split('category=')[1]
+                    : null;
+                  const isActive = itemCategory
+                    ? pathname.includes('/products') && routeParams.category === itemCategory
+                    : pathname.includes(item.match);
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={[sidebarStyles.item, isActive && { backgroundColor: colors.primary + '12' }]}
+                      onPress={() => {
+                        setPartnerMenuOpen(false);
+                        router.push(item.route as any);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name={item.icon} size={20} color={isActive ? colors.primary : (colors.textMid || colors.textLight)} />
+                      <Text style={[sidebarStyles.itemLabel, { color: isActive ? colors.primary : (isDark ? colors.text : '#374151') }]}>
+                        {item.label}
+                      </Text>
+                      <Ionicons name="chevron-forward" size={16} color={colors.textLight} />
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
             </View>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
-              {PARTNER_SIDEBAR_ITEMS.map((item) => {
-                const itemCategory = item.route.includes('category=')
-                  ? item.route.split('category=')[1]
-                  : null;
-                const isActive = itemCategory
-                  ? pathname.includes('/products') && routeParams.category === itemCategory
-                  : pathname.includes(item.match);
-                return (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[sidebarStyles.item, isActive && { backgroundColor: colors.primary + '12' }]}
-                    onPress={() => {
-                      setPartnerMenuOpen(false);
-                      // Navigate after the drawer finishes dismissing
-                      setTimeout(() => router.push(item.route as any), 300);
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name={item.icon} size={20} color={isActive ? colors.primary : (colors.textMid || colors.textLight)} />
-                    <Text style={[sidebarStyles.itemLabel, { color: isActive ? colors.primary : (isDark ? colors.text : '#374151') }]}>
-                      {item.label}
-                    </Text>
-                    <Ionicons name="chevron-forward" size={16} color={colors.textLight} />
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
           </View>
         </View>
-      </Modal>
+      )}
+
+      {/* Employee feature sidebar — mirrors the website EmployeeLayout nav */}
+      {employeeMenuOpen && showEmployeeNav && (
+        <View style={[StyleSheet.absoluteFill, { zIndex: 10000 }]}>
+          <View style={sidebarStyles.overlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setEmployeeMenuOpen(false)} />
+            <View style={[sidebarStyles.drawer, { backgroundColor: isDark ? colors.card : '#FFFFFF', borderColor: colors.border }]}>
+              <View style={[sidebarStyles.drawerHeader, { borderBottomColor: colors.border }]}>
+                <Image source={require('../../assets/images/logo.png')} style={sidebarStyles.drawerLogo} resizeMode="contain" />
+                <View style={{ flex: 1 }}>
+                  <Text style={[sidebarStyles.drawerTitle, { color: isDark ? colors.text : '#111827' }]}>GharKaPaisa</Text>
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: colors.textLight, textTransform: 'uppercase', letterSpacing: 0.5 }}>Employee Portal</Text>
+                </View>
+                <TouchableOpacity onPress={() => setEmployeeMenuOpen(false)} style={sidebarStyles.closeBtn}>
+                  <Ionicons name="close" size={22} color={isDark ? colors.text : '#111827'} />
+                </TouchableOpacity>
+              </View>
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+                {employeeSidebarItems.map((item) => {
+                  const isActive = pathname === item.match || pathname.startsWith(item.match + '/');
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={[sidebarStyles.item, isActive && { backgroundColor: colors.primary + '12' }]}
+                      onPress={() => {
+                        setEmployeeMenuOpen(false);
+                        router.push(item.route as any);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name={item.icon} size={20} color={isActive ? colors.primary : (colors.textMid || colors.textLight)} />
+                      <Text style={[sidebarStyles.itemLabel, { color: isActive ? colors.primary : (isDark ? colors.text : '#374151') }]}>
+                        {item.label}
+                      </Text>
+                      <Ionicons name="chevron-forward" size={16} color={colors.textLight} />
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
 
 // Partner sidebar — mirrors the website PartnerLayout sidebar exactly
 const PARTNER_SIDEBAR_ITEMS: { id: string; label: string; icon: keyof typeof Ionicons.glyphMap; route: string; match: string }[] = [
-  { id: 'panel', label: 'Dashboard', icon: 'home', route: '/partner-dashboard', match: '/partner-dashboard' },
+  { id: 'panel', label: 'Dashboard', icon: 'home', route: '/(app)/partner-dashboard', match: '/partner-dashboard' },
   { id: 'credit-cards', label: 'Credit Cards', icon: 'card', route: '/(app)/products?category=credit_card', match: '/products' },
   { id: 'loan-on-card', label: 'Loan on Credit Card', icon: 'cash', route: '/(app)/products?category=loan_on_credit_card', match: '/products' },
   { id: 'smart-emi', label: 'Smart EMI', icon: 'phone-portrait', route: '/(app)/products?category=smart_emi', match: '/products' },
   { id: 'loans', label: 'Loans', icon: 'business', route: '/(app)/products?category=loans', match: '/products' },
   { id: 'insurance', label: 'Insurance', icon: 'shield', route: '/(app)/products?category=insurance', match: '/products' },
-  { id: 'applications', label: 'Applications', icon: 'document-text', route: '/applications', match: '/applications' },
-  { id: 'customers', label: 'Customers', icon: 'people', route: '/customers', match: '/customers' },
-  { id: 'team', label: 'Manage Team', icon: 'people-circle', route: '/team', match: '/team' },
-  { id: 'reports', label: 'Reports', icon: 'stats-chart', route: '/reports', match: '/reports' },
-  { id: 'messenger', label: 'Messenger', icon: 'chatbubble', route: '/messenger', match: '/messenger' },
-  { id: 'support', label: 'Support', icon: 'headset', route: '/support', match: '/support' },
-  { id: 'settings', label: 'Settings', icon: 'settings', route: '/settings', match: '/settings' },
+  { id: 'applications', label: 'Applications', icon: 'document-text', route: '/(app)/applications', match: '/applications' },
+  { id: 'customers', label: 'Customers', icon: 'people', route: '/(app)/customers', match: '/customers' },
+  { id: 'team', label: 'Manage Team', icon: 'people-circle', route: '/(app)/team', match: '/team' },
+  { id: 'reports', label: 'Reports', icon: 'stats-chart', route: '/(app)/reports', match: '/reports' },
+  { id: 'messenger', label: 'Messenger', icon: 'chatbubble', route: '/(app)/messenger', match: '/messenger' },
+  { id: 'support', label: 'Support', icon: 'headset', route: '/(app)/support', match: '/support' },
+  { id: 'settings', label: 'Settings', icon: 'settings', route: '/(app)/settings', match: '/settings' },
 ];
 
 const sidebarStyles = StyleSheet.create({

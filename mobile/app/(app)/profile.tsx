@@ -178,6 +178,23 @@ export default function ProfileScreen() {
     }
   };
 
+  // Properly cancel an in-progress email/mobile change — resets step and clears entered values
+  const closeEmailModal = () => {
+    setEmailModalVisible(false);
+    setEmailStep('request');
+    setNewEmail('');
+    setOldEmailOtp('');
+    setNewEmailOtp('');
+  };
+
+  const closeMobileModal = () => {
+    setMobileModalVisible(false);
+    setMobileStep('request');
+    setNewMobile('');
+    setOldMobileOtp('');
+    setNewMobileOtp('');
+  };
+
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
@@ -331,7 +348,7 @@ export default function ProfileScreen() {
       <Button title="Sign Out of Session" onPress={handleLogout} variant="danger" style={{ marginTop: spacing.md, marginBottom: spacing.xl }} />
 
       {/* Change Email Modal */}
-      <Modal visible={emailModalVisible} transparent animationType="fade">
+      <Modal visible={emailModalVisible} transparent animationType="fade" onRequestClose={closeEmailModal}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Change Email Address</Text>
@@ -348,7 +365,7 @@ export default function ProfileScreen() {
                   autoCapitalize="none"
                 />
                 <View style={styles.modalBtnRow}>
-                  <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setEmailModalVisible(false)}>
+                  <TouchableOpacity style={styles.modalCancelBtn} onPress={closeEmailModal}>
                     <Text style={styles.modalCancelText}>Cancel</Text>
                   </TouchableOpacity>
                   <Button title={emailLoading ? 'Sending...' : 'Send Codes'} onPress={handleRequestEmailChange} loading={emailLoading} />
@@ -374,7 +391,7 @@ export default function ProfileScreen() {
                   keyboardType="number-pad"
                 />
                 <View style={styles.modalBtnRow}>
-                  <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setEmailModalVisible(false)}>
+                  <TouchableOpacity style={styles.modalCancelBtn} onPress={closeEmailModal}>
                     <Text style={styles.modalCancelText}>Cancel</Text>
                   </TouchableOpacity>
                   <Button title={emailLoading ? 'Verifying...' : 'Verify & Update'} onPress={handleVerifyEmailChange} loading={emailLoading} />
@@ -386,7 +403,7 @@ export default function ProfileScreen() {
       </Modal>
 
       {/* Change Mobile Modal */}
-      <Modal visible={mobileModalVisible} transparent animationType="fade">
+      <Modal visible={mobileModalVisible} transparent animationType="fade" onRequestClose={closeMobileModal}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Change Mobile Number</Text>
@@ -402,7 +419,7 @@ export default function ProfileScreen() {
                   keyboardType="phone-pad"
                 />
                 <View style={styles.modalBtnRow}>
-                  <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setMobileModalVisible(false)}>
+                  <TouchableOpacity style={styles.modalCancelBtn} onPress={closeMobileModal}>
                     <Text style={styles.modalCancelText}>Cancel</Text>
                   </TouchableOpacity>
                   <Button title={mobileLoading ? 'Sending...' : 'Send Codes'} onPress={handleRequestMobileChange} loading={mobileLoading} />
@@ -428,7 +445,7 @@ export default function ProfileScreen() {
                   keyboardType="number-pad"
                 />
                 <View style={styles.modalBtnRow}>
-                  <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setMobileModalVisible(false)}>
+                  <TouchableOpacity style={styles.modalCancelBtn} onPress={closeMobileModal}>
                     <Text style={styles.modalCancelText}>Cancel</Text>
                   </TouchableOpacity>
                   <Button title={mobileLoading ? 'Verifying...' : 'Verify & Update'} onPress={handleVerifyMobileChange} loading={mobileLoading} />

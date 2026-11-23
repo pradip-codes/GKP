@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,8 +8,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Dimensions,
-  Image,
-  Animated,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
@@ -23,59 +21,64 @@ import { StatusBadge } from '../../components/StatusBadge';
 import { Icon } from '../../components/Icon';
 import {
   fetchEmployeeProfile,
-  fetchEmployeeIncentives,
   fetchEmployeeApplications,
   fetchEmployeeVerificationStatus,
   fetchEmployeeOnboardingStatus,
   EmployeeProfileData,
-  EmployeeIncentivesResponse,
   EmployeeApplicationItem,
   VerificationStatus,
   OnboardingChecklist,
 } from '../../services/employee.service';
+import { getTodayAttendance, AttendanceRecord } from '../../services/attendance.service';
+import apiClient from '../../services/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function EmployeeDashboardScreen() {
-  const { colors } = useTheme();
-  const { user, userRole, userDesignation, reloadUser, logout } = useAuth();
+  const { colors, isDark } = useTheme();
+  const { user, reloadUser } = useAuth();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showLogoutMenu, setShowLogoutMenu] = useState(false);
 
   const [profileData, setProfileData] = useState<EmployeeProfileData | null>(null);
-  const [incentiveData, setIncentiveData] = useState<EmployeeIncentivesResponse | null>(null);
   const [applications, setApplications] = useState<EmployeeApplicationItem[]>([]);
   const [verificationStatus, setVerificationStatus] = useState<VerificationStatus | null>(null);
-  const [onboardingChecklist, setOnboardingChecklist] = useState<OnboardingChecklist | null>(null);
+  const [, setOnboardingChecklist] = useState<OnboardingChecklist | null>(null);
+  const [todayAttendance, setTodayAttendance] = useState<AttendanceRecord | null>(null);
 
-  // Banner carousel state
-  const [banners, setBanners] = useState([
+  // Banner carousel — API banners (/banners?page=offer) with static fallback, like the website
+  const [apiBanners, setApiBanners] = useState<any[]>([]);
+  const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
+
+  const STATIC_BANNERS = [
     { id: 1, title: 'Credit Card Bonus', subtitle: 'Earn up to ₹3,500 per card', color: '#0F766E' },
     { id: 2, title: 'Loan Contest', subtitle: 'Top performers win rewards', color: '#7C3AED' },
     { id: 3, title: 'Smart EMI', subtitle: 'Convert spends to EMIs', color: '#059669' },
-  ]);
-  const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
-  const scrollX = useRef(new Animated.Value(0)).current;
-  const flatListRef = useRef(null);
+  ];
+  const banners = apiBanners.length > 0
+    ? apiBanners.map((b: any, i: number) => ({
+        id: b.id ?? i,
+        title: b.title || b.name || 'Offer',
+        subtitle: b.subtitle || b.description || '',
+        color: b.theme_color || b.color || ['#0F766E', '#7C3AED', '#059669', '#B45309'][i % 4],
+      }))
+    : STATIC_BANNERS;
 
   const loadDashboardData = async () => {
     try {
       setError(null);
-      const [profileRes, incentiveRes, appsRes, verRes, onboardRes] = await Promise.allSettled([
+      const [profileRes, appsRes, verRes, onboardRes, attRes, bannersRes] = await Promise.allSettled([
         fetchEmployeeProfile(),
-        fetchEmployeeIncentives(),
         fetchEmployeeApplications(),
         fetchEmployeeVerificationStatus(),
         fetchEmployeeOnboardingStatus(),
+        getTodayAttendance().catch(() => null),
+        apiClient.get('/banners', { params: { page: 'offer' } }).catch(() => null),
       ]);
 
       if (profileRes.status === 'fulfilled') {
         setProfileData(profileRes.value);
-      }
-      if (incentiveRes.status === 'fulfilled') {
-        setIncentiveData(incentiveRes.value);
       }
       if (appsRes.status === 'fulfilled') {
         setApplications(appsRes.value);
@@ -85,6 +88,15 @@ export default function EmployeeDashboardScreen() {
       }
       if (onboardRes.status === 'fulfilled') {
         setOnboardingChecklist(onboardRes.value);
+      }
+      if (attRes.status === 'fulfilled') {
+        setTodayAttendance(attRes.value);
+      }
+      if (bannersRes.status === 'fulfilled') {
+        const data = bannersRes.value?.data?.data ?? bannersRes.value?.data;
+        if (Array.isArray(data) && data.length > 0) {
+          setApiBanners(data);
+        }
       }
     } catch (err) {
       console.error('[EmployeeDashboard] Load error:', err);
@@ -115,15 +127,29 @@ export default function EmployeeDashboardScreen() {
     return () => clearInterval(interval);
   }, [banners.length]);
 
-  const totalApps = profileData?.total_applications ?? 0;
-  const approvedApps = profileData?.approved_applications ?? 0;
-  const pendingApps = Math.max(0, totalApps - approvedApps);
-  const leadsCount = profileData?.leads_count ?? 0;
-  const approvalRate = totalApps > 0 ? ((approvedApps / totalApps) * 100).toFixed(1) : '0.0';
+  const totalApps = profileData?.total_applications ?? applications.length;
 
-  const totalPaidIncentive = incentiveData?.stats?.total_paid ?? profileData?.incentives_summary?.paid_incentives ?? 0;
-  const pendingIncentive = incentiveData?.stats?.pending_incentive ?? profileData?.incentives_summary?.pending_incentives ?? 0;
-  const totalIncentives = profileData?.incentives_summary?.total_incentives ?? (totalPaidIncentive + pendingIncentive);
+  // Website parity: greeting, date, attendance + tasks status
+  const firstName = (user?.full_name || user?.name || 'Employee').split(' ')[0];
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const currentDate = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+  const isPunchedIn = !!todayAttendance?.check_in_time;
+  const isPunchedOut = !!todayAttendance?.check_out_time;
+  const attStatusLabel = isPunchedOut ? 'Completed' : isPunchedIn ? 'Working' : 'Not Marked';
+  const attStatusColor = isPunchedOut ? '#065F46' : isPunchedIn ? '#1D4ED8' : '#92400E';
+  const attStatusBg = isPunchedOut ? '#D1FAE5' : isPunchedIn ? '#DBEAFE' : '#FEF3C7';
+  const attSubtitle = isPunchedOut
+    ? 'Attendance completed for today'
+    : isPunchedIn
+      ? `Checked in at ${String(todayAttendance?.check_in_time || '').slice(0, 5)}`
+      : 'Mark your daily attendance';
+
+  const pendingTasksCount = (verificationStatus?.missing_items || []).length;
+  const taskStatusLabel = pendingTasksCount > 0 ? `${pendingTasksCount} Action Reqd` : 'Completed';
+  const taskStatusColor = pendingTasksCount > 0 ? '#92400E' : '#065F46';
+  const taskStatusBg = pendingTasksCount > 0 ? '#FEF3C7' : '#D1FAE5';
 
   // Check if employee needs onboarding
   const isVerified = verificationStatus?.overall_status === 'VERIFIED';
@@ -202,33 +228,6 @@ export default function EmployeeDashboardScreen() {
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
       >
-        <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.avatarTouchable}
-            onPress={() => setShowLogoutMenu(!showLogoutMenu)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{(user?.full_name || user?.email || 'E')[0].toUpperCase()}</Text>
-            </View>
-          </TouchableOpacity>
-          {showLogoutMenu && (
-            <View style={styles.logoutMenu}>
-              <TouchableOpacity
-                style={styles.logoutMenuItem}
-                onPress={async () => {
-                  setShowLogoutMenu(false);
-                  await logout();
-                  router.replace('/(auth)/login');
-                }}
-              >
-                <Icon name="log-out" size={16} color={colors.error} />
-                <Text style={[styles.logoutMenuText, { color: colors.error }]}>Logout</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-
         <Card style={styles.onboardingCard}>
           <Text style={styles.onboardingTitle}>⚠️ Complete Your Onboarding</Text>
           <Text style={styles.onboardingSubtitle}>
@@ -268,32 +267,78 @@ export default function EmployeeDashboardScreen() {
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
     >
-      {/* Header Section - Profile Circle Only */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.avatarTouchable}
-          onPress={() => setShowLogoutMenu(!showLogoutMenu)}
-          activeOpacity={0.7}
-        >
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{(user?.full_name || user?.email || 'E')[0].toUpperCase()}</Text>
-          </View>
-        </TouchableOpacity>
-        {showLogoutMenu && (
-          <View style={styles.logoutMenu}>
-            <TouchableOpacity
-              style={styles.logoutMenuItem}
-              onPress={async () => {
-                setShowLogoutMenu(false);
-                await logout();
-                router.replace('/(auth)/login');
-              }}
-            >
-              <Icon name="log-out" size={16} color={colors.error} />
-              <Text style={[styles.logoutMenuText, { color: colors.error }]}>Logout</Text>
+      {/* Welcome Section — mirrors website EmployeeDashboard */}
+      <View style={styles.welcomeRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.greeting}>{greeting}, {firstName}</Text>
+          <View style={styles.welcomeMetaRow}>
+            <TouchableOpacity style={styles.appChip} onPress={() => router.push('/(app)/applications')} activeOpacity={0.7}>
+              <Icon name="file-text" size={12} color="#7C3AED" />
+              <Text style={styles.appChipLabel}>Applications:</Text>
+              <Text style={styles.appChipValue}>{totalApps}</Text>
             </TouchableOpacity>
+            <Text style={styles.welcomeSub}>Total submitted from your account</Text>
           </View>
-        )}
+        </View>
+        <View style={styles.dateChip}>
+          <Icon name="calendar" size={12} color={colors.primary} />
+          <Text style={styles.dateChipText} numberOfLines={1}>{currentDate}</Text>
+        </View>
+      </View>
+
+      {/* Top 3 Summary Cards — Attendance / Applications / Tasks */}
+      <View style={styles.summaryCol}>
+        <TouchableOpacity style={styles.summaryCard} onPress={() => router.push('/(app)/attendance')} activeOpacity={0.7}>
+          <View style={[styles.summaryIcon, { backgroundColor: '#E8F7EF' }]}>
+            <Icon name="calendar" size={20} color="#059669" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <View style={styles.summaryTitleRow}>
+              <Text style={styles.summaryTitle}>Attendance</Text>
+              <View style={[styles.summaryBadge, { backgroundColor: attStatusBg }]}>
+                <Text style={[styles.summaryBadgeText, { color: attStatusColor }]}>{attStatusLabel}</Text>
+              </View>
+            </View>
+            <Text style={styles.summarySub} numberOfLines={1}>{attSubtitle}</Text>
+          </View>
+          <Icon name="chevron-right" size={16} color="#059669" />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.summaryCard} onPress={() => router.push('/(app)/applications')} activeOpacity={0.7}>
+          <View style={[styles.summaryIcon, { backgroundColor: '#F1EBFF' }]}>
+            <Icon name="file-text" size={20} color="#8B5CF6" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <View style={styles.summaryTitleRow}>
+              <Text style={styles.summaryTitle}>Applications</Text>
+              <View style={[styles.summaryBadge, { backgroundColor: '#F1EBFF' }]}>
+                <Text style={[styles.summaryBadgeText, { color: '#8B5CF6' }]}>{totalApps} Applications</Text>
+              </View>
+            </View>
+            <Text style={styles.summarySub} numberOfLines={1}>
+              {totalApps} total application{totalApps === 1 ? '' : 's'} on this account
+            </Text>
+          </View>
+          <Icon name="chevron-right" size={16} color="#8B5CF6" />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.summaryCard} onPress={() => router.push('/(app)/profile')} activeOpacity={0.7}>
+          <View style={[styles.summaryIcon, { backgroundColor: '#FFF1DF' }]}>
+            <Icon name="checkmark-circle" size={20} color="#F59E0B" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <View style={styles.summaryTitleRow}>
+              <Text style={styles.summaryTitle}>Tasks</Text>
+              <View style={[styles.summaryBadge, { backgroundColor: taskStatusBg }]}>
+                <Text style={[styles.summaryBadgeText, { color: taskStatusColor }]}>{taskStatusLabel}</Text>
+              </View>
+            </View>
+            <Text style={styles.summarySub} numberOfLines={1}>
+              {pendingTasksCount > 0 ? 'KYC / verification pending' : 'All compliance tasks completed'}
+            </Text>
+          </View>
+          <Icon name="chevron-right" size={16} color="#F59E0B" />
+        </TouchableOpacity>
       </View>
 
       {/* Banner Carousel */}
@@ -307,151 +352,88 @@ export default function EmployeeDashboardScreen() {
         </Card>
       ) : null}
 
-      {/* Applications Performance Grid - Website Style */}
-      <Text style={styles.sectionTitle}>Application Metrics</Text>
-      <View style={styles.statsRow}>
-        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/(app)/applications')}>
-          <View style={[styles.iconCircle, { backgroundColor: '#EEF2FF' }]}>
-            <Icon name="file-text" size={18} color="#4F46E5" />
-          </View>
-          <Text style={styles.statValue}>{totalApps}</Text>
-          <Text style={styles.statLabel}>Total Submitted</Text>
-          <Text style={styles.statSublabel}>Applications logged</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/(app)/applications')}>
-          <View style={[styles.iconCircle, { backgroundColor: '#DCFCE7' }]}>
-            <Icon name="check-circle" size={18} color="#059669" />
-          </View>
-          <Text style={[styles.statValue, { color: '#059669' }]}>{approvedApps}</Text>
-          <Text style={styles.statLabel}>Approved</Text>
-          <Text style={styles.statSublabel}>Approved & Disbursed</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/(app)/applications')}>
-          <View style={[styles.iconCircle, { backgroundColor: '#FEF3C7' }]}>
-            <Icon name="clock" size={18} color="#D97706" />
-          </View>
-          <Text style={[styles.statValue, { color: '#D97706' }]}>{pendingApps}</Text>
-          <Text style={styles.statLabel}>Pending / Review</Text>
-          <Text style={styles.statSublabel}>In processing queue</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.statItem} onPress={() => router.push('/(app)/leads')}>
-          <View style={[styles.iconCircle, { backgroundColor: '#ECFDF5' }]}>
-            <Icon name="users" size={18} color="#10B981" />
-          </View>
-          <Text style={[styles.statValue, { color: '#10B981' }]}>{leadsCount}</Text>
-          <Text style={styles.statLabel}>Leads Captured</Text>
-          <Text style={styles.statSublabel}>Customer leads</Text>
+      {/* Explore services — mirrors website EmployeeDashboard grid */}
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionTitle}>Explore services</Text>
+        <TouchableOpacity onPress={() => router.push('/(app)/employee-credit-cards')}>
+          <Text style={styles.sectionLink}>View all services →</Text>
         </TouchableOpacity>
       </View>
+      <View style={styles.servicesGrid}>
+        {[
+          { icon: 'card', color: '#8B5CF6', bg: '#F1EBFF', title: 'Credit Cards', desc: 'Premium pre-approved credit cards', route: '/(app)/employee-credit-cards' },
+          { icon: 'cash', color: '#059669', bg: '#E8F7EF', title: 'Personal Loan', desc: 'Instant disbursement with lowest rate', route: '/(app)/employee-loans' },
+          { icon: 'card', color: '#3B82F6', bg: '#EAF2FF', title: 'Loan on Credit Card', desc: 'Instant limit-backed cash loans', route: '/(app)/employee-loan-on-card' },
+          { icon: 'phone-portrait', color: '#F59E0B', bg: '#FFF1DF', title: 'Smart EMI', desc: 'Convert transactions to monthly EMI', route: '/(app)/employee-smart-emi' },
+          { icon: 'shield', color: '#F97316', bg: '#FFF1DF', title: 'Insurance', desc: 'Life, health & vehicle insurance', route: '/(app)/employee-insurance' },
+          { icon: 'business', color: '#0D9488', bg: '#CCFBF1', title: 'All Loans', desc: 'Business, home & collateral loans', route: '/(app)/employee-loans' },
+        ].map((service) => (
+          <TouchableOpacity
+            key={service.title}
+            style={[styles.serviceCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+            onPress={() => router.push(service.route as any)}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.serviceIconBox, { backgroundColor: service.bg }]}>
+              <Icon name={service.icon as any} size={20} color={service.color} />
+            </View>
+            <Text style={[styles.serviceTitle, { color: colors.text }]}>{service.title}</Text>
+            <Text style={[styles.serviceDesc, { color: colors.textMid }]} numberOfLines={2}>{service.desc}</Text>
+            <View style={styles.serviceExploreRow}>
+              <Text style={[styles.serviceExplore, { color: colors.primary }]}>Explore</Text>
+              <Icon name="arrow-forward" size={11} color={colors.primary} />
+            </View>
+          </TouchableOpacity>
+        ))}
+      </View>
 
-      {/* Performance Conversion Summary */}
-      <Card style={styles.performanceCard}>
-        <Text style={styles.cardHeader}>Conversion Performance</Text>
-        <View style={styles.perfRow}>
-          <View style={styles.perfItem}>
-            <Text style={styles.perfValue}>{approvalRate}%</Text>
-            <Text style={styles.perfLabel}>Approval Rate</Text>
-          </View>
-          <View style={styles.perfDivider} />
-          <View style={styles.perfItem}>
-            <Text style={styles.perfValue}>{approvedApps} / {totalApps}</Text>
-            <Text style={styles.perfLabel}>Conversions</Text>
-          </View>
-        </View>
-      </Card>
+      {/* Quick actions — mirrors website EmployeeDashboard list */}
+      <Text style={styles.sectionTitle}>Quick actions</Text>
+      <View style={styles.quickActionsCol}>
+        {[
+          { icon: 'file-text', color: '#8B5CF6', bg: '#F1EBFF', title: 'My Applications', desc: 'Track and submit client applications', route: '/(app)/applications' },
+          { icon: 'calendar', color: '#059669', bg: '#E8F7EF', title: 'Mark Attendance', desc: 'Daily check-in & check-out', route: '/(app)/attendance' },
+          { icon: 'stats-chart', color: '#F59E0B', bg: '#FFF1DF', title: 'View Sales Report', desc: 'Commission & performance insights', route: '/(app)/employee-sales-report' },
+          { icon: 'people', color: '#3B82F6', bg: '#EAF2FF', title: 'My Team', desc: 'Team members & partner network', route: '/(app)/employee-team' },
+          { icon: 'gift', color: '#EC4899', bg: '#FCE7F3', title: 'My Incentives', desc: 'Earnings, contests & bonus ledger', route: '/(app)/employee-incentives' },
+          { icon: 'chatbubble', color: '#6366F1', bg: '#EEF2FF', title: 'Team Messenger', desc: 'Direct staff messaging & queries', route: '/(app)/messenger' },
+        ].map((action) => (
+          <TouchableOpacity
+            key={action.title}
+            style={[styles.actionRow, { backgroundColor: colors.card, borderColor: colors.border }]}
+            onPress={() => router.push(action.route as any)}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.actionIconBox, { backgroundColor: action.bg }]}>
+              <Icon name={action.icon as any} size={18} color={action.color} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.actionTitle, { color: colors.text }]}>{action.title}</Text>
+              <Text style={[styles.actionDesc, { color: colors.textMid }]} numberOfLines={1}>{action.desc}</Text>
+            </View>
+            <Icon name="chevron-right" size={16} color={colors.textLight} />
+          </TouchableOpacity>
+        ))}
+      </View>
 
-      {/* Incentives Summary Card */}
-      <Text style={styles.sectionTitle}>Incentive Earnings</Text>
-      <Card style={styles.incentiveCard}>
-        <View style={styles.incentiveHeader}>
-          <Text style={styles.incentiveTitle}>Employee Incentive Wallet</Text>
-          <Text style={styles.incentiveTotal}>₹{totalIncentives.toLocaleString('en-IN')}</Text>
-        </View>
-
-        <View style={styles.incentiveGrid}>
-          <View style={styles.incBox}>
-            <Text style={styles.incBoxLabel}>Paid / Released</Text>
-            <Text style={[styles.incBoxValue, { color: colors.success }]}>₹{totalPaidIncentive.toLocaleString('en-IN')}</Text>
-          </View>
-          <View style={styles.incBox}>
-            <Text style={styles.incBoxLabel}>Pending Payout</Text>
-            <Text style={[styles.incBoxValue, { color: colors.warning }]}>₹{pendingIncentive.toLocaleString('en-IN')}</Text>
-          </View>
-        </View>
-      </Card>
-
-      {/* Quick Launch Action Grid - Website Style */}
-      <Text style={styles.sectionTitle}>Quick Actions</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickActionsScroll}>
-        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/add-lead')}>
-          <View style={[styles.iconCircle, { backgroundColor: '#EEF2FF' }]}>
-            <Icon name="user-plus" size={20} color="#4F46E5" />
-          </View>
-          <Text style={styles.serviceItemText}>Punch Lead</Text>
+      {/* Account Applications — mirrors website "Account Applications" card */}
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionTitle}>Account Applications</Text>
+        <TouchableOpacity onPress={() => router.push('/(app)/applications')}>
+          <Text style={styles.sectionLink}>View all →</Text>
         </TouchableOpacity>
-
-        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/applications')}>
-          <View style={[styles.iconCircle, { backgroundColor: '#ECFDF5' }]}>
-            <Icon name="file-text" size={20} color="#10B981" />
-          </View>
-          <Text style={styles.serviceItemText}>Applications</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/employee-team')}>
-          <View style={[styles.iconCircle, { backgroundColor: '#FAF5FF' }]}>
-            <Icon name="users" size={20} color="#7C3AED" />
-          </View>
-          <Text style={styles.serviceItemText}>My Team</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/employee-referrals')}>
-          <View style={[styles.iconCircle, { backgroundColor: '#F3E8FF' }]}>
-            <Icon name="share-2" size={20} color="#9333EA" />
-          </View>
-          <Text style={styles.serviceItemText}>Referrals</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/leads')}>
-          <View style={[styles.iconCircle, { backgroundColor: '#FEF3C7' }]}>
-            <Icon name="users" size={20} color="#D97706" />
-          </View>
-          <Text style={styles.serviceItemText}>Leads</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/whatsapp')}>
-          <View style={[styles.iconCircle, { backgroundColor: '#ECFDF5' }]}>
-            <Icon name="message-circle" size={20} color="#25D366" />
-          </View>
-          <Text style={styles.serviceItemText}>WhatsApp</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/finance-buddy')}>
-          <View style={[styles.iconCircle, { backgroundColor: '#EFF6FF' }]}>
-            <Icon name="zap" size={20} color="#2563EB" />
-          </View>
-          <Text style={styles.serviceItemText}>Finance Buddy</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.serviceItem} onPress={() => router.push('/(app)/notifications')}>
-          <View style={[styles.iconCircle, { backgroundColor: '#FDF2F8' }]}>
-            <Icon name="bell" size={20} color="#DB2777" />
-          </View>
-          <Text style={styles.serviceItemText}>Notifications</Text>
-        </TouchableOpacity>
-      </ScrollView>
-
-      {/* Recent Submissions List */}
-      <Text style={styles.sectionTitle}>Recent Application Submissions</Text>
+      </View>
       {applications.length === 0 ? (
-        <Card style={styles.emptyCard}>
-          <Text style={styles.emptyText}>No applications submitted yet.</Text>
+        <Card style={[styles.emptyCard, { backgroundColor: colors.bg }]}>
+          <Text style={{ fontSize: 26, marginBottom: 6 }}>📂</Text>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>No recent activity</Text>
+          <Text style={[styles.emptyText, { marginBottom: 12 }]}>
+            Submit leads for credit cards and loans to start earning incentives.
+          </Text>
           <Button
-            title="Punch First Application"
-            onPress={() => router.push('/(app)/add-lead')}
-            style={{ marginTop: spacing.sm }}
+            title="Submit First Application"
+            onPress={() => router.push('/(app)/employee-credit-cards')}
+            style={{ marginTop: 0 }}
           />
         </Card>
       ) : (
@@ -472,6 +454,42 @@ export default function EmployeeDashboardScreen() {
           </TouchableOpacity>
         ))
       )}
+
+      {/* Tips / Action Required — mirrors website dashboard tip card */}
+      <View style={[styles.tipCard, { backgroundColor: isDark ? colors.card : '#F0FDF4', borderColor: isDark ? colors.border : '#BBF7D0' }]}>
+        <View style={styles.tipHeader}>
+          <View style={[styles.tipIcon, { backgroundColor: colors.primary }]}>
+            <Icon name="flash" size={16} color="#fff" />
+          </View>
+          <View>
+            <Text style={[styles.tipTitle, { color: colors.text }]}>
+              {pendingTasksCount > 0 ? 'Action Required' : !isPunchedIn ? 'Daily Reminder' : 'Performance Tip'}
+            </Text>
+            <Text style={[styles.tipSub, { color: colors.textMid }]}>GharKaPaisa Employee Portal</Text>
+          </View>
+        </View>
+        <Text style={[styles.tipBody, { color: colors.textMid }]}>
+          {pendingTasksCount > 0
+            ? 'Complete your KYC documents and teleprompter video verification to unlock full privileges and instant commission payouts.'
+            : !isPunchedIn
+              ? "You haven't punched today's attendance. Check in with facial biometric verification to record your working presence."
+              : 'Pre-approved lifetime free credit cards and instant personal loans are currently offering high payout rates. Recommend them to your clients today.'}
+        </Text>
+        <TouchableOpacity
+          style={[styles.tipBtn, { backgroundColor: colors.primary }]}
+          onPress={() => {
+            if (pendingTasksCount > 0) router.push('/(app)/profile' as any);
+            else if (!isPunchedIn) router.push('/(app)/attendance' as any);
+            else router.push('/(app)/employee-credit-cards' as any);
+          }}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.tipBtnText}>
+            {pendingTasksCount > 0 ? 'Complete Verification' : !isPunchedIn ? 'Punch Attendance' : 'Explore Products'}
+          </Text>
+          <Icon name="arrow-forward" size={13} color="#fff" />
+        </TouchableOpacity>
+      </View>
     </ScrollView>
   );
 }
@@ -697,6 +715,13 @@ const styles = StyleSheet.create({
   emptyText: {
     color: colors.textMid,
     fontSize: typography.sizes.xs,
+    textAlign: 'center',
+  },
+  emptyTitle: {
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+    marginTop: spacing.xs,
   },
   appItemCard: {
     marginBottom: spacing.xs,
@@ -820,4 +845,155 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     width: 20,
   },
+  // Website-parity dashboard styles
+  welcomeRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  greeting: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 6,
+  },
+  welcomeMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  appChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F3E8FF',
+    borderWidth: 1,
+    borderColor: '#7C3AED30',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 16,
+  },
+  appChipLabel: { fontSize: 12, fontWeight: '700', color: '#7C3AED' },
+  appChipValue: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#7C3AED',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 1,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  welcomeSub: { fontSize: 11, color: colors.textMid, fontWeight: '500' },
+  dateChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    maxWidth: 190,
+  },
+  dateChipText: { fontSize: 11, color: colors.textMid, fontWeight: '600', flexShrink: 1 },
+  summaryCol: { gap: spacing.sm, marginBottom: spacing.md },
+  summaryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 16,
+    padding: 14,
+  },
+  summaryIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  summaryTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 3 },
+  summaryTitle: { fontSize: 14, fontWeight: '700', color: colors.text },
+  summaryBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+  summaryBadgeText: { fontSize: 10, fontWeight: '800' },
+  summarySub: { fontSize: 12, color: colors.textMid },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  sectionLink: { fontSize: 12, fontWeight: '600', color: colors.primary },
+  servicesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: spacing.sm,
+  },
+  serviceCard: {
+    width: '48.5%',
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 2,
+  },
+  serviceIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  serviceTitle: { fontSize: 14, fontWeight: '700', marginBottom: 3 },
+  serviceDesc: { fontSize: 11.5, lineHeight: 16, marginBottom: 8, minHeight: 32 },
+  serviceExploreRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  serviceExplore: { fontSize: 12, fontWeight: '600' },
+  quickActionsCol: { gap: spacing.sm, marginBottom: spacing.md },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
+  },
+  actionIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  actionTitle: { fontSize: 13.5, fontWeight: '700', marginBottom: 1 },
+  actionDesc: { fontSize: 11.5 },
+  tipCard: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 18,
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  tipHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
+  tipIcon: { width: 40, height: 40, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  tipTitle: { fontSize: 15, fontWeight: '700' },
+  tipSub: { fontSize: 11, fontWeight: '600', marginTop: 1 },
+  tipBody: { fontSize: 13, lineHeight: 20, marginBottom: 14 },
+  tipBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  tipBtnText: { color: '#fff', fontSize: 13.5, fontWeight: '600' },
 });

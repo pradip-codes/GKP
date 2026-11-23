@@ -30,7 +30,7 @@ export const LoadingState: React.FC<{ message?: string }> = ({ message = 'Loadin
   return (
     <View style={[styles.center, { backgroundColor: colors.bg }]}>
       <Animated.Image
-        source={require('../assets/images/logo.webp')}
+        source={require('../assets/images/logo-loader.webp')}
         resizeMode="contain"
         accessibilityLabel="Loading"
         style={[styles.logo, { transform: [{ perspective: 1000 }, { rotateY }] }]}

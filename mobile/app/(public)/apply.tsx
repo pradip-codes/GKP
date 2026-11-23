@@ -261,6 +261,9 @@ export default function InstantApplyScreen() {
                 >
                   <Text style={styles.linkText}>Change number</Text>
                 </TouchableOpacity>
+                <TouchableOpacity onPress={() => router.back()}>
+                  <Text style={[styles.linkText, { color: '#F87171' }]}>Cancel</Text>
+                </TouchableOpacity>
                 {otpTimer > 0 ? (
                   <Text style={styles.timerText}>Resend in {otpTimer}s</Text>
                 ) : (

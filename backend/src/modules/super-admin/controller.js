@@ -942,24 +942,33 @@ const unlockUser = async (req, res, next) => {
       return error(res, 'userId or identity (email/mobile) parameter is required', 400);
     }
 
-    let targetUser;
+    let targetUsers = [];
     if (userId) {
-      const { rows: [user] } = await query(`SELECT id, email, role FROM users WHERE id::text = $1`, [userId]);
-      targetUser = user;
+      const { rows } = await query(`SELECT id, email, role FROM users WHERE id::text = $1`, [userId]);
+      targetUsers = rows;
     } else {
       const clean = String(identity).trim().toLowerCase();
-      const { rows: [user] } = await query(`SELECT id, email, role FROM users WHERE LOWER(email) = $1 OR mobile = $1`, [clean]);
-      targetUser = user;
+      const rawDigits = clean.replace(/\D/g, '');
+      const cleanMobile = rawDigits.length === 12 && rawDigits.startsWith('91') ? rawDigits.slice(2) : rawDigits;
+      const { rows } = await query(
+        `SELECT id, email, role FROM users 
+         WHERE LOWER(email) = $1 OR mobile = $1 OR mobile = $2 OR mobile = $3`, 
+        [clean, cleanMobile, `+91${cleanMobile}`]
+      );
+      targetUsers = rows;
     }
 
-    if (!targetUser) {
+    if (!targetUsers.length) {
       return error(res, 'User not found', 404);
     }
 
-    await query(`UPDATE users SET failed_login_attempts = 0, locked_until = NULL, updated_at = NOW() WHERE id = $1`, [targetUser.id]);
-    await logAction(req, 'UNLOCK_USER', targetUser.id, { email: targetUser.email, role: targetUser.role });
+    const ids = targetUsers.map(u => u.id);
+    await query(`UPDATE users SET failed_login_attempts = 0, locked_until = NULL, updated_at = NOW() WHERE id = ANY($1::uuid[])`, [ids]);
+    for (const u of targetUsers) {
+      await logAction(req, 'UNLOCK_USER', u.id, { email: u.email, role: u.role });
+    }
 
-    return success(res, { userId: targetUser.id }, 'User account has been unlocked successfully.');
+    return success(res, { userIds: ids }, 'User account(s) unlocked successfully.');
   } catch (err) {
     next(err);
   }

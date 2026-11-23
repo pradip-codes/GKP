@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'expo-router';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Image,
   ActivityIndicator,
   Modal,
   Alert,
@@ -42,7 +42,8 @@ interface AttendanceRecord {
   verification_status: string;
   verification_reference: string;
   source: string;
-  working_hours: string;
+  working_hours?: any;
+  reminder?: { should_remind?: boolean; [key: string]: any };
   tasks?: AttendanceTask[];
 }
 
@@ -66,6 +67,9 @@ interface MonthlySummary {
 
 export default function AttendanceScreen() {
   const { user } = useAuth();
+  const router = useRouter();
+  const [activeView, setActiveView] = useState<'DASHBOARD' | 'HISTORY' | 'SUMMARY'>('DASHBOARD');
+  const [now, setNow] = useState(new Date());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [todayAttendance, setTodayAttendance] = useState<AttendanceRecord | null>(null);
@@ -162,11 +166,7 @@ export default function AttendanceScreen() {
 
   const handleCheckIn = async () => {
     if (isFaceEnrolled === false) {
-      Alert.alert(
-        'Biometric Enrollment Required',
-        'Please complete your biometric enrollment in the employee panel before marking attendance.',
-        [{ text: 'OK' }]
-      );
+      router.push('/(app)/employee-onboarding' as any);
       return;
     }
     setActionType('CHECK_IN');
@@ -292,6 +292,12 @@ export default function AttendanceScreen() {
     }
   }, [showReportingModal]);
 
+  // Live clock — mirrors the website AttendanceDashboardCard ticking clock
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   const formatTime = (timeStr: string) => {
     if (!timeStr) return '--';
     const date = new Date(timeStr);
@@ -328,8 +334,8 @@ export default function AttendanceScreen() {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>My Attendance</Text>
-          <Text style={styles.headerSubtitle}>Track your daily attendance, working hours and verification history.</Text>
+          <Text style={styles.headerTitle}>Attendance</Text>
+          <Text style={styles.headerSubtitle}>Track your daily attendance</Text>
         </View>
         <View style={styles.centerContainer}>
           <Icon name="lock" size={48} color={colors.textLight} />
@@ -344,8 +350,8 @@ export default function AttendanceScreen() {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>My Attendance</Text>
-          <Text style={styles.headerSubtitle}>Track your daily attendance, working hours and verification history.</Text>
+          <Text style={styles.headerTitle}>Attendance</Text>
+          <Text style={styles.headerSubtitle}>Track your daily attendance</Text>
         </View>
         <LoadingState message="Loading attendance data..." />
       </View>
@@ -354,7 +360,24 @@ export default function AttendanceScreen() {
 
   const isCheckedIn = !!todayAttendance?.check_in_time;
   const isCheckedOut = !!todayAttendance?.check_out_time;
-  const todayWorkingHours = calculateWorkingHours(todayAttendance?.check_in_time || '', todayAttendance?.check_out_time || '');
+
+  // Website AttendanceDashboardCard status logic
+  const wh: any = todayAttendance?.working_hours;
+  const shouldRemind = Boolean(todayAttendance?.reminder?.should_remind);
+  const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+  const statusText = !isCheckedIn
+    ? 'Ready to start'
+    : !isCheckedOut
+      ? (shouldRemind ? 'Shift hours ended' : 'Work in progress')
+      : 'Work completed';
+  const statusStyle = !isCheckedIn
+    ? { bg: '#EFF6FF', border: '#DBEAFE', text: '#0B74F6' }
+    : !isCheckedOut
+      ? (shouldRemind
+          ? { bg: '#FEF2F2', border: '#FECACA', text: '#DC2626' }
+          : { bg: '#FEF3C7', border: '#FDE68A', text: '#D97706' })
+      : { bg: '#DCFCE7', border: '#BBF7D0', text: '#16A34A' };
 
   return (
     <ScrollView
@@ -363,170 +386,299 @@ export default function AttendanceScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Attendance</Text>
-        <Text style={styles.headerSubtitle}>Track your daily attendance, working hours and verification history.</Text>
+        <Text style={styles.headerTitle}>Attendance</Text>
+        <Text style={styles.headerSubtitle}>Track your daily attendance</Text>
       </View>
 
-      {/* Banner */}
-      <Image
-        source={require('../../../assets/attendance-workspace-banner.png')}
-        style={styles.banner}
-        resizeMode="cover"
-      />
+      {activeView === 'DASHBOARD' && (
+        <>
+          {/* Main card — mirrors website AttendanceDashboardCard */}
+          {loading && isFaceEnrolled === null ? (
+            <Card style={styles.mainCard}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={styles.mainCardLoading}>Loading attendance details...</Text>
+            </Card>
+          ) : isFaceEnrolled === false ? (
+            <Card style={styles.mainCard}>
+              <Text style={styles.clockDateSmall}>{now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</Text>
+              <Text style={styles.clockTime}>{now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}</Text>
+              <View style={styles.warnBox}>
+                <View style={styles.warnIconCircle}>
+                  <Icon name="alert-circle" size={22} color="#D97706" />
+                </View>
+                <Text style={styles.warnTitle}>Face Verification Required</Text>
+                <Text style={styles.warnText}>
+                  KYC face verification is not completed for your account. Please complete face verification before marking attendance.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.primaryBtn}
+                onPress={() => router.push('/(app)/employee-onboarding' as any)}
+                activeOpacity={0.85}
+              >
+                <Icon name="shield-check" size={16} color="#fff" />
+                <Text style={styles.primaryBtnText}>Verify</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.secondaryBtn}
+                onPress={() => router.push('/(app)/employee-dashboard' as any)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.secondaryBtnText}>Back to Dashboard</Text>
+              </TouchableOpacity>
+            </Card>
+          ) : (
+            <Card style={styles.mainCard}>
+              <Text style={styles.clockDate}>{now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
+              <Text style={styles.clockTime}>{now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}</Text>
+              {wh?.start_time && wh?.end_time ? (
+                <View style={styles.shiftRow}>
+                  <Icon name="time" size={13} color={colors.textMid} />
+                  <Text style={styles.shiftText}>Shift: {wh.start_time} - {wh.end_time}</Text>
+                </View>
+              ) : null}
 
-      {/* Today's Attendance Card */}
-      <Card style={styles.todayCard}>
-        <Text style={styles.cardTitle}>TODAY'S ATTENDANCE</Text>
-        
-        {!isCheckedIn ? (
-          <View style={styles.notMarkedContainer}>
-            <Text style={styles.notMarkedTitle}>Not Checked In Yet</Text>
-            <Text style={styles.notMarkedStatus}>NOT MARKED</Text>
-            <Text style={styles.todayDate}>
-              {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
-            </Text>
-            <Button
-              title="📷 Mark Check-In"
-              onPress={handleCheckIn}
-              style={styles.markButton}
-            />
-          </View>
-        ) : isCheckedOut ? (
-          <View style={styles.completedContainer}>
-            <Text style={styles.completedTitle}>Attendance Completed</Text>
-            <Text style={styles.completedStatus}>{todayAttendance?.status || 'PRESENT'}</Text>
-            
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Check-In</Text>
-              <Text style={styles.rowValue}>{formatTime(todayAttendance?.check_in_time || '')}</Text>
-            </View>
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Check-Out</Text>
-              <Text style={styles.rowValue}>{formatTime(todayAttendance?.check_out_time || '')}</Text>
-            </View>
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Working Hours</Text>
-              <Text style={styles.rowValue}>{todayWorkingHours}</Text>
-            </View>
-            
-            <View style={styles.verifiedBadge}>
-              <Icon name="check-circle" size={16} color={colors.success} />
-              <Text style={styles.verifiedText}>Biometric Verified</Text>
-            </View>
-          </View>
-        ) : (
-          <View style={styles.checkedInContainer}>
-            <Text style={styles.checkedInTitle}>Checked In</Text>
-            <Text style={styles.checkedInStatus}>{todayAttendance?.status || 'PRESENT'}</Text>
-            
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Check-In</Text>
-              <Text style={styles.rowValue}>{formatTime(todayAttendance?.check_in_time || '')}</Text>
-            </View>
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Check-Out</Text>
-              <Text style={styles.rowValue}>--</Text>
-            </View>
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Working Hours</Text>
-              <Text style={styles.rowValue}>00h 00m</Text>
-            </View>
-            
-            <Button
-              title="Mark Check-Out"
-              onPress={handleCheckOut}
-              style={styles.markButton}
-            />
-          </View>
-        )}
-      </Card>
+              <View style={[styles.statusPill, { backgroundColor: statusStyle.bg, borderColor: statusStyle.border }]}>
+                <View style={[styles.statusDot, { backgroundColor: statusStyle.text }]} />
+                <Text style={[styles.statusPillText, { color: statusStyle.text }]}>Status: {statusText}</Text>
+              </View>
 
-      {/* Quick Statistics */}
-      <View style={styles.statsContainer}>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{monthlySummary?.totalPresent || 0}</Text>
-          <Text style={styles.statLabel}>Present Days</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{monthlySummary?.totalAbsent || 0}</Text>
-          <Text style={styles.statLabel}>Absent Days</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{monthlySummary?.totalWorkingHoursFormatted || '0h 0m'}</Text>
-          <Text style={styles.statLabel}>Total Working Hours</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{getAttendanceRate()}</Text>
-          <Text style={styles.statLabel}>Attendance Rate</Text>
-        </View>
-      </View>
+              {shouldRemind && (
+                <View style={styles.remindBox}>
+                  <View style={styles.warnIconCircle}>
+                    <Icon name="alert-circle" size={18} color="#D97706" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.warnTitle}>Working Hours Ended</Text>
+                    <Text style={styles.warnText}>Your assigned working hours have ended. Please complete your attendance checkout.</Text>
+                  </View>
+                </View>
+              )}
 
-      {/* Attendance History */}
-      <Card style={styles.historyCard}>
-        <View style={styles.historyHeader}>
-          <Text style={styles.cardTitle}>ATTENDANCE HISTORY</Text>
-          <View style={styles.filterRow}>
-            <TouchableOpacity style={styles.filterButton}>
-              <Text style={styles.filterText}>{new Date(selectedYear, selectedMonth - 1).toLocaleString('en-US', { month: 'long' })} ▼</Text>
+              {!isCheckedIn ? (
+                <TouchableOpacity
+                  style={styles.primaryBtn}
+                  onPress={handleCheckIn}
+                  disabled={loading}
+                  activeOpacity={0.85}
+                >
+                  <Icon name="flash" size={16} color="#fff" />
+                  <Text style={styles.primaryBtnText}>Start Work</Text>
+                </TouchableOpacity>
+              ) : !isCheckedOut ? (
+                <TouchableOpacity
+                  style={[styles.primaryBtn, shouldRemind && { backgroundColor: '#D97706' }]}
+                  onPress={handleCheckOut}
+                  disabled={loading}
+                  activeOpacity={0.85}
+                >
+                  <Icon name="log-out" size={16} color="#fff" />
+                  <Text style={styles.primaryBtnText}>{shouldRemind ? 'End Attendance' : 'End Work'}</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.completedBtn}>
+                  <Icon name="check-circle" size={18} color="#16A34A" />
+                  <Text style={styles.completedBtnText}>Work Completed</Text>
+                </View>
+              )}
+
+              <View style={styles.linkCol}>
+                <TouchableOpacity style={styles.linkRow} onPress={() => setActiveView('HISTORY')} activeOpacity={0.7}>
+                  <View style={styles.linkRowLeft}>
+                    <Icon name="time" size={15} color={colors.textMid} />
+                    <Text style={styles.linkText}>View Attendance History</Text>
+                  </View>
+                  <Text style={styles.linkArrow}>→</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.linkRow} onPress={() => setActiveView('SUMMARY')} activeOpacity={0.7}>
+                  <View style={styles.linkRowLeft}>
+                    <Icon name="bar-chart" size={15} color={colors.textMid} />
+                    <Text style={styles.linkText}>Attendance Summary</Text>
+                  </View>
+                  <Text style={styles.linkArrow}>→</Text>
+                </TouchableOpacity>
+              </View>
+            </Card>
+          )}
+
+          {/* Today's Session — mirrors website "Today's Activity" card */}
+          {(isCheckedIn || isCheckedOut) && activeView === 'DASHBOARD' && isFaceEnrolled !== false && (
+            <Card style={styles.sessionCard}>
+              <View style={styles.sessionTitleRow}>
+                <Icon name="time" size={15} color="#0B74F6" />
+                <Text style={styles.sessionTitle}>Today's Session</Text>
+              </View>
+              <View style={styles.sessionGrid}>
+                <View style={styles.sessionBox}>
+                  <Text style={styles.sessionLabel}>START TIME</Text>
+                  <Text style={styles.sessionValue}>{formatTime(todayAttendance?.check_in_time || '')}</Text>
+                </View>
+                <View style={styles.sessionBox}>
+                  <Text style={styles.sessionLabel}>END TIME</Text>
+                  <Text style={[styles.sessionValue, !isCheckedOut && { color: '#9CA3AF' }]}>{formatTime(todayAttendance?.check_out_time || '')}</Text>
+                </View>
+              </View>
+              <View style={styles.sessionFooter}>
+                <Text style={styles.sessionFooterLabel}>Verification:</Text>
+                <View style={styles.sessionFooterRight}>
+                  <Icon name="shield-check" size={13} color="#16A34A" />
+                  <Text style={styles.sessionFooterValue}>Biometric Verified</Text>
+                </View>
+              </View>
+            </Card>
+          )}
+        </>
+      )}
+
+      {/* Attendance History view */}
+      {activeView === 'HISTORY' && (
+        <>
+          <View style={styles.viewHeaderRow}>
+            <TouchableOpacity style={styles.backBtn} onPress={() => setActiveView('DASHBOARD')}>
+              <Icon name="arrow-left" size={16} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.filterButton}>
-              <Text style={styles.filterText}>{selectedYear} ▼</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.exportButton}>
-              <Text style={styles.exportText}>Export</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {attendanceHistory.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Icon name="calendar" size={48} color={colors.textLight} />
-            <Text style={styles.emptyTitle}>No attendance records yet</Text>
-            <Text style={styles.emptyText}>Your attendance history will appear here after you complete your first check-in.</Text>
-            <Button
-              title="Mark Check-In"
-              onPress={handleCheckIn}
-              style={styles.emptyButton}
-            />
-          </View>
-        ) : (
-          <View style={styles.tableContainer}>
-            <View style={styles.tableHeader}>
-              <Text style={styles.tableHeaderText}>Date</Text>
-              <Text style={styles.tableHeaderText}>Day</Text>
-              <Text style={styles.tableHeaderText}>Check-In</Text>
-              <Text style={styles.tableHeaderText}>Check-Out</Text>
-              <Text style={styles.tableHeaderText}>Hours</Text>
-              <Text style={styles.tableHeaderText}>Status</Text>
-              <Text style={styles.tableHeaderText}>Verification</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.viewTitle}>Attendance History</Text>
+              <Text style={styles.viewSubtitle}>Your daily check-in records</Text>
             </View>
-            {attendanceHistory.map((record) => (
+          </View>
+
+          <MonthYearPicker
+            month={selectedMonth}
+            year={selectedYear}
+            onMonth={setSelectedMonth}
+            onYear={setSelectedYear}
+            colors={colors}
+            isDark={false}
+          />
+
+          <View style={styles.histStatsRow}>
+            <View style={styles.histStat}>
+              <Text style={styles.histStatValue}>{monthlySummary?.totalMarkedDays || 0}</Text>
+              <Text style={styles.histStatLabel}>Total Days</Text>
+            </View>
+            <View style={styles.histStat}>
+              <Text style={[styles.histStatValue, { color: '#16A34A' }]}>{monthlySummary?.totalPresent || 0}</Text>
+              <Text style={styles.histStatLabel}>Present</Text>
+            </View>
+            <View style={styles.histStat}>
+              <Text style={[styles.histStatValue, { color: '#9333EA' }]}>{monthlySummary?.totalWorkingHoursFormatted || '0h 0m'}</Text>
+              <Text style={styles.histStatLabel}>Work Hours</Text>
+            </View>
+            <View style={styles.histStat}>
+              <Text style={[styles.histStatValue, { color: '#D97706' }]}>{getAttendanceRate()}</Text>
+              <Text style={styles.histStatLabel}>Attendance</Text>
+            </View>
+          </View>
+
+          {attendanceHistory.length === 0 ? (
+            <Card style={styles.emptyCard}>
+              <Icon name="calendar" size={40} color={colors.textLight} />
+              <Text style={styles.emptyTitle}>No attendance records yet</Text>
+              <Text style={styles.emptyText}>Your attendance history will appear here after you complete your first check-in.</Text>
+              <Button title="Mark Check-In" onPress={handleCheckIn} style={styles.emptyButton} />
+            </Card>
+          ) : (
+            attendanceHistory.map((record) => (
               <TouchableOpacity
                 key={record.id}
-                style={styles.tableRow}
+                style={[styles.recordCard, { backgroundColor: colors.card, borderColor: colors.border }]}
                 onPress={() => {
                   setSelectedRecord(record);
                   setShowDetailModal(true);
                 }}
+                activeOpacity={0.7}
               >
-                <Text style={styles.tableCellText}>{formatDate(record.attendance_date)}</Text>
-                <Text style={styles.tableCellText}>{getDayName(record.attendance_date)}</Text>
-                <Text style={styles.tableCellText}>{formatTime(record.check_in_time)}</Text>
-                <Text style={styles.tableCellText}>{formatTime(record.check_out_time)}</Text>
-                <Text style={styles.tableCellText}>{calculateWorkingHours(record.check_in_time, record.check_out_time)}</Text>
-                <Text style={[styles.tableCellText, styles.statusText]}>{record.status}</Text>
-                <View style={styles.verificationCell}>
-                  {record.verification_status === 'VERIFIED' ? (
-                    <Icon name="check-circle" size={16} color={colors.success} />
-                  ) : (
-                    <Icon name="x-circle" size={16} color={colors.error} />
-                  )}
+                <View style={styles.recordTopRow}>
+                  <View>
+                    <Text style={[styles.recordDate, { color: colors.text }]}>{formatDate(record.attendance_date)}</Text>
+                    <Text style={[styles.recordDay, { color: colors.textMid }]}>{getDayName(record.attendance_date)}</Text>
+                  </View>
+                  <View style={styles.recordStatusWrap}>
+                    <Text style={styles.recordStatus}>{record.check_in_time && record.check_out_time ? 'Work Completed' : record.check_in_time ? 'Working' : record.status || 'Not Started'}</Text>
+                    {record.verification_status === 'VERIFIED' ? (
+                      <Icon name="check-circle" size={15} color={colors.success} />
+                    ) : (
+                      <Icon name="x-circle" size={15} color={colors.error} />
+                    )}
+                  </View>
+                </View>
+                <View style={styles.recordTimesRow}>
+                  <View style={styles.recordTimeBox}>
+                    <Text style={[styles.recordTimeLabel, { color: colors.textLight }]}>Start</Text>
+                    <Text style={[styles.recordTimeValue, { color: colors.text }]}>{formatTime(record.check_in_time)}</Text>
+                  </View>
+                  <View style={styles.recordTimeBox}>
+                    <Text style={[styles.recordTimeLabel, { color: colors.textLight }]}>End</Text>
+                    <Text style={[styles.recordTimeValue, { color: colors.text }]}>{formatTime(record.check_out_time)}</Text>
+                  </View>
+                  <View style={styles.recordTimeBox}>
+                    <Text style={[styles.recordTimeLabel, { color: colors.textLight }]}>Duration</Text>
+                    <Text style={[styles.recordTimeValue, { color: colors.text }]}>{calculateWorkingHours(record.check_in_time, record.check_out_time)}</Text>
+                  </View>
                 </View>
               </TouchableOpacity>
-            ))}
+            ))
+          )}
+        </>
+      )}
+
+      {/* Attendance Summary view */}
+      {activeView === 'SUMMARY' && (
+        <>
+          <View style={styles.viewHeaderRow}>
+            <TouchableOpacity style={styles.backBtn} onPress={() => setActiveView('DASHBOARD')}>
+              <Icon name="arrow-left" size={16} color={colors.text} />
+            </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.viewTitle}>Attendance Summary</Text>
+              <Text style={styles.viewSubtitle}>Monthly breakdown & totals</Text>
+            </View>
           </View>
-        )}
-      </Card>
+
+          <MonthYearPicker
+            month={selectedMonth}
+            year={selectedYear}
+            onMonth={setSelectedMonth}
+            onYear={setSelectedYear}
+            colors={colors}
+            isDark={false}
+          />
+
+          <View style={styles.histStatsRow}>
+            <View style={styles.histStat}>
+              <Text style={styles.histStatValue}>{monthlySummary?.totalMarkedDays || 0}</Text>
+              <Text style={styles.histStatLabel}>Total Days</Text>
+            </View>
+            <View style={styles.histStat}>
+              <Text style={[styles.histStatValue, { color: '#16A34A' }]}>{monthlySummary?.totalPresent || 0}</Text>
+              <Text style={styles.histStatLabel}>Present Days</Text>
+            </View>
+            <View style={styles.histStat}>
+              <Text style={[styles.histStatValue, { color: '#9333EA' }]}>{monthlySummary?.totalWorkingHoursFormatted || '0h 0m'}</Text>
+              <Text style={styles.histStatLabel}>Work Hours</Text>
+            </View>
+          </View>
+
+          <Card style={styles.summaryCard}>
+            <Text style={styles.summaryCardTitle}>Day Breakdown</Text>
+            <View style={styles.breakdownGrid}>
+              {[
+                { label: 'Present', value: monthlySummary?.totalPresent || 0, color: '#16A34A' },
+                { label: 'Late', value: monthlySummary?.totalLate || 0, color: '#CA8A04' },
+                { label: 'Half Day', value: monthlySummary?.totalHalfDay || 0, color: '#A16207' },
+                { label: 'Leave', value: monthlySummary?.totalLeave || 0, color: '#4F46E5' },
+                { label: 'Absent', value: monthlySummary?.totalAbsent || 0, color: '#DC2626' },
+              ].map((item) => (
+                <View key={item.label} style={[styles.breakdownBox, { borderColor: colors.border, backgroundColor: colors.bg }]}>
+                  <Text style={[styles.breakdownLabel, { color: item.color }]}>{item.label}</Text>
+                  <Text style={[styles.breakdownValue, { color: item.color }]}>{item.value}</Text>
+                </View>
+              ))}
+            </View>
+          </Card>
+        </>
+      )}
 
       {/* Verification Detail Modal */}
       <Modal visible={showDetailModal} transparent animationType="fade">
@@ -705,6 +857,62 @@ export default function AttendanceScreen() {
         </View>
       </Modal>
     </ScrollView>
+  );
+}
+
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+/** Horizontal month + year chip selector — mobile equivalent of the website's dropdowns */
+function MonthYearPicker({ month, year, onMonth, onYear, colors }: {
+  month: number;
+  year: number;
+  onMonth: (m: number) => void;
+  onYear: (y: number) => void;
+  colors: any;
+  isDark: boolean;
+}) {
+  const years = [year - 2, year - 1, year, year + 1, year + 2];
+  return (
+    <View style={{ marginBottom: spacing.sm }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 2 }}>
+        {MONTH_NAMES.map((m, i) => {
+          const active = month === i + 1;
+          return (
+            <TouchableOpacity
+              key={m}
+              onPress={() => onMonth(i + 1)}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 14,
+                backgroundColor: active ? colors.primary : colors.bgSecondary,
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '700', color: active ? '#fff' : colors.textMid }}>{m}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 2, marginTop: 6 }}>
+        {years.map((y) => {
+          const active = year === y;
+          return (
+            <TouchableOpacity
+              key={y}
+              onPress={() => onYear(y)}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 14,
+                backgroundColor: active ? colors.primary : colors.bgSecondary,
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '700', color: active ? '#fff' : colors.textMid }}>{y}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -1152,4 +1360,251 @@ const styles = StyleSheet.create({
   saveButton: {
     marginTop: spacing.md,
   },
+  // Website-parity attendance styles
+  mainCard: {
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    alignItems: 'center',
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.md,
+  },
+  mainCardLoading: {
+    marginTop: spacing.md,
+    fontSize: typography.sizes.sm,
+    color: colors.textMid,
+    fontWeight: '600',
+  },
+  clockDate: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textMid,
+    marginBottom: 6,
+  },
+  clockDateSmall: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textMid,
+    marginBottom: 4,
+  },
+  clockTime: {
+    fontSize: 34,
+    fontWeight: '800',
+    color: colors.text,
+    letterSpacing: -0.5,
+    marginBottom: 14,
+    fontVariant: ['tabular-nums'],
+  },
+  shiftRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 14,
+  },
+  shiftText: { fontSize: 12.5, color: colors.textMid, fontWeight: '500' },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 24,
+    marginBottom: 20,
+  },
+  statusDot: { width: 7, height: 7, borderRadius: 4 },
+  statusPillText: { fontSize: 13, fontWeight: '600' },
+  warnBox: {
+    width: '100%',
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  warnIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FEF3C7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  warnTitle: { fontSize: 14, fontWeight: '700', color: '#92400E', marginBottom: 4, textAlign: 'center' },
+  warnText: { fontSize: 12.5, color: '#78350F', lineHeight: 18, textAlign: 'center' },
+  remindBox: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 20,
+  },
+  primaryBtn: {
+    width: '100%',
+    height: 50,
+    borderRadius: 12,
+    backgroundColor: '#0B74F6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  secondaryBtn: {
+    width: '100%',
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryBtnText: { color: colors.text, fontSize: 14, fontWeight: '600' },
+  completedBtn: {
+    width: '100%',
+    height: 50,
+    borderRadius: 12,
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  completedBtnText: { color: '#16A34A', fontSize: 15, fontWeight: '700' },
+  linkCol: {
+    width: '100%',
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingTop: 14,
+    gap: 4,
+  },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+  },
+  linkRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  linkText: { fontSize: 14, fontWeight: '600', color: colors.text },
+  linkArrow: { fontSize: 15, color: colors.textLight },
+  sessionCard: {
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+  },
+  sessionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
+  sessionTitle: { fontSize: 14, fontWeight: '700', color: colors.text },
+  sessionGrid: { flexDirection: 'row', gap: 10 },
+  sessionBox: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 12,
+  },
+  sessionLabel: { fontSize: 11, fontWeight: '600', color: colors.textLight, textTransform: 'uppercase' },
+  sessionValue: { fontSize: 15, fontWeight: '700', color: colors.text, marginTop: 3 },
+  sessionFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  sessionFooterLabel: { fontSize: 12.5, color: colors.textMid },
+  sessionFooterRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  sessionFooterValue: { fontSize: 12.5, fontWeight: '600', color: '#16A34A' },
+  viewHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: spacing.sm,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewTitle: { fontSize: 20, fontWeight: '700', color: colors.text },
+  viewSubtitle: { fontSize: 12.5, color: colors.textMid, marginTop: 2 },
+  histStatsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  histStat: {
+    flex: 1,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  histStatValue: { fontSize: 16, fontWeight: '700', color: colors.text },
+  histStatLabel: { fontSize: 10.5, color: colors.textLight, marginTop: 3, textAlign: 'center' },
+  emptyCard: {
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    alignItems: 'center',
+    paddingVertical: spacing.xl,
+    paddingHorizontal: spacing.md,
+  },
+  recordCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: spacing.sm,
+  },
+  recordTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 },
+  recordDate: { fontSize: 13.5, fontWeight: '700' },
+  recordDay: { fontSize: 11.5, marginTop: 1 },
+  recordStatusWrap: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  recordStatus: { fontSize: 11.5, fontWeight: '700', color: colors.success },
+  recordTimesRow: { flexDirection: 'row', gap: 8 },
+  recordTimeBox: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+  },
+  recordTimeLabel: { fontSize: 9.5, fontWeight: '600', textTransform: 'uppercase' },
+  recordTimeValue: { fontSize: 12.5, fontWeight: '700', marginTop: 2 },
+  summaryCard: { marginBottom: spacing.lg },
+  summaryCardTitle: { fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 12 },
+  breakdownGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  breakdownBox: {
+    width: '31.5%',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  breakdownLabel: { fontSize: 11, fontWeight: '600' },
+  breakdownValue: { fontSize: 20, fontWeight: '800', marginTop: 3 },
 });
