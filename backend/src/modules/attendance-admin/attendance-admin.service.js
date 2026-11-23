@@ -50,8 +50,6 @@ const getTodayAdminAttendance = async ({
     LEFT JOIN users u ON u.id = e.user_id
     LEFT JOIN employee_attendance att ON att.employee_id = e.id AND att.attendance_date = $1
     WHERE e.employee_status != 'TERMINATED'
-      AND (u.role IS NULL OR u.role = 'EMPLOYEE')
-      AND (e.designation NOT ILIKE '%HR%' AND e.designation NOT ILIKE '%Human Resource%')
   `;
   const { rows: [summaryRow] } = await query(summaryQuery, [targetDate]);
 
@@ -74,8 +72,6 @@ const getTodayAdminAttendance = async ({
 
   let baseWhere = `
     WHERE e.employee_status != 'TERMINATED'
-      AND (u.role IS NULL OR u.role = 'EMPLOYEE')
-      AND (e.designation NOT ILIKE '%HR%' AND e.designation NOT ILIKE '%Human Resource%')
   `;
 
   if (search && search.trim()) {
@@ -228,8 +224,6 @@ const getAdminAttendanceHistory = async ({
   let baseWhere = `
     WHERE att.attendance_date >= $1 AND att.attendance_date <= $2
       AND e.employee_status != 'TERMINATED'
-      AND (u.role IS NULL OR u.role = 'EMPLOYEE')
-      AND (e.designation NOT ILIKE '%HR%' AND e.designation NOT ILIKE '%Human Resource%')
   `;
 
   if (search && search.trim()) {

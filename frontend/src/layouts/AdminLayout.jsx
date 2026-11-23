@@ -192,25 +192,25 @@ const AdminLayout = () => {
         navigate('/hr/dashboard', { replace: true });
       }
     } else if (isKycOperator) {
-      const allowedPaths = ['/admin/applications', '/admin/kyc', '/admin/messenger'];
+      const allowedPaths = ['/admin/applications', '/admin/kyc', '/admin/messenger', '/admin/attendance'];
       const isAllowed = allowedPaths.some(p => location.pathname.startsWith(p));
       if (!isAllowed) {
         navigate('/admin/applications', { replace: true });
       }
     } else if (isRemarkOperator || isQdOperator || isFinalStatusOperator || isQuerableOperator || isCurableOperator) {
-      const allowedPaths = ['/admin/applications', '/admin/messenger'];
+      const allowedPaths = ['/admin/applications', '/admin/messenger', '/admin/attendance'];
       const isAllowed = allowedPaths.some(p => location.pathname.startsWith(p));
       if (!isAllowed) {
         navigate('/admin/applications', { replace: true });
       }
     } else if (isSalesExec) {
-      const allowedPaths = ['/admin/dashboard', '/admin/applications', '/admin/messenger'];
+      const allowedPaths = ['/admin/dashboard', '/admin/applications', '/admin/messenger', '/admin/attendance'];
       const isAllowed = allowedPaths.some(p => location.pathname === p || location.pathname.startsWith(p));
       if (!isAllowed) {
         navigate('/admin/dashboard', { replace: true });
       }
     } else if (isBackend) {
-      const allowedPaths = ['/admin/dashboard', '/admin/applications', '/admin/credit-cards', '/admin/loans', '/admin/insurance', '/admin/leads', '/admin/messenger'];
+      const allowedPaths = ['/admin/dashboard', '/admin/applications', '/admin/credit-cards', '/admin/loans', '/admin/insurance', '/admin/leads', '/admin/messenger', '/admin/attendance'];
       const isAllowed = allowedPaths.some(p => location.pathname.startsWith(p));
       if (!isAllowed) {
         navigate('/admin/dashboard', { replace: true });
@@ -246,6 +246,12 @@ const AdminLayout = () => {
             <NavLink to="/hr/dashboard" style={navLinkStyle}>
               <Icons.profile size={18} />
               <span>HR Dashboard & Candidates</span>
+            </NavLink>
+
+            {/* HR Attendance */}
+            <NavLink to="/hr/attendance" style={navLinkStyle}>
+              <Icons.calendar size={18} />
+              <span>Attendance</span>
             </NavLink>
           </>
         ) : (
@@ -367,6 +373,12 @@ const AdminLayout = () => {
             >
               <Icons.creditCard size={18} />
               <span>{isKycOperator ? 'KYC Operator' : isQdOperator ? 'QD Operator' : isRemarkOperator ? 'Remark Operator' : isPanChecker ? 'PAN Checker' : isFinalStatusOperator ? 'Final Status Operator' : isQuerableOperator ? 'Querable Operator' : isPhysicalCurable ? 'Physical Curable' : isDigitalCurable ? 'Digital Curable' : isEmailCurable ? 'Email Curable' : 'Applications'}</span>
+            </NavLink>
+
+            {/* Attendance */}
+            <NavLink to="/admin/attendance" style={navLinkStyle}>
+              <Icons.calendar size={18} />
+              <span>Attendance</span>
             </NavLink>
 
             {/* Messenger */}

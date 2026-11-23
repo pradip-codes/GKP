@@ -382,6 +382,7 @@ const AppRoutes = () => {
             <Route path="/hr/dashboard" element={<HRDashboard />} />
             <Route path="/hr/candidates" element={<HRDashboard />} />
             <Route path="/hr/payroll" element={<HRPayroll />} />
+            <Route path="/hr/attendance" element={<EmployeeAttendance />} />
           </Route>
         </Route>
       </Route>
@@ -391,6 +392,7 @@ const AppRoutes = () => {
         <Route element={<RoleRoute allowedRoles={['ADMIN', 'SUPER_ADMIN', 'KYC_OPERATOR']} />}>
           <Route element={<AdminLayout />}>
             <Route path="/admin/dashboard" element={<AdminDashboard />} />
+            <Route path="/admin/attendance" element={<EmployeeAttendance />} />
             <Route path="/admin/kyc-operator" element={<KycOperatorDashboard />} />
             <Route path="/admin/kyc" element={<KycOperatorDashboard />} />
             <Route path="/admin/applications" element={<ManageApplications />} />

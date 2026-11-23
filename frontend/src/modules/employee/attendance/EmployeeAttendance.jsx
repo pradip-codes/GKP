@@ -139,9 +139,26 @@ export default function EmployeeAttendance() {
   const isCheckedIn = !!todayAttendance?.check_in_time;
   const isCheckedOut = !!todayAttendance?.check_out_time;
 
+  const getDashboardPath = useCallback(() => {
+    if (user?.role === 'HR') return '/hr/dashboard';
+    if (user?.role === 'SUPER_ADMIN') return '/super-admin/overview';
+    if (user?.role === 'ADMIN') {
+      const des = user?.designation || '';
+      if (['KYC Operator', 'QD Operator', 'Remark Operator', 'PAN Checker', 'Final Status Operator', 'Querable Operator', 'Physical Curable', 'Digital Curable', 'Email Curable'].some(d => des.toLowerCase().includes(d.toLowerCase()))) {
+        return '/admin/applications';
+      }
+      return '/admin/dashboard';
+    }
+    return '/employee/dashboard';
+  }, [user]);
+
   const handleStartVerification = useCallback(() => {
     if (isFaceEnrolled === false) {
-      navigate('/employee/kyc?step=4');
+      if (user?.role === 'ADMIN' || user?.role === 'HR' || user?.role === 'SUPER_ADMIN') {
+        setFaceEnrollModalOpen(true);
+      } else {
+        navigate('/employee/kyc?step=4');
+      }
       return;
     }
 
@@ -237,7 +254,7 @@ export default function EmployeeAttendance() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <button
                 type="button"
-                onClick={() => navigate('/employee/dashboard')}
+                onClick={() => navigate(getDashboardPath())}
                 aria-label="Go back"
                 style={{
                   background: '#FFFFFF',
@@ -343,7 +360,9 @@ export default function EmployeeAttendance() {
                   Face Verification Required
                 </h3>
                 <p style={{ fontSize: '13px', color: '#78350F', margin: 0, lineHeight: 1.45 }}>
-                  KYC Step 4 face verification is not completed for your account. Please complete face verification before marking attendance.
+                  {user?.role === 'ADMIN' || user?.role === 'HR' || user?.role === 'SUPER_ADMIN'
+                    ? 'Face verification is not enrolled for your account. Please complete face enrollment to mark attendance.'
+                    : 'KYC Step 4 face verification is not completed for your account. Please complete face verification before marking attendance.'}
                 </p>
               </div>
 
@@ -352,7 +371,13 @@ export default function EmployeeAttendance() {
                 <button
                   type="button"
                   id="direct-verify-face-btn"
-                  onClick={() => navigate('/employee/kyc?step=4')}
+                  onClick={() => {
+                    if (user?.role === 'ADMIN' || user?.role === 'HR' || user?.role === 'SUPER_ADMIN') {
+                      setFaceEnrollModalOpen(true);
+                    } else {
+                      navigate('/employee/kyc?step=4');
+                    }
+                  }}
                   style={{
                     width: '100%',
                     height: '50px',
@@ -375,7 +400,7 @@ export default function EmployeeAttendance() {
 
                 <button
                   type="button"
-                  onClick={() => navigate('/employee/dashboard')}
+                  onClick={() => navigate(getDashboardPath())}
                   style={{
                     width: '100%',
                     height: '44px',

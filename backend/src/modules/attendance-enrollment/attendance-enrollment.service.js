@@ -48,54 +48,7 @@ const resolveS3Url = async (keyOrUrl) => {
   }
 };
 
-/**
- * Helper to resolve employeeId from reqUser or user_id mapping
- * Handles both employee_id (UUID) and employee_code (string) by mapping to UUID
- */
-const resolveEmployeeId = async (reqUser) => {
-  if (!reqUser) return null;
-  
-  // 1. Authoritative: resolve employee by authenticated user_id
-  if (reqUser.id) {
-    try {
-      const { rows: [emp] } = await query(`SELECT id FROM employees WHERE user_id = $1 LIMIT 1`, [reqUser.id]);
-      if (emp) return emp.id;
-    } catch (e) {}
-  }
-
-  // 2. If employee_id is already a valid UUID, check and return it
-  const empId = reqUser.employeeId || reqUser.employee_id;
-  if (typeof empId === 'string' && empId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
-    return empId;
-  }
-  
-  // 3. If employee_code is provided, map it to employee_id (UUID)
-  const empCode = reqUser.employee_code || reqUser.emp_code || (typeof empId === 'string' && !empId.includes('-') ? empId : null);
-  if (empCode) {
-    try {
-      const { rows: [emp] } = await query(
-        `SELECT id FROM employees WHERE employee_id = $1 OR candidate_id::text = $1 LIMIT 1`,
-        [empCode]
-      );
-      if (emp) return emp.id;
-    } catch (e) {
-      logger.error('Error resolving employee_code to employee_id:', e.message);
-    }
-  }
-
-  // 4. Fallback lookup by email or phone
-  if (reqUser.email || reqUser.phone) {
-    try {
-      const { rows: [emp] } = await query(
-        `SELECT id FROM employees WHERE (email IS NOT NULL AND LOWER(email) = LOWER($1)) OR (phone IS NOT NULL AND phone = $2) LIMIT 1`,
-        [reqUser.email || '', reqUser.phone || '']
-      );
-      if (emp) return emp.id;
-    } catch (e) {}
-  }
-  
-  return null;
-};
+const { resolveEmployeeId } = require('../attendance/resolve-employee.helper');
 
 /**
  * Create a secure enrollment session token (valid 5 minutes)

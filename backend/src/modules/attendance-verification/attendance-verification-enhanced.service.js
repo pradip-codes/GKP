@@ -8,59 +8,7 @@ const challengeResponseService = require('../../services/attendance/challengeRes
 const rateLimiterService = require('../../services/attendance/rateLimiter.service');
 const { logAction } = require('../admin/audit.service');
 
-const isValidUuid = (str) => typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
-
-/**
- * Helper to resolve employeeId from reqUser or user_id mapping.
- */
-const resolveEmployeeId = async (reqUser) => {
-  if (!reqUser) return null;
-
-  // 1. Authoritative: resolve employee by authenticated user_id
-  if (reqUser.id && isValidUuid(reqUser.id)) {
-    try {
-      const { rows: [emp] } = await query(`SELECT id FROM employees WHERE user_id = $1 LIMIT 1`, [reqUser.id]);
-      if (emp && isValidUuid(emp.id)) return emp.id;
-    } catch (e) {}
-  }
-
-  const candidate = reqUser.employeeId || reqUser.employee_id || reqUser.employee_code || reqUser.emp_code;
-  
-  // 2. If candidate is already a valid UUID format and exists in employees table, return it
-  if (candidate && isValidUuid(candidate)) {
-    try {
-      const { rows: [emp] } = await query(`SELECT id FROM employees WHERE id = $1 LIMIT 1`, [candidate]);
-      if (emp) return emp.id;
-    } catch (e) {}
-  }
-  
-  // 3. If candidate string code like "CAND10001" or "EMP1001", query employee_id explicitly
-  if (candidate && typeof candidate === 'string') {
-    try {
-      const cleanCandidate = candidate.trim();
-      const { rows: [emp] } = await query(
-        `SELECT id FROM employees WHERE employee_id = $1 OR candidate_id::text = $1 LIMIT 1`,
-        [cleanCandidate]
-      );
-      if (emp && isValidUuid(emp.id)) return emp.id;
-    } catch (e) {
-      logger.error('Error resolving employee code to UUID:', e.message);
-    }
-  }
-
-  // 4. Fallback: try to resolve employee by mobile or email
-  if (reqUser.mobile || reqUser.email) {
-    try {
-      const { rows: [emp] } = await query(
-        `SELECT id FROM employees WHERE mobile_number = $1 OR (email_id IS NOT NULL AND email_id != '' AND LOWER(email_id) = LOWER($2)) LIMIT 1`,
-        [reqUser.mobile || '', reqUser.email || '']
-      );
-      if (emp && isValidUuid(emp.id)) return emp.id;
-    } catch (e) {}
-  }
-  
-  return null;
-};
+const { resolveEmployeeId, isValidUuid } = require('../attendance/resolve-employee.helper');
 
 /**
  * Enhanced Attendance Verification Service with Production Hardening
