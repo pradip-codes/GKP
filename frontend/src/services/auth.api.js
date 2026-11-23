@@ -67,7 +67,10 @@ export async function loginWithPassword(identity, password, role) {
     }
     return { success: true, idToken: res.data.token, refreshToken: res.data.refreshToken, redirect: res.data.redirect };
   } catch (err) {
-    throw new Error(err.response?.data?.message || 'Invalid credentials.');
+    const error = new Error(err.response?.data?.message || 'Invalid credentials.');
+    error.response = err.response;
+    error.data = err.response?.data;
+    throw error;
   }
 }
 
