@@ -177,7 +177,7 @@ export const ADMIN_NAV_SECTIONS: PanelNavSection[] = [
     title: 'OPERATIONS',
     items: [
       { label: 'Dashboard', icon: 'grid', route: '/(app)/admin-dashboard' },
-      { label: 'Applications', icon: 'document-text', route: '/(app)/applications' },
+      { label: 'Applications', icon: 'document-text', route: '/(app)/op-queue' },
       { label: 'Customers / Leads', icon: 'people', route: '/(app)/leads' },
       { label: 'Messenger', icon: 'chatbubbles', route: '/(app)/messenger' },
     ],
@@ -212,7 +212,7 @@ export const OPERATOR_NAV_SECTIONS: PanelNavSection[] = [
   {
     title: 'MY QUEUE',
     items: [
-      { label: 'Applications', icon: 'document-text', route: '/(app)/applications' },
+      { label: 'Applications', icon: 'document-text', route: '/(app)/op-queue' },
       { label: 'Messenger', icon: 'chatbubbles', route: '/(app)/messenger' },
     ],
   },
@@ -248,7 +248,6 @@ export const HR_NAV_SECTIONS: PanelNavSection[] = [
       { label: 'HR Dashboard & Candidates', icon: 'grid', route: '/(app)/hr-dashboard' },
       { label: 'Candidates', icon: 'id-card', route: '/(app)/hr-candidates' },
       { label: 'Payroll', icon: 'cash', route: '/(app)/hr-payroll' },
-      { label: 'Applications', icon: 'document-text', route: '/(app)/applications' },
     ],
   },
   {

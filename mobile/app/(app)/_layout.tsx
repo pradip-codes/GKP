@@ -176,7 +176,7 @@ export default function AppLayout() {
 
   const roleHome = (() => {
     if (role === 'SUPER_ADMIN') return '/super-admin';
-    if (role === 'ADMIN') return '/admin-dashboard';
+    if (role === 'ADMIN') return isOperatorDesignation(userDesignation, role) ? '/op-queue' : '/admin-dashboard';
     if (role === 'HR') return '/hr-dashboard';
     if (role === 'EMPLOYEE') return hasDesignation ? '/dashboard' : '/employee-dashboard';
     // Website PartnerLogin routes TEAM_MEMBER to /partner/dashboard
