@@ -7,6 +7,7 @@ import {
   AlertCircle, RefreshCw, Shield, Layers, Award, ArrowUpRight, BarChart3
 } from 'lucide-react';
 import DailyAnalyticsSection from '../../../components/Admin/DailyAnalyticsSection';
+import FaqAccordion from '../../../components/FaqAccordion';
 import { useAuthStore } from '../../../app/store/authStore';
 
 export default function AdminDashboard() {
@@ -327,6 +328,11 @@ export default function AdminDashboard() {
           </div>
         </>
       )}
+
+      {/* ── Help & FAQ ── */}
+      <div style={{ marginTop: '24px' }}>
+        <FaqAccordion categories={['general', 'employee', 'partner', 'credit-cards', 'loans', 'insurance']} title="Help & FAQ" />
+      </div>
 
     </div>
   );

@@ -23,6 +23,7 @@ import {
   updateEmployeeSettings,
   EmployeeSettings,
 } from '../../services/employee.service';
+import { FaqAccordion } from '../../components/FaqAccordion';
 
 const ACCENT = '#0F766E';
 
@@ -80,6 +81,13 @@ export default function EmployeeSettingsScreen() {
   const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
+  // Manage Devices state
+  const [devices, setDevices] = useState<any[]>([]);
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [devicesError, setDevicesError] = useState('');
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [logoutAllLoading, setLogoutAllLoading] = useState(false);
+
   const fetchProfile = useCallback(async () => {
     try {
       setLoading(true);
@@ -96,6 +104,56 @@ export default function EmployeeSettingsScreen() {
     fetchProfile();
     fetchEmployeeSettings().then((d) => { if (d) setNotifSettings(d); }).catch(() => {});
   }, [fetchProfile]);
+
+  const fetchDevices = useCallback(async () => {
+    setDevicesLoading(true);
+    setDevicesError('');
+    try {
+      const res = await apiClient.get('/auth/devices');
+      setDevices(res.data?.data || []);
+    } catch (err: any) {
+      setDevicesError(err.response?.data?.message || 'Failed to load devices');
+    } finally {
+      setDevicesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'security') fetchDevices();
+  }, [activeTab, fetchDevices]);
+
+  const revokeDevice = async (id: string) => {
+    setRevokingId(id);
+    try {
+      await apiClient.delete(`/auth/device/${id}`);
+      await fetchDevices();
+    } catch (err: any) {
+      Alert.alert('Error', err.response?.data?.message || 'Failed to log out device');
+    } finally {
+      setRevokingId(null);
+    }
+  };
+
+  const logoutOtherDevices = () => {
+    Alert.alert('Log out other devices', 'This will sign out all sessions except this device. Continue?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Log out',
+        style: 'destructive',
+        onPress: async () => {
+          setLogoutAllLoading(true);
+          try {
+            await apiClient.post('/auth/logout-all');
+            await fetchDevices();
+          } catch (err: any) {
+            Alert.alert('Error', err.response?.data?.message || 'Failed to log out other devices');
+          } finally {
+            setLogoutAllLoading(false);
+          }
+        },
+      },
+    ]);
+  };
 
   const emp = profileData?.employee || user || {};
   const jDetails = profileData?.joining_details || {};
@@ -264,6 +322,65 @@ export default function EmployeeSettingsScreen() {
                   </View>
                 </View>
               </View>
+            </View>
+
+            {/* Manage Devices — real sessions from /auth/devices */}
+            <View style={[styles.formCard, { backgroundColor: bgSecondary, borderColor: borderCol }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <Text style={[styles.formTitle, { color: colors.text, marginBottom: 0 }]}>Manage Devices</Text>
+                {devices.length > 1 && (
+                  <TouchableOpacity onPress={logoutOtherDevices} disabled={logoutAllLoading}>
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#DC2626' }}>
+                      {logoutAllLoading ? 'Logging out…' : 'Log out other devices'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {devicesLoading ? (
+                <ActivityIndicator size="small" color={ACCENT} style={{ marginVertical: 12 }} />
+              ) : devicesError ? (
+                <View style={{ alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+                  <Text style={{ fontSize: 12, color: '#DC2626', fontWeight: '600' }}>{devicesError}</Text>
+                  <TouchableOpacity onPress={fetchDevices}>
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: ACCENT }}>Retry</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : devices.length === 0 ? (
+                <Text style={{ fontSize: 12, color: colors.textMid }}>No active device sessions found.</Text>
+              ) : (
+                <View style={{ gap: 8 }}>
+                  {devices.map((d: any) => (
+                    <View key={d.id} style={styles.sessionRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.sessionDevice, { color: colors.text }]} numberOfLines={1}>
+                          {d.device_name || d.browser || 'Unknown device'}
+                          {d.city ? ` — ${d.city}` : ''}
+                        </Text>
+                        <Text style={[styles.sessionMeta, { color: colors.textMid }]} numberOfLines={1}>
+                          {[d.browser, d.ip_address].filter(Boolean).join(' • ') || 'Session'}
+                          {d.last_used_at ? ` • Last used ${new Date(d.last_used_at).toLocaleString('en-IN')}` : ''}
+                        </Text>
+                      </View>
+                      {d.is_current ? (
+                        <View style={styles.sessionBadge}>
+                          <Text style={styles.sessionBadgeText}>● This device</Text>
+                        </View>
+                      ) : (
+                        <TouchableOpacity
+                          style={[styles.modalBtn, { borderColor: '#FECACA', paddingHorizontal: 12, paddingVertical: 6 }]}
+                          onPress={() => revokeDevice(d.id)}
+                          disabled={revokingId === d.id}
+                        >
+                          {revokingId === d.id
+                            ? <ActivityIndicator size="small" color="#DC2626" />
+                            : <Text style={{ fontSize: 11, fontWeight: '800', color: '#DC2626' }}>Log out</Text>}
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
             </View>
           </View>
         );
@@ -451,6 +568,10 @@ export default function EmployeeSettingsScreen() {
                 </View>
                 <Icon name="chevron-right" size={16} color={colors.textLight} />
               </TouchableOpacity>
+            </View>
+
+            <View style={{ marginTop: 16 }}>
+              <FaqAccordion categories={['general', 'employee']} title="Help & FAQ" />
             </View>
           </View>
         );

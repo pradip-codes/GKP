@@ -45,6 +45,8 @@ interface AttendanceRecord {
   working_hours?: any;
   reminder?: { should_remind?: boolean; [key: string]: any };
   tasks?: AttendanceTask[];
+  display_status?: string;
+  duration_formatted?: string;
 }
 
 interface AttendanceTask {
@@ -82,6 +84,8 @@ export default function AttendanceScreen() {
   const [error, setError] = useState<string | null>(null);
   const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [isFaceEnrolled, setIsFaceEnrolled] = useState<boolean | null>(null);
   const [showEnrollModal, setShowEnrollModal] = useState(false);
   
@@ -112,19 +116,23 @@ export default function AttendanceScreen() {
 
   const fetchMonthlySummary = async () => {
     try {
+      setSummaryError(null);
       const data = await getMyAttendanceSummary({ month: selectedMonth, year: selectedYear });
       setMonthlySummary(data);
     } catch (err: any) {
       console.error('Error fetching monthly summary:', err);
+      setSummaryError(err?.message || 'Failed to load attendance summary');
     }
   };
 
   const fetchAttendanceHistory = async () => {
     try {
+      setHistoryError(null);
       const data = await getMyAttendanceHistory({ month: selectedMonth, year: selectedYear, limit: 31 });
       setAttendanceHistory(data?.records || []);
     } catch (err: any) {
       console.error('Error fetching attendance history:', err);
+      setHistoryError(err?.message || 'Failed to load attendance history');
     }
   };
 
@@ -298,19 +306,34 @@ export default function AttendanceScreen() {
     return () => clearInterval(timer);
   }, []);
 
+  // attendance_date comes back as 'YYYY-MM-DD' text — parse as local date to avoid TZ day-shift
+  const parseAttendanceDate = (dateStr: string) => {
+    if (!dateStr) return new Date(NaN);
+    const m = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return new Date(dateStr);
+  };
+
   const formatTime = (timeStr: string) => {
     if (!timeStr) return '--';
     const date = new Date(timeStr);
+    if (isNaN(date.getTime())) {
+      // Bare 'HH:MM:SS' time strings can't be parsed as dates — show as-is
+      const t = String(timeStr).match(/(\d{1,2}):(\d{2})/);
+      return t ? `${t[1].padStart(2, '0')}:${t[2]}` : '--';
+    }
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
+    const date = parseAttendanceDate(dateStr);
+    if (isNaN(date.getTime())) return dateStr || '--';
     return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
   const getDayName = (dateStr: string) => {
-    const date = new Date(dateStr);
+    const date = parseAttendanceDate(dateStr);
+    if (isNaN(date.getTime())) return '';
     return date.toLocaleDateString('en-GB', { weekday: 'short' });
   };
 
@@ -571,7 +594,14 @@ export default function AttendanceScreen() {
             </View>
           </View>
 
-          {attendanceHistory.length === 0 ? (
+          {historyError ? (
+            <Card style={styles.emptyCard}>
+              <Icon name="alert-circle" size={40} color={colors.error} />
+              <Text style={styles.emptyTitle}>Couldn't load history</Text>
+              <Text style={styles.emptyText}>{historyError}</Text>
+              <Button title="Retry" onPress={() => { fetchAttendanceHistory(); fetchMonthlySummary(); }} style={styles.emptyButton} />
+            </Card>
+          ) : attendanceHistory.length === 0 ? (
             <Card style={styles.emptyCard}>
               <Icon name="calendar" size={40} color={colors.textLight} />
               <Text style={styles.emptyTitle}>No attendance records yet</Text>
@@ -595,7 +625,14 @@ export default function AttendanceScreen() {
                     <Text style={[styles.recordDay, { color: colors.textMid }]}>{getDayName(record.attendance_date)}</Text>
                   </View>
                   <View style={styles.recordStatusWrap}>
-                    <Text style={styles.recordStatus}>{record.check_in_time && record.check_out_time ? 'Work Completed' : record.check_in_time ? 'Working' : record.status || 'Not Started'}</Text>
+                    <Text style={styles.recordStatus}>
+                      {record.display_status === 'COMPLETED' ? 'Work Completed'
+                        : record.display_status === 'WORKING' ? 'Working'
+                        : record.display_status === 'CHECKOUT_MISSING' ? 'Checkout Missing'
+                        : record.check_in_time && record.check_out_time ? 'Work Completed'
+                        : record.check_in_time ? 'Working'
+                        : record.status || 'Not Started'}
+                    </Text>
                     {record.verification_status === 'VERIFIED' ? (
                       <Icon name="check-circle" size={15} color={colors.success} />
                     ) : (
@@ -614,7 +651,7 @@ export default function AttendanceScreen() {
                   </View>
                   <View style={styles.recordTimeBox}>
                     <Text style={[styles.recordTimeLabel, { color: colors.textLight }]}>Duration</Text>
-                    <Text style={[styles.recordTimeValue, { color: colors.text }]}>{calculateWorkingHours(record.check_in_time, record.check_out_time)}</Text>
+                    <Text style={[styles.recordTimeValue, { color: colors.text }]}>{record.duration_formatted || calculateWorkingHours(record.check_in_time, record.check_out_time)}</Text>
                   </View>
                 </View>
               </TouchableOpacity>
@@ -660,6 +697,15 @@ export default function AttendanceScreen() {
             </View>
           </View>
 
+          {summaryError && (
+            <Card style={styles.emptyCard}>
+              <Icon name="alert-circle" size={40} color={colors.error} />
+              <Text style={styles.emptyTitle}>Couldn't load summary</Text>
+              <Text style={styles.emptyText}>{summaryError}</Text>
+              <Button title="Retry" onPress={() => { fetchMonthlySummary(); fetchAttendanceHistory(); }} style={styles.emptyButton} />
+            </Card>
+          )}
+
           <Card style={styles.summaryCard}>
             <Text style={styles.summaryCardTitle}>Day Breakdown</Text>
             <View style={styles.breakdownGrid}>
@@ -692,18 +738,19 @@ export default function AttendanceScreen() {
             </View>
             
             <View style={styles.verificationDetails}>
-              <View style={styles.verificationItem}>
-                <Icon name="check-circle" size={20} color={colors.success} />
-                <Text style={styles.verificationText}>Face Verified</Text>
-              </View>
-              <View style={styles.verificationItem}>
-                <Icon name="check-circle" size={20} color={colors.success} />
-                <Text style={styles.verificationText}>Liveness Verified</Text>
-              </View>
-              <View style={styles.verificationItem}>
-                <Icon name="check-circle" size={20} color={colors.success} />
-                <Text style={styles.verificationText}>Office Environment Verified</Text>
-              </View>
+              {[
+                ['Face Verified', 'VERIFIED'],
+                ['Liveness Verified', 'VERIFIED'],
+                ['Office Environment Verified', 'VERIFIED'],
+              ].map(([label]) => {
+                const verified = (selectedRecord?.verification_status || '').toUpperCase() === 'VERIFIED';
+                return (
+                  <View key={label as string} style={styles.verificationItem}>
+                    <Icon name={verified ? 'check-circle' : 'alert-circle'} size={20} color={verified ? colors.success : colors.textLight} />
+                    <Text style={[styles.verificationText, !verified && { color: colors.textLight }]}>{label}</Text>
+                  </View>
+                );
+              })}
             </View>
 
             <View style={styles.detailSection}>

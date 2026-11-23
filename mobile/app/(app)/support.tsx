@@ -5,6 +5,7 @@ import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { spacing } from '../../theme/spacing';
 import { getTickets, createTicket, SupportTicket } from '../../services/support.service';
+import { FaqAccordion } from '../../components/FaqAccordion';
 
 export default function SupportScreen() {
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
@@ -85,6 +86,11 @@ export default function SupportScreen() {
             data={tickets}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.list}
+            ListHeaderComponent={
+              <View style={{ marginBottom: spacing.md }}>
+                <FaqAccordion />
+              </View>
+            }
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>

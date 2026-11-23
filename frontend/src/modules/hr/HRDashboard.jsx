@@ -8,6 +8,7 @@ import {
   FaArrowRight
 } from 'react-icons/fa';
 import api from '../../services/api';
+import FaqAccordion from '../../components/FaqAccordion';
 
 const MONO_FONT = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
 
@@ -891,6 +892,11 @@ export default function HRDashboard() {
             </div>
           </>
         )}
+
+        {/* ── HR Help & FAQ ── */}
+        <div style={{ marginTop: '28px' }}>
+          <FaqAccordion categories={['general', 'employee', 'partner', 'credit-cards', 'loans', 'insurance']} title="Help & FAQ" />
+        </div>
 
         {/* ══════════════════════════════════════════════════════════════════
             MODAL 1: Candidate Review Drawer

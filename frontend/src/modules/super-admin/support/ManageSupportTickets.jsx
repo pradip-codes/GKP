@@ -5,6 +5,7 @@ import {
   MdSupportAgent, MdSearch, MdSend, MdCheckCircle,
   MdOutlineForum, MdRefresh, MdPerson
 } from 'react-icons/md';
+import FaqAccordion from '../../../components/FaqAccordion';
 
 const POLL_INTERVAL = 10000;
 
@@ -110,6 +111,7 @@ export default function ManageSupportTickets() {
   });
 
   return (
+    <>
     <div style={{
       display: 'flex',
       flexDirection: isMobile ? 'column' : 'row',
@@ -388,5 +390,11 @@ export default function ManageSupportTickets() {
         )}
       </div>
     </div>
+
+    {/* Knowledge-base FAQ for the support team */}
+    <div style={{ maxWidth: '1200px', margin: '0 auto', paddingBottom: '40px' }}>
+      <FaqAccordion categories={['general', 'partner', 'employee', 'credit-cards', 'loans', 'insurance']} title="Support Knowledge Base — FAQ" />
+    </div>
+    </>
   );
 }

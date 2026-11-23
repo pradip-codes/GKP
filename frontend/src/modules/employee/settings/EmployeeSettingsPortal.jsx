@@ -10,6 +10,7 @@ import {
 } from 'react-icons/fa';
 import api from '../../../services/api';
 import NotificationSettings from '../../../components/NotificationSettings/NotificationSettings';
+import FaqAccordion from '../../../components/FaqAccordion';
 
 export default function EmployeeSettingsPortal() {
   const { C, isDark, toggle } = useTheme();
@@ -28,6 +29,13 @@ export default function EmployeeSettingsPortal() {
 
   // Support Ticket Modal State
   const [showSupportModal, setShowSupportModal] = useState(false);
+
+  // Manage Devices state (real sessions from /auth/devices)
+  const [devices, setDevices] = useState([]);
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [devicesError, setDevicesError] = useState('');
+  const [revokingId, setRevokingId] = useState(null);
+  const [logoutAllLoading, setLogoutAllLoading] = useState(false);
   const [ticketForm, setTicketForm] = useState({ subject: '', category: 'General', description: '' });
 
   // Account Deletion State
@@ -110,6 +118,49 @@ export default function EmployeeSettingsPortal() {
       setShowDeleteModal(false);
     }
   };
+
+  const fetchDevices = async () => {
+    setDevicesLoading(true);
+    setDevicesError('');
+    try {
+      const res = await api.get('/auth/devices');
+      setDevices(res.data?.data || []);
+    } catch (err) {
+      setDevicesError(err.response?.data?.message || 'Failed to load devices');
+    } finally {
+      setDevicesLoading(false);
+    }
+  };
+
+  const revokeDevice = async (id) => {
+    setRevokingId(id);
+    try {
+      await api.delete(`/auth/device/${id}`);
+      await fetchDevices();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to log out device');
+    } finally {
+      setRevokingId(null);
+    }
+  };
+
+  const logoutOtherDevices = async () => {
+    if (!window.confirm('This will sign out all sessions except this device. Continue?')) return;
+    setLogoutAllLoading(true);
+    try {
+      await api.post('/auth/logout-all');
+      await fetchDevices();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to log out other devices');
+    } finally {
+      setLogoutAllLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'security') fetchDevices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   const emp = profileData?.employee || user || {};
   const jDetails = profileData?.joining_details || {};
@@ -330,18 +381,56 @@ export default function EmployeeSettingsPortal() {
                 </button>
               </form>
 
-              {/* Login Activity */}
-              <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '16px', padding: isMobile ? '16px' : '20px', boxSizing: 'border-box', width: '100%' }}>
-                <h3 style={{ fontSize: '14.5px', fontWeight: 800, margin: '0 0 10px 0' }}>Recent Login Activity</h3>
-                <div style={{ fontSize: '12.5px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: '6px' }}>
-                    <div>
-                      <strong>Windows Chrome Session</strong> — Maharashtra, India
-                      <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>Active Now • IP: 103.44.xx.xx</div>
-                    </div>
-                    <span style={{ color: '#10B981', fontWeight: 800, fontSize: '11px', background: '#10B98115', padding: '2px 8px', borderRadius: '6px' }}>● Current Session</span>
-                  </div>
+              {/* Manage Devices — real sessions from /auth/devices */}
+              <div style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '16px', padding: isMobile ? '16px' : '20px', boxSizing: 'border-box', width: '100%', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', gap: '8px', flexWrap: 'wrap' }}>
+                  <h3 style={{ fontSize: '14.5px', fontWeight: 800, margin: 0 }}>Manage Devices</h3>
+                  {devices.length > 1 && (
+                    <button
+                      onClick={logoutOtherDevices}
+                      disabled={logoutAllLoading}
+                      style={{ background: 'none', border: 'none', color: '#DC2626', fontWeight: 800, fontSize: '12px', cursor: 'pointer' }}
+                    >
+                      {logoutAllLoading ? 'Logging out…' : 'Log out other devices'}
+                    </button>
+                  )}
                 </div>
+
+                {devicesLoading ? (
+                  <div style={{ fontSize: '12.5px', color: C.textMid, padding: '8px 0' }}>Loading devices…</div>
+                ) : devicesError ? (
+                  <div style={{ fontSize: '12.5px', color: '#DC2626', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {devicesError}
+                    <button onClick={fetchDevices} style={{ background: 'none', border: 'none', color: C.teal, fontWeight: 800, cursor: 'pointer', fontSize: '12px' }}>Retry</button>
+                  </div>
+                ) : devices.length === 0 ? (
+                  <div style={{ fontSize: '12.5px', color: C.textMid }}>No active device sessions found.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12.5px' }}>
+                    {devices.map((d) => (
+                      <div key={d.id} style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: '6px' }}>
+                        <div>
+                          <strong>{d.device_name || d.browser || 'Unknown device'}{d.city ? ` — ${d.city}` : ''}</strong>
+                          <div style={{ fontSize: '11px', color: C.textMid, marginTop: '2px' }}>
+                            {[d.browser, d.ip_address].filter(Boolean).join(' • ') || 'Session'}
+                            {d.last_used_at ? ` • Last used ${new Date(d.last_used_at).toLocaleString('en-IN')}` : ''}
+                          </div>
+                        </div>
+                        {d.is_current ? (
+                          <span style={{ color: '#10B981', fontWeight: 800, fontSize: '11px', background: '#10B98115', padding: '2px 8px', borderRadius: '6px' }}>● This device</span>
+                        ) : (
+                          <button
+                            onClick={() => revokeDevice(d.id)}
+                            disabled={revokingId === d.id}
+                            style={{ background: 'none', border: `1px solid #FECACA`, color: '#DC2626', padding: '4px 12px', borderRadius: '8px', fontWeight: 800, fontSize: '11px', cursor: 'pointer' }}
+                          >
+                            {revokingId === d.id ? '…' : 'Log out'}
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -631,6 +720,11 @@ export default function EmployeeSettingsPortal() {
                     <span style={{ fontSize: '11px', color: C.textMid }}>{hierarchy.manager_name || 'Super Admin'}</span>
                   </div>
                 </button>
+              </div>
+
+              {/* FAQ accordion — same content as app & other panels */}
+              <div style={{ marginTop: '20px' }}>
+                <FaqAccordion categories={['general', 'employee']} title="Help & FAQ" />
               </div>
 
               {/* Support Ticket Form Modal */}
