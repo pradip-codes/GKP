@@ -849,6 +849,52 @@ const AdminLayout = () => {
               )}
             </div>
 
+            {/* Profile Avatar → Profile & Settings (all admin designations) */}
+            <button
+              id="admin-profile-button"
+              onClick={() => navigate(isHR ? '/hr/profile' : '/admin/profile')}
+              title="My Profile"
+              aria-label="Open my profile"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                padding: '0',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                borderRadius: '10px',
+                outline: 'none'
+              }}
+            >
+              <div style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
+                color: '#ffffff',
+                fontWeight: 900,
+                fontSize: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                border: `2px solid ${C.border}`
+              }}>
+                {(user?.first_name || user?.name || 'A').charAt(0).toUpperCase()}
+              </div>
+              {!isMobile && (
+                <div style={{ textAlign: 'left', lineHeight: 1.2 }}>
+                  <div style={{ fontSize: '12px', fontWeight: 800, color: C.text, maxWidth: '140px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {user?.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : (user?.name || 'Profile')}
+                  </div>
+                  <div style={{ fontSize: '10px', fontWeight: 600, color: C.textLight }}>
+                    {user?.designation || userRole || 'Admin'}
+                  </div>
+                </div>
+              )}
+            </button>
+
             {/* Desktop Only Extra Controls */}
             <div style={{ alignItems: 'center', gap: '10px', display: isMobile ? 'none' : 'flex' }}>
               <LanguageSwitcher />

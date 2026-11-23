@@ -178,7 +178,10 @@ export default function EmployeeSettingsScreen() {
     try {
       setPasswordLoading(true);
       setPasswordMsg('Updating password...');
-      const res = await apiClient.post('/auth/change-password', passwordForm);
+      const res = await apiClient.post('/auth/change-password', {
+        oldPassword: passwordForm.current_password,
+        newPassword: passwordForm.new_password,
+      });
       if (res.data?.success) {
         setPasswordMsg('✓ Password updated successfully!');
         setPasswordForm({ current_password: '', new_password: '', confirm_password: '' });
