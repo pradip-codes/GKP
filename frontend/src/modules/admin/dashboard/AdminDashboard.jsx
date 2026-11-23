@@ -331,7 +331,7 @@ export default function AdminDashboard() {
 
       {/* ── Help & FAQ ── */}
       <div style={{ marginTop: '24px' }}>
-        <FaqAccordion categories={['general', 'employee', 'partner', 'credit-cards', 'loans', 'insurance']} title="Help & FAQ" />
+        <FaqAccordion categories={['general', 'admin', 'employee', 'partner']} title="Admin Help & FAQ" />
       </div>
 
     </div>

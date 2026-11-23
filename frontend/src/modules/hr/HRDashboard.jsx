@@ -895,7 +895,7 @@ export default function HRDashboard() {
 
         {/* ── HR Help & FAQ ── */}
         <div style={{ marginTop: '28px' }}>
-          <FaqAccordion categories={['general', 'employee', 'partner', 'credit-cards', 'loans', 'insurance']} title="Help & FAQ" />
+          <FaqAccordion categories={['general', 'hr', 'employee']} title="HR Help & FAQ" />
         </div>
 
         {/* ══════════════════════════════════════════════════════════════════

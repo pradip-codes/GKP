@@ -393,7 +393,7 @@ export default function ManageSupportTickets() {
 
     {/* Knowledge-base FAQ for the support team */}
     <div style={{ maxWidth: '1200px', margin: '0 auto', paddingBottom: '40px' }}>
-      <FaqAccordion categories={['general', 'partner', 'employee', 'credit-cards', 'loans', 'insurance']} title="Support Knowledge Base — FAQ" />
+      <FaqAccordion categories={['general', 'super-admin', 'admin']} title="Support Knowledge Base — FAQ" />
     </div>
     </>
   );

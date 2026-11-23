@@ -172,7 +172,7 @@ export default function Contact() {
 
         {/* FAQ — same accordion shown across all panels */}
         <div style={{ marginTop: "28px" }}>
-          <FaqAccordion />
+          <FaqAccordion categories={['general', 'credit-cards', 'loans', 'insurance']} title="Help & FAQ" />
         </div>
       </div>
     </div>

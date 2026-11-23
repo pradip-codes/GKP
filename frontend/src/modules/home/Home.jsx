@@ -3054,7 +3054,7 @@ export default function Home({ onNavigate }) {
 
         {/* ── FAQ ── */}
         <div style={{ marginBottom: isMobile ? "20px" : "32px" }}>
-          <FaqAccordion />
+          <FaqAccordion categories={['general', 'credit-cards', 'loans', 'insurance']} title="Frequently Asked Questions" />
         </div>
 
         {/* ── MODERN FOOTER ── */}

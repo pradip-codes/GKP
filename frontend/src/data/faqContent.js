@@ -68,4 +68,38 @@ export const FAQ_CATEGORIES = [
       { q: 'How do team members work under me?', a: 'Team members you add share your downline structure. Their applications and commissions roll up to your reports per the configured hierarchy.' },
     ],
   },
+  {
+    id: 'admin',
+    label: 'Admin Panel',
+    items: [
+      { q: 'How do I approve or reject an application?', a: 'Step 1: Open Applications/Queue. Step 2: Filter by status (Pending, KYC, Approved). Step 3: Open the application and review customer documents. Step 4: Choose Approve or Reject with a reason — the customer is notified automatically.' },
+      { q: 'How do I manage partners and employees?', a: 'Go to Partners or Employees from the menu. You can add new accounts, assign designations, set reporting managers and deactivate accounts. Bank-wise access is controlled by the employee\'s assigned bank.' },
+      { q: 'How do I handle withdrawals?', a: 'Open Withdrawals, verify the partner\'s bank details and KYC status, then approve or reject the request. Approved payouts are processed in the next settlement cycle.' },
+      { q: 'Where do I see daily analytics?', a: 'The Admin dashboard shows applications, approvals, conversions and partner activity. Use the date filters to compare periods.' },
+      { q: 'How do I assign a product to a bank?', a: 'Open Product Management, select the product, and map it to the correct bank and category. Product links (partner_url / public_url) control where Apply Now sends the customer.' },
+      { q: 'A partner says their applications are missing. What do I check?', a: 'Confirm the partner account is active, the application status isn\'t filtered out by designation/bank scope, and the product is mapped to an active bank.' },
+    ],
+  },
+  {
+    id: 'hr',
+    label: 'HR Panel',
+    items: [
+      { q: 'How do I review a candidate application?', a: 'Step 1: Open Candidates. Step 2: Filter by stage (Registered, Interview Pending, Selected, Rejected). Step 3: Open the profile to verify documents and details. Step 4: Schedule an interview or update the stage — the candidate gets notified by email/SMS.' },
+      { q: 'How do I provision an HR account?', a: 'In the HR dashboard click "Create HR Account", enter name, email, mobile and designation, then submit. The account is created with HR role access.' },
+      { q: 'How does payroll work?', a: 'HR → Payroll: assign salary structures to employees, run payroll for the month, review PF/ESI/PT deductions and approve. Employees see payslips under My Salary & Payslips.' },
+      { q: 'How do I reject a candidate?', a: 'Open the candidate profile → Reject. A reference code and HR contact details are shared with the candidate by email, and dependent records are cleaned up automatically.' },
+      { q: 'Where do I see onboarding/KYC status?', a: 'The Candidates list shows onboarding and KYC stages per candidate. Filter by stage to find pending verifications.' },
+    ],
+  },
+  {
+    id: 'super-admin',
+    label: 'Super Admin',
+    items: [
+      { q: 'What can Super Admin access?', a: 'Everything: all panels (admin, HR, employee, partner), commission rules, product and bank management, support tickets, withdrawals, payroll oversight and system settings.' },
+      { q: 'How do I manage commission rules?', a: 'Open Commission Rules / Manage Commissions. Define per-department, per-bank incentive slabs and bonus rules — changes apply to new approvals automatically.' },
+      { q: 'How do I respond to support tickets?', a: 'Open Support Tickets, select a ticket, review the conversation and reply as Support Team. Set status to In Progress or Resolved when done.' },
+      { q: 'How do I manage product links?', a: 'Product Links lets you set the partner_url / public_url used by Apply Now for each product — per-bank HDFC links are mapped automatically by card name.' },
+      { q: 'How do I add or deactivate staff?', a: 'Use Staff/Employees management to create accounts with any role (Admin, HR, Employee) and deactivate or reassign them anytime.' },
+    ],
+  },
 ];
