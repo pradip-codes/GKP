@@ -22,7 +22,8 @@ function setPath(obj, p, v) {
   o[ks[ks.length - 1]] = v;
 }
 
-const SKIP = /^[A-Z0-9&\/\-+ ]{2,}$|^GharKaPaisa$|^OTP$|^PAN$|^KYC$|^HR$|^PDF$|^FAQ$|^EMI$/;
+const SKIP = /^(GharKaPaisa|OTP|PAN|KYC|HR|PDF|FAQ|EMI|Udyam|GSTIN|API|UIDAI|NPCI|TDS|PF|ESI|PT|CIBIL|DOB|ID|DTH|FASTag|UPI|NEFT|RTGS|IMPS|VPA|BBPS|CKYC|SMS|URL|IP|OS|UI|JSON|SQL|HTTP|HTTPS|SSL|AES|RSA|OTP)$/;
+const HAS_PLACEHOLDER = /\{\{|\}\}/;
 
 const { execFile } = require('child_process');
 function curlJson(url) {
@@ -35,9 +36,17 @@ function curlJson(url) {
 }
 
 async function translate(text, tl) {
-  const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=' + tl + '&dt=t&q=' + encodeURIComponent(text);
-  const data = await curlJson(url);
-  return (data[0] || []).map((s) => s[0]).join('');
+  // Primary: Google gtx via curl. Fallback: MyMemory (used when gtx rate-limits).
+  try {
+    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=' + tl + '&dt=t&q=' + encodeURIComponent(text);
+    const data = await curlJson(url);
+    const out = (data[0] || []).map((s) => s[0]).join('');
+    if (out && out !== text) return out;
+  } catch {}
+  const mm = await curlJson('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text) + '&langpair=en|' + tl);
+  const mt = mm && mm.responseData && mm.responseData.translatedText;
+  if (mt && mt !== text) return mt;
+  throw new Error('no translation');
 }
 
 async function pool(items, fn, size = 6) {
@@ -59,7 +68,7 @@ async function pool(items, fn, size = 6) {
     const file = path.join(ROOT, 'locales', lng, 'translation.json');
     const cur = JSON.parse(fs.readFileSync(file, 'utf8'));
     const curFlat = flatten(cur);
-    const gaps = Object.keys(enFlat).filter((p) => curFlat[p] === enFlat[p] && !SKIP.test(enFlat[p]));
+    const gaps = Object.keys(enFlat).filter((p) => curFlat[p] === enFlat[p] && !SKIP.test(enFlat[p]) && !HAS_PLACEHOLDER.test(enFlat[p]));
     console.log(lng + ': ' + gaps.length + ' strings to translate');
     if (!gaps.length) continue;
 
