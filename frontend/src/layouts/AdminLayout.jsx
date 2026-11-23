@@ -110,20 +110,19 @@ const AdminLayout = () => {
   const isDigitalCurable = ['Digital Curable', 'DIGITAL CURABLE', 'DIGITAL_CURABLE', 'Digital Curable Operator', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userRole);
   const isEmailCurable = ['Email Curable', 'EMAIL CURABLE', 'EMAIL_CURABLE', 'Email Curable Operator', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userRole);
   const isCurableOperator = isPhysicalCurable || isDigitalCurable || isEmailCurable;
-  const isCardActivationOperator = ['Card Activation Operator', 'CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR'].includes(userDesignation) || ['CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR'].includes(userRole);
   const isBackend = ['Backend', 'BACKEND', 'Backend Operation', 'BACKEND_OPERATION', 'Administrative Operator', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR'].includes(userDesignation);
   const assignedList = user?.assigned_banks?.length ? user.assigned_banks : (user?.permissions?.assigned_banks || []);
   const hasLocEocAssigned = !!user?.has_loc_eoc || assignedList.some(b => (b.short_code || '').toUpperCase() === 'LOC_EOC' || b.is_loc_eoc || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(b.name || ''));
   const regularBanks = assignedList.filter(b => (b.short_code || '').toUpperCase() !== 'LOC_EOC' && !b.is_loc_eoc && !/loc[\s/_]*eoc|loan\s+on\s+card/i.test(b.name || ''));
 
-  if ((isOpHead || isBackend || isRemarkOperator || isSalesExec || isPanChecker || isQdOperator || isKycOperator || isFinalStatusOperator || isQuerableOperator || isCurableOperator || isCardActivationOperator || assignedList.length > 0) && regularBanks.length > 0) {
+  if ((isOpHead || isBackend || isRemarkOperator || isSalesExec || isPanChecker || isQdOperator || isKycOperator || isFinalStatusOperator || isQuerableOperator || isCurableOperator || assignedList.length > 0) && regularBanks.length > 0) {
     banks = regularBanks.map(b => ({
       id: b.id,
       name: b.name || b.bank_name || b.short_code,
       short_code: b.short_code || b.code || b.name,
       logo: b.logo_url || b.logo
     }));
-  } else if (isOpHead || isBackend || isRemarkOperator || isSalesExec || isPanChecker || isQdOperator || isKycOperator || isFinalStatusOperator || isQuerableOperator || isCurableOperator || isCardActivationOperator) {
+  } else if (isOpHead || isBackend || isRemarkOperator || isSalesExec || isPanChecker || isQdOperator || isKycOperator || isFinalStatusOperator || isQuerableOperator || isCurableOperator) {
     banks = [];
   }
 
@@ -198,7 +197,7 @@ const AdminLayout = () => {
       if (!isAllowed) {
         navigate('/admin/applications', { replace: true });
       }
-    } else if (isRemarkOperator || isQdOperator || isFinalStatusOperator || isQuerableOperator || isCurableOperator || isCardActivationOperator) {
+    } else if (isRemarkOperator || isQdOperator || isFinalStatusOperator || isQuerableOperator || isCurableOperator) {
       const allowedPaths = ['/admin/applications', '/admin/messenger'];
       const isAllowed = allowedPaths.some(p => location.pathname.startsWith(p));
       if (!isAllowed) {
@@ -217,7 +216,7 @@ const AdminLayout = () => {
         navigate('/admin/dashboard', { replace: true });
       }
     }
-  }, [location.pathname, isHR, isKycOperator, isSuperAdmin, isRemarkOperator, isQdOperator, isFinalStatusOperator, isQuerableOperator, isCurableOperator, isCardActivationOperator, isSalesExec, isBackend, navigate]);
+  }, [location.pathname, isHR, isKycOperator, isSuperAdmin, isRemarkOperator, isQdOperator, isFinalStatusOperator, isQuerableOperator, isCurableOperator, isSalesExec, isBackend, navigate]);
 
   const handleLogout = () => {
     logout();
@@ -235,7 +234,7 @@ const AdminLayout = () => {
             {t('adminLayout.title', 'GharKaPaisa')}
           </h2>
           <span style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            {isHR ? 'HR Management Portal' : isKycOperator ? 'KYC Operator Portal' : isRemarkOperator ? 'Remark Operator' : isPanChecker ? 'PAN Checker' : isFinalStatusOperator ? 'Final Status Operator' : isQuerableOperator ? 'Querable Operator' : isPhysicalCurable ? 'Physical Curable Operator' : isDigitalCurable ? 'Digital Curable Operator' : isEmailCurable ? 'Email Curable Operator' : isCardActivationOperator ? 'Card Activation Operator' : isSalesExec ? 'Administrative Sales Executive' : isBackend ? 'Administrative Operator' : 'Admin Operations Portal'}
+            {isHR ? 'HR Management Portal' : isKycOperator ? 'KYC Operator Portal' : isRemarkOperator ? 'Remark Operator' : isPanChecker ? 'PAN Checker' : isFinalStatusOperator ? 'Final Status Operator' : isQuerableOperator ? 'Querable Operator' : isPhysicalCurable ? 'Physical Curable Operator' : isDigitalCurable ? 'Digital Curable Operator' : isEmailCurable ? 'Email Curable Operator' : isSalesExec ? 'Administrative Sales Executive' : isBackend ? 'Administrative Operator' : 'Admin Operations Portal'}
           </span>
         </div>
       </div>
@@ -252,7 +251,7 @@ const AdminLayout = () => {
         ) : (
           <>
             {/* Dashboard (Available to all Admin Roles except Remark Operator, QD Operator, KYC Operator, Final Status Operator, Querable Operator, and Curable Operators) */}
-            {!isRemarkOperator && !isQdOperator && !isKycOperator && !isFinalStatusOperator && !isQuerableOperator && !isCurableOperator && !isCardActivationOperator && (
+            {!isRemarkOperator && !isQdOperator && !isKycOperator && !isFinalStatusOperator && !isQuerableOperator && !isCurableOperator && (
               <NavLink to="/admin/dashboard" style={navLinkStyle}>
                 <Icons.dashboard size={18} />
                 <span>Dashboard</span>
@@ -284,7 +283,7 @@ const AdminLayout = () => {
             )}
 
             {/* CREDIT CARDS — Only Assigned Banks */}
-            {!isPanChecker && !isRemarkOperator && !isSalesExec && !isQdOperator && !isKycOperator && !isFinalStatusOperator && !isQuerableOperator && !isCurableOperator && !isCardActivationOperator && (
+            {!isPanChecker && !isRemarkOperator && !isSalesExec && !isQdOperator && !isKycOperator && !isFinalStatusOperator && !isQuerableOperator && !isCurableOperator && (
               <div>
                 <button onClick={() => setOpenCcMenu(!openCcMenu)} style={menuBtnStyle(openCcMenu)}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -310,7 +309,7 @@ const AdminLayout = () => {
             )}
 
             {/* LOANS — Only Assigned Banks */}
-            {!isPanChecker && !isRemarkOperator && !isSalesExec && !isQdOperator && !isKycOperator && !isFinalStatusOperator && !isQuerableOperator && !isCurableOperator && !isCardActivationOperator && (
+            {!isPanChecker && !isRemarkOperator && !isSalesExec && !isQdOperator && !isKycOperator && !isFinalStatusOperator && !isQuerableOperator && !isCurableOperator && (
               <div>
                 <button onClick={() => setOpenLoansMenu(!openLoansMenu)} style={menuBtnStyle(openLoansMenu)}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -336,7 +335,7 @@ const AdminLayout = () => {
             )}
 
             {/* INSURANCE — Only Assigned Banks */}
-            {!isPanChecker && !isRemarkOperator && !isSalesExec && !isQdOperator && !isKycOperator && !isFinalStatusOperator && !isQuerableOperator && !isCurableOperator && !isCardActivationOperator && (
+            {!isPanChecker && !isRemarkOperator && !isSalesExec && !isQdOperator && !isKycOperator && !isFinalStatusOperator && !isQuerableOperator && !isCurableOperator && (
               <div>
                 <button onClick={() => setOpenInsuranceMenu(!openInsuranceMenu)} style={menuBtnStyle(openInsuranceMenu)}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -367,7 +366,7 @@ const AdminLayout = () => {
               style={navLinkStyle}
             >
               <Icons.creditCard size={18} />
-              <span>{isKycOperator ? 'KYC Operator' : isQdOperator ? 'QD Operator' : isRemarkOperator ? 'Remark Operator' : isPanChecker ? 'PAN Checker' : isFinalStatusOperator ? 'Final Status Operator' : isQuerableOperator ? 'Querable Operator' : isPhysicalCurable ? 'Physical Curable' : isDigitalCurable ? 'Digital Curable' : isEmailCurable ? 'Email Curable' : isCardActivationOperator ? 'Card Activation Queue' : 'Applications'}</span>
+              <span>{isKycOperator ? 'KYC Operator' : isQdOperator ? 'QD Operator' : isRemarkOperator ? 'Remark Operator' : isPanChecker ? 'PAN Checker' : isFinalStatusOperator ? 'Final Status Operator' : isQuerableOperator ? 'Querable Operator' : isPhysicalCurable ? 'Physical Curable' : isDigitalCurable ? 'Digital Curable' : isEmailCurable ? 'Email Curable' : 'Applications'}</span>
             </NavLink>
 
             {/* Messenger */}
@@ -397,7 +396,7 @@ const AdminLayout = () => {
             )}
 
             {/* Additional Admin Nav Items */}
-            {!isBackend && !isSalesExec && !isPanChecker && !isRemarkOperator && !isQdOperator && !isKycOperator && !isFinalStatusOperator && !isQuerableOperator && !isCurableOperator && !isCardActivationOperator && (
+            {!isBackend && !isSalesExec && !isPanChecker && !isRemarkOperator && !isQdOperator && !isKycOperator && !isFinalStatusOperator && !isQuerableOperator && !isCurableOperator && (
               <>
                 {/* Customers */}
                 <NavLink to="/admin/leads" style={navLinkStyle}>

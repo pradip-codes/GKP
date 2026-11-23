@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import api from "../../../services/api";
 import { useTheme, makeS } from "../../../contexts/ThemeContext";
 import { Icons } from "../../../components/Icon/PartnerIcons";
-import { FileText, FileEdit, Building2, Clock, Search, CheckCircle2, Sparkles, XCircle, Layers, Eye, Download, ShieldCheck, Zap, Loader2, UserCheck, UserPlus, CreditCard } from 'lucide-react';
+import { FileText, FileEdit, Building2, Clock, Search, CheckCircle2, Sparkles, XCircle, Layers, Eye, Download, ShieldCheck, Zap, Loader2, UserCheck, UserPlus } from 'lucide-react';
 import {
   MdSearch, MdFilterList, MdDownload, MdAdd, MdHourglassEmpty, MdTrackChanges,
   MdCheckCircle, MdCancel, MdChevronLeft, MdChevronRight, MdClose, MdMoreVert,
@@ -29,22 +29,29 @@ export default function ManageApplications() {
   const userRole = (user?.role || '').toUpperCase();
   const userDesignation = (user?.designation || '').toUpperCase();
   const isSuperAdmin = userRole === 'SUPER_ADMIN' || userRole === 'SUPERADMIN';
-  const isSalesExecUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR', 'Administrative Sales Executive'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
-  const isAdministrativeOperatorUser = (
-    ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'BACKEND OPERATOR', 'Administrative Operator', 'Backend'].includes(userDesignation) ||
-    ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'BACKEND OPERATOR'].includes(userRole)
-  ) && !isSalesExecUser;
-  const isPanCheckerUser = ['PAN CHECKER', 'PAN_CHECKER', 'PAN Checker'].includes(userDesignation) || ['PAN CHECKER', 'PAN_CHECKER'].includes(userRole);
-  const isRemarkOperatorUser = ['REMARK OPERATOR', 'REMARK_OPERATOR', 'Remark Operator'].includes(userDesignation) || ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userRole);
-  const isQdOperatorUser = ['QD OPERATOR', 'QD_OPERATOR', 'QD CHECKER', 'QD_CHECKER', 'QD Operator', 'QD Checker'].includes(userDesignation) || ['QD OPERATOR', 'QD_OPERATOR', 'QD CHECKER', 'QD_CHECKER'].includes(userRole);
-  const isFinalStatusOperatorUser = ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'Final Status Operator'].includes(userDesignation) || ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userRole);
-  const isQuerableOperatorUser = ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR', 'Querable Operator', 'Queryable Operator'].includes(userDesignation) || ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userRole);
-  const isPhysicalCurableUser = ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'Physical Curable', 'Physical Curable Operator'].includes(userDesignation) || ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userRole);
-  const isDigitalCurableUser = ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'Digital Curable', 'Digital Curable Operator'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userRole);
-  const isEmailCurableUser = ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'Email Curable', 'Email Curable Operator'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userRole);
+  const isSalesExecUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+  const isPanCheckerUser = ['PAN CHECKER', 'PAN_CHECKER'].includes(userDesignation) || ['PAN CHECKER', 'PAN_CHECKER'].includes(userRole);
+  const isRemarkOperatorUser = ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userDesignation) || ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userRole);
+  const isQdOperatorUser = ['QD OPERATOR', 'QD_OPERATOR', 'QD CHECKER', 'QD_CHECKER'].includes(userDesignation) || ['QD OPERATOR', 'QD_OPERATOR', 'QD CHECKER', 'QD_CHECKER'].includes(userRole);
+  const isFinalStatusOperatorUser = ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userDesignation) || ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userRole);
+  const isQuerableOperatorUser = ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userDesignation) || ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userRole);
+  const isPhysicalCurableUser = ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userDesignation) || ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'].includes(userRole);
+  const isDigitalCurableUser = ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userRole);
+  const isEmailCurableUser = ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userRole);
   const isCurableOperatorUser = isPhysicalCurableUser || isDigitalCurableUser || isEmailCurableUser;
-  const isCardActivationOperatorUser = ['CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR', 'Card Activation Operator'].includes(userDesignation) || ['CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR', 'Card Activation Operator'].includes(userRole);
-  const isOpsOperator = isSalesExecUser || isAdministrativeOperatorUser || isPanCheckerUser || isRemarkOperatorUser || isQdOperatorUser || isFinalStatusOperatorUser || isQuerableOperatorUser || isCurableOperatorUser || isCardActivationOperatorUser;
+  const isAdministrativeOperatorUser = (
+    ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'OPERATOR', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'BACKEND OPERATOR'].includes(userDesignation) ||
+    ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'OPERATOR', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'BACKEND OPERATOR'].includes(userRole)
+  ) && !isSalesExecUser && !isPanCheckerUser && !isRemarkOperatorUser && !isQdOperatorUser && !isFinalStatusOperatorUser && !isQuerableOperatorUser && !isCurableOperatorUser;
+  const isOpsOperator = [
+    'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'OPERATOR', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'BACKEND OPERATOR',
+    'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES EXECUTIVE', 'PAN_CHECKER', 'PAN CHECKER',
+    'QD_OPERATOR', 'QD OPERATOR', 'FINAL_STATUS_OPERATOR', 'FINAL STATUS OPERATOR',
+    'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR',
+    'PHYSICAL_CURABLE', 'PHYSICAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE',
+    'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR',
+    'EMAIL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR'
+  ].some(t => userRole === t || userRole.includes(t) || userDesignation.includes(t));
   const isOpsHead = ['SUPER_ADMIN', 'ADMIN', 'OPERATIONS_HEAD', 'OPERATIONAL_HEAD'].includes(userRole) && !isOpsOperator;
   const isOpsHeadOrSuperAdmin = isOpsHead || isOpsOperator;
 
@@ -498,20 +505,13 @@ export default function ManageApplications() {
     }
   };
 
-  const STATUS_TABS = isCardActivationOperatorUser ? [
-    { id: '', label: 'All HDFC Approved Cards', color: '#10b981', bg: '#10b98115' },
-    { id: 'approved', label: 'Approved Lifecycle Status', color: C.primary, bg: `${C.primary}15` }
-  ] : isQuerableOperatorUser ? [
+  const STATUS_TABS = isQuerableOperatorUser ? [
     { id: 'rejected', label: 'Assigned Bank Rejected Cases', color: '#ef4444', bg: '#ef444415' }
   ] : isCurableOperatorUser ? [
     { id: '', label: 'All Curable Applications', color: C.primary, bg: `${C.primary}15` },
     { id: 'operational_verified', label: 'Operational Verified', color: '#8b5cf6', bg: '#8b5cf615' },
     { id: 'rejected', label: 'Declined / Rejected', color: '#ef4444', bg: '#ef444415' },
     { id: 'approved', label: 'Cured & Approved', color: '#10b981', bg: '#10b98115' },
-  ] : isFinalStatusOperatorUser ? [
-    { id: '', label: 'All Dispatched Cases', color: C.primary, bg: `${C.primary}15` },
-    { id: 'operational_verified', label: 'Under Review / In Process', color: '#8b5cf6', bg: '#8b5cf615' },
-    { id: 'pending', label: 'Pending Verification', color: '#f59e0b', bg: '#f59e0b15' }
   ] : [
     { id: '', label: 'All Applications', color: C.primary, bg: `${C.primary}15` },
     { id: 'pending', label: 'Pending', color: '#f59e0b', bg: '#f59e0b15' },
@@ -663,12 +663,12 @@ export default function ManageApplications() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '20px' }}>
         <div>
           <h2 style={{ fontSize: '24px', fontWeight: 900, color: C.text, margin: 0, letterSpacing: '-0.02em' }}>
-            {isCardActivationOperatorUser ? 'Card Activation Operations Queue' : isPhysicalCurableUser ? 'Physical Curable Operations Queue' : isDigitalCurableUser ? 'Digital Curable Operations Queue' : isEmailCurableUser ? 'Email Curable Operations Queue' : isQuerableOperatorUser ? 'Querable Operator Applications Queue' : isPanCheckerUser ? 'PAN Checker Review Queue' : isRemarkOperatorUser ? 'Remark Operator Queue' : isQdOperatorUser ? 'QD Operator Queue' : isFinalStatusOperatorUser ? 'Final Status Review Queue' : 'Applications Management'}
+            {isPhysicalCurableUser ? 'Physical Curable Operations Queue' : isDigitalCurableUser ? 'Digital Curable Operations Queue' : isEmailCurableUser ? 'Email Curable Operations Queue' : isQuerableOperatorUser ? 'Querable Operator Applications Queue' : isPanCheckerUser ? 'PAN Checker Review Queue' : isRemarkOperatorUser ? 'Remark Operator Queue' : isQdOperatorUser ? 'QD Operator Queue' : isFinalStatusOperatorUser ? 'Final Status Operations Queue' : 'Applications Management'}
           </h2>
           <p style={{ fontSize: '13px', color: C.textLight, margin: '4px 0 0 0' }}>
-            {isCardActivationOperatorUser ? 'Review and manage card activation status for HDFC approved credit card applications.' : isPhysicalCurableUser ? 'Review and cure HDFC physical curable declined applications (Document pickups, physical verifications).' : isDigitalCurableUser ? 'Review and cure HDFC digital curable declined applications (VKYC, customer link re-trigger).' : isEmailCurableUser ? 'Review and cure HDFC email curable declined applications (Bank underwriting appeals).' : isQuerableOperatorUser ? 'Review and manage assigned bank rejected applications.' : isPanCheckerUser ? 'Review and verify customer PAN details for assigned applications.' : isRemarkOperatorUser ? 'Review and update remarks for assigned bank applications.' : isQdOperatorUser ? 'Review assigned bank applications for QD form and remark details.' : isFinalStatusOperatorUser ? 'Review and update final status for dispatched applications.' : 'Track, verify, update and manage operations for all submitted customer applications.'}
+            {isPhysicalCurableUser ? 'Review and cure HDFC physical curable declined applications (Document pickups, physical verifications).' : isDigitalCurableUser ? 'Review and cure HDFC digital curable declined applications (VKYC, customer link re-trigger).' : isEmailCurableUser ? 'Review and cure HDFC email curable declined applications (Bank underwriting appeals).' : isQuerableOperatorUser ? 'Review and manage assigned bank rejected applications.' : isPanCheckerUser ? 'Review and verify customer PAN details for assigned applications.' : isRemarkOperatorUser ? 'Review and update remarks for assigned bank applications.' : isQdOperatorUser ? 'Review assigned bank applications for QD form and remark details.' : isFinalStatusOperatorUser ? 'Review dispatched applications and record bank final approval or rejection status.' : 'Track, verify, update and manage operations for all submitted customer applications.'}
           </p>
-          {(isQuerableOperatorUser || isCurableOperatorUser || isCardActivationOperatorUser || isFinalStatusOperatorUser || isQdOperatorUser || isRemarkOperatorUser) && (
+          {(isQuerableOperatorUser || isCurableOperatorUser) && (
             <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
                 <span style={{ fontSize: '12px', fontWeight: 800, color: C.textLight }}>
@@ -763,41 +763,7 @@ export default function ManageApplications() {
 
 
       {/* ── 2. TOP KPI SUMMARY CARDS ── */}
-      {isCardActivationOperatorUser ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-          <div style={{ background: C.card, borderRadius: '14px', padding: '16px 18px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: '12px', fontWeight: 800, color: C.textLight, textTransform: 'uppercase', letterSpacing: '0.04em' }}>HDFC Card Approved Cases</span>
-              <div style={{ width: '34px', height: '34px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.1)', color: '#10B981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <CreditCard size={20} />
-              </div>
-            </div>
-            <div style={{ marginTop: '12px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-              <span style={{ fontSize: '28px', fontWeight: 900, color: '#10B981' }}>
-                {total || 0}
-              </span>
-              <span style={{ fontSize: '11.5px', fontWeight: 700, color: C.textLight }}>Approved Cards</span>
-            </div>
-          </div>
-        </div>
-      ) : isFinalStatusOperatorUser ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-          <div style={{ background: C.card, borderRadius: '14px', padding: '16px 18px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: '12px', fontWeight: 800, color: C.textLight, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Dispatched Applications Queue</span>
-              <div style={{ width: '34px', height: '34px', borderRadius: '8px', background: 'rgba(59, 130, 246, 0.1)', color: '#3B82F6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <FaFileAlt size={18} />
-              </div>
-            </div>
-            <div style={{ marginTop: '12px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-              <span style={{ fontSize: '28px', fontWeight: 900, color: '#3B82F6' }}>
-                {total || 0}
-              </span>
-              <span style={{ fontSize: '11.5px', fontWeight: 700, color: C.textLight }}>Dispatched Cases</span>
-            </div>
-          </div>
-        </div>
-      ) : isQuerableOperatorUser ? (
+      {isQuerableOperatorUser ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', marginBottom: '20px' }}>
           <div style={{ background: C.card, borderRadius: '14px', padding: '16px 18px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1394,18 +1360,6 @@ export default function ManageApplications() {
                                 Decline Code: <strong>{app.decline_code}</strong>
                               </div>
                             )}
-                            {app.card_activation_stage && app.card_activation_stage !== 'None' && app.card_activation_stage !== 'NA' && (
-                              <div style={{ marginTop: '3px' }}>
-                                <span style={{
-                                  display: "inline-block", padding: "2px 6px", borderRadius: "4px", fontSize: "10.5px", fontWeight: 800,
-                                  background: app.card_activation_stage.toLowerCase().includes('active') ? '#ECFDF5' : '#F3F4F6',
-                                  color: app.card_activation_stage.toLowerCase().includes('active') ? '#047857' : '#4B5563',
-                                  border: `1px solid ${app.card_activation_stage.toLowerCase().includes('active') ? '#A7F3D0' : '#E5E7EB'}`
-                                }}>
-                                  💳 {app.card_activation_stage}
-                                </span>
-                              </div>
-                            )}
                             <div style={{ fontSize: '11px', color: C.textLight, fontWeight: 700 }}>
                               Comm: <span style={{ color: app.commission_released || app.commission_status === 'processed' ? '#059669' : C.textMid }}>₹{parseFloat(app.commission_amount || 0).toLocaleString('en-IN')} ({app.commission_released || app.commission_status === 'processed' ? 'Released' : 'Pending'})</span>
                             </div>
@@ -1416,15 +1370,7 @@ export default function ManageApplications() {
                       {/* Actions */}
                       <td style={{ padding: '14px 16px', textAlign: 'right' }}>
                         <div style={{ display: "flex", justifyContent: "flex-end", gap: "6px", alignItems: "center" }}>
-                          {isCardActivationOperatorUser ? (
-                            <button
-                              onClick={() => { setVerifyModalTab('remark'); setVerifyModalApp(app); }}
-                              style={{ background: "#10b98115", border: "1px solid #10b98140", color: "#059669", padding: "6px 12px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
-                              title="Open Card Activation Form"
-                            >
-                              <CreditCard size={13} /> Card Activation
-                            </button>
-                          ) : isCurableOperatorUser ? (
+                          {isCurableOperatorUser ? (
                             <>
                               <button
                                 onClick={() => { setVerifyModalTab('remark'); setVerifyModalApp(app); }}
@@ -1441,14 +1387,6 @@ export default function ManageApplications() {
                                 <CheckCircle2 size={12} /> Final
                               </button>
                             </>
-                          ) : isFinalStatusOperatorUser ? (
-                            <button
-                              onClick={() => { setVerifyModalTab('final'); setVerifyModalApp(app); }}
-                              style={{ background: "#16a34a15", border: "1px solid #16a34a40", color: "#16a34a", padding: "6px 12px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
-                              title="Update Final Status"
-                            >
-                              <CheckCircle2 size={13} /> Final Status
-                            </button>
                           ) : isQuerableOperatorUser ? (
                             <button
                               onClick={() => { setVerifyModalTab('remark'); setVerifyModalApp(app); }}
@@ -1456,6 +1394,14 @@ export default function ManageApplications() {
                               title="View Reject / Decline Details"
                             >
                               <Eye size={13} /> View Query
+                            </button>
+                          ) : isFinalStatusOperatorUser ? (
+                            <button
+                              onClick={() => { setVerifyModalTab('final'); setVerifyModalApp(app); }}
+                              style={{ background: "#2563eb15", border: "1px solid #2563eb40", color: "#2563eb", padding: "6px 12px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                              title="Update Final Status"
+                            >
+                              <CheckCircle2 size={13} /> Final Status
                             </button>
                           ) : isPanCheckerUser ? (
                             <button

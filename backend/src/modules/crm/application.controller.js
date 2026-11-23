@@ -567,8 +567,7 @@ const getApplicationsDashboard = async (req, res, next) => {
       'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR',
       'PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR',
       'DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR',
-      'EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR',
-      'CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR', 'Card Activation Operator'
+      'EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'
     ].some(title => userDesignation.includes(title) || userRole === title);
     const isPartnerOrTeam = ['PARTNER', 'TEAM_MEMBER'].includes(userRole) || (userRole === 'EMPLOYEE' && !isStaffOrOperatorUser);
 
@@ -1737,8 +1736,7 @@ const listApplications = async (req, res, next) => {
       'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR',
       'PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR',
       'DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR',
-      'EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR',
-      'CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR', 'Card Activation Operator'
+      'EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'
     ].some(title => userDesignation.includes(title) || userRole === title);
     const isPartnerOrTeam = ['PARTNER', 'TEAM_MEMBER'].includes(userRole) || (userRole === 'EMPLOYEE' && !isStaffOrOperatorUser);
 
@@ -1885,17 +1883,29 @@ const listApplications = async (req, res, next) => {
     }
 
     // Note: ensureAssignmentsTableExists() removed from request path (handled in migrations)
-    const isOpHeadUser = ['OPERATIONAL HEAD', 'OPERATIONAL_HEAD', 'OPERATIONS HEAD', 'OPERATIONS_HEAD'].includes(userDesignation) || ['OPERATIONAL HEAD', 'OPERATIONAL_HEAD', 'OPERATIONS HEAD', 'OPERATIONS_HEAD'].includes(userRole);
-    const isSalesExecUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR', 'Administrative Sales Executive'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
-    const isSalesExecOnlyUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR', 'Administrative Sales Executive'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
-    const isAdministrativeOperatorUser = [
-      'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR',
-      'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'BACKEND OPERATOR',
-      'Administrative Operator', 'Backend'
+    const isSalesExecUser = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userRole);
+    const isSalesExecOnlyUser = isSalesExecUser;
+    const isPanCheckerUser = ['PAN CHECKER', 'PAN_CHECKER'].includes(userDesignation) || ['PAN CHECKER', 'PAN_CHECKER'].includes(userRole);
+    const isQdOperatorUser = ['QD OPERATOR', 'QD_OPERATOR', 'QD CHECKER', 'QD_CHECKER'].includes(userDesignation) || ['QD OPERATOR', 'QD_OPERATOR', 'QD CHECKER', 'QD_CHECKER'].includes(userRole);
+    const isRemarkOperatorUser = ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userDesignation) || ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userRole);
+    const isFinalStatusOperatorUser = ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userDesignation) || ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userRole);
+    const isQuerableOperatorUser = ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userDesignation) || ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userRole);
+    const isCurableOperatorUserRole = [
+      'PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR',
+      'DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR',
+      'EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'
     ].includes(userDesignation) || [
-      'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR',
-      'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'BACKEND OPERATOR'
+      'PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR',
+      'DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR',
+      'EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'
     ].includes(userRole);
+
+    const isAdministrativeOperatorUser = (
+      ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'OPERATOR', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'BACKEND OPERATOR', 'ADMIN', 'SUPER_ADMIN'].includes(userDesignation) ||
+      ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'OPERATOR', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'BACKEND OPERATOR', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
+    ) && !isSalesExecUser && !isPanCheckerUser && !isQdOperatorUser && !isRemarkOperatorUser && !isFinalStatusOperatorUser && !isQuerableOperatorUser && !isCurableOperatorUserRole;
+
+    const isOpHeadUser = ['OPERATIONAL HEAD', 'OPERATIONAL_HEAD', 'OPERATIONS HEAD', 'OPERATIONS_HEAD'].includes(userDesignation) || ['OPERATIONAL HEAD', 'OPERATIONAL_HEAD', 'OPERATIONS HEAD', 'OPERATIONS_HEAD'].includes(userRole) || isAdministrativeOperatorUser;
     let isLocEocAdmin = false;
     let regularBankAssignments = [];
     let abRows = [];
@@ -2004,6 +2014,7 @@ const listApplications = async (req, res, next) => {
       };
 
       if (!abRows || abRows.length === 0) {
+        // Without specific bank assignments, user has unrestricted bank access across all banks
         baseBankAccessFilterSQL = '';
       } else {
         const byCat = {};
@@ -2070,23 +2081,17 @@ const listApplications = async (req, res, next) => {
       salesExecFilterSQL = ` ${salesBankScopeSQL} AND ${tataExclusionFilter}${processFilter}${dispatchFilter}${claimFilter}`;
     }
 
-    const isPanCheckerUser = ['PAN CHECKER', 'PAN_CHECKER', 'PAN Checker'].includes(userDesignation) || ['PAN CHECKER', 'PAN_CHECKER'].includes(userRole);
     let panCheckerFilterSQL = '';
     if (isPanCheckerUser && req.user?.id) {
-      const baseBankAccessClean = (baseBankAccessFilterSQL || '').replace(/^\s*AND\s*/i, '').trim();
-      const hasValidBaseBank = baseBankAccessClean && baseBankAccessClean !== '1=0';
-      const sbiBankMatchSQL = `((LOWER(COALESCE(combined.bank_code, '')) = 'sbi' OR LOWER(COALESCE(combined.bank_name, '')) LIKE '%sbi%') AND LOWER(COALESCE(combined.bank_name, '')) NOT LIKE '%tata%' AND LOWER(COALESCE(combined.bank_code, '')) NOT LIKE '%tata%')`;
-      const panBankScopeSQL = hasValidBaseBank ? ` AND (${baseBankAccessClean})` : ` AND ${sbiBankMatchSQL}`;
-      panCheckerFilterSQL = ` ${panBankScopeSQL} AND combined.status NOT IN ('approved', 'disbursed', 'sanctioned') AND LOWER(COALESCE(combined.pan_check, 'no')) = 'no'`;
+      const panCheckerBankScope = (baseBankAccessFilterSQL || '').trim();
+      const bankFilterClause = panCheckerBankScope && panCheckerBankScope !== 'AND 1=0'
+        ? panCheckerBankScope
+        : `AND ((LOWER(COALESCE(combined.bank_code, '')) = 'sbi' OR LOWER(COALESCE(combined.bank_name, '')) LIKE '%sbi%') AND LOWER(COALESCE(combined.bank_name, '')) NOT LIKE '%tata%' AND LOWER(COALESCE(combined.bank_code, '')) NOT LIKE '%tata%')`;
+      panCheckerFilterSQL = ` ${bankFilterClause} AND combined.status NOT IN ('approved', 'disbursed', 'sanctioned') AND LOWER(COALESCE(combined.pan_check, 'no')) = 'no'`;
     }
 
-    const isQdOperatorUser = ['QD OPERATOR', 'QD_OPERATOR', 'QD CHECKER', 'QD_CHECKER', 'QD Operator', 'QD Checker'].includes(userDesignation) || ['QD OPERATOR', 'QD_OPERATOR', 'QD CHECKER', 'QD_CHECKER'].includes(userRole);
     let qdOperatorFilterSQL = '';
     if (isQdOperatorUser && req.user?.id) {
-      const baseBankAccessClean = (baseBankAccessFilterSQL || '').replace(/^\s*AND\s*/i, '').trim();
-      const hasValidBaseBank = baseBankAccessClean && baseBankAccessClean !== '1=0';
-      const qdBankScopeSQL = hasValidBaseBank ? ` AND (${baseBankAccessClean})` : '';
-
       const tataExclusionFilter = `NOT (
         (LOWER(COALESCE(combined.bank_name, '')) LIKE '%tata%' OR LOWER(COALESCE(combined.bank_code, '')) LIKE '%tata%')
         AND NOT EXISTS (
@@ -2098,27 +2103,19 @@ const listApplications = async (req, res, next) => {
       )`;
       const physicalProcessFilter = ` AND (LOWER(COALESCE(combined.process_type, combined.process_by, '')) LIKE '%physical%' OR LOWER(COALESCE(combined.process_type, '')) = 'physical' OR LOWER(COALESCE(combined.process_type, '')) = 'physical_process')`;
       const dispatchFilter = ` AND (COALESCE(combined.dispatch_status, '') = '' OR LOWER(COALESCE(combined.dispatch_status, 'none')) IN ('none', 'na', 'n/a'))`;
-      qdOperatorFilterSQL = `${qdBankScopeSQL} AND ${tataExclusionFilter}${physicalProcessFilter}${dispatchFilter}`;
+      qdOperatorFilterSQL = ` ${baseBankAccessFilterSQL} AND ${tataExclusionFilter}${physicalProcessFilter}${dispatchFilter}`;
     }
 
-    const isRemarkOperatorUser = ['REMARK OPERATOR', 'REMARK_OPERATOR', 'Remark Operator'].includes(userDesignation) || ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userRole);
+    const isRemarkOperatorUser = ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userDesignation) || ['REMARK OPERATOR', 'REMARK_OPERATOR'].includes(userRole);
     let remarkOperatorFilterSQL = '';
     if (isRemarkOperatorUser && req.user?.id) {
-      const baseBankAccessClean = (baseBankAccessFilterSQL || '').replace(/^\s*AND\s*/i, '').trim();
-      const hasValidBaseBank = baseBankAccessClean && baseBankAccessClean !== '1=0';
-      const remarkBankScopeSQL = hasValidBaseBank ? ` AND (${baseBankAccessClean})` : '';
-
       const panCheckCondition = `(((LOWER(COALESCE(combined.bank_code, '')) <> 'sbi' AND LOWER(COALESCE(combined.bank_name, '')) NOT LIKE '%sbi%') OR LOWER(COALESCE(combined.bank_name, '')) LIKE '%tata%' OR LOWER(COALESCE(combined.bank_code, '')) LIKE '%tata%') OR LOWER(COALESCE(combined.pan_check, 'no')) = 'yes')`;
-      remarkOperatorFilterSQL = `${remarkBankScopeSQL} AND ${panCheckCondition} AND (COALESCE(combined.dispatch_status, '') = '' OR LOWER(COALESCE(combined.dispatch_status, 'none')) IN ('none', 'na', 'n/a')) AND combined.status NOT IN ('rejected', 'declined', 'cancelled') AND LOWER(COALESCE(combined.bank_remark, '')) NOT LIKE '%pan%reject%'`;
+      remarkOperatorFilterSQL = ` ${baseBankAccessFilterSQL} AND ${panCheckCondition} AND (COALESCE(combined.dispatch_status, '') = '' OR LOWER(COALESCE(combined.dispatch_status, 'none')) IN ('none', 'na', 'n/a')) AND combined.status NOT IN ('rejected', 'declined', 'cancelled') AND LOWER(COALESCE(combined.bank_remark, '')) NOT LIKE '%pan%reject%'`;
     }
 
-    const isFinalStatusOperatorUser = ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'Final Status Operator'].includes(userDesignation) || ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userRole);
+    const isFinalStatusOperatorUser = ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userDesignation) || ['FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR'].includes(userRole);
     let finalStatusOperatorFilterSQL = '';
     if (isFinalStatusOperatorUser && req.user?.id) {
-      const baseBankAccessClean = (baseBankAccessFilterSQL || '').replace(/^\s*AND\s*/i, '').trim();
-      const hasValidBaseBank = baseBankAccessClean && baseBankAccessClean !== '1=0';
-      const finalStatusBankScopeSQL = hasValidBaseBank ? ` AND (${baseBankAccessClean})` : '';
-
       const eligibleDispatchFilter = `(
         LOWER(COALESCE(combined.dispatch_status, '')) IN (
           'dispatch complete', 'physical dispatch', 'digital dispatch',
@@ -2140,16 +2137,12 @@ const listApplications = async (req, res, next) => {
         )
       )`;
 
-      finalStatusOperatorFilterSQL = `${finalStatusBankScopeSQL} AND ${eligibleDispatchFilter} AND ${inProcessFinalStatusFilter}`;
+      finalStatusOperatorFilterSQL = ` ${baseBankAccessFilterSQL} AND ${eligibleDispatchFilter} AND ${inProcessFinalStatusFilter}`;
     }
 
-    const isQuerableOperatorUser = ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR', 'Querable Operator', 'Queryable Operator'].includes(userDesignation) || ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userRole);
+    const isQuerableOperatorUser = ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userDesignation) || ['QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].includes(userRole);
     let querableOperatorFilterSQL = '';
     if (isQuerableOperatorUser && req.user?.id) {
-      const baseBankAccessClean = (baseBankAccessFilterSQL || '').replace(/^\s*AND\s*/i, '').trim();
-      const hasValidBaseBank = baseBankAccessClean && baseBankAccessClean !== '1=0';
-      const querableBankScopeSQL = hasValidBaseBank ? ` AND (${baseBankAccessClean})` : '';
-
       const rejectedCondition = `(
         LOWER(TRIM(COALESCE(combined.status, ''))) IN ('rejected', 'declined', 'decline', 'technical_error')
         OR LOWER(TRIM(COALESCE(combined.status, ''))) LIKE '%reject%'
@@ -2160,22 +2153,21 @@ const listApplications = async (req, res, next) => {
         OR LOWER(TRIM(COALESCE(combined.bank_current_lead_status, ''))) LIKE '%reject%'
         OR LOWER(TRIM(COALESCE(combined.bank_current_lead_status, ''))) LIKE '%decline%'
       )`;
-      querableOperatorFilterSQL = `${querableBankScopeSQL} AND ${rejectedCondition}`;
+      querableOperatorFilterSQL = ` ${baseBankAccessFilterSQL} AND ${rejectedCondition}`;
     }
 
     // ── Curable Operators (Physical / Digital / Email) ─────────────────────────
     const curableDesignationSets = {
-      PHYSICAL_CURABLE: ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'Physical Curable', 'Physical Curable Operator'],
-      DIGITAL_CURABLE: ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'Digital Curable', 'Digital Curable Operator'],
-      EMAIL_CURABLE: ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'Email Curable', 'Email Curable Operator'],
+      PHYSICAL_CURABLE: ['PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR'],
+      DIGITAL_CURABLE: ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'],
+      EMAIL_CURABLE: ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'],
     };
     const ownCurableTeam = Object.keys(curableDesignationSets).find(team =>
       curableDesignationSets[team].includes(userDesignation) || curableDesignationSets[team].includes(userRole)
     ) || null;
-    const isSpecializedOtherOperator = isSalesExecUser || isPanCheckerUser || isQdOperatorUser || isRemarkOperatorUser || isFinalStatusOperatorUser || isQuerableOperatorUser || isCardActivationOperatorUser;
     const requestedParam = String(req.query.curing_designation || '').trim().toUpperCase().replace(/ /g, '_');
     const requestedCurableTeam = curableDesignationSets[requestedParam] ? requestedParam : null;
-    const activeCurableTeam = ownCurableTeam || (!isSpecializedOtherOperator ? requestedCurableTeam : null);
+    const activeCurableTeam = ownCurableTeam || requestedCurableTeam;
     const isCurableOperatorUser = Boolean(activeCurableTeam);
 
     let curableOperatorFilterSQL = '';
@@ -2251,46 +2243,8 @@ const listApplications = async (req, res, next) => {
       curableOperatorFilterSQL = ` AND ${isDeclineCaseSQL} AND ${creditCardAppSQL} AND ${hdfcBankScopeSQL} AND ${curableCondition}`;
     }
 
-    const isCardActivationOperatorUser = ['CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR', 'Card Activation Operator'].includes(userDesignation) || ['CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR', 'Card Activation Operator'].includes(userRole);
-    let cardActivationOperatorFilterSQL = '';
-    if (isCardActivationOperatorUser && req.user?.id) {
-      const hdfcBankScopeSQL = `(
-        (
-          combined.bank_id = 'f0b5742d-f04d-4a91-b162-6009ddf6e345'::uuid
-          OR LOWER(COALESCE(combined.bank_name, '')) LIKE '%hdfc%'
-          OR LOWER(COALESCE(combined.bank_code, '')) LIKE '%hdfc%'
-        )
-        AND LOWER(COALESCE(combined.bank_name, '')) NOT LIKE '%tata%'
-        AND LOWER(COALESCE(combined.bank_code, '')) NOT LIKE '%tata%'
-      )`;
-
-      const cardApprovedCondition = `(
-        LOWER(COALESCE(combined.card_approval_stage, '')) LIKE '%approve%'
-        OR (
-          LOWER(COALESCE(combined.final_status, '')) LIKE '%approve%'
-          AND LOWER(COALESCE(combined.card_approval_stage, '')) NOT LIKE '%decline%'
-          AND LOWER(COALESCE(combined.card_approval_stage, '')) NOT LIKE '%reject%'
-        )
-        OR (
-          LOWER(COALESCE(combined.status, '')) IN ('approved', 'sanctioned', 'super_admin_approved', 'disbursed')
-          AND LOWER(COALESCE(combined.card_approval_stage, '')) NOT LIKE '%decline%'
-          AND LOWER(COALESCE(combined.card_approval_stage, '')) NOT LIKE '%reject%'
-          AND LOWER(COALESCE(combined.final_status, '')) NOT LIKE '%decline%'
-          AND LOWER(COALESCE(combined.final_status, '')) NOT LIKE '%reject%'
-        )
-        OR (
-          LOWER(COALESCE(combined.digital_card_issued, '')) IN ('yes', 'issued', 'complete', 'completed')
-          AND LOWER(COALESCE(combined.card_approval_stage, '')) NOT LIKE '%decline%'
-          AND LOWER(COALESCE(combined.card_approval_stage, '')) NOT LIKE '%reject%'
-        )
-      )`;
-
-      cardActivationOperatorFilterSQL = ` AND ${creditCardAppSQL} AND ${hdfcBankScopeSQL} AND ${cardApprovedCondition}`;
-    }
-
     if (!isPartnerOrTeam && !isSuperAdmin && req.user?.id) {
-      const isSpecializedQueueOperator = isSalesExecUser || isPanCheckerUser || isRemarkOperatorUser || isQdOperatorUser || isFinalStatusOperatorUser || isQuerableOperatorUser || isCurableOperatorUser || isCardActivationOperatorUser;
-      if (isSpecializedQueueOperator) {
+      if (isSalesExecUser || isPanCheckerUser || isRemarkOperatorUser || isQdOperatorUser || isFinalStatusOperatorUser || isQuerableOperatorUser || isCurableOperatorUser) {
         opHeadBankFilterSQL = ``;
         countOpHeadBankFilterSQL = ``;
       } else {
@@ -2400,7 +2354,6 @@ const listApplications = async (req, res, next) => {
           COALESCE(NULLIF(a.kyc_stage, ''), NULLIF(pad.kyc_stage, ''), NULLIF(a.vkyc_stage, ''), NULLIF(a.vkyc_status, ''), NULLIF(pad.vkyc_stage, '')) as kyc_stage,
           a.card_approval_stage,
           a.digital_card_issued,
-          COALESCE(NULLIF(a.card_activation_stage, ''), NULLIF(pad.card_activation_stage, ''), 'None') as card_activation_stage,
           COALESCE(NULLIF(a.appcode_status, ''), NULLIF(pad.appcode_status, '')) as appcode_status,
           COALESCE(NULLIF(a.dispatch_status, ''), NULLIF(pad.dispatch_status, '')) as dispatch_status,
           COALESCE(NULLIF(a.soft_approval_status, ''), NULLIF(pad.soft_approval_status, '')) as soft_approval_stage,
@@ -2432,9 +2385,6 @@ const listApplications = async (req, res, next) => {
           COALESCE(NULLIF(a.secondary_decline_code, ''), NULLIF(pad.secondary_decline_code, '')) as secondary_decline_code,
           COALESCE(NULLIF(a.secondary_decline_description, ''), NULLIF(pad.secondary_decline_description, '')) as secondary_decline_description,
           COALESCE(NULLIF(a.secondary_curing_designation, ''), NULLIF(pad.secondary_curing_designation, '')) as secondary_curing_designation,
-          COALESCE(NULLIF(a.address, ''), NULLIF(pad.address, ''), NULLIF(c.address, '')) as address,
-          COALESCE(NULLIF(pad.company_address, ''), NULLIF(pad.office_address, ''), '') as company_address,
-          COALESCE(NULLIF(pad.curing_address, ''), '') as curing_address,
           COALESCE(NULLIF(a.address_type, ''), NULLIF(a.curing_address_type, ''), NULLIF(pad.address_type, ''), NULLIF(pad.curing_address_type, ''), 'Current Address') as address_type,
           COALESCE(NULLIF(a.address_type, ''), NULLIF(a.curing_address_type, ''), NULLIF(pad.address_type, ''), NULLIF(pad.curing_address_type, ''), 'Current Address') as curing_address_type,
           COALESCE(NULLIF(a.queryable_remark, ''), NULLIF(pad.queryable_remark, ''), 'NOT REQUIRED') as queryable_remark,
@@ -2595,7 +2545,6 @@ const listApplications = async (req, res, next) => {
         ${finalStatusOperatorFilterSQL}
         ${querableOperatorFilterSQL}
         ${curableOperatorFilterSQL}
-        ${cardActivationOperatorFilterSQL}
       ORDER BY combined.created_at DESC, combined.id DESC
       LIMIT $15::int OFFSET $16::int
     `;
@@ -2673,10 +2622,7 @@ const listApplications = async (req, res, next) => {
         NULLIF(to_jsonb(a)->>'assigned_to_user_id', '') as assigned_to_user_id,
         COALESCE(a.assigned_to_employee_id::text, pad.assigned_to_employee_id::text, '') as assigned_to_employee_id,
         COALESCE(a.assigned_by_user_id::text, '') as assigned_by_user_id,
-        COALESCE(a.assigned_by_employee_id::text, '') as assigned_by_employee_id,
-        COALESCE(NULLIF(a.card_approval_stage, ''), NULLIF(pad.card_approval_stage, '')) as card_approval_stage,
-        COALESCE(NULLIF(a.digital_card_issued, ''), NULLIF(pad.digital_card_issued, '')) as digital_card_issued,
-        COALESCE(NULLIF(a.card_activation_stage, ''), NULLIF(pad.card_activation_stage, ''), 'None') as card_activation_stage
+        COALESCE(a.assigned_by_employee_id::text, '') as assigned_by_employee_id
         FROM applications a
         ${countSearchJoinSQL}
         LEFT JOIN products p ON p.id = a.product_id
@@ -2730,7 +2676,6 @@ const listApplications = async (req, res, next) => {
         ${finalStatusOperatorFilterSQL}
         ${querableOperatorFilterSQL}
         ${curableOperatorFilterSQL}
-        ${cardActivationOperatorFilterSQL}
     `;
 
     // Compute canonical status counts scoped to user role & bank filters
@@ -2762,10 +2707,7 @@ const listApplications = async (req, res, next) => {
         NULLIF(to_jsonb(a)->>'assigned_to_user_id', '') as assigned_to_user_id,
         COALESCE(a.assigned_to_employee_id::text, pad.assigned_to_employee_id::text, '') as assigned_to_employee_id,
         COALESCE(a.assigned_by_user_id::text, '') as assigned_by_user_id,
-        COALESCE(a.assigned_by_employee_id::text, '') as assigned_by_employee_id,
-        COALESCE(NULLIF(a.card_approval_stage, ''), NULLIF(pad.card_approval_stage, '')) as card_approval_stage,
-        COALESCE(NULLIF(a.digital_card_issued, ''), NULLIF(pad.digital_card_issued, '')) as digital_card_issued,
-        COALESCE(NULLIF(a.card_activation_stage, ''), NULLIF(pad.card_activation_stage, ''), 'None') as card_activation_stage
+        COALESCE(a.assigned_by_employee_id::text, '') as assigned_by_employee_id
         FROM applications a
         ${countSearchJoinSQL}
         LEFT JOIN products p ON p.id = a.product_id
@@ -2819,7 +2761,6 @@ const listApplications = async (req, res, next) => {
         ${finalStatusOperatorFilterSQL}
         ${querableOperatorFilterSQL}
         ${curableOperatorFilterSQL}
-        ${cardActivationOperatorFilterSQL}
       GROUP BY combined.status, COALESCE(combined.final_status, ''), COALESCE(combined.bank_current_lead_status, ''), COALESCE(combined.decline_code, '')
     `;
 
@@ -3111,7 +3052,7 @@ const getApplication = async (req, res, next) => {
 
     if (req.user && req.user.role !== 'SUPER_ADMIN' && req.user.role !== 'PARTNER') {
       const userDesig = (req.user.designation || '').toUpperCase();
-      const isRestrictedOperator = ['OPERATIONAL HEAD', 'OPERATIONAL_HEAD', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'PAN CHECKER', 'PAN_CHECKER', 'REMARK OPERATOR', 'REMARK_OPERATOR', 'QD OPERATOR', 'QD_OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR', 'CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR'].some(d => userDesig.includes(d));
+      const isRestrictedOperator = ['OPERATIONAL HEAD', 'OPERATIONAL_HEAD', 'ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'PAN CHECKER', 'PAN_CHECKER', 'REMARK OPERATOR', 'REMARK_OPERATOR', 'QD OPERATOR', 'QD_OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'QUERABLE OPERATOR', 'QUERABLE_OPERATOR', 'QUERYABLE OPERATOR', 'QUERYABLE_OPERATOR'].some(d => userDesig.includes(d));
 
       if (isRestrictedOperator) {
         const { rows: abRows } = await query(`
@@ -3190,7 +3131,6 @@ const getApplication = async (req, res, next) => {
       if (!isClean(app.ipa_stage) && pd.ipa_stage) app.ipa_stage = pd.ipa_stage;
       if (!isClean(app.kyc_stage) && pd.kyc_stage) app.kyc_stage = pd.kyc_stage;
       if (!isClean(app.card_approval_stage) && pd.card_approval_stage) app.card_approval_stage = pd.card_approval_stage;
-      if (!isClean(app.card_activation_stage) && pd.card_activation_stage) app.card_activation_stage = pd.card_activation_stage;
       if (!isClean(app.digital_card_issued) && pd.digital_card_issued) app.digital_card_issued = pd.digital_card_issued;
       if (!isClean(app.user_remark) && pd.user_remark) app.user_remark = pd.user_remark;
       if (!isClean(app.notes) && pd.user_remark) app.notes = pd.user_remark;
@@ -3232,16 +3172,10 @@ const getApplication = async (req, res, next) => {
       if (!isClean(app.address_type) && pd.address_type) app.address_type = pd.address_type;
       if (!isClean(app.curing_address_type) && (pd.curing_address_type || pd.address_type)) app.curing_address_type = pd.curing_address_type || pd.address_type;
       if (!isClean(app.curing_address) && pd.curing_address) app.curing_address = pd.curing_address;
-      if (!isClean(app.address) && pd.address) app.address = pd.address;
-      if (!isClean(app.company_address) && pd.company_address) app.company_address = pd.company_address;
-      if (!isClean(app.company_address) && pd.office_address) app.company_address = pd.office_address;
-      if (!isClean(app.office_address) && app.company_address) app.office_address = app.company_address;
     }
 
     if (!app.address_type && app.curing_address_type) app.address_type = app.curing_address_type;
     if (!app.curing_address_type && app.address_type) app.curing_address_type = app.address_type;
-    if (!app.company_address && app.office_address) app.company_address = app.office_address;
-    if (!app.office_address && app.company_address) app.office_address = app.company_address;
 
     if (!app.customer_loan_type && app.customer_loan_offer) app.customer_loan_type = app.customer_loan_offer;
     if (!app.disbursement_amount && app.disbursed_amount) app.disbursement_amount = app.disbursed_amount;
@@ -3735,12 +3669,6 @@ const updateBankProcessingStatus = async (req, res, next) => {
           updated_at = NOW()
       `, [id, bankAppNoVal, vkyc_url || null, userRemarkVal, ipa_stage || null, kyc_stage || null, card_approval_stage || null, digital_card_issued || null, income_details || null, mail_status || null, appFileGenVal]);
     } catch (_) { }
-
-    const effectiveCardActivationStage = card_activation_stage || req.body.card_activation_stage || (req.body.physical_details?.card_activation_stage) || null;
-    if (effectiveCardActivationStage) {
-      await query(`UPDATE applications SET card_activation_stage = $1, updated_at = NOW() WHERE id = $2`, [effectiveCardActivationStage, id]).catch(() => {});
-      await query(`UPDATE physical_application_details SET card_activation_stage = $1, updated_at = NOW() WHERE application_id = $2`, [effectiveCardActivationStage, id]).catch(() => {});
-    }
 
     const titleMap = {
       under_review: 'Bank Reviewing Application',
@@ -4483,11 +4411,7 @@ const exportApplicationsCSV = async (req, res, next) => {
       `, [userId]).catch(() => ({ rows: [] }));
 
       if (abRows.length === 0) {
-        if (isAdminOperator) {
-          whereClause = ``;
-        } else {
-          whereClause = `WHERE 1=0`;
-        }
+        whereClause = ``;
       } else {
         const pairClauses = abRows.map(b => {
           const isVirtualLocBank = (b.short_code || '').toUpperCase() === 'LOC_EOC' || /loc[\s/_]*eoc|loan\s+on\s+card/i.test(b.name || '');
@@ -4748,7 +4672,7 @@ const exportApplicationsCSV = async (req, res, next) => {
         }
       } catch (e) {}
     }
-    if (!isHdfcExport && ['PHYSICAL_CURABLE', 'DIGITAL_CURABLE', 'EMAIL_CURABLE', 'PHYSICAL CURABLE', 'DIGITAL CURABLE', 'EMAIL CURABLE', 'CARD_ACTIVATION_OPERATOR', 'CARD ACTIVATION OPERATOR', 'Card Activation Operator'].some(r => userRole.includes(r) || userDesignation.includes(r))) {
+    if (!isHdfcExport && ['PHYSICAL_CURABLE', 'DIGITAL_CURABLE', 'EMAIL_CURABLE', 'PHYSICAL CURABLE', 'DIGITAL CURABLE', 'EMAIL CURABLE'].some(r => userRole.includes(r) || userDesignation.includes(r))) {
       isHdfcExport = true;
     }
     if (!isHdfcExport && rows.length > 0 && rows.every(r => (r.bank_name || '').toLowerCase().includes('hdfc') || (r.product_name || '').toLowerCase().includes('hdfc'))) {
@@ -5821,14 +5745,6 @@ const updateApplicationDetails = async (req, res, next) => {
       console.error('Failed to upsert physical_application_details:', physErr.message || physErr);
     }
 
-    const effectiveCardActivationStage = req.body.card_activation_stage !== undefined
-      ? req.body.card_activation_stage
-      : (req.body.physical_details?.card_activation_stage !== undefined ? req.body.physical_details.card_activation_stage : null);
-    if (effectiveCardActivationStage) {
-      await client.query(`UPDATE applications SET card_activation_stage = $1, updated_at = NOW() WHERE id = $2`, [effectiveCardActivationStage, app.id]).catch(() => {});
-      await client.query(`UPDATE physical_application_details SET card_activation_stage = $1, updated_at = NOW() WHERE application_id = $2`, [effectiveCardActivationStage, app.id]).catch(() => {});
-    }
-
     if (effectiveDeclineCode !== undefined || derivedCuringDesignation !== undefined || effectiveSecondaryDeclineCode !== undefined) {
       try {
         await client.query('SAVEPOINT pad_curing_sp');
@@ -5880,12 +5796,10 @@ const updateApplicationDetails = async (req, res, next) => {
     const effectiveDigitalRemark = req.body.digital_remark !== undefined ? cleanStr(req.body.digital_remark) : undefined;
     const effectiveDeclineRemark = req.body.decline_remark !== undefined ? cleanStr(req.body.decline_remark) : undefined;
     const effectiveAddressType = (req.body.address_type !== undefined ? cleanStr(req.body.address_type) : cleanStr(req.body.curing_address_type)) || undefined;
-    const effectiveCurrentAddress = req.body.address !== undefined ? cleanStr(req.body.address) : (req.body.manual_address !== undefined ? cleanStr(req.body.manual_address) : undefined);
-    const effectiveCompanyAddress = req.body.company_address !== undefined ? cleanStr(req.body.company_address) : (req.body.office_address !== undefined ? cleanStr(req.body.office_address) : undefined);
-    const effectiveAddressText = effectiveCurrentAddress || (req.body.curing_address !== undefined ? cleanStr(req.body.curing_address) : undefined);
-    const effectiveCuringAddress = (req.body.curing_address !== undefined ? cleanStr(req.body.curing_address) : undefined) || (effectiveAddressType && effectiveAddressType.toLowerCase().includes('office') ? effectiveCompanyAddress : effectiveCurrentAddress) || effectiveCurrentAddress || effectiveCompanyAddress || undefined;
+    const effectiveAddressText = (req.body.curing_address !== undefined ? cleanStr(req.body.curing_address) : (req.body.manual_address !== undefined ? cleanStr(req.body.manual_address) : (req.body.address !== undefined ? cleanStr(req.body.address) : undefined))) || undefined;
+    const effectiveCompanyAddress = req.body.company_address !== undefined ? cleanStr(req.body.company_address) : undefined;
 
-    if (effectiveQueryableRemark !== undefined || effectiveQueryableSalesRemark !== undefined || effectiveDigitalRemark !== undefined || effectiveDeclineRemark !== undefined || effectiveAddressType !== undefined || effectiveCurrentAddress !== undefined || effectiveCompanyAddress !== undefined || effectiveCuringAddress !== undefined) {
+    if (effectiveQueryableRemark !== undefined || effectiveQueryableSalesRemark !== undefined || effectiveDigitalRemark !== undefined || effectiveDeclineRemark !== undefined || effectiveAddressType !== undefined || effectiveAddressText !== undefined || effectiveCompanyAddress !== undefined) {
       try {
         await client.query('SAVEPOINT curing_remarks_sp');
         await client.query(`
@@ -5896,23 +5810,19 @@ const updateApplicationDetails = async (req, res, next) => {
             decline_remark = COALESCE($4, decline_remark),
             address_type = COALESCE($5, address_type),
             curing_address_type = COALESCE($5, curing_address_type),
-            address = COALESCE($6, address)
-          WHERE id = $7
+            address = COALESCE($6, address),
+            company_address = COALESCE($7, company_address)
+          WHERE id = $8
         `, [
           effectiveQueryableRemark || null,
           effectiveQueryableSalesRemark || null,
           effectiveDigitalRemark || null,
           effectiveDeclineRemark || null,
           effectiveAddressType || null,
-          effectiveCurrentAddress || null,
+          effectiveAddressText || null,
+          effectiveCompanyAddress || null,
           app.id
         ]);
-        if (effectiveCompanyAddress) {
-          await client.query(`UPDATE applications SET company_address = $1 WHERE id = $2`, [effectiveCompanyAddress, app.id]).catch(() => {});
-        }
-        if (effectiveCuringAddress) {
-          await client.query(`UPDATE applications SET curing_address = $1 WHERE id = $2`, [effectiveCuringAddress, app.id]).catch(() => {});
-        }
         await client.query(`
           UPDATE physical_application_details SET
             queryable_remark = COALESCE($1, queryable_remark),
@@ -5930,12 +5840,13 @@ const updateApplicationDetails = async (req, res, next) => {
           effectiveDigitalRemark || null,
           effectiveDeclineRemark || null,
           effectiveAddressType || null,
-          effectiveCurrentAddress || null,
+          effectiveAddressText || null,
           effectiveCompanyAddress || null,
           app.id
         ]);
-        if (effectiveCuringAddress) {
-          await client.query(`UPDATE physical_application_details SET curing_address = $1 WHERE application_id = $2`, [effectiveCuringAddress, app.id]).catch(() => {});
+        if (effectiveAddressText) {
+          await client.query(`UPDATE applications SET curing_address = $1 WHERE id = $2`, [effectiveAddressText, app.id]).catch(() => {});
+          await client.query(`UPDATE physical_application_details SET curing_address = $1 WHERE application_id = $2`, [effectiveAddressText, app.id]).catch(() => {});
         }
         await client.query('RELEASE SAVEPOINT curing_remarks_sp');
       } catch (curRemErr) {

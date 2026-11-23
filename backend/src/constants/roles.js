@@ -29,7 +29,6 @@ const DESIGNATIONS = {
   PHYSICAL_CURABLE_OPERATOR: 'Physical Curable Operator',
   DIGITAL_CURABLE_OPERATOR: 'Digital Curable Operator',
   EMAIL_CURABLE_OPERATOR: 'Email Curable Operator',
-  CARD_ACTIVATION_OPERATOR: 'Card Activation Operator',
   SUPER_ADMIN: 'Super Admin',
 };
 
