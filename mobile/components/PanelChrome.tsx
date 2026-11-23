@@ -1,12 +1,13 @@
 import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, Image, BackHandler, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '../contexts/ThemeContext';
 import { spacing } from '../theme/spacing';
 import { Icon } from './Icon';
 
-export interface PanelNavItem { label: string; icon: string; route: string }
-export interface PanelNavSection { title: string; items: PanelNavItem[] }
+export interface PanelNavItem { label: string; k?: string; icon: string; route: string }
+export interface PanelNavSection { title: string; titleKey?: string; items: PanelNavItem[] }
 
 interface PanelTopBarProps {
   brand: string;
@@ -84,6 +85,7 @@ interface PanelNavDrawerProps {
 /** Full-screen navigation drawer mirroring a website panel sidebar. */
 export function PanelNavDrawer({ visible, onClose, sections, brand, subtitle }: PanelNavDrawerProps) {
   const router = useRouter();
+  const { t } = useTranslation();
   const { colors: themeColors, isDark } = useTheme();
   const [activeSection, setActiveSection] = React.useState<string | null>(null);
 
@@ -125,7 +127,7 @@ export function PanelNavDrawer({ visible, onClose, sections, brand, subtitle }: 
                   style={[styles.catChip, { backgroundColor: themeColors.primary + '14', borderColor: themeColors.primary }]}
                   onPress={() => setActiveSection(null)}
                 >
-                  <Text style={[styles.catChipText, { color: themeColors.primary }]}>All</Text>
+                  <Text style={[styles.catChipText, { color: themeColors.primary }]}>{t('common.all')}</Text>
                 </TouchableOpacity>
                 {sections.map((s) => (
                   <TouchableOpacity
@@ -140,7 +142,7 @@ export function PanelNavDrawer({ visible, onClose, sections, brand, subtitle }: 
                     onPress={() => setActiveSection(activeSection === s.title ? null : s.title)}
                   >
                     <Text style={[styles.catChipText, { color: activeSection === s.title ? themeColors.primary : (isDark ? themeColors.textMid : '#475569') }]}>
-                      {s.title}
+                      {s.titleKey ? t(s.titleKey) : s.title}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -149,7 +151,7 @@ export function PanelNavDrawer({ visible, onClose, sections, brand, subtitle }: 
 
             {sections.filter((s) => !activeSection || s.title === activeSection).map((section) => (
               <View key={section.title} style={styles.navSection}>
-                <Text style={[styles.navSectionTitle, { color: themeColors.textLight }]}>{section.title}</Text>
+                <Text style={[styles.navSectionTitle, { color: themeColors.textLight }]}>{section.titleKey ? t(section.titleKey) : section.title}</Text>
                 {section.items.map((item) => (
                   <TouchableOpacity
                     key={item.label}
@@ -158,7 +160,7 @@ export function PanelNavDrawer({ visible, onClose, sections, brand, subtitle }: 
                     activeOpacity={0.7}
                   >
                     <Icon name={item.icon} size={18} color={themeColors.textMid || themeColors.textLight} />
-                    <Text style={[styles.navItemText, { color: isDark ? themeColors.text : '#1F2937' }]}>{item.label}</Text>
+                    <Text style={[styles.navItemText, { color: isDark ? themeColors.text : '#1F2937' }]}>{item.k ? t(item.k) : item.label}</Text>
                     <Icon name="chevron-right" size={16} color={themeColors.textLight} />
                   </TouchableOpacity>
                 ))}
@@ -174,32 +176,32 @@ export function PanelNavDrawer({ visible, onClose, sections, brand, subtitle }: 
 // ── Admin panel nav — mirrors website AdminLayout sidebar ──
 export const ADMIN_NAV_SECTIONS: PanelNavSection[] = [
   {
-    title: 'OPERATIONS',
+    title: 'OPERATIONS', titleKey: 'drawer.secOperations',
     items: [
-      { label: 'Dashboard', icon: 'grid', route: '/(app)/admin-dashboard' },
-      { label: 'Applications', icon: 'document-text', route: '/(app)/op-queue' },
-      { label: 'Customers / Leads', icon: 'people', route: '/(app)/leads' },
-      { label: 'Messenger', icon: 'chatbubbles', route: '/(app)/messenger' },
+      { label: 'Dashboard', k: 'drawer.dashboard', icon: 'grid', route: '/(app)/admin-dashboard' },
+      { label: 'Applications', k: 'drawer.applications', icon: 'document-text', route: '/(app)/op-queue' },
+      { label: 'Customers / Leads', k: 'drawer.customersLeads', icon: 'people', route: '/(app)/leads' },
+      { label: 'Messenger', k: 'drawer.messenger', icon: 'chatbubbles', route: '/(app)/messenger' },
     ],
   },
   {
-    title: 'MANAGEMENT',
+    title: 'MANAGEMENT', titleKey: 'drawer.secManagement',
     items: [
-      { label: 'Partners', icon: 'handshake', route: '/(app)/admin-partners' },
-      { label: 'Wallet & Payouts', icon: 'wallet', route: '/(app)/admin-withdrawals' },
-      { label: 'Commissions', icon: 'cash', route: '/(app)/manage-commissions' },
-      { label: 'Products', icon: 'grid', route: '/(app)/product-management' },
-      { label: 'Product Links', icon: 'link', route: '/(app)/product-links' },
-      { label: 'Designation Rules', icon: 'shield', route: '/(app)/admin-designation-rules' },
+      { label: 'Partners', k: 'drawer.partners', icon: 'handshake', route: '/(app)/admin-partners' },
+      { label: 'Wallet & Payouts', k: 'drawer.walletPayouts', icon: 'wallet', route: '/(app)/admin-withdrawals' },
+      { label: 'Commissions', k: 'drawer.commissions', icon: 'cash', route: '/(app)/manage-commissions' },
+      { label: 'Products', k: 'drawer.products', icon: 'grid', route: '/(app)/product-management' },
+      { label: 'Product Links', k: 'drawer.productLinks', icon: 'link', route: '/(app)/product-links' },
+      { label: 'Designation Rules', k: 'drawer.designationRules', icon: 'shield', route: '/(app)/admin-designation-rules' },
     ],
   },
   {
-    title: 'SYSTEM',
+    title: 'SYSTEM', titleKey: 'drawer.secSystem',
     items: [
-      { label: 'Reports', icon: 'stats-chart', route: '/(app)/reports' },
-      { label: 'Support', icon: 'help-buoy', route: '/(app)/support' },
-      { label: 'Settings', icon: 'settings', route: '/(app)/settings' },
-      { label: 'Profile', icon: 'person-circle', route: '/(app)/profile' },
+      { label: 'Reports', k: 'drawer.reports', icon: 'stats-chart', route: '/(app)/reports' },
+      { label: 'Support', k: 'drawer.support', icon: 'help-buoy', route: '/(app)/support' },
+      { label: 'Settings', k: 'drawer.settings', icon: 'settings', route: '/(app)/settings' },
+      { label: 'Profile', k: 'drawer.profile', icon: 'person-circle', route: '/(app)/profile' },
     ],
   },
 ];
@@ -210,18 +212,18 @@ export const ADMIN_NAV_SECTIONS: PanelNavSection[] = [
 // Applications (their queue) + Messenger + a few system links.
 export const OPERATOR_NAV_SECTIONS: PanelNavSection[] = [
   {
-    title: 'MY QUEUE',
+    title: 'MY QUEUE', titleKey: 'drawer.secMyQueue',
     items: [
-      { label: 'Applications', icon: 'document-text', route: '/(app)/op-queue' },
-      { label: 'Messenger', icon: 'chatbubbles', route: '/(app)/messenger' },
+      { label: 'Applications', k: 'drawer.applicationsQueue', icon: 'document-text', route: '/(app)/op-queue' },
+      { label: 'Messenger', k: 'drawer.messenger', icon: 'chatbubbles', route: '/(app)/messenger' },
     ],
   },
   {
-    title: 'SYSTEM',
+    title: 'SYSTEM', titleKey: 'drawer.secSystem',
     items: [
-      { label: 'Support', icon: 'help-buoy', route: '/(app)/support' },
-      { label: 'Settings', icon: 'settings', route: '/(app)/settings' },
-      { label: 'Profile', icon: 'person-circle', route: '/(app)/profile' },
+      { label: 'Support', k: 'drawer.support', icon: 'help-buoy', route: '/(app)/support' },
+      { label: 'Settings', k: 'drawer.settings', icon: 'settings', route: '/(app)/settings' },
+      { label: 'Profile', k: 'drawer.profile', icon: 'person-circle', route: '/(app)/profile' },
     ],
   },
 ];
@@ -243,20 +245,20 @@ export function isOperatorDesignation(designation?: string | null, role?: string
 // ── HR panel nav — mirrors website HR view of AdminLayout ──
 export const HR_NAV_SECTIONS: PanelNavSection[] = [
   {
-    title: 'HR OPERATIONS',
+    title: 'HR OPERATIONS', titleKey: 'drawer.secHrOperations',
     items: [
-      { label: 'HR Dashboard & Candidates', icon: 'grid', route: '/(app)/hr-dashboard' },
-      { label: 'Candidates', icon: 'id-card', route: '/(app)/hr-candidates' },
-      { label: 'Payroll', icon: 'cash', route: '/(app)/hr-payroll' },
+      { label: 'HR Dashboard & Candidates', k: 'drawer.hrDashboardCandidates', icon: 'grid', route: '/(app)/hr-dashboard' },
+      { label: 'Candidates', k: 'drawer.candidates', icon: 'id-card', route: '/(app)/hr-candidates' },
+      { label: 'Payroll', k: 'drawer.payroll', icon: 'cash', route: '/(app)/hr-payroll' },
     ],
   },
   {
-    title: 'SYSTEM',
+    title: 'SYSTEM', titleKey: 'drawer.secSystem',
     items: [
-      { label: 'Messenger', icon: 'chatbubbles', route: '/(app)/messenger' },
-      { label: 'Support', icon: 'help-buoy', route: '/(app)/support' },
-      { label: 'Settings', icon: 'settings', route: '/(app)/settings' },
-      { label: 'Profile', icon: 'person-circle', route: '/(app)/profile' },
+      { label: 'Messenger', k: 'drawer.messenger', icon: 'chatbubbles', route: '/(app)/messenger' },
+      { label: 'Support', k: 'drawer.support', icon: 'help-buoy', route: '/(app)/support' },
+      { label: 'Settings', k: 'drawer.settings', icon: 'settings', route: '/(app)/settings' },
+      { label: 'Profile', k: 'drawer.profile', icon: 'person-circle', route: '/(app)/profile' },
     ],
   },
 ];

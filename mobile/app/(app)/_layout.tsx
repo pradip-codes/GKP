@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, View, StyleSheet, AppState, Modal, TouchableOpacity, ScrollView, Image, BackHandler } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '../../contexts/ThemeContext';
 import { LoadingState } from '../../components/LoadingState';
 import { MinimalDock } from '../../components/MinimalDock';
@@ -43,6 +44,7 @@ const TabIcon = ({ label, focused, badgeCount }: { label: string; focused: boole
 
 export default function AppLayout() {
   const { isAuthenticated, isLoading, userRole, userDesignation, user } = useAuth();
+  const { t } = useTranslation();
   const { colors, isDark } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -346,8 +348,8 @@ export default function AppLayout() {
       {role === 'ADMIN' && (
         <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
           <PanelTopBar
-            brand={isOperatorDesignation(userDesignation, role) ? 'Operator Panel' : 'Admin Panel'}
-            subtitle={isOperatorDesignation(userDesignation, role) ? String(userDesignation || 'Operations') : 'Operations'}
+            brand={isOperatorDesignation(userDesignation, role) ? t('panels.operator') : t('panels.admin')}
+            subtitle={isOperatorDesignation(userDesignation, role) ? String(userDesignation || t('panels.adminSubtitle')) : t('panels.adminSubtitle')}
             onMenuPress={() => setPanelMenuOpen(true)}
             messengerUnread={unreadCount}
             notificationUnread={notificationUnread}
@@ -358,8 +360,8 @@ export default function AppLayout() {
       {role === 'HR' && (
         <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
           <PanelTopBar
-            brand="HR Panel"
-            subtitle="Human Resources"
+            brand={t('panels.hr')}
+            subtitle={t('panels.hrSubtitle')}
             onMenuPress={() => setPanelMenuOpen(true)}
             messengerUnread={unreadCount}
             notificationUnread={notificationUnread}
@@ -546,8 +548,8 @@ export default function AppLayout() {
           visible={panelMenuOpen}
           onClose={() => setPanelMenuOpen(false)}
           sections={isOperatorDesignation(userDesignation, role) ? OPERATOR_NAV_SECTIONS : ADMIN_NAV_SECTIONS}
-          brand={isOperatorDesignation(userDesignation, role) ? 'Operator Panel' : 'Admin Panel'}
-          subtitle={isOperatorDesignation(userDesignation, role) ? String(userDesignation || 'Operations') : 'Operations'}
+          brand={isOperatorDesignation(userDesignation, role) ? t('panels.operator') : t('panels.admin')}
+          subtitle={isOperatorDesignation(userDesignation, role) ? String(userDesignation || t('panels.adminSubtitle')) : t('panels.adminSubtitle')}
         />
       )}
       {role === 'HR' && (
@@ -555,8 +557,8 @@ export default function AppLayout() {
           visible={panelMenuOpen}
           onClose={() => setPanelMenuOpen(false)}
           sections={HR_NAV_SECTIONS}
-          brand="HR Panel"
-          subtitle="Human Resources"
+          brand={t('panels.hr')}
+          subtitle={t('panels.hrSubtitle')}
         />
       )}
 

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, Switch, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, Switch, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Modal } from 'react-native';
+import { useTranslation } from 'react-i18next';
+import { LANGUAGES, setLanguage } from '../../i18n';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -16,6 +18,8 @@ import { router } from 'expo-router';
 export default function SettingsScreen() {
   const { isSuperAdmin } = useAuth();
   const { colors, isDark } = useTheme();
+  const { t, i18n } = useTranslation();
+  const [langModal, setLangModal] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [prefs, setPrefs] = useState<NotificationPreference | null>(null);
@@ -127,6 +131,22 @@ export default function SettingsScreen() {
               </View>
               <ThemeToggle />
             </View>
+          </View>
+        </View>
+
+        {/* Language Section */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textLight }]}>{t('settings.language')}</Text>
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <TouchableOpacity style={styles.row} onPress={() => setLangModal(true)}>
+              <View style={styles.rowTextGroup}>
+                <Text style={[styles.rowTitle, { color: colors.text }]}>{t('common.language')}</Text>
+                <Text style={[styles.rowSub, { color: colors.textLight }]}>
+                  {LANGUAGES.find((l) => l.code === i18n.language)?.nativeLabel || 'English'}
+                </Text>
+              </View>
+              <Icon name="chevron-forward" size={18} color={colors.textLight} />
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -261,6 +281,38 @@ export default function SettingsScreen() {
           <Text style={[styles.infoText, { color: colors.textLight }]}>Version 2.4.0 • Enterprise Workspace</Text>
         </View>
       </ScrollView>
+
+      {/* Language picker */}
+      <Modal visible={langModal} animationType="slide" transparent onRequestClose={() => setLangModal(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: spacing.lg, maxHeight: '70%' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
+              <Text style={{ fontSize: typography.sizes.md, fontWeight: '800', color: colors.text }}>{t('common.language')}</Text>
+              <TouchableOpacity onPress={() => setLangModal(false)}>
+                <Text style={{ fontSize: 18, color: colors.textLight, fontWeight: '700' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView>
+              {LANGUAGES.map((l) => {
+                const active = i18n.language === l.code;
+                return (
+                  <TouchableOpacity
+                    key={l.code}
+                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border }}
+                    onPress={async () => { await setLanguage(l.code); setLangModal(false); }}
+                  >
+                    <View>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{l.nativeLabel}</Text>
+                      <Text style={{ fontSize: 11, color: colors.textLight }}>{l.label}</Text>
+                    </View>
+                    {active && <Icon name="check" size={18} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, Image, BackHandler, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '../contexts/ThemeContext';
 import { spacing } from '../theme/spacing';
 import { Icon } from './Icon';
@@ -19,6 +20,7 @@ interface SuperAdminTopBarProps {
  */
 export function SuperAdminTopBar({ onMenuPress, messengerUnread = 0, notificationUnread = 0 }: SuperAdminTopBarProps) {
   const router = useRouter();
+  const { t } = useTranslation();
   const { colors: themeColors, isDark, toggleTheme } = useTheme();
 
   return (
@@ -26,8 +28,8 @@ export function SuperAdminTopBar({ onMenuPress, messengerUnread = 0, notificatio
       <View style={styles.navbarLeft}>
         <Image source={require('../assets/images/logo.png')} style={styles.navbarLogo} resizeMode="contain" />
         <View>
-          <Text style={[styles.navbarBrand, { color: isDark ? themeColors.text : '#111827' }]}>Super Admin</Text>
-          <Text style={[styles.navbarSub, { color: themeColors.textLight }]}>Control Center</Text>
+          <Text style={[styles.navbarBrand, { color: isDark ? themeColors.text : '#111827' }]}>{t('panels.superAdmin')}</Text>
+          <Text style={[styles.navbarSub, { color: themeColors.textLight }]}>{t('panels.superAdminSubtitle')}</Text>
         </View>
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -71,75 +73,76 @@ export function SuperAdminTopBar({ onMenuPress, messengerUnread = 0, notificatio
 }
 
 // ── Navigation drawer content — mirrors website SuperAdminLayout sidebar ──
-export const SUPER_ADMIN_NAV_SECTIONS: { title: string; items: { label: string; icon: string; route: string }[] }[] = [
+// `k` = i18n key under drawer.*; `label` kept as English fallback
+export const SUPER_ADMIN_NAV_SECTIONS: { title: string; titleKey: string; items: { label: string; k: string; icon: string; route: string }[] }[] = [
   {
-    title: 'OVERVIEW',
+    title: 'OVERVIEW', titleKey: 'drawer.secOverview',
     items: [
-      { label: 'Master Overview', icon: 'grid', route: '/(app)/super-admin/overview' },
-      { label: 'Admins', icon: 'shield', route: '/(app)/super-admin/dashboard' },
+      { label: 'Master Overview', k: 'drawer.masterOverview', icon: 'grid', route: '/(app)/super-admin/overview' },
+      { label: 'Admins', k: 'drawer.admins', icon: 'shield', route: '/(app)/super-admin/dashboard' },
     ],
   },
   {
-    title: 'USERS & ACCOUNTS',
+    title: 'USERS & ACCOUNTS', titleKey: 'drawer.secUsersAccounts',
     items: [
-      { label: 'Working Hours', icon: 'clock', route: '/(app)/super-admin/working-hours' },
-      { label: 'Partners', icon: 'people', route: '/(app)/super-admin/partners' },
-      { label: 'Employees', icon: 'person', route: '/(app)/super-admin/employees' },
-      { label: 'Employee Attendance', icon: 'calendar', route: '/(app)/super-admin/attendance' },
-      { label: 'HR', icon: 'briefcase', route: '/(app)/hr-dashboard' },
+      { label: 'Working Hours', k: 'drawer.workingHours', icon: 'clock', route: '/(app)/super-admin/working-hours' },
+      { label: 'Partners', k: 'drawer.partners', icon: 'people', route: '/(app)/super-admin/partners' },
+      { label: 'Employees', k: 'drawer.employees', icon: 'person', route: '/(app)/super-admin/employees' },
+      { label: 'Employee Attendance', k: 'drawer.employeeAttendance', icon: 'calendar', route: '/(app)/super-admin/attendance' },
+      { label: 'HR', k: 'drawer.hr', icon: 'briefcase', route: '/(app)/hr-dashboard' },
     ],
   },
   {
-    title: 'LEAD & APPLICATIONS',
+    title: 'LEAD & APPLICATIONS', titleKey: 'drawer.secLeadApplications',
     items: [
-      { label: 'Direct Card Leads', icon: 'card', route: '/(app)/super-admin/leads' },
-      { label: 'Loan Applications', icon: 'cash', route: '/(app)/applications' },
-      { label: 'Applications Tracking', icon: 'check-circle', route: '/(app)/super-admin/applications' },
+      { label: 'Direct Card Leads', k: 'drawer.directCardLeads', icon: 'card', route: '/(app)/super-admin/leads' },
+      { label: 'Loan Applications', k: 'drawer.loanApplications', icon: 'cash', route: '/(app)/applications' },
+      { label: 'Applications Tracking', k: 'drawer.applicationsTracking', icon: 'check-circle', route: '/(app)/super-admin/applications' },
     ],
   },
   {
-    title: 'PRODUCTS & BANKS',
+    title: 'PRODUCTS & BANKS', titleKey: 'drawer.secProductsBanks',
     items: [
-      { label: 'Manage Banks', icon: 'business', route: '/(app)/super-admin/banks' },
-      { label: 'Products', icon: 'grid', route: '/(app)/product-management' },
-      { label: 'Product & Employee Links', icon: 'link', route: '/(app)/product-links' },
-      { label: 'Bank Direct Links', icon: 'git-branch', route: '/(app)/super-admin/links' },
-      { label: 'Services Catalog', icon: 'layers', route: '/(app)/super-admin/services' },
+      { label: 'Manage Banks', k: 'drawer.manageBanks', icon: 'business', route: '/(app)/super-admin/banks' },
+      { label: 'Products', k: 'drawer.products', icon: 'grid', route: '/(app)/product-management' },
+      { label: 'Product & Employee Links', k: 'drawer.productEmployeeLinks', icon: 'link', route: '/(app)/product-links' },
+      { label: 'Bank Direct Links', k: 'drawer.bankDirectLinks', icon: 'git-branch', route: '/(app)/super-admin/links' },
+      { label: 'Services Catalog', k: 'drawer.servicesCatalog', icon: 'layers', route: '/(app)/super-admin/services' },
     ],
   },
   {
-    title: 'FINANCE',
+    title: 'FINANCE', titleKey: 'drawer.secFinance',
     items: [
-      { label: 'Wallet & Settlements', icon: 'wallet', route: '/(app)/super-admin/wallet' },
-      { label: 'Employee Incentives', icon: 'gift', route: '/(app)/employee-incentives' },
-      { label: 'Partner Commissions', icon: 'cash', route: '/(app)/super-admin/commissions' },
-      { label: 'Commission Rules', icon: 'options', route: '/(app)/commission-rules' },
-      { label: 'Manage Commissions', icon: 'receipt', route: '/(app)/manage-commissions' },
+      { label: 'Wallet & Settlements', k: 'drawer.walletSettlements', icon: 'wallet', route: '/(app)/super-admin/wallet' },
+      { label: 'Employee Incentives', k: 'drawer.employeeIncentives', icon: 'gift', route: '/(app)/employee-incentives' },
+      { label: 'Partner Commissions', k: 'drawer.partnerCommissions', icon: 'cash', route: '/(app)/super-admin/commissions' },
+      { label: 'Commission Rules', k: 'drawer.commissionRules', icon: 'options', route: '/(app)/commission-rules' },
+      { label: 'Manage Commissions', k: 'drawer.manageCommissions', icon: 'receipt', route: '/(app)/manage-commissions' },
     ],
   },
   {
-    title: 'MODIFY WEBSITE & PROMOTIONS',
+    title: 'MODIFY WEBSITE & PROMOTIONS', titleKey: 'drawer.secModifyWebsite',
     items: [
-      { label: 'Banners', icon: 'image', route: '/(app)/super-admin/banners' },
-      { label: 'Contest Manager', icon: 'trophy', route: '/(app)/super-admin/contests' },
-      { label: 'Homepage Sections', icon: 'albums', route: '/(app)/super-admin/sections' },
+      { label: 'Banners', k: 'drawer.banners', icon: 'image', route: '/(app)/super-admin/banners' },
+      { label: 'Contest Manager', k: 'drawer.contestManager', icon: 'trophy', route: '/(app)/super-admin/contests' },
+      { label: 'Homepage Sections', k: 'drawer.homepageSections', icon: 'albums', route: '/(app)/super-admin/sections' },
     ],
   },
   {
-    title: 'SYSTEM & REPORTS',
+    title: 'SYSTEM & REPORTS', titleKey: 'drawer.secSystemReports',
     items: [
-      { label: 'Bulk SMS', icon: 'chatbox', route: '/(app)/bulk-sms-dashboard' },
-      { label: 'WhatsApp Business', icon: 'logo-whatsapp', route: '/(app)/whatsapp' },
-      { label: 'Messenger', icon: 'chatbubbles', route: '/(app)/messenger' },
-      { label: 'View Messages', icon: 'mail-open', route: '/(app)/view-messages' },
-      { label: 'Announcements Manager', icon: 'megaphone', route: '/(app)/super-admin/announcements' },
-      { label: 'Support Tickets', icon: 'help-buoy', route: '/(app)/super-admin/support' },
-      { label: 'Audit Logs', icon: 'document-text', route: '/(app)/super-admin/audit-logs' },
-      { label: 'Reports', icon: 'stats-chart', route: '/(app)/super-admin/reports' },
-      { label: 'Referral Analytics', icon: 'git-network', route: '/(app)/referral-analytics' },
-      { label: 'Penalty Settings', icon: 'warning', route: '/(app)/super-admin/penalty-settings' },
-      { label: 'Settings', icon: 'settings', route: '/(app)/super-admin/settings' },
-      { label: 'Profile', icon: 'person-circle', route: '/(app)/profile' },
+      { label: 'Bulk SMS', k: 'drawer.bulkSms', icon: 'chatbox', route: '/(app)/bulk-sms-dashboard' },
+      { label: 'WhatsApp Business', k: 'drawer.whatsappBusiness', icon: 'logo-whatsapp', route: '/(app)/whatsapp' },
+      { label: 'Messenger', k: 'drawer.messenger', icon: 'chatbubbles', route: '/(app)/messenger' },
+      { label: 'View Messages', k: 'drawer.viewMessages', icon: 'mail-open', route: '/(app)/view-messages' },
+      { label: 'Announcements Manager', k: 'drawer.announcementsManager', icon: 'megaphone', route: '/(app)/super-admin/announcements' },
+      { label: 'Support Tickets', k: 'drawer.supportTickets', icon: 'help-buoy', route: '/(app)/super-admin/support' },
+      { label: 'Audit Logs', k: 'drawer.auditLogs', icon: 'document-text', route: '/(app)/super-admin/audit-logs' },
+      { label: 'Reports', k: 'drawer.reports', icon: 'stats-chart', route: '/(app)/super-admin/reports' },
+      { label: 'Referral Analytics', k: 'drawer.referralAnalytics', icon: 'git-network', route: '/(app)/referral-analytics' },
+      { label: 'Penalty Settings', k: 'drawer.penaltySettings', icon: 'warning', route: '/(app)/super-admin/penalty-settings' },
+      { label: 'Settings', k: 'drawer.settings', icon: 'settings', route: '/(app)/super-admin/settings' },
+      { label: 'Profile', k: 'drawer.profile', icon: 'person-circle', route: '/(app)/profile' },
     ],
   },
 ];
@@ -152,6 +155,7 @@ interface SuperAdminNavDrawerProps {
 /** Full-screen navigation drawer mirroring the website sidebar categories. */
 export function SuperAdminNavDrawer({ visible, onClose }: SuperAdminNavDrawerProps) {
   const router = useRouter();
+  const { t } = useTranslation();
   const { colors: themeColors, isDark } = useTheme();
   const [activeSection, setActiveSection] = useState<string | null>(null);
 
@@ -179,8 +183,8 @@ export function SuperAdminNavDrawer({ visible, onClose }: SuperAdminNavDrawerPro
           <View style={[styles.drawerHeader, { borderBottomColor: themeColors.border }]}>
             <Image source={require('../assets/images/logo.png')} style={styles.drawerLogo} resizeMode="contain" />
             <View style={{ flex: 1 }}>
-              <Text style={[styles.drawerTitle, { color: isDark ? themeColors.text : '#111827' }]}>SUPER ADMIN</Text>
-              <Text style={[styles.drawerSub, { color: themeColors.primary }]}>Control Center</Text>
+              <Text style={[styles.drawerTitle, { color: isDark ? themeColors.text : '#111827' }]}>{t('panels.superAdmin')}</Text>
+              <Text style={[styles.drawerSub, { color: themeColors.primary }]}>{t('panels.superAdminSubtitle')}</Text>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
               <Icon name="x" size={20} color={isDark ? themeColors.text : '#111827'} />
@@ -194,7 +198,7 @@ export function SuperAdminNavDrawer({ visible, onClose }: SuperAdminNavDrawerPro
                 style={[styles.catChip, { backgroundColor: themeColors.primary + '14', borderColor: themeColors.primary }]}
                 onPress={() => setActiveSection(null)}
               >
-                <Text style={[styles.catChipText, { color: themeColors.primary }]}>All</Text>
+                <Text style={[styles.catChipText, { color: themeColors.primary }]}>{t('common.all')}</Text>
               </TouchableOpacity>
               {SUPER_ADMIN_NAV_SECTIONS.map((s) => (
                 <TouchableOpacity
@@ -209,7 +213,7 @@ export function SuperAdminNavDrawer({ visible, onClose }: SuperAdminNavDrawerPro
                   onPress={() => setActiveSection(activeSection === s.title ? null : s.title)}
                 >
                   <Text style={[styles.catChipText, { color: activeSection === s.title ? themeColors.primary : (isDark ? themeColors.textMid : '#475569') }]}>
-                    {s.title}
+                    {t(s.titleKey)}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -217,7 +221,7 @@ export function SuperAdminNavDrawer({ visible, onClose }: SuperAdminNavDrawerPro
 
             {SUPER_ADMIN_NAV_SECTIONS.filter((s) => !activeSection || s.title === activeSection).map((section) => (
               <View key={section.title} style={styles.navSection}>
-                <Text style={[styles.navSectionTitle, { color: themeColors.textLight }]}>{section.title}</Text>
+                <Text style={[styles.navSectionTitle, { color: themeColors.textLight }]}>{t(section.titleKey)}</Text>
                 {section.items.map((item) => (
                   <TouchableOpacity
                     key={item.label}
@@ -226,7 +230,7 @@ export function SuperAdminNavDrawer({ visible, onClose }: SuperAdminNavDrawerPro
                     activeOpacity={0.7}
                   >
                     <Icon name={item.icon} size={18} color={themeColors.textMid || themeColors.textLight} />
-                    <Text style={[styles.navItemText, { color: isDark ? themeColors.text : '#1F2937' }]}>{item.label}</Text>
+                    <Text style={[styles.navItemText, { color: isDark ? themeColors.text : '#1F2937' }]}>{t(item.k)}</Text>
                     <Icon name="chevron-right" size={16} color={themeColors.textLight} />
                   </TouchableOpacity>
                 ))}
