@@ -10,6 +10,8 @@ import { MinimalDock } from '../../components/MinimalDock';
 import { PartnerDock } from '../../components/PartnerDock';
 import { PartnerTopBar } from '../../components/PartnerTopBar';
 import { EmployeeTopBar } from '../../components/EmployeeTopBar';
+import { SuperAdminTopBar, SuperAdminNavDrawer } from '../../components/SuperAdminTopBar';
+import { notificationService } from '../../services/notification.service';
 import { typography } from '../../theme/typography';
 import { getUnreadCount } from '../../services/messenger.service';
 import { getMessengerSocket } from '../../services/messengerSocket';
@@ -45,8 +47,10 @@ export default function AppLayout() {
   const insets = useSafeAreaInsets();
   const routeParams = useGlobalSearchParams<{ category?: string }>();
   const [unreadCount, setUnreadCount] = useState<number>(0);
+  const [notificationUnread, setNotificationUnread] = useState<number>(0);
   const [partnerMenuOpen, setPartnerMenuOpen] = useState(false);
   const [employeeMenuOpen, setEmployeeMenuOpen] = useState(false);
+  const [superAdminMenuOpen, setSuperAdminMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!partnerMenuOpen) return;
@@ -69,6 +73,16 @@ export default function AppLayout() {
   }, [employeeMenuOpen]);
 
   useEffect(() => {
+    if (!superAdminMenuOpen) return;
+    const backAction = () => {
+      setSuperAdminMenuOpen(false);
+      return true;
+    };
+    const handler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => handler.remove();
+  }, [superAdminMenuOpen]);
+
+  useEffect(() => {
     if (!isAuthenticated) return;
     
     let isMounted = true;
@@ -79,6 +93,12 @@ export default function AppLayout() {
       if (isMounted) {
         setUnreadCount(count);
       }
+      try {
+        const notif = await notificationService.fetchUnreadCount();
+        if (isMounted) {
+          setNotificationUnread(notif.unread_count || 0);
+        }
+      } catch (_) {}
     };
 
     // Initial fetch
@@ -300,6 +320,16 @@ export default function AppLayout() {
           <EmployeeTopBar onMenuPress={() => setEmployeeMenuOpen(true)} unreadCount={unreadCount} isManager={isManagerOrTL} />
         </View>
       )}
+      {/* Super Admin navbar — mirrors the website SuperAdminLayout mobile header on every panel page */}
+      {role === 'SUPER_ADMIN' && (
+        <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+          <SuperAdminTopBar
+            onMenuPress={() => setSuperAdminMenuOpen(true)}
+            messengerUnread={unreadCount}
+            notificationUnread={notificationUnread}
+          />
+        </View>
+      )}
       <Tabs
         backBehavior="history"
         screenOptions={{
@@ -468,6 +498,11 @@ export default function AppLayout() {
             </View>
           </View>
         </View>
+      )}
+
+      {/* Super Admin navigation drawer — mirrors website sidebar categories */}
+      {role === 'SUPER_ADMIN' && (
+        <SuperAdminNavDrawer visible={superAdminMenuOpen} onClose={() => setSuperAdminMenuOpen(false)} />
       )}
 
       {/* Employee feature sidebar — mirrors the website EmployeeLayout nav */}

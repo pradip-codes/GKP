@@ -1,0 +1,76 @@
+# GharKaPaisa
+
+> GharKaPaisa is an enterprise-grade Indian FinTech marketplace, lead management aggregator, and multi-tenant operational CRM. It combines a public financial comparison marketplace (Credit Cards, Personal Loans, Insurance, Utility Services) with an end-to-end back-office execution platform spanning 35+ domain modules, partner commissions, GPS geofenced attendance, multi-stage KYC curing, and real-time operations across Web and Mobile.
+
+GharKaPaisa aggregates banking and credit products from top-tier Indian financial institutions (HDFC, SBI, ICICI, Axis, Kotak, IDFC FIRST, AU Small Finance Bank) and powers high-throughput distribution via an independent partner network, sales executives, and specialized operational curing desks. The platform enforces strict Role-Based Access Control (RBAC), multi-tier operator isolation, progressive security lockout with OTP failover, and high-accuracy geospatial attendance verification.
+
+- **Production Website**: https://gharkapaisa.in
+- **API Base URL**: `https://gharkapaisa.in/api/v1` (behind Nginx reverse proxy to Express on port 5000)
+- **Monorepo Layout**: `backend/` (Node.js/Express API), `frontend/` (React 19/Vite), `mobile/` (React Native/Expo 58), `documentation/` (Technical & Architectural Specifications).
+
+---
+
+## Architecture & Workspaces
+
+- [Backend Architecture](backend/): Node.js (v18+) Express REST API with PostgreSQL connection pooling, Redis caching, Socket.IO & Server-Sent Events (SSE), AWS S3/SES/Rekognition, and Razorpay integrations.
+- [Frontend Application](frontend/): React 19 single-page application built with Vite, Tailwind CSS, Lucide icons, Recharts, and Zustand state management. Hosts the public marketplace and all 5 authenticated operational portals.
+- [Mobile Application](mobile/): Cross-platform React Native app powered by Expo 58 and Expo Router. Implements biometric authentication, GPS polygon geofencing, push notifications, and 100% screen parity with the web dashboard.
+- [Enterprise Documentation](documentation/): Detailed technical architecture, entity-relationship diagrams, database schemas, mobile-vs-web audits, and module workflows.
+
+---
+
+## Core Domain Modules & Services
+
+- [Auth Module & Progressive Lockout](backend/src/modules/auth/): Multi-tenant JWT authentication supporting email, mobile, and employee ID identities. Features progressive password lockout (cooldown after 3 failed attempts) with seamless MSG91 OTP bypass.
+- [CRM & Lead Processing](backend/src/modules/crm/): Core application state machine handling credit card, personal loan, and insurance journeys from initial punch through soft approval, bank processing, and final disbursement.
+- [KYC & Operator Desks](backend/src/modules/kyc-operator/): Specialized operational queues for VKYC, biometric verification, DigiLocker 1-rupee penny-drop verification, and bank application reconciliation.
+- [Attendance & Geofencing System](backend/src/modules/attendance/): Polygon-based building geofencing (10m boundary tolerance, 50m max GPS accuracy filter), AWS Rekognition facial biometric verification, and mobile clock-in/out.
+- [HR & Payroll Engine](backend/src/modules/hr/): Employee lifecycle management, automated salary slip generation, attendance reconciliation, bonus departments, and performance-based incentive reports.
+- [Partner Ecosystem & Wallet](backend/src/modules/partner/): Partner onboarding, referral link tracking, tiered team commissions, hold periods, and automated Razorpay payout disbursements.
+- [Real-time Messenger & Notifications](backend/src/modules/messenger/): Ephemeral and persistent team messaging with SSE streaming, file attachments, and 48-hour automated disk and database purge cron jobs.
+- [Travel & Utility Services](backend/src/modules/travel-utilities/): BBPS utility bill payments, mobile and DTH recharges, FASTag, money transfer, and bus/flight booking margin engine.
+
+---
+
+## Roles, Permissions & Operational Desks
+
+The platform enforces strict PostgreSQL enum roles and granular operational designations:
+
+- [Admin Roles & Designations Mapping](ADMIN_ROLES_MAPPING.md): Detailed specification of PostgreSQL `user_role` (`SUPER_ADMIN`, `ADMIN`, `EMPLOYEE`, `PARTNER`, `TEAM_MEMBER`) and 14 operational designations.
+- [PAN Checker Desk](backend/src/modules/crm/): Verifies PAN validity, dedupes against existing applications, and records audit timestamps.
+- [Remark Operator Desk](backend/src/modules/crm/): Ingests bank API or portal remarks and updates real-time application notes.
+- [Quick Decision (QD) Operator Desk](backend/src/modules/crm/): Manages automated and manual instant card decisioning.
+- [Curable Operators (Physical, Digital, Email)](backend/src/modules/crm/): Bank-specific queue isolation for resolving defective or queried applications with dual current/office address cure persistence.
+- [Employee Panel Parity Matrix](EMPLOYEE_PANEL_CONNECTION_STATUS.md): Complete cross-platform feature matrix between web dashboards and mobile application views.
+
+---
+
+## Database Schemas & Migrations
+
+- [Complete Database Schema](documentation/DATABASE_SCHEMA.md): Exhaustive PostgreSQL schema documentation with table definitions, foreign key constraints, indexes, and JSONB metadata layouts.
+- [Database Migrations](backend/src/database/migrations/): Incremental, reversible SQL migration scripts for zero-downtime production schema evolution.
+- [Primary Tables](backend/src/database/):
+  - `users`: Authentication identities, roles, mobile/email hashes, failed attempt counters, and lockout timestamps.
+  - `applications`: Master lead records with financial product references, current stages, curing designations, and bank statuses.
+  - `physical_application_details`: Extended physical and bank card metadata, PAN verification, and dispatch details.
+  - `employee_profiles` & `employee_tasks`: Internal staff registry, department mapping, GPS geofence bindings, and daily task commitments.
+  - `attendance_logs` & `attendance_environments`: Geofence coordinate history, biometric match scores, and clock-in audit trails.
+  - `wallet_transactions` & `commission_hold_entries`: Ledger-backed financial movements and maturing commission releases.
+
+---
+
+## Developer Rules & Safe Implementation Guidelines
+
+- **PostgreSQL Column Safety**: Tables like `applications` and `physical_application_details` contain evolving JSONB metadata. Always query dynamically using `to_jsonb(a)->>'field'` or explicit verified columns (`pad.pan_number`, NOT non-existent `pad.pan`).
+- **Parameterized SQL Queries**: All dynamic queries must use parameterized placeholders (`$1, $2, ...`) with explicit type casting (e.g., `$1::uuid`, `$2::text`) to prevent parameter inference collisions on NULL values.
+- **Linux Path Sensitivity**: Production runs on Ubuntu Linux (case-sensitive ext4). File imports must strictly match disk casing (`customer.routes.js`, `kyc-operator.controller.js`).
+- **Progressive Lockout Fallback**: Never lock a user out permanently without OTP fallback. After 3 incorrect passwords, enforce a 2-minute cooldown while allowing instant, verified mobile OTP login.
+- **GPS Geofence Validation**: Attendance clock-in strictly mandates device accuracy $\le 50\text{m}$. Reject mock locations, out-of-bounds inputs, and accuracy $\gt 50\text{m}$ as `LOW_ACCURACY`.
+
+---
+
+## Optional & Deep Dive
+
+- [Full Monorepo Knowledge Base (llms-full.txt)](llms-full.txt): Complete consolidated documentation with every route, schema definition, and algorithm in a single LLM-optimized document.
+- [System Architecture Audit](documentation/ARCHITECTURE.md): Deep architectural overview of services, caching strategies, and proxy topologies.
+- [Project Algorithms & Incentive Models](documentation/PROJECT_ALGORITHMS_AND_ARCHITECTURE.md): Mathematical models for payout slabs, TDS deduction, and partner referral trees.
