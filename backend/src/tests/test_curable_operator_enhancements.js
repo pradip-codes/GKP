@@ -32,6 +32,8 @@ assert.ok(modalContent.includes('Current Address: '), 'Final form must display C
 assert.ok(modalContent.includes('Office Address: '), 'Final form must display Office Address in summary');
 assert.ok(modalContent.includes("queryable_remark: queryableRemark || 'NOT REQUIRED'"), 'Must save queryable_remark');
 assert.ok(modalContent.includes("address_type: addressType || 'Current Address'"), 'Must save address_type');
+assert.ok(modalContent.includes('currentAddressText'), 'Must pass currentAddressText in payload');
+assert.ok(modalContent.includes('officeAddressText'), 'Must pass officeAddressText in payload');
 
 // 1.3 Save Remarks & Stage moves to Cured & Approved
 assert.ok(modalContent.includes("payload.status = 'approved'"), 'Must set status to approved for curable operator');
@@ -59,6 +61,8 @@ assert.ok(controllerContent.includes('as queryable_remark'), 'listApplications m
 // Curable operator can approve
 assert.ok(controllerContent.includes('isCurableOperatorLocal'), 'Must recognize curable operator in updateApplicationDetails');
 assert.ok(controllerContent.includes('effectiveAddressText'), 'Backend must extract effectiveAddressText');
+assert.ok(controllerContent.includes('effectiveCurrentAddress'), 'Backend must extract effectiveCurrentAddress');
+assert.ok(controllerContent.includes('effectiveCompanyAddress'), 'Backend must extract effectiveCompanyAddress');
 assert.ok(controllerContent.includes('curing_address'), 'Backend must handle curing_address');
 
 console.log('✓ application.controller.js backend checks passed.');

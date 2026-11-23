@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import api from "../../../services/api";
 import { useTheme, makeS } from "../../../contexts/ThemeContext";
 import { Icons } from "../../../components/Icon/PartnerIcons";
-import { FileText, FileEdit, Building2, Clock, Search, CheckCircle2, Sparkles, XCircle, Layers, Eye, Download, ShieldCheck, Zap, Loader2, UserCheck, UserPlus } from 'lucide-react';
+import { FileText, FileEdit, Building2, Clock, Search, CheckCircle2, Sparkles, XCircle, Layers, Eye, Download, ShieldCheck, Zap, Loader2, UserCheck, UserPlus, CreditCard } from 'lucide-react';
 import {
   MdSearch, MdFilterList, MdDownload, MdAdd, MdHourglassEmpty, MdTrackChanges,
   MdCheckCircle, MdCancel, MdChevronLeft, MdChevronRight, MdClose, MdMoreVert,
@@ -42,6 +42,7 @@ export default function ManageApplications() {
   const isDigitalCurableUser = ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userRole);
   const isEmailCurableUser = ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userRole);
   const isCurableOperatorUser = isPhysicalCurableUser || isDigitalCurableUser || isEmailCurableUser;
+  const isCardActivationOperatorUser = ['CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR', 'Card Activation Operator'].includes(userDesignation) || ['CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR', 'Card Activation Operator'].includes(userRole);
   const isOpsOperator = [
     'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'OPERATOR', 'BACKEND', 'BACKEND OPERATION', 'BACKEND_OPERATION', 'BACKEND OPERATOR',
     'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES EXECUTIVE', 'PAN_CHECKER', 'PAN CHECKER',
@@ -49,7 +50,8 @@ export default function ManageApplications() {
     'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR',
     'PHYSICAL_CURABLE', 'PHYSICAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE',
     'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR',
-    'EMAIL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR'
+    'EMAIL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR',
+    'CARD_ACTIVATION_OPERATOR', 'CARD ACTIVATION OPERATOR', 'Card Activation Operator'
   ].some(t => userRole === t || userRole.includes(t) || userDesignation.includes(t));
   const isOpsHead = ['SUPER_ADMIN', 'ADMIN', 'OPERATIONS_HEAD', 'OPERATIONAL_HEAD'].includes(userRole) && !isOpsOperator;
   const isOpsHeadOrSuperAdmin = isOpsHead || isOpsOperator;
@@ -67,7 +69,7 @@ export default function ManageApplications() {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(25);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState(() => isQuerableOperatorUser ? 'rejected' : "");
+  const [status, setStatus] = useState(() => isCardActivationOperatorUser ? 'approved' : (isQuerableOperatorUser ? 'rejected' : ""));
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -504,7 +506,10 @@ export default function ManageApplications() {
     }
   };
 
-  const STATUS_TABS = isQuerableOperatorUser ? [
+  const STATUS_TABS = isCardActivationOperatorUser ? [
+    { id: 'approved', label: 'HDFC Card Approved Cases', color: '#10b981', bg: '#10b98115' },
+    { id: '', label: 'All Approved Cases', color: C.primary, bg: `${C.primary}15` }
+  ] : isQuerableOperatorUser ? [
     { id: 'rejected', label: 'Assigned Bank Rejected Cases', color: '#ef4444', bg: '#ef444415' }
   ] : isCurableOperatorUser ? [
     { id: '', label: 'All Curable Applications', color: C.primary, bg: `${C.primary}15` },
@@ -662,12 +667,12 @@ export default function ManageApplications() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '20px' }}>
         <div>
           <h2 style={{ fontSize: '24px', fontWeight: 900, color: C.text, margin: 0, letterSpacing: '-0.02em' }}>
-            {isPhysicalCurableUser ? 'Physical Curable Operations Queue' : isDigitalCurableUser ? 'Digital Curable Operations Queue' : isEmailCurableUser ? 'Email Curable Operations Queue' : isQuerableOperatorUser ? 'Querable Operator Applications Queue' : isPanCheckerUser ? 'PAN Checker Review Queue' : isRemarkOperatorUser ? 'Remark Operator Queue' : isQdOperatorUser ? 'QD Operator Queue' : 'Applications Management'}
+            {isCardActivationOperatorUser ? 'Card Activation Operations Queue' : isPhysicalCurableUser ? 'Physical Curable Operations Queue' : isDigitalCurableUser ? 'Digital Curable Operations Queue' : isEmailCurableUser ? 'Email Curable Operations Queue' : isQuerableOperatorUser ? 'Querable Operator Applications Queue' : isPanCheckerUser ? 'PAN Checker Review Queue' : isRemarkOperatorUser ? 'Remark Operator Queue' : isQdOperatorUser ? 'QD Operator Queue' : 'Applications Management'}
           </h2>
           <p style={{ fontSize: '13px', color: C.textLight, margin: '4px 0 0 0' }}>
-            {isPhysicalCurableUser ? 'Review and cure HDFC physical curable declined applications (Document pickups, physical verifications).' : isDigitalCurableUser ? 'Review and cure HDFC digital curable declined applications (VKYC, customer link re-trigger).' : isEmailCurableUser ? 'Review and cure HDFC email curable declined applications (Bank underwriting appeals).' : isQuerableOperatorUser ? 'Review and manage assigned bank rejected applications.' : isPanCheckerUser ? 'Review and verify customer PAN details for assigned applications.' : isRemarkOperatorUser ? 'Review and update remarks for assigned bank applications.' : isQdOperatorUser ? 'Review assigned bank applications for QD form and remark details.' : 'Track, verify, update and manage operations for all submitted customer applications.'}
+            {isCardActivationOperatorUser ? 'Review and manage card activation status for HDFC approved credit card applications.' : isPhysicalCurableUser ? 'Review and cure HDFC physical curable declined applications (Document pickups, physical verifications).' : isDigitalCurableUser ? 'Review and cure HDFC digital curable declined applications (VKYC, customer link re-trigger).' : isEmailCurableUser ? 'Review and cure HDFC email curable declined applications (Bank underwriting appeals).' : isQuerableOperatorUser ? 'Review and manage assigned bank rejected applications.' : isPanCheckerUser ? 'Review and verify customer PAN details for assigned applications.' : isRemarkOperatorUser ? 'Review and update remarks for assigned bank applications.' : isQdOperatorUser ? 'Review assigned bank applications for QD form and remark details.' : 'Track, verify, update and manage operations for all submitted customer applications.'}
           </p>
-          {(isQuerableOperatorUser || isCurableOperatorUser) && (
+          {(isQuerableOperatorUser || isCurableOperatorUser || isCardActivationOperatorUser) && (
             <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
                 <span style={{ fontSize: '12px', fontWeight: 800, color: C.textLight }}>
@@ -762,7 +767,24 @@ export default function ManageApplications() {
 
 
       {/* ── 2. TOP KPI SUMMARY CARDS ── */}
-      {isQuerableOperatorUser ? (
+      {isCardActivationOperatorUser ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+          <div style={{ background: C.card, borderRadius: '14px', padding: '16px 18px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', fontWeight: 800, color: C.textLight, textTransform: 'uppercase', letterSpacing: '0.04em' }}>HDFC Card Approved Cases</span>
+              <div style={{ width: '34px', height: '34px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.1)', color: '#10B981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <CreditCard size={20} />
+              </div>
+            </div>
+            <div style={{ marginTop: '12px', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              <span style={{ fontSize: '28px', fontWeight: 900, color: '#10B981' }}>
+                {total || 0}
+              </span>
+              <span style={{ fontSize: '11.5px', fontWeight: 700, color: C.textLight }}>Approved Cards</span>
+            </div>
+          </div>
+        </div>
+      ) : isQuerableOperatorUser ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', marginBottom: '20px' }}>
           <div style={{ background: C.card, borderRadius: '14px', padding: '16px 18px', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1359,6 +1381,18 @@ export default function ManageApplications() {
                                 Decline Code: <strong>{app.decline_code}</strong>
                               </div>
                             )}
+                            {app.card_activation_stage && app.card_activation_stage !== 'None' && app.card_activation_stage !== 'NA' && (
+                              <div style={{ marginTop: '3px' }}>
+                                <span style={{
+                                  display: "inline-block", padding: "2px 6px", borderRadius: "4px", fontSize: "10.5px", fontWeight: 800,
+                                  background: app.card_activation_stage.toLowerCase().includes('active') ? '#ECFDF5' : '#F3F4F6',
+                                  color: app.card_activation_stage.toLowerCase().includes('active') ? '#047857' : '#4B5563',
+                                  border: `1px solid ${app.card_activation_stage.toLowerCase().includes('active') ? '#A7F3D0' : '#E5E7EB'}`
+                                }}>
+                                  💳 {app.card_activation_stage}
+                                </span>
+                              </div>
+                            )}
                             <div style={{ fontSize: '11px', color: C.textLight, fontWeight: 700 }}>
                               Comm: <span style={{ color: app.commission_released || app.commission_status === 'processed' ? '#059669' : C.textMid }}>₹{parseFloat(app.commission_amount || 0).toLocaleString('en-IN')} ({app.commission_released || app.commission_status === 'processed' ? 'Released' : 'Pending'})</span>
                             </div>
@@ -1369,7 +1403,15 @@ export default function ManageApplications() {
                       {/* Actions */}
                       <td style={{ padding: '14px 16px', textAlign: 'right' }}>
                         <div style={{ display: "flex", justifyContent: "flex-end", gap: "6px", alignItems: "center" }}>
-                          {isCurableOperatorUser ? (
+                          {isCardActivationOperatorUser ? (
+                            <button
+                              onClick={() => { setVerifyModalTab('remark'); setVerifyModalApp(app); }}
+                              style={{ background: "#10b98115", border: "1px solid #10b98140", color: "#059669", padding: "6px 12px", borderRadius: "6px", fontSize: "11.5px", fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                              title="Open Card Activation Form"
+                            >
+                              <CreditCard size={13} /> Card Activation
+                            </button>
+                          ) : isCurableOperatorUser ? (
                             <>
                               <button
                                 onClick={() => { setVerifyModalTab('remark'); setVerifyModalApp(app); }}

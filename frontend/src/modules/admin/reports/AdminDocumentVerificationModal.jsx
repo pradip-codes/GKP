@@ -325,9 +325,10 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
   const isDigitalCurable = ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(role);
   const isEmailCurable = ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(role);
   const isCurableOperator = isPhysicalCurable || isDigitalCurable || isEmailCurable;
+  const isCardActivationOperator = ['Card Activation Operator', 'CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR'].includes(userDesignation) || ['CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR'].includes(role);
   const isAdministrativeOperator = ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(role);
   const isSalesExecUser = (['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE'].includes(role)) && !isAdministrativeOperator;
-  const isOpsOperator = ['ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'OPERATOR', 'PAN_CHECKER', 'PAN CHECKER', 'QD_OPERATOR', 'QD OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE', 'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR'].includes(role) || ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'PAN CHECKER', 'PAN_CHECKER', 'QD OPERATOR', 'QD_OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR', 'PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'DIGITAL CURABLE', 'DIGITAL_CURABLE', 'EMAIL CURABLE', 'EMAIL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation);
+  const isOpsOperator = ['ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'OPERATOR', 'PAN_CHECKER', 'PAN CHECKER', 'QD_OPERATOR', 'QD OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE', 'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR', 'CARD_ACTIVATION_OPERATOR', 'CARD ACTIVATION OPERATOR', 'Card Activation Operator'].includes(role) || ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'PAN CHECKER', 'PAN_CHECKER', 'QD OPERATOR', 'QD_OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR', 'PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'DIGITAL CURABLE', 'DIGITAL_CURABLE', 'EMAIL CURABLE', 'EMAIL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'CARD ACTIVATION OPERATOR', 'CARD_ACTIVATION_OPERATOR', 'Card Activation Operator'].includes(userDesignation);
   const isSuperAdminRole = ['SUPER_ADMIN', 'SUPER ADMIN'].includes(role) || ['SUPER_ADMIN', 'SUPER ADMIN'].includes(userDesignation);
   const isOpsHead = ['ADMIN', 'SUPER_ADMIN', 'OPERATIONS_HEAD', 'OPERATIONAL_HEAD', 'OPERATIONS HEAD', 'OPERATIONAL HEAD'].includes(role) && !isOpsOperator;
   const isOpsOrAdmin = isOpsHead || isOpsOperator || isSuperAdminRole;
@@ -383,7 +384,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
 
 
   useEffect(() => {
-    if (isQuerableOperator || isCurableOperator) {
+    if (isQuerableOperator || isCurableOperator || isCardActivationOperator) {
       setActiveTab('remark');
       return;
     }
@@ -391,7 +392,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
       const targetKey = getTabKey(initialTab);
       setActiveTab(targetKey);
     }
-  }, [application?.id, initialTab, isSalesExecUser, isQuerableOperator, isCurableOperator]);
+  }, [application?.id, initialTab, isSalesExecUser, isQuerableOperator, isCurableOperator, isCardActivationOperator]);
 
   const isPunchLead = processTypeStr.includes('punch') || processTypeStr.includes('lead_punching') || processTypeStr.includes('punching');
   const isDigital = isLinkedShare || isDirectBank;
@@ -402,7 +403,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
 
   // Role & Status Access Rules:
   const canEditQd = !isLockedStatus;
-  const canEditRemark = !isLockedStatus || isQuerableOperator || isCurableOperator;
+  const canEditRemark = !isLockedStatus || isQuerableOperator || isCurableOperator || isCardActivationOperator;
   const canEditFinal = !isSalesExecUser && !isQdOperator && (isSuperAdminOrAdmin || isFinalStatusOperator || isCurableOperator || (!isPartner && !isLockedStatus));
 
   const sanitizeVal = (val) => {
@@ -523,9 +524,9 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
 
   const resolveCurrentAddr = (appData) => {
     return (
-      sanitizeVal(appData?.curing_address && (!appData?.address_type || appData?.address_type === 'Current Address') ? appData?.curing_address : '') ||
       sanitizeVal(appData?.address) ||
       sanitizeVal(appData?.physical_details?.address) ||
+      sanitizeVal(appData?.curing_address && (!appData?.address_type || !String(appData?.address_type).toLowerCase().includes('office')) ? appData?.curing_address : '') ||
       [
         appData?.address1 || appData?.physical_details?.address1,
         appData?.address2 || appData?.physical_details?.address2,
@@ -540,11 +541,11 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
 
   const resolveOfficeAddr = (appData) => {
     return (
-      sanitizeVal(appData?.curing_address && (appData?.address_type === 'Office Address') ? appData?.curing_address : '') ||
       sanitizeVal(appData?.company_address) ||
       sanitizeVal(appData?.office_address) ||
       sanitizeVal(appData?.physical_details?.company_address) ||
       sanitizeVal(appData?.physical_details?.office_address) ||
+      sanitizeVal(appData?.curing_address && (appData?.address_type === 'Office Address' || String(appData?.address_type || '').toLowerCase().includes('office')) ? appData?.curing_address : '') ||
       ''
     );
   };
@@ -841,8 +842,12 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           sanitizeVal(pd.curing_address_type) ||
           'Current Address'
         );
-        setCurrentAddressText(resolveCurrentAddr(app) || resolveCurrentAddr(pd) || '');
-        setOfficeAddressText(resolveOfficeAddr(app) || resolveOfficeAddr(pd) || '');
+        const fetchedCurrent = resolveCurrentAddr(app) || resolveCurrentAddr(pd) || '';
+        const fetchedOffice = resolveOfficeAddr(app) || resolveOfficeAddr(pd) || '';
+        setCurrentAddressText(fetchedCurrent);
+        setOfficeAddressText(fetchedOffice);
+        setAddress1(fetchedCurrent);
+        setCompanyAddress(fetchedOffice);
         setInProcessStage(sanitizeVal(app.in_process_stage) || sanitizeVal(pd.in_process_stage) || 'None');
         if (realAppFileGenerated) setAppFileGenerated(realAppFileGenerated);
         if (app.decline_reason || pd.decline_reason) setDeclineReason(app.decline_reason || pd.decline_reason);
@@ -918,6 +923,17 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
       const initRawDisbDate = application?.disbursement_date || application?.physical_details?.disbursement_date || application?.disbursal_date || application?.physical_details?.disbursal_date;
       setDisbursementDate(formatDateToYyyyMmDd(initRawDisbDate));
       setDisbursementDateDisplay(formatDateToDdMmYyyy(initRawDisbDate));
+
+      const initCurrentAddr = resolveCurrentAddr(application);
+      const initOfficeAddr = resolveOfficeAddr(application);
+      if (initCurrentAddr) {
+        setCurrentAddressText(initCurrentAddr);
+        setAddress1(initCurrentAddr);
+      }
+      if (initOfficeAddr) {
+        setOfficeAddressText(initOfficeAddr);
+        setCompanyAddress(initOfficeAddr);
+      }
     }
   }, [application?.id]);
 
@@ -989,10 +1005,11 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           digital_remark: digitalRemark || 'None',
           address_type: addressType || 'Current Address',
           curing_address_type: addressType || 'Current Address',
-          address: isOfficeSelected ? (currentAddressText || address1 || '') : (activeAddressText || currentAddressText || ''),
-          company_address: isOfficeSelected ? (activeAddressText || officeAddressText || '') : (officeAddressText || companyAddress || ''),
-          curing_address: activeAddressText || '',
-          manual_address: activeAddressText || '',
+          address: (currentAddressText !== undefined && currentAddressText !== null ? currentAddressText : (address1 || '')),
+          company_address: (officeAddressText !== undefined && officeAddressText !== null ? officeAddressText : (companyAddress || '')),
+          office_address: (officeAddressText !== undefined && officeAddressText !== null ? officeAddressText : (companyAddress || '')),
+          curing_address: (isOfficeSelected ? officeAddressText : currentAddressText) || currentAddressText || officeAddressText || '',
+          manual_address: (isOfficeSelected ? officeAddressText : currentAddressText) || currentAddressText || officeAddressText || '',
           appcode_status: appcodeStatus || 'None',
           soft_approval_status: softApprovalStatus || 'None',
           iqa_stage: iqaStage || 'None',
@@ -1131,10 +1148,11 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           digital_remark: digitalRemark,
           address_type: addressType || 'Current Address',
           curing_address_type: addressType || 'Current Address',
-          address: isOfficeSelected ? (currentAddressText || address1 || '') : (activeAddressText || currentAddressText || ''),
-          company_address: isOfficeSelected ? (activeAddressText || officeAddressText || '') : (officeAddressText || companyAddress || ''),
-          curing_address: activeAddressText || '',
-          manual_address: activeAddressText || '',
+          address: (currentAddressText !== undefined && currentAddressText !== null ? currentAddressText : (address1 || '')),
+          company_address: (officeAddressText !== undefined && officeAddressText !== null ? officeAddressText : (companyAddress || '')),
+          office_address: (officeAddressText !== undefined && officeAddressText !== null ? officeAddressText : (companyAddress || '')),
+          curing_address: (isOfficeSelected ? officeAddressText : currentAddressText) || currentAddressText || officeAddressText || '',
+          manual_address: (isOfficeSelected ? officeAddressText : currentAddressText) || currentAddressText || officeAddressText || '',
           bank_remark: effectiveRemarkToSave,
           decline_reason: declineReason || offerDeclineReason || declineRemark || effectiveRemarkToSave,
           user_remark: userRemarkToSave,
@@ -2028,7 +2046,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
             </button>
 
             {/* 3. Final Tab (Shown for all processes and all admin designations) */}
-            {(!isPartner || initialTabKey === 'final' || showAllTabs || isOpsOrAdmin || isAdministrativeOperator || isSalesExecUser || isRemarkOperator || isPanChecker || isQdOperator || isFinalStatusOperator || isCurableOperator || isQuerableOperator) && (
+            {(!isPartner || initialTabKey === 'final' || showAllTabs || isOpsOrAdmin || isAdministrativeOperator || isSalesExecUser || isRemarkOperator || isPanChecker || isQdOperator || isFinalStatusOperator || isCurableOperator || isQuerableOperator || isCardActivationOperator) && (
               <button
                 onClick={() => setActiveTab('final')}
                 style={{
@@ -3301,7 +3319,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                   {(isHdfcBank || isTataCobrandHdfc) && !isLocOrEoc && (
                     <>
                       {/* WHEN CARD APPROVAL IS APPROVED */}
-                      {String(cardApprovalStage || finalStatus || '').toLowerCase().includes('approve') && (
+                      {(isCardActivationOperator || String(cardApprovalStage || finalStatus || '').toLowerCase().includes('approve')) && (
                         <div>
                           <label style={{ fontSize: '12px', fontWeight: 800, color: '#15803d', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>CARD ACTIVATION STAGE</label>
                           <select

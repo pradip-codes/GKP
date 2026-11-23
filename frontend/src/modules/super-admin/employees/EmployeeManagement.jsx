@@ -2225,6 +2225,7 @@ Generated On        : ${new Date().toLocaleString()}
                       <option value="Physical Curable Operator">Physical Curable Operator</option>
                       <option value="Digital Curable Operator">Digital Curable Operator</option>
                       <option value="Email Curable Operator">Email Curable Operator</option>
+                      <option value="Card Activation Operator">Card Activation Operator</option>
                       <option value="PAN Checker">PAN Checker</option>
                       <option value="Administrative Operator">Administrative Operator</option>
                       <option value="Administrative Sales Executive">Administrative Sales Executive</option>
@@ -5827,6 +5828,7 @@ Generated On        : ${new Date().toLocaleString()}
                               <option value="Physical Curable Operator">Physical Curable Operator</option>
                               <option value="Digital Curable Operator">Digital Curable Operator</option>
                               <option value="Email Curable Operator">Email Curable Operator</option>
+                              <option value="Card Activation Operator">Card Activation Operator</option>
                               <option value="PAN Checker">PAN Checker</option>
                               <option value="Administrative Operator">Administrative Operator</option>
                             </select>

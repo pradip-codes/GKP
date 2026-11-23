@@ -4708,6 +4708,11 @@ const migrate = async () => {
         ADD COLUMN IF NOT EXISTS aadhaar_number VARCHAR(20);
       ALTER TABLE applications
         ADD COLUMN IF NOT EXISTS address TEXT,
+        ADD COLUMN IF NOT EXISTS company_address TEXT,
+        ADD COLUMN IF NOT EXISTS curing_address TEXT,
+        ADD COLUMN IF NOT EXISTS curing_address_type VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS address_type VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS card_activation_stage VARCHAR(100),
         ADD COLUMN IF NOT EXISTS mother_name VARCHAR(255),
         ADD COLUMN IF NOT EXISTS father_name VARCHAR(255),
         ADD COLUMN IF NOT EXISTS marital_status VARCHAR(100),
@@ -4990,7 +4995,8 @@ const migrate = async () => {
       ADD COLUMN IF NOT EXISTS last_operator_designation VARCHAR(100),
       ADD COLUMN IF NOT EXISTS last_operator_code VARCHAR(100),
       ADD COLUMN IF NOT EXISTS final_status_operator_code VARCHAR(100),
-      ADD COLUMN IF NOT EXISTS last_operated_at TIMESTAMPTZ;
+      ADD COLUMN IF NOT EXISTS last_operated_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS card_activation_stage VARCHAR(100);
     `);
     logger.info('Final Status Operator & Audit History migration completed successfully.');
   } catch (fsoErr) {
