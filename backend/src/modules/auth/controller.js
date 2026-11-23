@@ -1229,20 +1229,61 @@ const loginPassword = async (req, res, next) => {
     }
 
     if (!user) {
+      // Progressive lockout flow:
+      //  - attempts 1-2 wrong        → 401 Invalid credentials
+      //  - attempt 3 wrong           → 2-minute cooldown (429 + retry_after), then OTP-only
+      //  - while cooling down        → 429 with remaining seconds + require_otp
+      //  - after cooldown, attempts>=3 → 403 require_otp (password disabled until OTP success resets count)
+      const lockedMatch = matchedUsers.find(u => isLocked(u));
+      const otpGatedMatch = matchedUsers.find(u => (u.failed_login_attempts || 0) >= 3);
+
+      if (lockedMatch) {
+        const secs = Math.max(1, Math.ceil((new Date(lockedMatch.locked_until) - Date.now()) / 1000));
+        return res.status(429).json({
+          success: false,
+          code: 'LOGIN_COOLDOWN',
+          require_otp: true,
+          retry_after_seconds: secs,
+          locked_until: lockedMatch.locked_until,
+          message: `Too many failed attempts. Please wait ${Math.ceil(secs / 60)} minute(s) or login using OTP.`
+        });
+      }
+      if (otpGatedMatch || sawOtpGatedMatch) {
+        return res.status(403).json({
+          success: false,
+          code: 'OTP_REQUIRED',
+          require_otp: true,
+          message: 'Maximum password attempts reached. Please log in using OTP.'
+        });
+      }
+
       let maxAttempts = 0;
       for (const u of matchedUsers) {
         const updated = await security.recordFailedLogin(u, req, 'invalid_password');
         maxAttempts = Math.max(maxAttempts, updated?.failed_login_attempts || (u.failed_login_attempts || 0) + 1);
       }
       if (sawLockedMatch) return error(res, 'Account is temporarily locked. Try again later.', 423);
-      if (sawOtpGatedMatch || maxAttempts >= 3) {
-        return res.status(403).json({
+      if (maxAttempts >= 3) {
+        // Short 2-minute cooldown before OTP verification is offered
+        await query(
+          `UPDATE users SET locked_until = NOW() + INTERVAL '2 minutes'
+           WHERE failed_login_attempts >= 3
+             AND (locked_until IS NULL OR locked_until < NOW() + INTERVAL '2 minutes')`
+        ).catch(() => {});
+        return res.status(429).json({
           success: false,
+          code: 'LOGIN_COOLDOWN',
           require_otp: true,
-          message: 'Maximum password attempts reached. Please log in using OTP.'
+          retry_after_seconds: 120,
+          message: 'Too many failed attempts. Please wait 2 minutes or login using OTP.'
         });
       }
-      return error(res, 'Invalid credentials', 401);
+      return res.status(401).json({
+        success: false,
+        code: 'INVALID_CREDENTIALS',
+        attempts_left: Math.max(0, 3 - maxAttempts),
+        message: 'Invalid credentials'
+      });
     }
 
     if (!user.password_hash) return error(res, 'Password login not enabled for this account', 401);
