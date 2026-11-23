@@ -685,22 +685,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
   },
-  tabScroll: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    gap: 8,
-  },
-  tabButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  tabButtonText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
 });

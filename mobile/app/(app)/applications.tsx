@@ -20,7 +20,6 @@ import { typography } from '../../theme/typography';
 import { spacing } from '../../theme/spacing';
 import { Card, Input, Button, StatusBadge, LoadingState, ErrorState } from '../../components';
 import { fetchApplications, ApplicationQueryParams, fetchBanks, fetchProducts, exportApplicationsCSV } from '../../services/application.service';
-import { PartnerTopBar } from '../../components/PartnerTopBar';
 import { ApplicationItem } from '../../types';
 
 const STATUS_OPTIONS = [
@@ -57,7 +56,7 @@ export default function ApplicationsScreen() {
   const { user } = useAuth();
   const { scope: scopeParam } = useLocalSearchParams<{ scope?: string }>();
   const isPartnerRole = user?.role === 'PARTNER' || user?.role === 'TEAM_MEMBER';
-  const [appScope, setAppScope] = useState<string>(scopeParam === 'team' ? 'team' : 'my');
+  const [appScope, setAppScope] = useState<string>(scopeParam === 'team' && user?.role !== 'TEAM_MEMBER' ? 'team' : 'my');
 
   const [applications, setApplications] = useState<ApplicationItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -344,13 +343,6 @@ export default function ApplicationsScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Same partner navbar as the partner panel */}
-      {isPartnerRole && (
-        <View style={{ paddingHorizontal: spacing.md, paddingTop: spacing.md }}>
-          <PartnerTopBar />
-        </View>
-      )}
-
       {/* Search & Filter Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Applications Queue</Text>
@@ -370,19 +362,23 @@ export default function ApplicationsScreen() {
               Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.exportBtn}
-            onPress={handleExportCSV}
-          >
-            <Text style={styles.exportBtnText}>Export</Text>
-          </TouchableOpacity>
+          {/* Website PartnerLayout marks Export Applications as partnerOnly — hidden for TEAM_MEMBER */}
+          {user?.role !== 'TEAM_MEMBER' && (
+            <TouchableOpacity
+              style={styles.exportBtn}
+              onPress={handleExportCSV}
+            >
+              <Text style={styles.exportBtnText}>Export</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        {/* My / Team scope toggle — same as website partner applications */}
-        {isPartnerRole && (
+        {/* My / Team scope toggle — same as website partner applications.
+            Website hides "Team Applications" (partnerOnly) for TEAM_MEMBER. */}
+        {isPartnerRole && user?.role !== 'TEAM_MEMBER' && (
           <View style={styles.scopeRow}>
             {[
-              { key: 'my', label: user?.role === 'TEAM_MEMBER' ? 'My Applications' : 'My Applications' },
+              { key: 'my', label: 'My Applications' },
               { key: 'team', label: 'Team Applications' },
             ].map((opt) => (
               <TouchableOpacity

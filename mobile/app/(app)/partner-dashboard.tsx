@@ -15,7 +15,6 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
-import { PartnerTopBar } from '../../components/PartnerTopBar';
 import {
   fetchPartnerDashboard,
   fetchPartnerWallet,
@@ -45,16 +44,16 @@ const localBannerMap: Record<string, any> = {
 };
 
 const offerFallbackBanners = [
-  { title: 'Lifetime Free Credit Cards', image_url: 'lifetimefree card.png', click_url: '/products?category=credit_card' },
-  { title: 'Instant Personal Loans', image_url: 'loan.png', click_url: '/products?category=personal_loan' },
-  { title: 'Smart EMI Credit Cards', image_url: 'smart emi.png', click_url: '/products?category=credit_card' },
-  { title: 'HDFC Bank Pixel Credit Card', image_url: 'hdfc pixel card.png', click_url: '/products?category=credit_card' },
-  { title: 'Exclusive Financial Offers', image_url: 'offerbanner.png', click_url: '/products' },
+  { title: 'Lifetime Free Credit Cards', image_url: 'lifetimefree card.png', click_url: '/(app)/products?category=credit_card' },
+  { title: 'Instant Personal Loans', image_url: 'loan.png', click_url: '/(app)/products?category=personal_loan' },
+  { title: 'Smart EMI Credit Cards', image_url: 'smart emi.png', click_url: '/(app)/products?category=credit_card' },
+  { title: 'HDFC Bank Pixel Credit Card', image_url: 'hdfc pixel card.png', click_url: '/(app)/products?category=credit_card' },
+  { title: 'Exclusive Financial Offers', image_url: 'offerbanner.png', click_url: '/(app)/products' },
 ];
 
 const teamFallbackBanners = [
-  { id: 'team-2', image: require('../../assets/images/team-banner.webp'), alt: 'Team Growth & Rewards', link: '/team' },
-  { id: 'refer', image: require('../../assets/images/reference-banner.webp'), alt: 'Refer and Earn', link: '/team' },
+  { id: 'team-2', image: require('../../assets/images/team-banner.webp'), alt: 'Team Growth & Rewards', link: '/(app)/team' },
+  { id: 'refer', image: require('../../assets/images/reference-banner.webp'), alt: 'Refer and Earn', link: '/(app)/team' },
 ];
 
 const resolveBannerSource = (url: any): any => {
@@ -78,18 +77,20 @@ const resolveBannerSource = (url: any): any => {
 
 // Map website routes to mobile routes
 const resolveMobileRoute = (url: string): string => {
-  if (!url) return '/products';
+  if (!url) return '/(app)/products';
   let route = url;
   route = route.replace('/partner/credit-cards', '/(auth)/bank-cards')
-    .replace('/partner/products', '/products')
-    .replace('/partner/team-network', '/team')
-    .replace('/partner/kyc-centre', '/partner-kyc')
-    .replace('/partner/applications', '/applications')
-    .replace('/partner/customers', '/customers')
+    .replace('/partner/products', '/(app)/products')
+    .replace('/partner/team-network', '/(app)/team')
+    .replace('/partner/kyc-centre', '/(app)/partner-kyc')
+    .replace('/partner/applications', '/(app)/applications')
+    .replace('/partner/customers', '/(app)/customers')
     .replace('/credit-cards', '/(auth)/bank-cards')
-    .replace('/loans', '/products?category=personal_loan')
-    .replace('/partner/', '/');
-  if (!route.startsWith('/')) route = `/${route}`;
+    .replace('/loans', '/(app)/products?category=personal_loan')
+    .replace('/partner/', '/(app)/');
+  if (!route.startsWith('/(app)/') && !route.startsWith('/(auth)/') && !route.startsWith('/(public)/')) {
+    route = `/(app)${route.startsWith('/') ? route : `/${route}`}`;
+  }
   return route;
 };
 
@@ -208,22 +209,22 @@ function QuickAccessItem({ icon, label, bg, color, onPress }: any) {
 }
 
 const QUICK_ACCESS = [
-  { id: 'recharge', label: 'Recharge & Bills', icon: 'phone-portrait', bg: '#EEF2FF', color: '#4F46E5', route: '/travel-utilities' },
+  { id: 'recharge', label: 'Recharge & Bills', icon: 'phone-portrait', bg: '#EEF2FF', color: '#4F46E5', route: '/(app)/travel-utilities' },
   { id: 'banks', label: 'Credit Card Banks', icon: 'business', bg: '#E0F2FE', color: '#0EA5E9', route: '/(auth)/bank-cards?bank=ALL' },
-  { id: 'loans', label: 'Loans', icon: 'cash', bg: '#ECFDF5', color: '#10B981', route: '/products?category=personal_loan' },
-  { id: 'insurance', label: 'Insurance', icon: 'shield', bg: '#FEF3C7', color: '#F59E0B', route: '/products?category=insurance' },
-  { id: 'invest', label: 'Accounts & Investments', icon: 'pie-chart', bg: '#F5F3FF', color: '#8B5CF6', route: '/products?category=bank_account' },
-  { id: 'other', label: 'Other Services', icon: 'ellipsis-h', bg: '#FDF2F8', color: '#EC4899', route: '/products' },
-  { id: 'travel', label: 'Travel & Bookings', icon: 'airplane', bg: '#FFF1F2', color: '#F43F5E', route: '/travel-utilities' },
+  { id: 'loans', label: 'Loans', icon: 'cash', bg: '#ECFDF5', color: '#10B981', route: '/(app)/products?category=personal_loan' },
+  { id: 'insurance', label: 'Insurance', icon: 'shield', bg: '#FEF3C7', color: '#F59E0B', route: '/(app)/products?category=insurance' },
+  { id: 'invest', label: 'Accounts & Investments', icon: 'pie-chart', bg: '#F5F3FF', color: '#8B5CF6', route: '/(app)/products?category=bank_account' },
+  { id: 'other', label: 'Other Services', icon: 'ellipsis-h', bg: '#FDF2F8', color: '#EC4899', route: '/(app)/products' },
+  { id: 'travel', label: 'Travel & Bookings', icon: 'airplane', bg: '#FFF1F2', color: '#F43F5E', route: '/(app)/travel-utilities' },
 ];
 
 const SELL_EARN_CARDS = [
-  { id: 'personal-loan', title: 'Personal Loan', value: '₹5 Lakh', valueColor: '#2FA35B', bg: '#E3F5EA', color: '#2FA35B', icon: 'cash', route: '/products?category=personal_loan' },
-  { id: 'credit-cards', title: 'Credit Cards', value: '₹1 Lakh', valueColor: '#6E3FD6', bg: '#EEE9FB', color: '#6E3FD6', icon: 'credit-card', route: '/products?category=credit_card' },
-  { id: 'insurance', title: 'Insurance', value: '₹5 Lakh', valueColor: '#E8862E', bg: '#FCE7E1', color: '#E8862E', icon: 'shield', route: '/products?category=insurance' },
-  { id: 'bank-accounts', title: 'Bank Accounts', value: '₹10k', valueColor: '#3A78D6', bg: '#E2ECFB', color: '#3A78D6', icon: 'business', route: '/products?category=bank_account' },
-  { id: 'demat', title: 'Demat Accounts', value: '₹10k', valueColor: '#E0473E', bg: '#FCE7E1', color: '#E0473E', icon: 'trending-up', route: '/products?category=demat' },
-  { id: 'investment', title: 'Investment', value: '₹1 Cr', valueColor: '#2FA35B', bg: '#E3F5EA', color: '#2FA35B', icon: 'pie-chart', route: '/products?category=investment' },
+  { id: 'personal-loan', title: 'Personal Loan', value: '₹5 Lakh', valueColor: '#2FA35B', bg: '#E3F5EA', color: '#2FA35B', icon: 'cash', route: '/(app)/products?category=personal_loan' },
+  { id: 'credit-cards', title: 'Credit Cards', value: '₹1 Lakh', valueColor: '#6E3FD6', bg: '#EEE9FB', color: '#6E3FD6', icon: 'credit-card', route: '/(app)/products?category=credit_card' },
+  { id: 'insurance', title: 'Insurance', value: '₹5 Lakh', valueColor: '#E8862E', bg: '#FCE7E1', color: '#E8862E', icon: 'shield', route: '/(app)/products?category=insurance' },
+  { id: 'bank-accounts', title: 'Bank Accounts', value: '₹10k', valueColor: '#3A78D6', bg: '#E2ECFB', color: '#3A78D6', icon: 'business', route: '/(app)/products?category=bank_account' },
+  { id: 'demat', title: 'Demat Accounts', value: '₹10k', valueColor: '#E0473E', bg: '#FCE7E1', color: '#E0473E', icon: 'trending-up', route: '/(app)/products?category=demat' },
+  { id: 'investment', title: 'Investment', value: '₹1 Cr', valueColor: '#2FA35B', bg: '#E3F5EA', color: '#2FA35B', icon: 'pie-chart', route: '/(app)/products?category=investment' },
 ];
 
 export default function PartnerDashboardScreen() {
@@ -321,9 +322,12 @@ export default function PartnerDashboardScreen() {
         id: `dyn-${b.id}`,
         image: resolveBannerSource(b.image_url || b.image),
         image_url: b.image_url,
-        click_url: b.click_url || '/team',
+        click_url: b.click_url || (user?.role === 'TEAM_MEMBER' ? '/partner-referrals' : '/team'),
       }))
-    : teamFallbackBanners
+    : teamFallbackBanners.map((b: any) => ({
+        ...b,
+        link: user?.role === 'TEAM_MEMBER' ? '/(app)/partner-referrals' : b.link,
+      }))
   );
 
   // Recent applications from leads (website uses /leads for partners)
@@ -357,7 +361,7 @@ export default function PartnerDashboardScreen() {
       icon: 'storefront',
       bg: '#F5F3FF',
       color: '#7C3AED',
-      route: '/products',
+      route: '/(app)/products',
     },
     {
       id: 'customer',
@@ -366,16 +370,17 @@ export default function PartnerDashboardScreen() {
       icon: 'people',
       bg: '#EFF6FF',
       color: '#2563EB',
-      route: '/customers',
+      route: '/(app)/customers',
     },
     {
       id: 'invite',
-      label: 'Invite Partner',
-      desc: 'Grow your network and overrides',
+      // TEAM_MEMBER cannot manage a team (website blocks /partner/team) — refers flow instead
+      label: user?.role === 'TEAM_MEMBER' ? 'Refer & Earn' : 'Invite Partner',
+      desc: user?.role === 'TEAM_MEMBER' ? 'Invite partners and earn bonuses' : 'Grow your network and overrides',
       icon: 'people-outline',
       bg: '#FFF7ED',
       color: '#EA580C',
-      route: '/team',
+      route: user?.role === 'TEAM_MEMBER' ? '/(app)/partner-referrals' : '/(app)/team',
     },
   ];
 
@@ -387,9 +392,6 @@ export default function PartnerDashboardScreen() {
         <RefreshControl refreshing={refreshing} onRefresh={() => loadDashboard(true)} colors={[colors.primary]} tintColor={colors.primary} />
       }
     >
-      <PartnerTopBar name={partnerName} code={partnerCode} balance={walletBalance} />
-
-
       {error ? (
         <View style={styles.errorBanner}>
           <Icon name="alert-circle" size={18} color={colors.error} />
@@ -413,7 +415,7 @@ export default function PartnerDashboardScreen() {
           {kycStatus !== 'under_review' && (
             <TouchableOpacity
               style={[styles.kycBtn, { backgroundColor: kycStatus === 'rejected' ? '#EF4444' : '#F59E0B' }]}
-              onPress={() => router.push('/partner-kyc' as any)}
+              onPress={() => router.push('/(app)/partner-kyc' as any)}
             >
               <Text style={styles.kycBtnText}>{kycStatus === 'rejected' ? 'Re-upload' : 'Complete KYC'}</Text>
             </TouchableOpacity>
@@ -425,7 +427,7 @@ export default function PartnerDashboardScreen() {
       <BannerSlider slides={offerSlides} height={175} borderRadius={8} fit="contain" bgColor={isDark ? '#0F172A' : '#F5F3FF'} />
 
       {/* SELL & EARN grid (website: 2-col on mobile) */}
-      <SectionHeader title="SELL & EARN" actionLabel="View All" onAction={() => router.push('/products' as any)} />
+      <SectionHeader title="SELL & EARN" actionLabel="View All" onAction={() => router.push('/(app)/products' as any)} />
       <View style={styles.earnGrid}>
         {SELL_EARN_CARDS.map((card) => (
           <EarnCard
@@ -492,7 +494,7 @@ export default function PartnerDashboardScreen() {
         <View style={[styles.panelCard, { backgroundColor: isDark ? colors.card : '#FFFFFF', borderColor: colors.border }]}>
           <View style={styles.panelHeaderRow}>
             <Text style={[styles.panelTitle, { color: isDark ? colors.text : '#111827' }]}>Recent Applications</Text>
-            <TouchableOpacity onPress={() => router.push('/applications' as any)}>
+            <TouchableOpacity onPress={() => router.push('/(app)/applications' as any)}>
               <Text style={styles.panelLink}>View All</Text>
             </TouchableOpacity>
           </View>
@@ -505,7 +507,7 @@ export default function PartnerDashboardScreen() {
               <Text style={[styles.emptyDesc, { color: isDark ? colors.textLight : '#6B7280' }]}>
                 Share credit cards and loan links with customers to start earning commissions.
               </Text>
-              <TouchableOpacity style={styles.exploreBtn} onPress={() => router.push('/products' as any)}>
+              <TouchableOpacity style={styles.exploreBtn} onPress={() => router.push('/(app)/products' as any)}>
                 <Text style={styles.exploreBtnText}>Explore Products</Text>
                 <Icon name="chevron-right" size={14} color="#FFFFFF" />
               </TouchableOpacity>

@@ -25,7 +25,6 @@ import {
 } from '../../services/application.service';
 import apiClient from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
-import { PartnerTopBar } from '../../components/PartnerTopBar';
 
 type SegmentTab = 'overview' | 'kyc' | 'timeline' | 'docs';
 
@@ -76,7 +75,6 @@ const maskMobile = (mobile?: string) => {
 export default function ApplicationDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
-  const isPartnerRole = user?.role === 'PARTNER' || user?.role === 'TEAM_MEMBER';
 
   // State
   const [appData, setAppData] = useState<any | null>(null);
@@ -264,13 +262,6 @@ export default function ApplicationDetailsScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Same partner navbar as the partner panel */}
-      {isPartnerRole && (
-        <View style={{ paddingHorizontal: spacing.md, paddingTop: spacing.md }}>
-          <PartnerTopBar />
-        </View>
-      )}
-
       {/* Navigation & Application Compact Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>

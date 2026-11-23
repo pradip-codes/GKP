@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -94,9 +95,13 @@ export default function ShareTrackingScreen() {
       <View style={styles.searchContainer}>
         <View style={styles.searchBox}>
           <Icon name="search" size={18} color={colors.textLight} />
-          <Text style={styles.searchInput} placeholder="Search shares..." placeholderTextColor={colors.textLight}>
-            {searchText || 'Search shares...'}
-          </Text>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search shares..."
+            placeholderTextColor={colors.textLight}
+            value={searchText}
+            onChangeText={setSearchText}
+          />
         </View>
       </View>
 

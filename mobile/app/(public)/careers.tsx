@@ -755,15 +755,27 @@ export default function CareersScreen() {
             )}
           </View>
           {mobileOtpSent && !mobileVerified && (
-            <TextInput
-              style={styles.textInput}
-              placeholder="Enter 6-digit Mobile OTP"
-              placeholderTextColor={colors.textLight}
-              value={mobileOtp}
-              onChangeText={setMobileOtp}
-              keyboardType="number-pad"
-              maxLength={6}
-            />
+            <>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Enter 6-digit Mobile OTP"
+                placeholderTextColor={colors.textLight}
+                value={mobileOtp}
+                onChangeText={setMobileOtp}
+                keyboardType="number-pad"
+                maxLength={6}
+              />
+              <TouchableOpacity
+                style={styles.otpCancelRow}
+                onPress={() => {
+                  setMobileOtpSent(false);
+                  setMobileOtp('');
+                }}
+              >
+                <Icon name="close" size={12} color={colors.textLight} />
+                <Text style={styles.otpCancelText}>Cancel verification</Text>
+              </TouchableOpacity>
+            </>
           )}
 
           <Text style={styles.inputLabel}>Email Address *</Text>
@@ -803,15 +815,27 @@ export default function CareersScreen() {
             )}
           </View>
           {emailOtpSent && !emailVerified && (
-            <TextInput
-              style={styles.textInput}
-              placeholder="Enter 6-digit Email OTP"
-              placeholderTextColor={colors.textLight}
-              value={emailOtp}
-              onChangeText={setEmailOtp}
-              keyboardType="number-pad"
-              maxLength={6}
-            />
+            <>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Enter 6-digit Email OTP"
+                placeholderTextColor={colors.textLight}
+                value={emailOtp}
+                onChangeText={setEmailOtp}
+                keyboardType="number-pad"
+                maxLength={6}
+              />
+              <TouchableOpacity
+                style={styles.otpCancelRow}
+                onPress={() => {
+                  setEmailOtpSent(false);
+                  setEmailOtp('');
+                }}
+              >
+                <Icon name="close" size={12} color={colors.textLight} />
+                <Text style={styles.otpCancelText}>Cancel verification</Text>
+              </TouchableOpacity>
+            </>
           )}
 
           <FloatingInput label="Date of Birth *" icon="calendar" value={form.date_of_birth} onChangeText={(v) => setField('date_of_birth', v)} maxLength={10} />
@@ -1209,6 +1233,20 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: '700',
+  },
+  otpCancelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    marginTop: -4,
+    marginBottom: 8,
+    paddingVertical: 4,
+  },
+  otpCancelText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: colors.textLight,
   },
   verifiedBadge: {
     flexDirection: 'row',

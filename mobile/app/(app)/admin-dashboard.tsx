@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -8,366 +8,218 @@ import apiClient from '../../services/api';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 
-interface AdminStats {
-  total_partners: number;
-  active_partners: number;
-  pending_kyc: number;
-  pending_withdrawals: number;
-  total_applications: number;
-  approved_applications: number;
-  pending_approvals: number;
-}
-
+// Mobile port of website AdminDashboard.jsx — "Admin Dashboard Analytics"
 export default function AdminDashboardScreen() {
-  const { colors } = useTheme();
+  const { colors: tc, isDark } = useTheme() as any;
   const router = useRouter();
-  const { logout } = useAuth();
+  const { user } = useAuth();
+  const role = (user?.role || '').toUpperCase();
+  const designation = (user?.designation || '').toUpperCase();
+  const isSuperAdmin = ['ADMIN', 'SUPER_ADMIN'].includes(role);
+  const isAdministrativeOperator = designation.includes('OPERATOR') || designation.includes('ADMINISTRATIVE');
+
+  const cardBg = isDark ? '#111c35' : '#ffffff';
+  const bgSecondary = isDark ? '#1a2744' : '#f1f5f9';
+  const border = isDark ? '#1e2b4a' : '#e5e7eb';
+  const textPrimary = isDark ? '#f1f5f9' : '#111827';
+  const textMuted = isDark ? '#94a3b8' : '#6b7280';
+
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState<AdminStats | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [stats, setStats] = useState<any>(null);
+  const [topPartners, setTopPartners] = useState<any[]>([]);
+  const [productStats, setProductStats] = useState<any[]>([]);
 
-  useEffect(() => {
-    fetchAdminStats();
-  }, []);
-
-  const fetchAdminStats = async () => {
+  const fetchData = useCallback(async (isRefresh = false) => {
     try {
-      setLoading(true);
-      const response = await apiClient.get('/reports/overview');
-      const data = response.data?.data;
-      setStats(
-        data
-          ? {
-              total_partners: Number(data.Partners?.total || 0),
-              active_partners: Number(data.Partners?.active || 0),
-              pending_kyc: Number(data.Partners?.pending_kyc || 0),
-              pending_withdrawals: Number(data.withdrawal?.pending_withdrawals || 0),
-              total_applications: Number(data.applications?.total || 0),
-              approved_applications: Number(data.applications?.approved || 0),
-              pending_approvals: Number(data.applications?.pending || 0),
-            }
-          : null
-      );
-    } catch (error) {
-      console.error('Failed to fetch admin stats:', error);
+      if (isRefresh) setRefreshing(true); else setLoading(true);
+      const jobs: Promise<any>[] = [apiClient.get('/reports/overview')];
+      if (isSuperAdmin) {
+        jobs.push(apiClient.get('/reports/top-partners', { params: { limit: 5 } }));
+        jobs.push(apiClient.get('/reports/applications-by-product'));
+      }
+      const results = await Promise.allSettled(jobs);
+      const overview = results[0].status === 'fulfilled' ? results[0].value?.data?.data : null;
+      setStats(overview);
+      if (isSuperAdmin && results[1]?.status === 'fulfilled') {
+        const d = results[1].value?.data?.data;
+        setTopPartners(Array.isArray(d) ? d : d?.partners || d?.rows || []);
+      }
+      if (isSuperAdmin && results[2]?.status === 'fulfilled') {
+        const d = results[2].value?.data?.data;
+        setProductStats(Array.isArray(d) ? d : d?.products || d?.rows || []);
+      }
+    } catch (e) {
+      console.error('Admin dashboard fetch error', e);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [isSuperAdmin]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const appStats = stats?.applications || { total: 0, approved: 0, rejected: 0, pending: 0, total_commission: 0 };
+  const partnerStats = stats?.Partners || stats?.partners || { total: 0, active: 0, pending_kyc: 0 };
+  const leadStats = stats?.leads || { total_leads: 0, approved_leads: 0, rejected_leads: 0, pending_leads: 0, todays_leads: 0 };
+  const withdrawalStats = stats?.withdrawal || { pending_withdrawals: 0, total_commission_paid: 0 };
+
+  // Same cards as website, role-filtered (superAdminOnly hidden for operators; zero values hidden)
+  const allStatCards = [
+    { label: isAdministrativeOperator ? 'Total Leads' : 'Pending Leads', val: isAdministrativeOperator ? leadStats.total_leads || 0 : leadStats.pending_leads || 0, icon: 'people', color: '#F59E0B', bg: '#F59E0B15', path: '/leads' },
+    { label: "Today's Leads", val: leadStats.todays_leads || 0, icon: 'trending-up', color: '#3B82F6', bg: '#3B82F615', path: '/leads' },
+    { label: 'Pending KYC', val: partnerStats.pending_kyc || 0, icon: 'shield', color: '#8B5CF6', bg: '#8B5CF615', path: '/admin-partners', superAdminOnly: true },
+    { label: 'Pending Withdrawals', val: withdrawalStats.pending_withdrawals || 0, icon: 'wallet', color: '#EF4444', bg: '#EF444415', path: '/admin-withdrawals', superAdminOnly: true },
+    { label: 'Total Partners', val: partnerStats.total || 0, icon: 'people-circle', color: '#10B981', bg: '#10B98115', path: '/admin-partners', superAdminOnly: true },
+    { label: 'Total Applications', val: appStats.total || 0, icon: 'document-text', color: '#06B6D4', bg: '#06B6D415', path: '/applications', superAdminOnly: true },
+  ];
+  const statCards = allStatCards.filter((c) => {
+    if (c.superAdminOnly && !isSuperAdmin) return false;
+    if (c.val === 0 || c.val === '0') return false;
+    return true;
+  });
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View style={styles.center}>
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.loadingText}>Loading admin dashboard...</Text>
+        <Text style={{ color: textMuted, marginTop: 10 }}>Loading admin dashboard...</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
+    <ScrollView
+      style={{ flex: 1, backgroundColor: isDark ? '#0d1428' : colors.bg }}
+      contentContainerStyle={{ padding: 16, paddingBottom: 120, gap: 20 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => fetchData(true)} colors={[colors.primary]} />}
+    >
+      {/* Top banner — "Admin Dashboard Analytics" */}
+      <View style={[styles.headerCard, { backgroundColor: cardBg, borderColor: border }]}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Admin Dashboard</Text>
-          <Text style={styles.subtitle}>Overview of admin operations</Text>
+          <Text style={{ fontSize: 20, fontWeight: '900', color: textPrimary }}>Admin Dashboard Analytics</Text>
+          <Text style={{ fontSize: 12, color: textMuted, marginTop: 2 }}>{user?.full_name || 'Administrator'}</Text>
         </View>
-        <TouchableOpacity
-          style={styles.logoutBtn}
-          onPress={async () => {
-            await logout();
-            router.replace('/(auth)/login');
-          }}
-          activeOpacity={0.7}
-        >
-          <Icon name="log-out" size={16} color={colors.error} />
-          <Text style={[styles.logoutText, { color: colors.error }]}>Logout</Text>
+        <TouchableOpacity style={[styles.refreshBtn, { backgroundColor: bgSecondary, borderColor: border }]} onPress={() => fetchData(true)}>
+          <Icon name="refresh" size={15} color={textPrimary} />
+          <Text style={{ fontSize: 12, fontWeight: '800', color: textPrimary, marginLeft: 6 }}>Refresh Data</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Quick Stats */}
-      <View style={styles.statsContainer}>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{stats?.total_partners || 0}</Text>
-          <Text style={styles.statLabel}>Total Partners</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{stats?.active_partners || 0}</Text>
-          <Text style={styles.statLabel}>Active Partners</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={[styles.statValue, { color: '#F59E0B' }]}>{stats?.pending_kyc || 0}</Text>
-          <Text style={styles.statLabel}>Pending KYC</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={[styles.statValue, { color: '#EF4444' }]}>{stats?.pending_withdrawals || 0}</Text>
-          <Text style={styles.statLabel}>Pending Withdrawals</Text>
-        </View>
+      {/* Stat cards — colored top border like website */}
+      <View style={styles.statGrid}>
+        {statCards.map((card, idx) => (
+          <TouchableOpacity
+            key={idx}
+            style={[styles.statCard, { backgroundColor: cardBg, borderColor: border, borderTopColor: card.color }]}
+            onPress={() => router.push(card.path as any)}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.statIcon, { backgroundColor: card.bg }]}>
+              <Icon name={card.icon} size={22} color={card.color} />
+            </View>
+            <View>
+              <Text style={{ fontSize: 22, fontWeight: '900', color: textPrimary }}>{card.val}</Text>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: textMuted, marginTop: 3 }}>{card.label}</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
       </View>
 
-      {/* Applications Stats */}
+      {/* Lead pipeline — administrative operators (website parity) */}
+      {isAdministrativeOperator && (
+        <View style={[styles.section, { backgroundColor: cardBg, borderColor: border }]}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <Text style={{ fontSize: 15, fontWeight: '900', color: textPrimary }}>Lead pipeline</Text>
+            <TouchableOpacity onPress={() => router.push('/leads' as any)} style={[styles.smallBtn, { borderColor: border, backgroundColor: bgSecondary }]}>
+              <Text style={{ fontSize: 12, fontWeight: '800', color: textPrimary }}>Open leads</Text>
+            </TouchableOpacity>
+          </View>
+          {[
+            { label: 'Pending review', value: leadStats.pending_leads },
+            { label: 'Approved', value: leadStats.approved_leads },
+            { label: 'Rejected', value: leadStats.rejected_leads },
+          ].map((item) => (
+            <View key={item.label} style={[styles.pipeRow, { borderColor: border }]}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: textPrimary }}>{item.label}</Text>
+              <Text style={{ fontSize: 14, fontWeight: '800', color: textPrimary, fontVariant: ['tabular-nums'] }}>{(item.value || 0).toLocaleString('en-IN')}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Super-admin analytics — top partners + applications by product */}
+      {isSuperAdmin && (
+        <>
+          <View style={[styles.section, { backgroundColor: cardBg, borderColor: border }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <Icon name="trophy" size={18} color="#10B981" />
+              <Text style={{ fontSize: 15, fontWeight: '900', color: textPrimary }}>Top Performing Partners</Text>
+            </View>
+            {topPartners.length === 0 ? (
+              <Text style={{ fontSize: 13, color: textMuted, textAlign: 'center', paddingVertical: 20 }}>No active partner activity logged.</Text>
+            ) : topPartners.map((p: any, idx: number) => (
+              <View key={idx} style={[styles.pipeRow, { borderColor: border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: textPrimary }} numberOfLines={1}>{p.first_name} {p.last_name}</Text>
+                  <Text style={{ fontSize: 10, fontWeight: '800', color: '#3B82F6' }}>{p.partner_code || p.code || ''}</Text>
+                </View>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: textMuted }}>{p.total_cases ?? p.cases ?? p.applications ?? 0} cases</Text>
+                <Text style={{ fontSize: 13, fontWeight: '800', color: '#10B981' }}>₹{parseFloat(p.total_commission || p.commission || 0).toLocaleString('en-IN')}</Text>
+              </View>
+            ))}
+          </View>
+
+          <View style={[styles.section, { backgroundColor: cardBg, borderColor: border }]}>
+            <Text style={{ fontSize: 15, fontWeight: '900', color: textPrimary, marginBottom: 12 }}>Applications by Product</Text>
+            {productStats.length === 0 ? (
+              <Text style={{ fontSize: 13, color: textMuted, textAlign: 'center', paddingVertical: 20 }}>No product data available.</Text>
+            ) : productStats.slice(0, 10).map((p: any, idx: number) => (
+              <View key={idx} style={[styles.pipeRow, { borderColor: border }]}>
+                <Text style={{ flex: 1, fontSize: 13, fontWeight: '600', color: textPrimary }} numberOfLines={1}>{p.product_name || p.name || p.bank_name || 'Product'}</Text>
+                <Text style={{ fontSize: 13, fontWeight: '800', color: '#06B6D4' }}>{p.total ?? p.count ?? p.applications ?? 0}</Text>
+              </View>
+            ))}
+          </View>
+        </>
+      )}
+
+      {/* Quick actions — website equivalent navigation cards */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Applications Overview</Text>
-        <View style={styles.sectionStats}>
-          <View style={styles.sectionStatItem}>
-            <Text style={styles.sectionStatValue}>{stats?.total_applications || 0}</Text>
-            <Text style={styles.sectionStatLabel}>Total Applications</Text>
-          </View>
-          <View style={styles.sectionStatItem}>
-            <Text style={[styles.sectionStatValue, { color: '#10B981' }]}>{stats?.approved_applications || 0}</Text>
-            <Text style={styles.sectionStatLabel}>Approved</Text>
-          </View>
-          <View style={styles.sectionStatItem}>
-            <Text style={[styles.sectionStatValue, { color: '#F59E0B' }]}>{stats?.pending_approvals || 0}</Text>
-            <Text style={styles.sectionStatLabel}>Pending Approval</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Quick Actions */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Quick Actions</Text>
-        
-        <TouchableOpacity
-          style={styles.actionCard}
-          onPress={() => router.push('/admin-partners')}
-        >
-          <View style={styles.actionIconContainer}>
-            <Text style={styles.actionIcon}>👥</Text>
-          </View>
-          <View style={styles.actionInfo}>
-            <Text style={styles.actionTitle}>Manage Partners</Text>
-            <Text style={styles.actionDescription}>View and manage partner accounts</Text>
-          </View>
-          <Text style={styles.actionArrow}>→</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionCard}
-          onPress={() => router.push('/admin-withdrawals')}
-        >
-          <View style={styles.actionIconContainer}>
-            <Text style={styles.actionIcon}>💰</Text>
-          </View>
-          <View style={styles.actionInfo}>
-            <Text style={styles.actionTitle}>Withdrawals</Text>
-            <Text style={styles.actionDescription}>Approve or reject withdrawal requests</Text>
-          </View>
-          <Text style={styles.actionArrow}>→</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionCard}
-          onPress={() => router.push('/op-queue')}
-        >
-          <View style={styles.actionIconContainer}>
-            <Text style={styles.actionIcon}>📋</Text>
-          </View>
-          <View style={styles.actionInfo}>
-            <Text style={styles.actionTitle}>Operational Queue</Text>
-            <Text style={styles.actionDescription}>Review applications and documents</Text>
-          </View>
-          <Text style={styles.actionArrow}>→</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionCard}
-          onPress={() => router.push('/leads')}
-        >
-          <View style={styles.actionIconContainer}>
-            <Text style={styles.actionIcon}>🎯</Text>
-          </View>
-          <View style={styles.actionInfo}>
-            <Text style={styles.actionTitle}>Leads</Text>
-            <Text style={styles.actionDescription}>View and manage leads</Text>
-          </View>
-          <Text style={styles.actionArrow}>→</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionCard}
-          onPress={() => router.push('/applications')}
-        >
-          <View style={styles.actionIconContainer}>
-            <Text style={styles.actionIcon}>📄</Text>
-          </View>
-          <View style={styles.actionInfo}>
-            <Text style={styles.actionTitle}>Applications</Text>
-            <Text style={styles.actionDescription}>View all applications</Text>
-          </View>
-          <Text style={styles.actionArrow}>→</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Recent Activity */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Recent Activity</Text>
-        <View style={styles.activityCard}>
-          <Text style={styles.activityText}>• 5 new partner registrations pending approval</Text>
-          <Text style={styles.activityText}>• 12 withdrawal requests awaiting review</Text>
-          <Text style={styles.activityText}>• 23 applications need document verification</Text>
-          <Text style={styles.activityText}>• 8 partners submitted KYC documents</Text>
-        </View>
+        <Text style={{ fontSize: 16, fontWeight: '900', color: textPrimary, marginBottom: 12 }}>Quick Actions</Text>
+        {[
+          { title: 'Manage Partners', desc: 'View and manage partner accounts', icon: 'people', path: '/admin-partners' },
+          { title: 'Withdrawals', desc: 'Approve or reject withdrawal requests', icon: 'wallet', path: '/admin-withdrawals' },
+          { title: 'Operational Queue', desc: 'Review applications and documents', icon: 'clipboard', path: '/op-queue' },
+          { title: 'Leads', desc: 'View and manage leads', icon: 'flag', path: '/leads' },
+          { title: 'Applications', desc: 'View all applications', icon: 'document-text', path: '/applications' },
+        ].map((a) => (
+          <TouchableOpacity key={a.title} style={[styles.actionCard, { backgroundColor: cardBg, borderColor: border }]} onPress={() => router.push(a.path as any)} activeOpacity={0.75}>
+            <View style={[styles.actionIconWrap, { backgroundColor: bgSecondary }]}>
+              <Icon name={a.icon} size={20} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={{ fontSize: 14, fontWeight: '700', color: textPrimary }}>{a.title}</Text>
+              <Text style={{ fontSize: 11, color: textMuted, marginTop: 2 }}>{a.desc}</Text>
+            </View>
+            <Icon name="chevron-forward" size={16} color={textMuted} />
+          </TouchableOpacity>
+        ))}
       </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: colors.bg,
-  },
-  loadingText: {
-    marginTop: 12,
-    color: colors.textLight,
-    fontSize: typography.sizes.sm,
-  },
-  header: {
-    padding: 20,
-    backgroundColor: colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  logoutBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.error,
-    backgroundColor: colors.bg,
-  },
-  logoutText: {
-    fontSize: typography.sizes.xs,
-    fontWeight: typography.weights.bold,
-  },
-  title: {
-    fontSize: typography.sizes.xl,
-    fontWeight: typography.weights.bold,
-    color: colors.text,
-  },
-  subtitle: {
-    fontSize: typography.sizes.sm,
-    color: colors.textLight,
-    marginTop: 4,
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    padding: 16,
-    gap: 12,
-  },
-  statCard: {
-    width: '48%',
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  statValue: {
-    fontSize: typography.sizes.xl,
-    fontWeight: typography.weights.bold,
-    color: colors.text,
-  },
-  statLabel: {
-    fontSize: typography.sizes.xs,
-    color: colors.textLight,
-    marginTop: 4,
-  },
-  section: {
-    padding: 16,
-    paddingBottom: 8,
-  },
-  sectionTitle: {
-    fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.bold,
-    color: colors.text,
-    marginBottom: 12,
-  },
-  sectionStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    padding: 16,
-  },
-  sectionStatItem: {
-    alignItems: 'center',
-  },
-  sectionStatValue: {
-    fontSize: typography.sizes.xl,
-    fontWeight: typography.weights.bold,
-    color: colors.text,
-  },
-  sectionStatLabel: {
-    fontSize: typography.sizes.xs,
-    color: colors.textLight,
-    marginTop: 4,
-  },
-  actionCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  actionIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.bg,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  actionIcon: {
-    fontSize: 24,
-  },
-  actionInfo: {
-    flex: 1,
-  },
-  actionTitle: {
-    fontSize: typography.sizes.md,
-    fontWeight: typography.weights.bold,
-    color: colors.text,
-    marginBottom: 2,
-  },
-  actionDescription: {
-    fontSize: typography.sizes.xs,
-    color: colors.textLight,
-  },
-  actionArrow: {
-    fontSize: typography.sizes.lg,
-    color: colors.textLight,
-    fontWeight: typography.weights.bold,
-  },
-  activityCard: {
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    padding: 16,
-  },
-  activityText: {
-    fontSize: typography.sizes.sm,
-    color: colors.text,
-    marginBottom: 8,
-  },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.bg },
+  headerCard: { borderRadius: 20, padding: 18, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  refreshBtn: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1 },
+  statGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  statCard: { width: '48%', borderRadius: 20, padding: 18, borderWidth: 1, borderTopWidth: 3, flexDirection: 'row', alignItems: 'center', gap: 14 },
+  statIcon: { width: 50, height: 50, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
+  section: { borderRadius: 20, padding: 18, borderWidth: 1 },
+  pipeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 11, borderBottomWidth: 1, gap: 10 },
+  smallBtn: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1 },
+  actionCard: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1 },
+  actionIconWrap: { width: 42, height: 42, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
 });

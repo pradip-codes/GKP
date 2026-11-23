@@ -9,8 +9,10 @@ import {
   ActivityIndicator,
   Share,
   Alert,
+  Clipboard,
+  Linking,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { Icon } from '../../components/Icon';
@@ -28,6 +30,13 @@ export default function EmployeeReferralsScreen() {
   const { colors } = useTheme();
   const router = useRouter();
   const { user } = useAuth();
+  const { type: typeParam } = useLocalSearchParams<{ type?: string }>();
+
+  // Website EmployeeLayout invite modal — EMPLOYEE (careers) or PARTNER register link
+  const [inviteType, setInviteType] = useState<'EMPLOYEE' | 'PARTNER'>(
+    typeParam === 'partner' ? 'PARTNER' : 'EMPLOYEE'
+  );
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -65,7 +74,25 @@ export default function EmployeeReferralsScreen() {
     loadData();
   }, [loadData]);
 
-  const empCode = profileData?.employee?.employee_id || (user as any)?.emp_code || (user as any)?.employee_id || 'EMP';
+  const empCode = profileData?.employee?.employee_id || (user as any)?.emp_code || (user as any)?.employee_id || (user as any)?.id || 'EMP';
+
+  // Same links as website EmployeeLayout
+  const baseUrl = 'https://gharkapaisa.in';
+  const careerInviteLink = `${baseUrl}/careers/register?ref=${encodeURIComponent(empCode)}`;
+  const partnerInviteLink = `${baseUrl}/partner/register?ref=${encodeURIComponent(empCode)}`;
+  const currentInviteLink = inviteType === 'EMPLOYEE' ? careerInviteLink : partnerInviteLink;
+
+  const handleCopyInviteLink = () => {
+    Clipboard.setString(currentInviteLink);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 3000);
+  };
+
+  const handleShareInviteWhatsApp = () => {
+    const roleTitle = inviteType === 'EMPLOYEE' ? 'Candidate Employee' : 'Partner';
+    const text = encodeURIComponent(`Join GharKaPaisa as a ${roleTitle}! Register using my official referral code (${empCode}): ${currentInviteLink}`);
+    Linking.openURL(`https://api.whatsapp.com/send?text=${text}`).catch(() => {});
+  };
 
   const handleShareLink = async (item: EmployeeProductLink) => {
     try {
@@ -136,6 +163,64 @@ export default function EmployeeReferralsScreen() {
           </TouchableOpacity>
         </View>
       ) : null}
+
+      {/* Invite card — mirrors website EmployeeLayout invite modal */}
+      <View style={styles.inviteCard}>
+        <View style={styles.inviteToggleRow}>
+          <TouchableOpacity
+            style={[styles.inviteToggleBtn, inviteType === 'EMPLOYEE' && styles.inviteToggleEmployee]}
+            onPress={() => setInviteType('EMPLOYEE')}
+          >
+            <Text style={[styles.inviteToggleText, inviteType === 'EMPLOYEE' && { color: '#FFFFFF' }]}>Invite Employee</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.inviteToggleBtn, inviteType === 'PARTNER' && styles.inviteTogglePartner]}
+            onPress={() => setInviteType('PARTNER')}
+          >
+            <Text style={[styles.inviteToggleText, inviteType === 'PARTNER' && { color: '#FFFFFF' }]}>Invite Partner</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.inviteTitle}>
+          {inviteType === 'EMPLOYEE' ? 'Invite Candidate / Employee' : 'Invite Partner / DSA'}
+        </Text>
+        <Text style={styles.inviteDesc}>
+          {inviteType === 'EMPLOYEE'
+            ? 'Share this link to register new candidate employees. Your referral ID will be tracked automatically upon registration.'
+            : 'Share this link to onboard new financial partners/DSAs under your referral network.'}
+        </Text>
+
+        <View style={styles.inviteRefBadge}>
+          <Text style={styles.inviteRefLabel}>Your Official Referral ID:</Text>
+          <Text style={styles.inviteRefValue}>{empCode || 'GKP-EMP'}</Text>
+        </View>
+
+        <Text style={styles.inviteLinkLabel}>
+          {inviteType === 'EMPLOYEE' ? 'Careers Register Form Link:' : 'Partner Register Form Link:'}
+        </Text>
+        <View style={styles.inviteLinkRow}>
+          <View style={styles.inviteLinkBox}>
+            <Text style={styles.inviteLinkText} numberOfLines={1}>{currentInviteLink}</Text>
+          </View>
+          <TouchableOpacity style={styles.inviteCopyBtn} onPress={handleCopyInviteLink}>
+            <Icon name={copiedLink ? 'check' : 'copy'} size={14} color="#FFFFFF" />
+            <Text style={styles.inviteCopyText}>{copiedLink ? 'Copied' : 'Copy'}</Text>
+          </TouchableOpacity>
+        </View>
+        {copiedLink && <Text style={styles.inviteCopiedMsg}>✓ Copied to Clipboard!</Text>}
+
+        <View style={styles.inviteShareRow}>
+          <TouchableOpacity style={styles.inviteWaBtn} onPress={handleShareInviteWhatsApp}>
+            <Text style={styles.inviteWaText}>WhatsApp</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.inviteShareBtn}
+            onPress={() => Share.share({ message: `Join GharKaPaisa as a ${inviteType === 'EMPLOYEE' ? 'Candidate Employee' : 'Partner'}! Register using my official referral code (${empCode}): ${currentInviteLink}` }).catch(() => {})}
+          >
+            <Text style={styles.inviteShareText}>More</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       {/* Employee Code Card - Website Style */}
       <View style={styles.codeCard}>
@@ -518,5 +603,147 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  // Invite card — website EmployeeLayout invite modal styles
+  inviteCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  inviteToggleRow: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: spacing.md,
+  },
+  inviteToggleBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  inviteToggleEmployee: {
+    backgroundColor: '#0F766E',
+  },
+  inviteTogglePartner: {
+    backgroundColor: '#F59E0B',
+  },
+  inviteToggleText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#64748B',
+  },
+  inviteTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  inviteDesc: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 18,
+    marginBottom: spacing.md,
+  },
+  inviteRefBadge: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1,
+    borderColor: '#99F6E4',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginBottom: spacing.md,
+  },
+  inviteRefLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  inviteRefValue: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0F766E',
+  },
+  inviteLinkLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 6,
+  },
+  inviteLinkRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  inviteLinkBox: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    justifyContent: 'center',
+  },
+  inviteLinkText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  inviteCopyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#0F766E',
+    paddingHorizontal: 16,
+    borderRadius: 12,
+  },
+  inviteCopyText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  inviteCopiedMsg: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#10B981',
+    marginTop: 6,
+  },
+  inviteShareRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: spacing.md,
+  },
+  inviteWaBtn: {
+    flex: 1,
+    backgroundColor: '#25D366',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  inviteWaText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  inviteShareBtn: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  inviteShareText: {
+    color: '#334155',
+    fontSize: 14,
+    fontWeight: '800',
   },
 });
