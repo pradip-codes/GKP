@@ -11,7 +11,7 @@ import { PartnerDock } from '../../components/PartnerDock';
 import { PartnerTopBar } from '../../components/PartnerTopBar';
 import { EmployeeTopBar } from '../../components/EmployeeTopBar';
 import { SuperAdminTopBar, SuperAdminNavDrawer } from '../../components/SuperAdminTopBar';
-import { PanelTopBar, PanelNavDrawer, ADMIN_NAV_SECTIONS, HR_NAV_SECTIONS } from '../../components/PanelChrome';
+import { PanelTopBar, PanelNavDrawer, ADMIN_NAV_SECTIONS, HR_NAV_SECTIONS, OPERATOR_NAV_SECTIONS, isOperatorDesignation } from '../../components/PanelChrome';
 import { notificationService } from '../../services/notification.service';
 import { typography } from '../../theme/typography';
 import { getUnreadCount } from '../../services/messenger.service';
@@ -346,8 +346,8 @@ export default function AppLayout() {
       {role === 'ADMIN' && (
         <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
           <PanelTopBar
-            brand="Admin Panel"
-            subtitle="Operations"
+            brand={isOperatorDesignation(userDesignation, role) ? 'Operator Panel' : 'Admin Panel'}
+            subtitle={isOperatorDesignation(userDesignation, role) ? String(userDesignation || 'Operations') : 'Operations'}
             onMenuPress={() => setPanelMenuOpen(true)}
             messengerUnread={unreadCount}
             notificationUnread={notificationUnread}
@@ -545,9 +545,9 @@ export default function AppLayout() {
         <PanelNavDrawer
           visible={panelMenuOpen}
           onClose={() => setPanelMenuOpen(false)}
-          sections={ADMIN_NAV_SECTIONS}
-          brand="Admin Panel"
-          subtitle="Operations"
+          sections={isOperatorDesignation(userDesignation, role) ? OPERATOR_NAV_SECTIONS : ADMIN_NAV_SECTIONS}
+          brand={isOperatorDesignation(userDesignation, role) ? 'Operator Panel' : 'Admin Panel'}
+          subtitle={isOperatorDesignation(userDesignation, role) ? String(userDesignation || 'Operations') : 'Operations'}
         />
       )}
       {role === 'HR' && (

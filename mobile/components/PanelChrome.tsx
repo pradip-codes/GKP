@@ -204,6 +204,42 @@ export const ADMIN_NAV_SECTIONS: PanelNavSection[] = [
   },
 ];
 
+// ── Operator designation nav — mirrors website AdminLayout for queue roles ──
+// KYC / QD / Remark / PAN Checker / Final Status / Querable / Curable / Sales Exec /
+// Telecaller / Administrative Operator: the website collapses their sidebar to
+// Applications (their queue) + Messenger + a few system links.
+export const OPERATOR_NAV_SECTIONS: PanelNavSection[] = [
+  {
+    title: 'MY QUEUE',
+    items: [
+      { label: 'Applications', icon: 'document-text', route: '/(app)/applications' },
+      { label: 'Messenger', icon: 'chatbubbles', route: '/(app)/messenger' },
+    ],
+  },
+  {
+    title: 'SYSTEM',
+    items: [
+      { label: 'Support', icon: 'help-buoy', route: '/(app)/support' },
+      { label: 'Settings', icon: 'settings', route: '/(app)/settings' },
+      { label: 'Profile', icon: 'person-circle', route: '/(app)/profile' },
+    ],
+  },
+];
+
+// Designations that get the reduced operator drawer instead of the full admin nav.
+// Mirrors the website AdminLayout role checks (operators lose Dashboard, Credit
+// Cards, Loans, Insurance, Customers, Banks, Products, Wallet, Commissions).
+const OPERATOR_DESIGNATION_RE = /OPERATOR|CURABLE|CHECKER|TELECALLER|SALES\s*EXECUTIVE|EXECUTIVE/i;
+const FULL_NAV_DESIGNATION_RE = /HEAD|MANAGER|LEADER|DIRECTOR|ADMIN/i;
+
+export function isOperatorDesignation(designation?: string | null, role?: string | null): boolean {
+  if ((role || '').toUpperCase() === 'HR' || (role || '').toUpperCase() === 'SUPER_ADMIN') return false;
+  const d = String(designation || '').toUpperCase().replace(/[_-]+/g, ' ').trim();
+  if (!d) return false;
+  if (FULL_NAV_DESIGNATION_RE.test(d)) return false;
+  return OPERATOR_DESIGNATION_RE.test(d);
+}
+
 // ── HR panel nav — mirrors website HR view of AdminLayout ──
 export const HR_NAV_SECTIONS: PanelNavSection[] = [
   {
