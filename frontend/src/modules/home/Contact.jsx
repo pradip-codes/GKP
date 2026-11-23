@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useTheme } from "../../contexts/ThemeContext";
 import { FaArrowLeft, FaEnvelope, FaPhoneAlt, FaMapMarkerAlt, FaPaperPlane } from "react-icons/fa";
 import api from "../../services/api";
+import FaqAccordion from "../../components/FaqAccordion";
 
 export default function Contact() {
   const navigate = useNavigate();
@@ -167,6 +168,11 @@ export default function Contact() {
             )}
           </div>
 
+        </div>
+
+        {/* FAQ — same accordion shown across all panels */}
+        <div style={{ marginTop: "28px" }}>
+          <FaqAccordion categories={['general', 'credit-cards', 'loans', 'insurance']} title="Help & FAQ" />
         </div>
       </div>
     </div>

@@ -22,6 +22,7 @@ import {
   fetchSupportTicketsList,
   updateTicketStatus,
 } from '../../../services/super-admin.service';
+import { FaqAccordion } from '../../../components/FaqAccordion';
 
 export default function SuperAdminSupportScreen() {
   const { colors } = useTheme();
@@ -179,6 +180,11 @@ export default function SuperAdminSupportScreen() {
           keyExtractor={(item, index) => item.id || item._id || String(index)}
           renderItem={renderTicketCard}
           contentContainerStyle={styles.listContent}
+          ListHeaderComponent={
+            <View style={{ marginBottom: spacing.md }}>
+              <FaqAccordion categories={['general', 'super-admin', 'admin']} title="Support Knowledge Base — FAQ" />
+            </View>
+          }
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => loadTickets(true)} colors={[colors.primary]} />
           }

@@ -13,13 +13,13 @@ interface EmployeeTopBarProps {
 }
 
 /**
- * Shared employee top navbar — hamburger + logo left, messenger + profile right.
+ * Shared employee top navbar — hamburger + logo left, notifications + theme + profile right.
  * Mirrors the website EmployeeLayout top navbar. Rendered once in (app)/_layout.
  */
 export function EmployeeTopBar({ onMenuPress, unreadCount = 0, isManager = false }: EmployeeTopBarProps) {
   const router = useRouter();
   const { user, logout } = useAuth();
-  const { colors: themeColors, isDark } = useTheme();
+  const { colors: themeColors, isDark, toggleTheme } = useTheme();
 
   const [menuVisible, setMenuVisible] = useState(false);
 
@@ -55,7 +55,7 @@ export function EmployeeTopBar({ onMenuPress, unreadCount = 0, isManager = false
 
   return (
     <>
-      {/* Navbar — hamburger + brand left, messenger + profile right */}
+      {/* Navbar — hamburger + brand left, notifications + theme + profile right */}
       <View style={[styles.navbar, { backgroundColor: isDark ? themeColors.card : '#FFFFFF', borderColor: themeColors.border }]}>
         <View style={styles.navbarLeft}>
           <TouchableOpacity onPress={onMenuPress} style={styles.iconBtn} activeOpacity={0.7}>
@@ -70,15 +70,22 @@ export function EmployeeTopBar({ onMenuPress, unreadCount = 0, isManager = false
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <TouchableOpacity
             style={[styles.iconBtn, { backgroundColor: isDark ? themeColors.bg : '#F3F4F6' }]}
-            onPress={() => router.push('/(app)/messenger' as any)}
+            onPress={() => router.push('/(app)/notifications' as any)}
             activeOpacity={0.8}
           >
-            <Icon name="chatbubble" size={18} color={themeColors.primary} />
+            <Icon name="notifications" size={18} color={themeColors.primary} />
             {unreadCount > 0 && (
               <View style={styles.badge}>
                 <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
               </View>
             )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.iconBtn, { backgroundColor: isDark ? themeColors.bg : '#F3F4F6' }]}
+            onPress={toggleTheme}
+            activeOpacity={0.8}
+          >
+            <Icon name={isDark ? 'sunny' : 'moon'} size={18} color={themeColors.primary} />
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.profileBtn, { backgroundColor: isDark ? themeColors.bg : '#F3F4F6' }]}

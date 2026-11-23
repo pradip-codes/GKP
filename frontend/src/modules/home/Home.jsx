@@ -42,6 +42,7 @@ import { popularCards } from "./components/PopularCards/index";
 import { travelTransitData } from "./components/TravelTransit/index";
 import CategoryCardItem from "./components/CategoryCardItem";
 import { HeroBannerCarousel } from "./components/HomePageSections";
+import FaqAccordion from "../../components/FaqAccordion";
 const PersonalLoanPage = React.lazy(() => import("./components/Loans/PersonalLoanPage"));
 import LazyRenderOnScroll from "../../components/LazyRenderOnScroll";
 import "./Home.css";
@@ -3050,6 +3051,11 @@ export default function Home({ onNavigate }) {
           </div>
         </Section>
 
+
+        {/* ── FAQ ── */}
+        <div style={{ marginBottom: isMobile ? "20px" : "32px" }}>
+          <FaqAccordion categories={['general', 'credit-cards', 'loans', 'insurance']} title="Frequently Asked Questions" />
+        </div>
 
         {/* ── MODERN FOOTER ── */}
         <LazyRenderOnScroll minHeight={380} rootMargin="300px">

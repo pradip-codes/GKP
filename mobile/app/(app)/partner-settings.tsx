@@ -14,6 +14,7 @@ import { colors } from '../../theme/colors';
 import { spacing } from '../../theme/spacing';
 import { Card } from '../../components/Card';
 import { Icon } from '../../components/Icon';
+import { FaqAccordion } from '../../components/FaqAccordion';
 import { useAuth } from '../../contexts/AuthContext';
 
 export default function PartnerSettingsScreen() {
@@ -117,6 +118,9 @@ export default function PartnerSettingsScreen() {
             </View>
           </TouchableOpacity>
         </Card>
+
+        <Text style={styles.sectionTitle}>Help & FAQ</Text>
+        <FaqAccordion categories={['general', 'partner', 'credit-cards', 'loans', 'insurance']} title="Partner Help & FAQ" />
       </View>
     </ScrollView>
   );

@@ -2305,6 +2305,20 @@ const listApplications = async (req, res, next) => {
       OR ($2::text = 'cancelled' AND (combined.status IN ('cancelled', 'cancel', 'canceled') OR LOWER(COALESCE(combined.final_status, '')) LIKE '%cancel%'))
     )`;
 
+    // Curable operators bucket applications by cure progress (queryable_remark),
+    // not by application status: pending -> Operational Verified, solved -> Cured &
+    // Approved, not required -> Declined/Rejected.
+    const curableRemarkNorm = `UPPER(TRIM(COALESCE(combined.queryable_remark, '')))`;
+    const curablePendingRemarks = `('PHYSICAL PENDING', 'DIGITAL PENDING', 'PHYSICAL', 'DIGITAL')`;
+    const curableSolvedRemarks = `('PHYSICAL SOLVED', 'DIGITAL SOLVED', 'COMPLETE', 'COMPLETED', 'COMPLETE DIGITAL JOURNEY')`;
+    const curableNotRequiredRemarks = `('NOT REQUIRED', 'NONE', 'NA', 'N/A', '')`;
+    const effectiveStatusFilterSQL = isCurableOperatorUser ? `(
+      (${statusFilterBlockSQL} AND ($2::text IS NULL OR $2::text = '' OR $2::text = 'all' OR $2::text NOT IN ('operational_verified', 'approved', 'rejected')))
+      OR ($2::text = 'operational_verified' AND ${curableRemarkNorm} IN ${curablePendingRemarks})
+      OR ($2::text = 'approved' AND ${curableRemarkNorm} IN ${curableSolvedRemarks})
+      OR ($2::text = 'rejected' AND ${curableRemarkNorm} IN ${curableNotRequiredRemarks})
+    )` : statusFilterBlockSQL;
+
     const listQuerySQL = `
       SELECT * FROM (
         SELECT 
@@ -2469,7 +2483,7 @@ const listApplications = async (req, res, next) => {
         LEFT JOIN employees appemp_id ON appemp_id.id = appu.id
       ) combined
       ${effectivePartnerTeamScopeSQL}
-        AND ${statusFilterBlockSQL}
+        AND ${effectiveStatusFilterSQL}
         AND ($3::uuid IS NULL OR combined.product_id = $3)
         AND ($4::uuid IS NULL OR combined.bank_id = $4)
         AND ($5::text IS NULL OR (combined.app_number ILIKE $5 OR combined.customer_name ILIKE $5 OR combined.customer_mobile ILIKE $5 OR combined.bank_application_number ILIKE $5 OR combined.bank_ref_number ILIKE $5 OR combined.pan_number ILIKE $5))
@@ -2588,6 +2602,7 @@ const listApplications = async (req, res, next) => {
         COALESCE(NULLIF(a.primary_decline_code, ''), NULLIF(pad.primary_decline_code, ''), NULLIF(a.decline_code, ''), NULLIF(pad.decline_code, '')) as primary_decline_code,
         COALESCE(NULLIF(a.secondary_decline_code, ''), NULLIF(pad.secondary_decline_code, '')) as secondary_decline_code,
         COALESCE(NULLIF(a.curing_designation, ''), NULLIF(pad.curing_designation, '')) as cureble_type,
+        COALESCE(NULLIF(a.queryable_remark, ''), NULLIF(pad.queryable_remark, ''), 'NOT REQUIRED') as queryable_remark,
         COALESCE(a.sales_claimed_by, pad.sales_claimed_by, '') as sales_claimed_by,
         NULLIF(to_jsonb(a)->>'assigned_to_user_id', '') as assigned_to_user_id,
         COALESCE(a.assigned_to_employee_id::text, pad.assigned_to_employee_id::text, '') as assigned_to_employee_id,
@@ -2600,7 +2615,7 @@ const listApplications = async (req, res, next) => {
         LEFT JOIN physical_application_details pad ON pad.application_id = a.id
       ) combined
       ${effectiveCountScopeSQL}
-        AND ${statusFilterBlockSQL}
+        AND ${effectiveStatusFilterSQL}
         AND ($3::uuid IS NULL OR combined.product_id = $3)
         AND ($4::uuid IS NULL OR combined.bank_id = $4)
         AND ($5::text IS NULL OR (combined.app_number ILIKE $5 OR combined.customer_name ILIKE $5 OR combined.customer_mobile ILIKE $5 OR combined.bank_application_number ILIKE $5 OR combined.bank_ref_number ILIKE $5 OR combined.pan_number ILIKE $5))
@@ -2650,7 +2665,7 @@ const listApplications = async (req, res, next) => {
 
     // Compute canonical status counts scoped to user role & bank filters
     const statusCountsSQL = `
-      SELECT combined.status, COALESCE(combined.final_status, '') as final_status, COALESCE(combined.bank_current_lead_status, '') as bank_current_lead_status, COALESCE(combined.decline_code, '') as decline_code, COUNT(*)::int as count FROM (
+      SELECT combined.status, COALESCE(combined.final_status, '') as final_status, COALESCE(combined.bank_current_lead_status, '') as bank_current_lead_status, COALESCE(combined.decline_code, '') as decline_code, COALESCE(combined.queryable_remark, '') as queryable_remark, COUNT(*)::int as count FROM (
         SELECT a.id, a.partner_id, a.submitted_by, a.employee_id, COALESCE(
           NULLIF(to_jsonb(a)->>'assigned_to', ''),
           NULLIF(to_jsonb(pad)->>'assigned_to', ''),
@@ -2673,6 +2688,7 @@ const listApplications = async (req, res, next) => {
         COALESCE(NULLIF(a.primary_decline_code, ''), NULLIF(pad.primary_decline_code, ''), NULLIF(a.decline_code, ''), NULLIF(pad.decline_code, '')) as primary_decline_code,
         COALESCE(NULLIF(a.secondary_decline_code, ''), NULLIF(pad.secondary_decline_code, '')) as secondary_decline_code,
         COALESCE(NULLIF(a.curing_designation, ''), NULLIF(pad.curing_designation, '')) as cureble_type,
+        COALESCE(NULLIF(a.queryable_remark, ''), NULLIF(pad.queryable_remark, ''), 'NOT REQUIRED') as queryable_remark,
         COALESCE(a.sales_claimed_by, pad.sales_claimed_by, '') as sales_claimed_by,
         NULLIF(to_jsonb(a)->>'assigned_to_user_id', '') as assigned_to_user_id,
         COALESCE(a.assigned_to_employee_id::text, pad.assigned_to_employee_id::text, '') as assigned_to_employee_id,
@@ -2685,7 +2701,7 @@ const listApplications = async (req, res, next) => {
         LEFT JOIN physical_application_details pad ON pad.application_id = a.id
       ) combined
       ${effectiveCountScopeSQL}
-        AND ${statusFilterBlockSQL}
+        AND ${effectiveStatusFilterSQL}
         AND ($3::uuid IS NULL OR combined.product_id = $3)
         AND ($4::uuid IS NULL OR combined.bank_id = $4)
         AND ($5::text IS NULL OR (combined.app_number ILIKE $5 OR combined.customer_name ILIKE $5 OR combined.customer_mobile ILIKE $5 OR combined.bank_application_number ILIKE $5 OR combined.bank_ref_number ILIKE $5 OR combined.pan_number ILIKE $5))
@@ -2731,7 +2747,7 @@ const listApplications = async (req, res, next) => {
         ${finalStatusOperatorFilterSQL}
         ${querableOperatorFilterSQL}
         ${curableOperatorFilterSQL}
-      GROUP BY combined.status, COALESCE(combined.final_status, ''), COALESCE(combined.bank_current_lead_status, ''), COALESCE(combined.decline_code, '')
+      GROUP BY combined.status, COALESCE(combined.final_status, ''), COALESCE(combined.bank_current_lead_status, ''), COALESCE(combined.decline_code, ''), COALESCE(combined.queryable_remark, '')
     `;
 
     const isStatusFiltered = !!validStatus && validStatus !== 'all';
@@ -2770,46 +2786,66 @@ const listApplications = async (req, res, next) => {
       cancelled: 0
     };
 
-    for (const r of statusCountsRows) {
-      const s = String(r.status || '').toLowerCase();
-      const fs = String(r.final_status || '').toLowerCase();
-      const bs = String(r.bank_current_lead_status || '').toLowerCase();
-      const dc = String(r.decline_code || '').trim().toUpperCase();
-      const cnt = parseInt(r.count, 10) || 0;
-
-      const isCancelled = ['cancelled', 'cancel', 'canceled'].includes(s) || fs.includes('cancel') || bs.includes('cancel');
-      const isDeclined = ['declined', 'decline'].includes(s) || s.includes('decline') || fs.includes('decline') || bs.includes('decline');
-      const isRejected = isDeclined || ['rejected', 'technical_error'].includes(s) || s.includes('reject') || fs.includes('reject') || bs.includes('reject') || (dc && dc !== 'NONE');
-
-      if (isCancelled) {
-        statusCountsObj.cancelled += cnt;
-      } else if (isDeclined) {
-        statusCountsObj.declined = (statusCountsObj.declined || 0) + cnt;
-        statusCountsObj.rejected += cnt;
-      } else if (isRejected) {
-        statusCountsObj.rejected += cnt;
-      } else if (['pending', 'lead_created', 'new', 'draft', 'initiated', 'link_sent', 'confirmed', 'link_pending'].includes(s)) {
-        statusCountsObj.pending += cnt;
-      } else if (['details_submitted', 'submitted', 'bank_form_submitted'].includes(s)) {
-        statusCountsObj.details_submitted += cnt;
-      } else if (['operational_verified', 'under_review', 'under review', 'verification', 'in_process', 'in_progress', 'vkyc_pending', 'vkyc_completed'].includes(s)) {
-        statusCountsObj.operational_verified += cnt;
-      } else if (['approved', 'sanctioned', 'super_admin_approved', 'disbursed'].includes(s)) {
-        statusCountsObj.approved += cnt;
-      } else if (['commission_received', 'commission_released', 'released', 'credited', 'paid'].includes(s)) {
-        statusCountsObj.commission_received += cnt;
-      } else {
-        statusCountsObj[s] = (statusCountsObj[s] || 0) + cnt;
+    if (isCurableOperatorUser) {
+      // Curable tabs bucket by cure progress remark, not application status
+      const pendingRemarks = new Set(['PHYSICAL PENDING', 'DIGITAL PENDING', 'PHYSICAL', 'DIGITAL']);
+      const solvedRemarks = new Set(['PHYSICAL SOLVED', 'DIGITAL SOLVED', 'COMPLETE', 'COMPLETED', 'COMPLETE DIGITAL JOURNEY']);
+      let curableTotal = 0;
+      for (const r of statusCountsRows) {
+        const remark = String(r.queryable_remark || 'NOT REQUIRED').trim().toUpperCase();
+        const cnt = parseInt(r.count, 10) || 0;
+        curableTotal += cnt;
+        if (solvedRemarks.has(remark)) {
+          statusCountsObj.approved += cnt;
+        } else if (pendingRemarks.has(remark)) {
+          statusCountsObj.operational_verified += cnt;
+        } else {
+          statusCountsObj.rejected += cnt;
+        }
       }
-    }
+      statusCountsObj.all = curableTotal;
+    } else {
+      for (const r of statusCountsRows) {
+        const s = String(r.status || '').toLowerCase();
+        const fs = String(r.final_status || '').toLowerCase();
+        const bs = String(r.bank_current_lead_status || '').toLowerCase();
+        const dc = String(r.decline_code || '').trim().toUpperCase();
+        const cnt = parseInt(r.count, 10) || 0;
 
-    statusCountsObj.all = (statusCountsObj.pending || 0) +
-      (statusCountsObj.details_submitted || 0) +
-      (statusCountsObj.operational_verified || 0) +
-      (statusCountsObj.approved || 0) +
-      (statusCountsObj.commission_received || 0) +
-      (statusCountsObj.rejected || 0) +
-      (statusCountsObj.cancelled || 0);
+        const isCancelled = ['cancelled', 'cancel', 'canceled'].includes(s) || fs.includes('cancel') || bs.includes('cancel');
+        const isDeclined = ['declined', 'decline'].includes(s) || s.includes('decline') || fs.includes('decline') || bs.includes('decline');
+        const isRejected = isDeclined || ['rejected', 'technical_error'].includes(s) || s.includes('reject') || fs.includes('reject') || bs.includes('reject') || (dc && dc !== 'NONE');
+
+        if (isCancelled) {
+          statusCountsObj.cancelled += cnt;
+        } else if (isDeclined) {
+          statusCountsObj.declined = (statusCountsObj.declined || 0) + cnt;
+          statusCountsObj.rejected += cnt;
+        } else if (isRejected) {
+          statusCountsObj.rejected += cnt;
+        } else if (['pending', 'lead_created', 'new', 'draft', 'initiated', 'link_sent', 'confirmed', 'link_pending'].includes(s)) {
+          statusCountsObj.pending += cnt;
+        } else if (['details_submitted', 'submitted', 'bank_form_submitted'].includes(s)) {
+          statusCountsObj.details_submitted += cnt;
+        } else if (['operational_verified', 'under_review', 'under review', 'verification', 'in_process', 'in_progress', 'vkyc_pending', 'vkyc_completed'].includes(s)) {
+          statusCountsObj.operational_verified += cnt;
+        } else if (['approved', 'sanctioned', 'super_admin_approved', 'disbursed'].includes(s)) {
+          statusCountsObj.approved += cnt;
+        } else if (['commission_received', 'commission_released', 'released', 'credited', 'paid'].includes(s)) {
+          statusCountsObj.commission_received += cnt;
+        } else {
+          statusCountsObj[s] = (statusCountsObj[s] || 0) + cnt;
+        }
+      }
+
+      statusCountsObj.all = (statusCountsObj.pending || 0) +
+        (statusCountsObj.details_submitted || 0) +
+        (statusCountsObj.operational_verified || 0) +
+        (statusCountsObj.approved || 0) +
+        (statusCountsObj.commission_received || 0) +
+        (statusCountsObj.rejected || 0) +
+        (statusCountsObj.cancelled || 0);
+    }
 
     const responsePayload = {
       success: true,
@@ -5760,13 +5796,26 @@ const updateApplicationDetails = async (req, res, next) => {
       }
     }
 
-    const effectiveQueryableRemark = req.body.queryable_remark !== undefined ? cleanStr(req.body.queryable_remark) : undefined;
-    const effectiveQueryableSalesRemark = req.body.queryable_sales_remark !== undefined ? cleanStr(req.body.queryable_sales_remark) : undefined;
-    const effectiveDigitalRemark = req.body.digital_remark !== undefined ? cleanStr(req.body.digital_remark) : undefined;
-    const effectiveDeclineRemark = req.body.decline_remark !== undefined ? cleanStr(req.body.decline_remark) : undefined;
-    const effectiveAddressType = (req.body.address_type !== undefined ? cleanStr(req.body.address_type) : cleanStr(req.body.curing_address_type)) || undefined;
-    const effectiveAddressText = (req.body.curing_address !== undefined ? cleanStr(req.body.curing_address) : (req.body.manual_address !== undefined ? cleanStr(req.body.manual_address) : (req.body.address !== undefined ? cleanStr(req.body.address) : undefined))) || undefined;
-    const effectiveCompanyAddress = req.body.company_address !== undefined ? cleanStr(req.body.company_address) : undefined;
+    // Presence-aware field extraction: when a key is sent (even as an empty
+    // string) the value is written — including '' to clear the field. Absent
+    // keys stay undefined so COALESCE preserves the stored value.
+    const pickBodyStr = (keys) => {
+      for (const k of keys) {
+        if (req.body[k] !== undefined) {
+          const c = cleanStr(req.body[k]);
+          return c === null ? '' : c;
+        }
+      }
+      return undefined;
+    };
+    const orNull = (v) => (v === undefined ? null : v);
+    const effectiveQueryableRemark = pickBodyStr(['queryable_remark']);
+    const effectiveQueryableSalesRemark = pickBodyStr(['queryable_sales_remark']);
+    const effectiveDigitalRemark = pickBodyStr(['digital_remark']);
+    const effectiveDeclineRemark = pickBodyStr(['decline_remark']);
+    const effectiveAddressType = pickBodyStr(['address_type', 'curing_address_type']);
+    const effectiveAddressText = pickBodyStr(['curing_address', 'manual_address', 'address']);
+    const effectiveCompanyAddress = pickBodyStr(['company_address']);
 
     if (effectiveQueryableRemark !== undefined || effectiveQueryableSalesRemark !== undefined || effectiveDigitalRemark !== undefined || effectiveDeclineRemark !== undefined || effectiveAddressType !== undefined || effectiveAddressText !== undefined || effectiveCompanyAddress !== undefined) {
       try {
@@ -5783,13 +5832,13 @@ const updateApplicationDetails = async (req, res, next) => {
             company_address = COALESCE($7, company_address)
           WHERE id = $8
         `, [
-          effectiveQueryableRemark || null,
-          effectiveQueryableSalesRemark || null,
-          effectiveDigitalRemark || null,
-          effectiveDeclineRemark || null,
-          effectiveAddressType || null,
-          effectiveAddressText || null,
-          effectiveCompanyAddress || null,
+          orNull(effectiveQueryableRemark),
+          orNull(effectiveQueryableSalesRemark),
+          orNull(effectiveDigitalRemark),
+          orNull(effectiveDeclineRemark),
+          orNull(effectiveAddressType),
+          orNull(effectiveAddressText),
+          orNull(effectiveCompanyAddress),
           app.id
         ]);
         await client.query(`
@@ -5804,16 +5853,16 @@ const updateApplicationDetails = async (req, res, next) => {
             company_address = COALESCE($7, company_address)
           WHERE application_id = $8
         `, [
-          effectiveQueryableRemark || null,
-          effectiveQueryableSalesRemark || null,
-          effectiveDigitalRemark || null,
-          effectiveDeclineRemark || null,
-          effectiveAddressType || null,
-          effectiveAddressText || null,
-          effectiveCompanyAddress || null,
+          orNull(effectiveQueryableRemark),
+          orNull(effectiveQueryableSalesRemark),
+          orNull(effectiveDigitalRemark),
+          orNull(effectiveDeclineRemark),
+          orNull(effectiveAddressType),
+          orNull(effectiveAddressText),
+          orNull(effectiveCompanyAddress),
           app.id
         ]);
-        if (effectiveAddressText) {
+        if (effectiveAddressText !== undefined) {
           await client.query(`UPDATE applications SET curing_address = $1 WHERE id = $2`, [effectiveAddressText, app.id]).catch(() => {});
           await client.query(`UPDATE physical_application_details SET curing_address = $1 WHERE application_id = $2`, [effectiveAddressText, app.id]).catch(() => {});
         }

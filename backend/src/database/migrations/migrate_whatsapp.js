@@ -16,9 +16,9 @@ const migrateWhatsApp = async () => {
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         business_name VARCHAR(100) DEFAULT 'GharKaPaisa',
         display_name VARCHAR(100) DEFAULT 'GharKaPaisa Official',
-        phone_number VARCHAR(50) DEFAULT '+91 92703 19438',
-        phone_number_id VARCHAR(100) DEFAULT '1374538775742787',
-        waba_id VARCHAR(100) DEFAULT '2311979219210283',
+        phone_number VARCHAR(50) DEFAULT '+1 555-888-9619',
+        phone_number_id VARCHAR(100) DEFAULT '1479811178545953',
+        waba_id VARCHAR(100) DEFAULT '1152896627449094',
         meta_app_id VARCHAR(100) DEFAULT '38773576468924779',
         status VARCHAR(20) DEFAULT 'LIVE',
         is_default BOOLEAN DEFAULT TRUE,
@@ -35,7 +35,7 @@ const migrateWhatsApp = async () => {
         INSERT INTO whatsapp_sender_configs (
           business_name, display_name, phone_number, phone_number_id, waba_id, meta_app_id, status, is_default, purpose
         ) VALUES (
-          'GharKaPaisa', 'GharKaPaisa Official', '+91 92703 19438', '1374538775742787', '2311979219210283', '38773576468924779', 'LIVE', true, 'ALL'
+          'GharKaPaisa', 'GharKaPaisa Official', '+1 555-888-9619', '1479811178545953', '1152896627449094', '38773576468924779', 'LIVE', true, 'ALL'
         );
       `);
     }
@@ -59,6 +59,12 @@ const migrateWhatsApp = async () => {
       );
     `);
 
+    // 3b. Credential columns — allow Super Admin to connect WhatsApp from the panel
+    // without needing server .env access. Secrets are masked by the API before returning.
+    await query(`ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS access_token TEXT`);
+    await query(`ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS app_secret TEXT`);
+    await query(`ALTER TABLE whatsapp_settings ADD COLUMN IF NOT EXISTS api_version VARCHAR(20) DEFAULT 'v19.0'`);
+
     // Ensure default row exists
     const { rows: settingRows } = await query(`SELECT id FROM whatsapp_settings LIMIT 1`);
     if (settingRows.length === 0) {
@@ -67,7 +73,7 @@ const migrateWhatsApp = async () => {
           business_name, phone_number, phone_number_id, waba_id, meta_app_id, 
           webhook_verify_token, is_live, mock_mode
         ) VALUES (
-          'GharKaPaisa', '+91 92703 19438', '1374538775742787', '2311979219210283', '38773576468924779',
+          'GharKaPaisa', '+1 555-888-9619', '1479811178545953', '1152896627449094', '38773576468924779',
           'gharkapaisa_meta_webhook_secret_2026', true, false
         );
       `);

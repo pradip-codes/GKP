@@ -203,10 +203,18 @@ export default function AppLayout() {
           moreItem,
         ];
       case 'EMPLOYEE':
+        // Same floating dock style as the partner panel — Dashboard · Applications · [+ Attendance] · Chat · More
         return [
-          dockItem('panel', 'Panel', 'home', roleHome, hasDesignation ? '/dashboard' : '/employee-dashboard'),
-          dockItem('attendance', 'Attendance', 'location', '/attendance', '/attendance'),
-          dockItem('apps', 'Apps', 'document-text', '/applications', '/applications'),
+          dockItem('panel', 'Dashboard', 'home', roleHome, hasDesignation ? '/dashboard' : '/employee-dashboard'),
+          dockItem('apps', 'Applications', 'document-text', '/(app)/applications', '/applications'),
+          {
+            id: 'attendance',
+            label: 'Attendance',
+            icon: 'flash',
+            active: pathname.includes('/attendance'),
+            isCenter: true,
+            onPress: () => router.push('/(app)/attendance' as any),
+          },
           chatItem,
           {
             id: 'menu',
@@ -411,10 +419,10 @@ export default function AppLayout() {
       <Tabs.Screen name="loan-calculator" />
       <Tabs.Screen name="partner-settings" />
       </Tabs>
-      {!['SUPER_ADMIN', 'ADMIN', 'HR', 'EMPLOYEE'].includes(role) ? (
-        <PartnerDock items={dockItems as any} />
-      ) : (
+      {['SUPER_ADMIN', 'ADMIN', 'HR'].includes(role) ? (
         <MinimalDock items={dockItems} />
+      ) : (
+        <PartnerDock items={dockItems as any} />
       )}
 
       {/* Partner feature sidebar — hamburger menu, labels only */}

@@ -83,6 +83,7 @@ const HdfcCreditCardsPage = lazy(() => import('../modules/home/components/Credit
 
 // Admin Pages
 const AdminDashboard = lazy(() => import('../modules/admin/dashboard/AdminDashboard'));
+const AdminProfile = lazy(() => import('../modules/admin/profile/AdminProfile'));
 const AdminLogin = lazy(() => import('../modules/authentication/login/AdminLogin'));
 const ManageApplications = lazy(() => import('../modules/admin/reports/ManageApplications'));
 const ManagePartners = lazy(() => import('../modules/admin/users/ManagePartners'));
@@ -383,6 +384,8 @@ const AppRoutes = () => {
             <Route path="/hr/candidates" element={<HRDashboard />} />
             <Route path="/hr/payroll" element={<HRPayroll />} />
             <Route path="/hr/attendance" element={<EmployeeAttendance />} />
+            <Route path="/admin/profile" element={<AdminProfile />} />
+            <Route path="/hr/profile" element={<AdminProfile />} />
           </Route>
         </Route>
       </Route>
@@ -433,6 +436,7 @@ const AppRoutes = () => {
             <Route path="/admin/messenger" element={<MessengerView />} />
             <Route path="/admin/whatsapp" element={<SuperAdminWhatsApp />} />
             <Route path="/admin/designation-rules" element={<DesignationRulesAudit />} />
+            <Route path="/admin/profile" element={<AdminProfile />} />
           </Route>
         </Route>
       </Route>

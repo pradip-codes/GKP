@@ -5,8 +5,9 @@ import api from '../../../services/api';
 import { 
   MdSupportAgent, MdAdd, MdSearch, 
   MdCheckCircle, MdPendingActions, MdClose, MdSend,
-  MdOutlineForum
+  MdOutlineForum, MdQuiz
 } from 'react-icons/md';
+import FaqAccordion from '../../../components/FaqAccordion';
 
 export default function PartnerSupport() {
   const { t } = useTranslation();
@@ -19,6 +20,7 @@ export default function PartnerSupport() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [isNewTicketModalOpen, setIsNewTicketModalOpen] = useState(false);
+  const [showFaq, setShowFaq] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [width, setWidth] = useState(window.innerWidth);
 
@@ -163,7 +165,21 @@ export default function PartnerSupport() {
 
   return (
     <div style={containerStyle}>
-      
+      {showFaq ? (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <button
+            onClick={() => setShowFaq(false)}
+            style={{
+              alignSelf: 'flex-start', background: 'none', border: 'none', cursor: 'pointer',
+              color: C.primary, fontWeight: 800, fontSize: '13px', padding: '4px 0',
+            }}
+          >
+            ← Back to tickets
+          </button>
+          <FaqAccordion categories={['general', 'partner', 'credit-cards', 'loans', 'insurance']} title="Help & FAQ" />
+        </div>
+      ) : (
+      <>
       {/* ═══ LEFT COLUMN: TICKET LIST ═══ */}
       <div style={listPaneStyle}>
         <div style={{ padding: '20px', borderBottom: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -171,18 +187,31 @@ export default function PartnerSupport() {
             <h2 id="partner-support-title" style={{ fontSize: '18px', fontWeight: 800, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
               <MdSupportAgent style={{ color: C.primary }} /> {t("support.title", "Helpdesk")}
             </h2>
-            <button 
-              onClick={() => setIsNewTicketModalOpen(true)}
-              style={{
-                background: C.primary, border: 'none', color: '#fff',
-                width: 36, height: 36, borderRadius: '10px', display: 'flex',
-                alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-                boxShadow: `0 4px 12px ${C.primary}30`
-              }}
-              title="Create New Ticket"
-            >
-              <MdAdd size={20} />
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={() => setShowFaq(true)}
+                style={{
+                  background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.textMid,
+                  height: 36, padding: '0 14px', borderRadius: '10px', display: 'flex',
+                  alignItems: 'center', gap: '6px', cursor: 'pointer', fontWeight: 700, fontSize: '12px',
+                }}
+                title="Frequently Asked Questions"
+              >
+                <MdQuiz size={18} /> FAQ
+              </button>
+              <button 
+                onClick={() => setIsNewTicketModalOpen(true)}
+                style={{
+                  background: C.primary, border: 'none', color: '#fff',
+                  width: 36, height: 36, borderRadius: '10px', display: 'flex',
+                  alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                  boxShadow: `0 4px 12px ${C.primary}30`
+                }}
+                title="Create New Ticket"
+              >
+                <MdAdd size={20} />
+              </button>
+            </div>
           </div>
           
           <div style={{ position: 'relative' }}>
@@ -496,6 +525,8 @@ export default function PartnerSupport() {
             </div>
           </form>
         </div>
+      )}
+      </>
       )}
     </div>
   );

@@ -5,8 +5,23 @@ import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { spacing } from '../../theme/spacing';
 import { getTickets, createTicket, SupportTicket } from '../../services/support.service';
+import { FaqAccordion } from '../../components/FaqAccordion';
+import { useAuth } from '../../contexts/AuthContext';
+
+// Role-specific FAQ categories shown on the Support screen
+const ROLE_FAQ_CATEGORIES: Record<string, string[]> = {
+  EMPLOYEE: ['general', 'employee'],
+  PARTNER: ['general', 'partner', 'credit-cards', 'loans', 'insurance'],
+  TEAM_MEMBER: ['general', 'partner', 'credit-cards', 'loans', 'insurance'],
+  ADMIN: ['general', 'admin', 'employee', 'partner'],
+  HR: ['general', 'hr', 'employee'],
+  SUPER_ADMIN: ['general', 'super-admin', 'admin'],
+};
 
 export default function SupportScreen() {
+  const { userRole } = useAuth() as any;
+  const role = (userRole || '').toUpperCase();
+  const faqCategories = ROLE_FAQ_CATEGORIES[role] || ['general', 'credit-cards', 'loans', 'insurance'];
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -85,6 +100,11 @@ export default function SupportScreen() {
             data={tickets}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.list}
+            ListHeaderComponent={
+              <View style={{ marginBottom: spacing.md }}>
+                <FaqAccordion categories={faqCategories} title="Help & FAQ" />
+              </View>
+            }
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>

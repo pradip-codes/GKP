@@ -7,10 +7,11 @@ import {
   MdDevices, MdLaptopMac, MdPhoneAndroid, MdTabletMac, MdComputer,
   MdLogout, MdShield, MdVerifiedUser, MdContentCopy, MdRefresh,
   MdAccessTime, MdLocationOn, MdVpnLock, MdVisibility, MdVisibilityOff,
-  MdQrCode2, MdWarning, MdClose, MdCheck, MdEmail, MdPhone, MdDeleteForever
+  MdQrCode2, MdWarning, MdClose, MdCheck, MdEmail, MdPhone, MdDeleteForever, MdQuiz
 } from 'react-icons/md';
 import { useAuthStore } from '../../../app/store/authStore';
 import api from '../../../services/api';
+import FaqAccordion from '../../../components/FaqAccordion';
 
 // ── Mock Data Generators ────────────────────────────────────────────────────────
 
@@ -382,6 +383,7 @@ export default function SettingsPage() {
     { id: 'sessions', label: t('settings.sessions', 'Sessions'), icon: MdVpnLock },
     { id: 'twoFa', label: t('settings.twoFa', 'Two-Factor Auth'), icon: MdShield },
     { id: 'preferences', label: t('settings.preferences', 'Preferences'), icon: MdSettings },
+    { id: 'help', label: t('settings.help', 'Help & FAQ'), icon: MdQuiz },
   ];
 
   const metaRow = {
@@ -808,6 +810,11 @@ export default function SettingsPage() {
                 </select>
               </div>
             </div>
+          )}
+
+          {/* ═══════════ TAB 7: HELP & FAQ ═══════════ */}
+          {activeTab === 'help' && (
+            <FaqAccordion categories={['general', 'partner', 'credit-cards', 'loans', 'insurance']} title="Help & FAQ" />
           )}
 
         </div>
