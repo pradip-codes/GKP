@@ -18,10 +18,20 @@ const ROLE_FAQ_CATEGORIES: Record<string, string[]> = {
   SUPER_ADMIN: ['general', 'super-admin', 'admin'],
 };
 
+// Operator designations that get the Operator Panel FAQ instead of full Admin FAQ
+const OPERATOR_DESIGNATIONS = [
+  'KYC', 'PAN', 'QD', 'QUER', 'REMARK', 'FINAL', 'CURABLE', 'CUREABLE',
+  'SALES EXECUTIVE', 'TELECALLER', 'ADMINISTRATIVE',
+];
+
 export default function SupportScreen() {
-  const { userRole } = useAuth() as any;
+  const { userRole, userDesignation } = useAuth() as any;
   const role = (userRole || '').toUpperCase();
-  const faqCategories = ROLE_FAQ_CATEGORIES[role] || ['general', 'credit-cards', 'loans', 'insurance'];
+  const desig = (userDesignation || '').toUpperCase();
+  const isOperator = role === 'ADMIN' && OPERATOR_DESIGNATIONS.some((d) => desig.includes(d));
+  const faqCategories = isOperator
+    ? ['general', 'operator']
+    : ROLE_FAQ_CATEGORIES[role] || ['general', 'credit-cards', 'loans', 'insurance'];
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

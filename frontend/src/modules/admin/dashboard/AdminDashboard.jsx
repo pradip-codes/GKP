@@ -17,6 +17,10 @@ export default function AdminDashboard() {
   const isSuperAdmin = (user?.role || '').toUpperCase() === 'SUPER_ADMIN';
   const isAdministrativeOperator = ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR']
     .includes((user?.designation || '').toUpperCase());
+  const isQueueOperator = ['KYC', 'PAN', 'QD', 'QUER', 'REMARK', 'FINAL', 'CURABLE', 'CUREABLE',
+    'SALES EXECUTIVE', 'TELECALLER', 'ADMINISTRATIVE']
+    .some((d) => (user?.designation || '').toUpperCase().includes(d));
+  const faqCategories = isQueueOperator ? ['general', 'operator'] : ['general', 'admin', 'employee', 'partner'];
 
   const [stats, setStats] = useState(null);
   const [topPartners, setTopPartners] = useState([]);
@@ -331,7 +335,7 @@ export default function AdminDashboard() {
 
       {/* ── Help & FAQ ── */}
       <div style={{ marginTop: '24px' }}>
-        <FaqAccordion categories={['general', 'admin', 'employee', 'partner']} title="Admin Help & FAQ" />
+        <FaqAccordion categories={faqCategories} title={isQueueOperator ? 'Operator Help & FAQ' : 'Admin Help & FAQ'} />
       </div>
 
     </div>
