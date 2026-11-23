@@ -66,9 +66,9 @@ export default function SuperAdminWhatsApp() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsForm, setSettingsForm] = useState({
     business_name: 'GharKaPaisa',
-    phone_number: '+91 92703 19438',
-    phone_number_id: '1374538775742787',
-    waba_id: '2311979219210283',
+    phone_number: '+1 555-888-9619',
+    phone_number_id: '1479811178545953',
+    waba_id: '1152896627449094',
     meta_app_id: '38773576468924779',
     webhook_verify_token: 'gharkapaisa_meta_webhook_secret_2026',
     mock_mode: false,
@@ -805,17 +805,17 @@ export default function SuperAdminWhatsApp() {
 
               <div>
                 <span style={{ fontSize: '11px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase' }}>Official WhatsApp Number</span>
-                <h4 style={{ margin: '4px 0 0', fontSize: '16px', fontWeight: 800, color: '#0F172A', fontFamily: 'monospace' }}>+91 92703 19438</h4>
+                <h4 style={{ margin: '4px 0 0', fontSize: '16px', fontWeight: 800, color: '#0F172A', fontFamily: 'monospace' }}>+1 555-888-9619</h4>
               </div>
 
               <div>
                 <span style={{ fontSize: '11px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase' }}>Phone Number ID</span>
-                <h4 style={{ margin: '4px 0 0', fontSize: '14px', fontWeight: 700, color: '#334155', fontFamily: 'monospace' }}>1374538775742787</h4>
+                <h4 style={{ margin: '4px 0 0', fontSize: '14px', fontWeight: 700, color: '#334155', fontFamily: 'monospace' }}>1479811178545953</h4>
               </div>
 
               <div>
                 <span style={{ fontSize: '11px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase' }}>WABA Account ID</span>
-                <h4 style={{ margin: '4px 0 0', fontSize: '14px', fontWeight: 700, color: '#334155', fontFamily: 'monospace' }}>2311979219210283</h4>
+                <h4 style={{ margin: '4px 0 0', fontSize: '14px', fontWeight: 700, color: '#334155', fontFamily: 'monospace' }}>1152896627449094</h4>
               </div>
 
               <div>
@@ -886,7 +886,7 @@ export default function SuperAdminWhatsApp() {
             </div>
 
             <div style={{ marginTop: '16px', padding: '12px 16px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '10px', fontSize: '12.5px', color: '#1E40AF', lineHeight: '1.5' }}>
-              <strong>Note on WhatsApp Business Architecture:</strong> The sender identity is tied to the official WhatsApp Business phone number (+91 92703 19438). The template header ("GharKaPaisa") represents the visually rendered header element inside Meta-approved templates.
+              <strong>Note on WhatsApp Business Architecture:</strong> The sender identity is tied to the official WhatsApp Business phone number (+1 555-888-9619). The template header ("GharKaPaisa") represents the visually rendered header element inside Meta-approved templates.
             </div>
           </div>
         </div>

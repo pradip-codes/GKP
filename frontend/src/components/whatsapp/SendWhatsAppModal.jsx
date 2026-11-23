@@ -643,7 +643,7 @@ export default function SendWhatsAppModal({
                   </div>
                   <div>
                     <span style={{ color: '#64748B', display: 'block', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', marginBottom: '2px' }}>Sender Number</span>
-                    <span style={{ fontFamily: 'monospace', fontWeight: 800, color: '#0F172A', fontSize: '13px' }}>+91 92703 19438</span>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 800, color: '#0F172A', fontSize: '13px' }}>+1 555-888-9619</span>
                   </div>
                   <div>
                     <span style={{ color: '#64748B', display: 'block', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', marginBottom: '2px' }}>Message Category</span>

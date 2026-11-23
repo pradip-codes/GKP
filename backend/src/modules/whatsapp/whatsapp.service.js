@@ -24,7 +24,7 @@ async function getWhatsAppConfig() {
   const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN || process.env.META_WEBHOOK_VERIFY_TOKEN || dbConfig.webhook_verify_token || 'gharkapaisa_meta_webhook_secret_2026';
   const apiVersion = process.env.WHATSAPP_API_VERSION || process.env.META_API_VERSION || dbConfig.api_version || 'v19.0';
   const appSecret = process.env.WHATSAPP_APP_SECRET || process.env.META_APP_SECRET || dbConfig.app_secret || null;
-  const phoneNumber = process.env.WHATSAPP_PHONE_NUMBER || process.env.META_PHONE_NUMBER || dbConfig.phone_number || '+91 92703 19438';
+  const phoneNumber = process.env.WHATSAPP_PHONE_NUMBER || process.env.META_PHONE_NUMBER || dbConfig.phone_number || '+1 555-888-9619';
 
   return {
     businessName: process.env.META_BUSINESS_NAME || dbConfig.business_name || 'GharKaPaisa',
@@ -542,9 +542,9 @@ async function getSenderConfigs() {
       id: 'default-config-01',
       business_name: 'GharKaPaisa',
       display_name: 'GharKaPaisa Official',
-      phone_number: '+91 92703 19438',
-      phone_number_id: '1374538775742787',
-      waba_id: '2311979219210283',
+      phone_number: '+1 555-888-9619',
+      phone_number_id: '1479811178545953',
+      waba_id: '1152896627449094',
       meta_app_id: '38773576468924779',
       status: 'LIVE',
       is_default: true,
