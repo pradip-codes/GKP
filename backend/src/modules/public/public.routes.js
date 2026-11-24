@@ -3,7 +3,7 @@ const router = express.Router();
 const { query } = require('../../config/database');
 const logger = require('../../config/logger');
 const { sendSmsOtp } = require('../../services/otp/msg91.service');
-const { sendOtpEmail, sendCandidateAssignedToHrEmail } = require('../../services/email/email.service');
+const { sendOtpEmail, sendCandidateAssignedToHrEmail, sendCandidateRegistrationSuccessEmail } = require('../../services/email/email.service');
 const { uploadToS3 } = require('../../services/aws/s3.service');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -583,6 +583,17 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
         logger.warn('Auto-create employee registration background note:', autoErr.message);
       }
     })();
+
+    // Send registration confirmation email to the candidate (non-blocking)
+    if (email_id) {
+      sendCandidateRegistrationSuccessEmail({
+        candidateEmail: email_id.trim(),
+        candidateName: full_name.trim(),
+        referenceCode: reference_code,
+        targetRole: target_role || current_designation || 'Candidate',
+        mobileNumber: mobile_number.trim()
+      }).catch((e) => logger.warn(`Candidate registration email failed: ${e.message}`));
+    }
 
     // Check if candidate is assigned to a specific HR user and notify them via email
     if (assignedHrUser || finalHrName || validReferredByUuid) {
