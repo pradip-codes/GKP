@@ -142,15 +142,10 @@ export default function EmployeeLayout() {
     { path: '/employee/smart-emi', label: 'Smart EMI on Credit Card', icon: <FaCreditCard /> },
     { path: '/employee/loans', label: 'Loans', icon: <FaCoins /> },
     { path: '/employee/insurance', label: 'Insurance', icon: <FaShieldAlt /> },
-    { path: '/employee/sales-reports', label: 'Sales Reports', icon: <FaFileAlt /> },
     { path: '/employee/applications', label: 'My Applications', icon: <FaFileAlt /> },
     { path: '/employee/messenger', label: 'Messenger', icon: <FaFileAlt /> },
     { path: '/employee/contests', label: 'Contests', icon: <FaTrophy /> },
     { path: '/employee/hr-department', label: 'HR Department', icon: <FaBuilding /> },
-    { path: '/employee/incentives', label: 'My Incentives', icon: <FaGift /> },
-    { path: '/employee/salary', label: 'My Salary', icon: <FaRupeeSign /> },
-    { path: '/employee/payslip', label: 'Payslip', icon: <FaFileInvoiceDollar /> },
-    { path: '/employee/documents', label: 'Documents & Reports', icon: <FaFolderOpen /> },
     ...(isManagerOrTL ? [{ path: '/employee/team', label: 'My Team Architecture', icon: <FaUsers /> }] : []),
     { path: '/employee/settings', label: 'Settings & Preferences', icon: <FaCog /> }
   ] : [
@@ -350,7 +345,13 @@ export default function EmployeeLayout() {
               </button>
             )}
             <h2 style={{ fontSize: isMobile ? '15px' : '18px', fontWeight: 700, color: C.text, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: isMobile ? '140px' : 'none' }}>
-              {navItems.find(n => n.path === location.pathname)?.label || 'Employee Workspace'}
+              {navItems.find(n => n.path === location.pathname)?.label || 
+                (location.pathname === '/employee/incentives' ? 'My Incentive' :
+                 location.pathname === '/employee/salary' ? 'My Salary' :
+                 location.pathname === '/employee/payslip' ? 'Payslip' :
+                 location.pathname === '/employee/documents' ? 'Document' :
+                 location.pathname === '/employee/sales-reports' ? 'Report' :
+                 'Employee Workspace')}
             </h2>
           </div>
 
