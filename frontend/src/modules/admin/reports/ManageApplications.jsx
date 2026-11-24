@@ -164,12 +164,19 @@ export default function ManageApplications() {
       .catch(err => console.error('Failed to load banks for filter:', err));
   }, []);
 
-  // Helper to mask last 6 digits of mobile number (e.g. 9876543210 -> 9876******)
+  // Helper to mask last 5 digits of mobile number (e.g. 9876543210 -> 98765*****)
   const maskMobileNumber = (raw) => {
     if (!raw) return '—';
     const str = String(raw).trim();
-    if (str.length <= 6) return '******';
-    return str.slice(0, str.length - 6) + '******';
+    const digitsOnly = str.replace(/\D/g, '');
+    if (digitsOnly.length >= 10) {
+      const mainDigits = digitsOnly.slice(-10);
+      const visiblePart = mainDigits.slice(0, 5);
+      const prefix = str.startsWith('+91') ? '+91 ' : (str.length > 10 ? str.slice(0, str.length - 10) : '');
+      return `${prefix}${visiblePart}*****`;
+    }
+    if (str.length <= 5) return '*****';
+    return str.slice(0, str.length - 5) + '*****';
   };
 
   // Helper to check if a field has actual meaningful value and should be shown

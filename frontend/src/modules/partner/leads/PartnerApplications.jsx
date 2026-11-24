@@ -79,14 +79,28 @@ export default function PartnerApplications() {
     const digitsOnly = str.replace(/\D/g, '');
     if (digitsOnly.length >= 10) {
       const mainDigits = digitsOnly.slice(-10);
-      const visiblePart = mainDigits.slice(0, 4);
+      const visiblePart = mainDigits.slice(0, 5);
       const prefix = str.startsWith('+91') ? '+91 ' : (str.length > 10 ? str.slice(0, str.length - 10) : '');
-      return `${prefix}${visiblePart}******`;
+      return `${prefix}${visiblePart}*****`;
     }
-    if (str.length > 6) {
-      return str.slice(0, str.length - 6) + '******';
+    if (str.length > 5) {
+      return str.slice(0, str.length - 5) + '*****';
     }
     return str.replace(/\d/g, '*');
+  };
+
+  const maskPanNumber = (pan) => {
+    if (!pan || String(pan).trim() === '' || String(pan).toUpperCase() === 'N/A' || String(pan).toUpperCase() === 'NA') return 'N/A';
+    const str = String(pan).trim();
+    if (str.length >= 10) {
+      const visiblePart = str.slice(0, 5);
+      return `${visiblePart}*****`;
+    }
+    if (str.length > 5) {
+      const visiblePart = str.slice(0, str.length - 5);
+      return `${visiblePart}*****`;
+    }
+    return '*****';
   };
 
   const formatMobileForDisplay = (mob) => {
@@ -95,6 +109,14 @@ export default function PartnerApplications() {
       return maskMobileNumber(mob);
     }
     return mob;
+  };
+
+  const formatPanForDisplay = (pan) => {
+    if (!pan) return 'N/A';
+    if (isEmployeeRole) {
+      return maskPanNumber(pan);
+    }
+    return pan;
   };
 
   const getProcessFlags = (procType, procBy) => {
@@ -1988,7 +2010,7 @@ export default function PartnerApplications() {
                       </div>
                       <div>
                         <div style={{ color: textMuted, fontSize: 10, fontWeight: 700 }}>PAN CARD NUMBER</div>
-                        <div style={{ fontWeight: 800, color: textPrimary, fontFamily: 'monospace' }}>{panNumber}</div>
+                        <div style={{ fontWeight: 800, color: textPrimary, fontFamily: 'monospace' }}>{formatPanForDisplay(panNumber)}</div>
                       </div>
                       <div>
                         <div style={{ color: textMuted, fontSize: 10, fontWeight: 700 }}>MOTHER NAME</div>
