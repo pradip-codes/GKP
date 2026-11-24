@@ -23,6 +23,7 @@ const Careers = lazy(() => import('../modules/home/Careers'));
 const InterviewRegistration = lazy(() => import('../modules/home/InterviewRegistration'));
 const ApplicationStatus = lazy(() => import('../modules/home/ApplicationStatus'));
 const HRDashboard = lazy(() => import('../modules/hr/HRDashboard'));
+const HRHelp = lazy(() => import('../modules/hr/HRHelp'));
 const EmployeeManagement = lazy(() => import('../modules/super-admin/employees/EmployeeManagement'));
 const EmployeeLogin = lazy(() => import('../modules/employee/EmployeeLogin'));
 const EmployeeDashboard = lazy(() => import('../modules/employee/EmployeeDashboard'));
@@ -386,6 +387,7 @@ const AppRoutes = () => {
             <Route path="/hr/attendance" element={<EmployeeAttendance />} />
             <Route path="/admin/profile" element={<AdminProfile />} />
             <Route path="/hr/profile" element={<AdminProfile />} />
+            <Route path="/hr/help" element={<HRHelp />} />
           </Route>
         </Route>
       </Route>

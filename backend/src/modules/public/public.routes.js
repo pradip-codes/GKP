@@ -3,7 +3,7 @@ const router = express.Router();
 const { query } = require('../../config/database');
 const logger = require('../../config/logger');
 const { sendSmsOtp } = require('../../services/otp/msg91.service');
-const { sendOtpEmail, sendCandidateAssignedToHrEmail } = require('../../services/email/email.service');
+const { sendOtpEmail, sendCandidateAssignedToHrEmail, sendCandidateRegistrationSuccessEmail } = require('../../services/email/email.service');
 const { uploadToS3 } = require('../../services/aws/s3.service');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -270,6 +270,21 @@ router.post('/verify-otp', async (req, res, next) => {
   }
 });
 
+// GET /api/v1/public/hr-list — Active HR accounts for the interview registration "Select HR" dropdown.
+// Returns minimal public-safe fields only (id + display name).
+router.get('/hr-list', async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT id, full_name FROM users
+       WHERE UPPER(role) = 'HR' AND status = 'active' AND full_name IS NOT NULL AND full_name <> ''
+       ORDER BY full_name ASC`
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/v1/public/careers/register — Candidate Registration
 router.post('/register', upload.single('resume'), async (req, res, next) => {
   try {
@@ -283,7 +298,7 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
       current_company, current_designation, last_salary_ctc, expected_salary, previous_salary,
       immediate_joining, notice_period_days, comfortable_with_location,
       relevant_experience, how_did_you_hear, referred_by_employee_id,
-      target_role, hr_name, selected_hr, hr_reference
+      target_role, hr_name, selected_hr, hr_reference, hr_id, assigned_hr_id
     } = req.body;
 
     if (!full_name || !mobile_number || !email_id || !highest_qualification) {
@@ -353,6 +368,7 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
         immediate_joining, notice_period_days, comfortable_with_location,
         relevant_experience, how_did_you_hear, referred_by_employee_id,
         resume_url, resume_file_name, target_role, hr_name, selected_hr, hr_reference,
+        assigned_hr_id, assigned_hr_name,
         mobile_verified, email_verified, otp_verified,
         interview_status
       ) VALUES (
@@ -365,6 +381,7 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
         $30, $31, $32,
         $33, $34, $35,
         $36, $37, $38, $39, $40, $41,
+        $42, $43,
         true, true, true,
         'REGISTERED'
       ) RETURNING id, reference_code, interview_status, created_at
@@ -393,12 +410,27 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
 
     const cleanSelectedHr = cleanStr(selected_hr);
     const cleanHrName = cleanStr(hr_name);
+
+    // Resolve explicitly selected HR account (dropdown sends hr_id)
+    const requestedHrId = cleanStr(hr_id) || cleanStr(assigned_hr_id);
+    let assignedHrUser = null;
+    if (requestedHrId) {
+      const hrUserRes = await query(
+        `SELECT id, full_name, email FROM users WHERE id = $1 AND UPPER(role) = 'HR' AND status = 'active' LIMIT 1`,
+        [requestedHrId]
+      );
+      if (hrUserRes.rows.length > 0) assignedHrUser = hrUserRes.rows[0];
+    }
+
     const OTHER_HR_VALUES = ['Other HR / Reference', 'Other'];
-    const isOtherHr = !cleanSelectedHr || OTHER_HR_VALUES.includes(cleanSelectedHr);
-    const finalHrName = (!isOtherHr ? cleanSelectedHr : null)
-      || cleanHrName
-      || cleanStr(hr_reference)
-      || (!isUuid(referred_by_employee_id) && referred_by_employee_id ? String(referred_by_employee_id).trim() : (rawRefCode ? String(rawRefCode).trim() : null));
+    const isRealHrSelected = !!assignedHrUser;
+    const isOtherHr = OTHER_HR_VALUES.includes(cleanSelectedHr) || (!isRealHrSelected && !cleanSelectedHr);
+    const finalHrName = isRealHrSelected
+      ? assignedHrUser.full_name
+      : (!isOtherHr ? cleanSelectedHr : null)
+        || cleanHrName
+        || cleanStr(hr_reference)
+        || (!isUuid(referred_by_employee_id) && referred_by_employee_id ? String(referred_by_employee_id).trim() : (rawRefCode ? String(rawRefCode).trim() : null));
 
     const addressParts = [address_flat_no, address_society, address_area, address_city, address_district, address_state, pincode]
       .map(v => cleanStr(v)).filter(Boolean);
@@ -500,7 +532,9 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
       cleanStr(target_role),
       cleanStr(finalHrName),
       cleanSelectedHr,
-      cleanStr(hr_reference) || (isOtherHr ? cleanHrName : null)
+      cleanStr(hr_reference) || (isOtherHr ? cleanHrName : null),
+      isRealHrSelected ? assignedHrUser.id : null,
+      isRealHrSelected ? assignedHrUser.full_name : null
     ];
 
     const { rows } = await query(insertQuery, values);
@@ -550,23 +584,44 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
       }
     })();
 
+    // Send registration confirmation email to the candidate (non-blocking)
+    if (email_id) {
+      sendCandidateRegistrationSuccessEmail({
+        candidateEmail: email_id.trim(),
+        candidateName: full_name.trim(),
+        referenceCode: reference_code,
+        targetRole: target_role || current_designation || 'Candidate',
+        mobileNumber: mobile_number.trim()
+      }).catch((e) => logger.warn(`Candidate registration email failed: ${e.message}`));
+    }
+
     // Check if candidate is assigned to a specific HR user and notify them via email
-    if (finalHrName || validReferredByUuid) {
+    if (assignedHrUser || finalHrName || validReferredByUuid) {
       (async () => {
         try {
-          let hrRes;
-          if (validReferredByUuid) {
-            hrRes = await query(`SELECT email, full_name FROM users WHERE id = $1 OR employee_id = $1 LIMIT 1`, [validReferredByUuid]);
-          }
-          if ((!hrRes || hrRes.rows.length === 0) && finalHrName) {
-            hrRes = await query(`SELECT email, full_name FROM users WHERE (full_name ILIKE $1 OR email ILIKE $1) AND role IN ('HR', 'ADMIN', 'SUPER_ADMIN') LIMIT 1`, [finalHrName]);
+          let hrEmail = null;
+          let hrDisplayName = null;
+          if (assignedHrUser) {
+            hrEmail = assignedHrUser.email;
+            hrDisplayName = assignedHrUser.full_name;
+          } else {
+            let hrRes;
+            if (validReferredByUuid) {
+              hrRes = await query(`SELECT email, full_name FROM users WHERE id = $1 OR employee_id = $1 LIMIT 1`, [validReferredByUuid]);
+            }
+            if ((!hrRes || hrRes.rows.length === 0) && finalHrName) {
+              hrRes = await query(`SELECT email, full_name FROM users WHERE (full_name ILIKE $1 OR email ILIKE $1) AND role IN ('HR', 'ADMIN', 'SUPER_ADMIN') LIMIT 1`, [finalHrName]);
+            }
+            if (hrRes && hrRes.rows.length > 0) {
+              hrEmail = hrRes.rows[0].email;
+              hrDisplayName = hrRes.rows[0].full_name;
+            }
           }
 
-          if (hrRes && hrRes.rows.length > 0 && hrRes.rows[0].email) {
-            const hrUser = hrRes.rows[0];
+          if (hrEmail) {
             await sendCandidateAssignedToHrEmail({
-              hrEmail: hrUser.email,
-              hrName: hrUser.full_name || finalHrName || 'HR Manager',
+              hrEmail,
+              hrName: hrDisplayName || finalHrName || 'HR Manager',
               candidateName: full_name.trim(),
               referenceCode: reference_code,
               targetRole: target_role || current_designation || 'Candidate',
