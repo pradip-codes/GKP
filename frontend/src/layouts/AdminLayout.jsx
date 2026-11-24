@@ -253,6 +253,12 @@ const AdminLayout = () => {
               <Icons.calendar size={18} />
               <span>Attendance</span>
             </NavLink>
+
+            {/* HR Help & FAQ */}
+            <NavLink to="/hr/help" style={navLinkStyle}>
+              <Icons.profile size={18} />
+              <span>Help & FAQ</span>
+            </NavLink>
           </>
         ) : (
           <>

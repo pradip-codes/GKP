@@ -145,15 +145,35 @@ router.post('/candidates/:id/assign-hr', async (req, res, next) => {
     const { id } = req.params;
     const { hr_id, hr_name } = req.body;
 
+    // Only candidates who selected "Other" (or have no HR assignment yet) may be manually assigned
+    const candCheck = await query(
+      `SELECT id, assigned_hr_id, selected_hr FROM employee_candidates WHERE id = $1`,
+      [id]
+    );
+    if (candCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Candidate record not found' });
+    }
+    const candRow = candCheck.rows[0];
+    if (candRow.assigned_hr_id) {
+      return res.status(409).json({ success: false, message: 'Candidate is already assigned to an HR' });
+    }
+    const UNASSIGNED_HR = ['Other', 'Other HR / Reference', ''];
+    if (candRow.selected_hr && !UNASSIGNED_HR.includes(candRow.selected_hr)) {
+      return res.status(409).json({ success: false, message: 'Candidate was assigned an HR during registration' });
+    }
+
     let hrName = hr_name;
     let hrEmail = null;
 
     if (hr_id) {
-      const hrRes = await query(`SELECT full_name, email FROM users WHERE id = $1`, [hr_id]);
-      if (hrRes.rows.length > 0) {
-        if (!hrName) hrName = hrRes.rows[0].full_name;
-        hrEmail = hrRes.rows[0].email;
+      const hrRes = await query(`SELECT full_name, email FROM users WHERE id = $1 AND UPPER(role) = 'HR' AND status = 'active'`, [hr_id]);
+      if (hrRes.rows.length === 0) {
+        return res.status(400).json({ success: false, message: 'Selected user is not an active HR account' });
       }
+      if (!hrName) hrName = hrRes.rows[0].full_name;
+      hrEmail = hrRes.rows[0].email;
+    } else {
+      return res.status(400).json({ success: false, message: 'hr_id is required' });
     }
 
     if (!hrEmail && hrName) {

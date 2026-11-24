@@ -8,7 +8,6 @@ import {
   FaArrowRight
 } from 'react-icons/fa';
 import api from '../../services/api';
-import FaqAccordion from '../../components/FaqAccordion';
 
 const MONO_FONT = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
 
@@ -203,7 +202,7 @@ export default function HRDashboard() {
 
   const handleAssignHR = async (candidateId, hrId) => {
     const hrObj = hrAccounts.find(h => String(h.id || h._id) === String(hrId));
-    const hrName = hrObj ? (hrObj.fullName || hrObj.email) : '';
+    const hrName = hrObj ? (hrObj.fullName || hrObj.full_name || hrObj.email) : '';
     try {
       const res = await api.post(`/hr/candidates/${candidateId}/assign-hr`, {
         hr_id: hrId || null,
@@ -609,30 +608,41 @@ export default function HRDashboard() {
                               <div style={{ fontSize: '11px', color: C.textMid }}>{cand.total_experience_years} yrs</div>
                             ) : null}
                           </td>
-                          {isSuperAdmin && (
-                            <td style={{ padding: '12px 16px' }}>
-                              <select
-                                value={cand.assigned_hr_id || ''}
-                                onChange={(e) => handleAssignHR(cand.id, e.target.value)}
-                                style={{
-                                  padding: '4px 8px',
-                                  borderRadius: '4px',
-                                  fontSize: '12px',
-                                  background: C.bgSecondary,
-                                  border: `1px solid ${C.border}`,
-                                  color: C.text,
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                <option value="">-- Assign HR --</option>
-                                {hrAccounts.map((hr) => (
-                                  <option key={hr.id || hr._id} value={hr.id || hr._id}>
-                                    {hr.fullName || hr.email}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                          )}
+                          {isSuperAdmin && (() => {
+                            const UNASSIGNED_HR = ['Other', 'Other HR / Reference', ''];
+                            const isOtherCandidate = !cand.assigned_hr_id && UNASSIGNED_HR.includes(cand.selected_hr || '');
+                            if (!isOtherCandidate) {
+                              return (
+                                <td style={{ padding: '12px 16px', color: C.textMid, fontSize: '12px' }}>
+                                  {cand.assigned_hr_name || cand.hr_name || cand.selected_hr || '—'}
+                                </td>
+                              );
+                            }
+                            return (
+                              <td style={{ padding: '12px 16px' }}>
+                                <select
+                                  value={cand.assigned_hr_id || ''}
+                                  onChange={(e) => handleAssignHR(cand.id, e.target.value)}
+                                  style={{
+                                    padding: '4px 8px',
+                                    borderRadius: '4px',
+                                    fontSize: '12px',
+                                    background: C.bgSecondary,
+                                    border: `1px solid ${C.border}`,
+                                    color: C.text,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  <option value="">-- Assign HR --</option>
+                                  {hrAccounts.map((hr) => (
+                                    <option key={hr.id || hr._id} value={hr.id || hr._id}>
+                                      {hr.fullName || hr.full_name || hr.email}
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                            );
+                          })()}
                           <td style={{ padding: '12px 16px' }}>
                             {renderStatusBadge(cand.interview_status)}
                           </td>
@@ -893,10 +903,7 @@ export default function HRDashboard() {
           </>
         )}
 
-        {/* ── HR Help & FAQ ── */}
-        <div style={{ marginTop: '28px' }}>
-          <FaqAccordion categories={['general', 'hr', 'employee']} title="HR Help & FAQ" />
-        </div>
+        {/* HR Help & FAQ lives on its own page now: /hr/help */}
 
         {/* ══════════════════════════════════════════════════════════════════
             MODAL 1: Candidate Review Drawer

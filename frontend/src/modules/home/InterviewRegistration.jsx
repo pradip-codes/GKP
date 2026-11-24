@@ -74,9 +74,13 @@ export default function InterviewRegistration() {
 
     // HR & Source
     how_did_you_hear: 'WorkIndia / Job Portal',
-    selected_hr: 'Riya',
+    selected_hr: '',
+    hr_id: '',
     hr_name: ''
   });
+
+  // Active HR accounts fetched from backend for the "Select HR" dropdown
+  const [hrOptions, setHrOptions] = useState([]);
 
   // ── Three Mandatory Supporting Documents State ──
   // const [panDoc, setPanDoc] = useState({ file: null, previewUrl: '' });
@@ -127,6 +131,22 @@ export default function InterviewRegistration() {
         hr_name: refParam
       }));
     }
+  }, []);
+
+  // Fetch active HR accounts for the Select HR dropdown
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await axios.get(`${getApiV1Url()}/public/hr-list`);
+        if (!cancelled && res.data?.success && Array.isArray(res.data.data)) {
+          setHrOptions(res.data.data);
+        }
+      } catch (e) {
+        // Fallback: leave dropdown with just "Other" if HR list is unavailable
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   // OTP Countdown Timers
@@ -782,6 +802,7 @@ export default function InterviewRegistration() {
       relevant_experience: formData.relevant_experience,
       how_did_you_hear: formData.how_did_you_hear,
       selected_hr: formData.selected_hr,
+      hr_id: formData.hr_id || null,
       hr_name: formData.hr_name,
       referred_by_employee_id: referredByCode || null,
       ref: referredByCode || null
@@ -1936,21 +1957,28 @@ export default function InterviewRegistration() {
 
             <div style={{ marginBottom: '24px' }}>
 
-              {/* Select HR Dropdown (Complete exact list: Hrutika, Nandini, Riya, Poonam, Riyakumari, Other HR / Reference) */}
+              {/* Select HR Dropdown — populated live from HR accounts; "Other" routes to Super Admin assignment */}
               <div style={{ marginBottom: '18px' }}>
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>Select HR *</label>
                 <select
                   name="selected_hr"
                   required
                   value={formData.selected_hr}
-                  onChange={handleInputChange}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === 'Other') {
+                      setFormData(prev => ({ ...prev, selected_hr: 'Other', hr_id: '', hr_name: prev.how_did_you_hear === 'Employee Reference' ? prev.hr_name : '' }));
+                    } else {
+                      const hr = hrOptions.find(h => String(h.id) === val);
+                      setFormData(prev => ({ ...prev, selected_hr: hr ? hr.full_name : val, hr_id: val }));
+                    }
+                  }}
                   style={{ width: '100%', padding: '10px 14px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '10px', color: C.text, boxSizing: 'border-box' }}
                 >
-                  <option value="Hrutika">Hrutika</option>
-                  <option value="Nandini">Nandini</option>
-                  <option value="Riya">Riya</option>
-                  <option value="Poonam">Poonam</option>
-                  <option value="Riyakumari">Riyakumari</option>
+                  <option value="" disabled>Select an HR</option>
+                  {hrOptions.map((hr) => (
+                    <option key={hr.id} value={hr.id}>{hr.full_name}</option>
+                  ))}
                   <option value="Other">Other</option>
                 </select>
               </div>
