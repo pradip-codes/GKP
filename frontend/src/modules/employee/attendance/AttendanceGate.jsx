@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../../app/store/authStore';
+import { isStaffAttendanceGateRequired } from '../../../config/attendanceRollout';
 import employeeCommitmentsService from '../../../services/employeeCommitments.service';
 import CheckInScreen from './components/CheckInScreen';
 import CommitmentsScreen from './components/CommitmentsScreen';
@@ -30,6 +31,8 @@ export const useAttendanceGate = () => useContext(AttendanceGateContext);
  */
 function LockedHeader({ user, onLogout }) {
   const employeeName = user?.full_name || user?.name || user?.first_name || 'Team Member';
+  const headerRole = String(user?.role || '').toUpperCase();
+  const portalLabel = headerRole === 'HR' ? 'HR Portal' : headerRole === 'ADMIN' ? 'Admin Portal' : 'Employee Portal';
 
   return (
     <header
@@ -58,7 +61,7 @@ function LockedHeader({ user, onLogout }) {
             GharKaPaisa
           </span>
           <span style={{ fontSize: '11px', fontWeight: 700, color: '#008A60', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            Employee Portal
+            {portalLabel}
           </span>
         </div>
       </div>
@@ -199,10 +202,15 @@ export default function AttendanceGate({ children }) {
   const isEmployee = (user?.role || '').toUpperCase() === 'EMPLOYEE' ||
     (user?.designation && !['SUPER_ADMIN', 'ADMIN', 'HR', 'PARTNER', 'AGENT'].includes((user?.role || '').toUpperCase()));
 
+  // Admin / HR panel users: attendance check-in is mandatory (first screen), but they skip the
+  // "daily commitments" step and are not locked again after check-out.
+  const isStaffGated = isStaffAttendanceGateRequired(user);
+
   const fetchStatus = useCallback(async () => {
-    // If not an employee or no user logged in, bypass gate
+    // Not logged in, or roles that are never gated (Super Admin, Partner, Agent, KYC operator...)
     const userRole = (user?.role || '').toUpperCase();
-    if (!user || ['SUPER_ADMIN', 'ADMIN', 'HR', 'PARTNER', 'AGENT'].includes(userRole)) {
+    const staffGated = isStaffAttendanceGateRequired(user);
+    if (!user || (['SUPER_ADMIN', 'ADMIN', 'HR', 'PARTNER', 'AGENT'].includes(userRole) && !staffGated)) {
       setDayState('UNLOCKED');
       return;
     }
@@ -211,9 +219,20 @@ export default function AttendanceGate({ children }) {
       setErrorMessage('');
       const data = await employeeCommitmentsService.getDayStatus();
       setDayData(data);
-      setDayState(data.state || 'NOT_CHECKED_IN');
+      let nextState = data.state || 'NOT_CHECKED_IN';
+      if (staffGated) {
+        // Staff only need Step 1 (check-in). No commitments screen, no lock after check-out.
+        if (nextState === 'NEEDS_COMMITMENTS' || nextState === 'CHECKED_OUT') nextState = 'UNLOCKED';
+      }
+      setDayState(nextState);
     } catch (err) {
       console.error('[ATTENDANCE GATE STATUS ERROR]:', err);
+      if (staffGated) {
+        // Never lock the whole Admin/HR panel because the status call failed (network / profile link issue).
+        console.warn('[ATTENDANCE GATE] Staff day-status unavailable, leaving panel unlocked.');
+        setDayState('UNLOCKED');
+        return;
+      }
       // If 403 DAY_LOCKED, error object may carry the state
       if (err.response?.data?.code === 'DAY_LOCKED' && err.response?.data?.state) {
         setDayState(err.response.data.state);
@@ -322,7 +341,9 @@ export default function AttendanceGate({ children }) {
     dayState,
     dayData,
     refreshDayStatus: fetchStatus,
-    openCheckOutReview: handleStartCheckOut,
+    // Staff (Admin/HR) have no task review step: leaving this undefined makes the
+    // Attendance page fall back to the plain face + office CHECK_OUT verification.
+    openCheckOutReview: isStaffGated ? undefined : handleStartCheckOut,
     isReviewModalOpen,
     closeReviewModal: () => {
       setIsReviewModalOpen(false);
