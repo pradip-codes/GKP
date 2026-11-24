@@ -1,18 +1,26 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTheme } from '../../contexts/ThemeContext';
 import { 
   FaCalendarCheck, FaFileAlt, FaTasks, FaArrowRight, FaCamera,
   FaLightbulb, FaCreditCard, FaShieldAlt, FaLandmark, FaCoins,
   FaChartLine, FaUserPlus, FaChartBar, FaChevronLeft, FaChevronRight,
   FaUsers, FaGift, FaComments, FaCheckCircle, FaClock, FaUserCircle,
-  FaExclamationCircle, FaExternalLinkAlt, FaExclamationTriangle, FaSignOutAlt
+  FaExclamationCircle, FaExternalLinkAlt, FaExclamationTriangle, FaSignOutAlt,
+  FaBuilding, FaRupeeSign, FaFileInvoiceDollar, FaFolderOpen, FaChevronDown, FaChevronUp, FaArrowLeft
 } from 'react-icons/fa';
 import api from '../../services/api';
 import { getApiV1Url } from '../../config/api';
 import LoadingLogo from '../../components/Loader/LoadingLogo';
 import { useLocalStorageCache } from '../../hooks/useLocalStorageCache';
 import { useAttendanceGate } from './attendance/AttendanceGate';
+
+// Lazy load existing HR department modules for embedded view
+const MyIncentives = React.lazy(() => import('./incentives/MyIncentives'));
+const EmployeeMySalary = React.lazy(() => import('./payroll/EmployeeMySalary'));
+const EmployeePayslip = React.lazy(() => import('./payroll/EmployeePayslip'));
+const EmployeeDocumentsReports = React.lazy(() => import('./payroll/EmployeeDocumentsReports'));
+const EmployeeSalesReports = React.lazy(() => import('./reports/EmployeeSalesReports'));
 
 // Static Banner Image Assets
 import offerBanner from '../home/components/banner/offerbanner.webp';
@@ -54,10 +62,85 @@ const resolveBannerImage = (url) => {
   return offerBanner;
 };
 
+// 5 Existing HR Department Modules
+const hrDepartmentModules = [
+  {
+    id: 'incentive',
+    title: 'My Incentive',
+    desc: 'Earnings, contests, bonus ledger & commission payouts',
+    icon: FaGift,
+    color: '#EC4899',
+    bg: '#FCE7F3',
+    route: '/employee/incentives'
+  },
+  {
+    id: 'salary',
+    title: 'My Salary',
+    desc: 'Monthly salary structure, base pay, earnings & deductions',
+    icon: FaRupeeSign,
+    color: '#059669',
+    bg: '#E8F7EF',
+    route: '/employee/salary'
+  },
+  {
+    id: 'payslip',
+    title: 'Payslip',
+    desc: 'Download, print & view official monthly salary payslips',
+    icon: FaFileInvoiceDollar,
+    color: '#3B82F6',
+    bg: '#EAF2FF',
+    route: '/employee/payslip'
+  },
+  {
+    id: 'document',
+    title: 'Document',
+    desc: 'Payroll documents, PF statements, tax Form-16 & HR certificates',
+    icon: FaFolderOpen,
+    color: '#8B5CF6',
+    bg: '#F1EBFF',
+    route: '/employee/documents'
+  },
+  {
+    id: 'report',
+    title: 'Report',
+    desc: 'Sales performance reports, card sales & operational insights',
+    icon: FaChartBar,
+    color: '#F59E0B',
+    bg: '#FFF1DF',
+    route: '/employee/sales-reports'
+  }
+];
+
 export default function EmployeeDashboardRedesigned() {
   const { C, isDark } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
   const { openCheckOutReview } = useAttendanceGate() || {};
+  const hrDepartmentRef = useRef(null);
+
+  // HR Department state: toggled open/closed & selected active module
+  const [hrDepartmentOpen, setHrDepartmentOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('tab') === 'hr' || 
+             params.get('section') === 'hr' || 
+             params.get('tab') === 'hr-department' || 
+             window.location.hash === '#hr-department' ||
+             window.location.pathname.includes('/hr-department');
+    }
+    return false;
+  });
+
+  const [activeHrModule, setActiveHrModule] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const mod = params.get('module');
+      if (['incentive', 'salary', 'payslip', 'document', 'report'].includes(mod)) {
+        return mod;
+      }
+    }
+    return null;
+  });
 
   const [employee, setEmployee] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -92,6 +175,25 @@ export default function EmployeeDashboardRedesigned() {
     const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
     setCurrentDate(now.toLocaleDateString('en-IN', options));
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const isHrParam = params.get('tab') === 'hr' || 
+                      params.get('section') === 'hr' || 
+                      params.get('tab') === 'hr-department' || 
+                      location.hash === '#hr-department' ||
+                      location.pathname.includes('/hr-department');
+    if (isHrParam) {
+      setHrDepartmentOpen(true);
+      const mod = params.get('module');
+      if (['incentive', 'salary', 'payslip', 'document', 'report'].includes(mod)) {
+        setActiveHrModule(mod);
+      }
+      setTimeout(() => {
+        hrDepartmentRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 150);
+    }
+  }, [location.search, location.hash, location.pathname]);
 
   // Client-side cache helpers
   const CACHE_PREFIX = 'employee_dashboard_cache_';
@@ -1227,12 +1329,17 @@ export default function EmployeeDashboardRedesigned() {
                 route: '/employee/attendance'
               },
               { 
-                icon: FaChartBar, 
-                color: '#F59E0B', 
-                bg: '#FFF1DF', 
-                title: 'View Sales Report', 
-                desc: 'Commission & performance insights',
-                route: '/employee/sales-reports'
+                icon: FaBuilding, 
+                color: '#008A60', 
+                bg: '#E6F4EA', 
+                title: 'HR Department', 
+                desc: 'Incentives, salary, payslips, documents & reports',
+                onClick: () => {
+                  setHrDepartmentOpen(true);
+                  setTimeout(() => {
+                    hrDepartmentRef.current?.scrollIntoView({ behavior: 'smooth' });
+                  }, 100);
+                }
               },
               { 
                 icon: FaUsers, 
@@ -1246,9 +1353,9 @@ export default function EmployeeDashboardRedesigned() {
                 icon: FaGift, 
                 color: '#EC4899', 
                 bg: '#FCE7F3', 
-                title: 'My Incentives', 
-                desc: 'Earnings, contests & bonus ledger',
-                route: '/employee/incentives'
+                title: 'Contests', 
+                desc: 'Competitions, targets & awards',
+                route: '/employee/contests'
               },
               { 
                 icon: FaComments, 
@@ -1261,7 +1368,13 @@ export default function EmployeeDashboardRedesigned() {
             ].map((action, idx) => (
               <div
                 key={idx}
-                onClick={() => navigate(action.route)}
+                onClick={() => {
+                  if (action.onClick) {
+                    action.onClick();
+                  } else if (action.route) {
+                    navigate(action.route);
+                  }
+                }}
                 style={{
                   background: C.card,
                   border: `1px solid ${C.border}`,
@@ -1607,6 +1720,375 @@ export default function EmployeeDashboardRedesigned() {
               } <FaArrowRight />
             </button>
           </div>
+        </div>
+
+        {/* Separate HR Department Section - Below Dashboard Sections */}
+        <div
+          id="hr-department"
+          ref={hrDepartmentRef}
+          style={{
+            marginTop: '32px',
+            background: C.card,
+            border: `1.5px solid ${hrDepartmentOpen ? (C.teal || '#008A60') : C.border}`,
+            borderRadius: '20px',
+            padding: isMobile ? '18px 14px' : '26px 28px',
+            boxShadow: hrDepartmentOpen
+              ? (isDark ? '0 12px 36px rgba(0,0,0,0.5)' : '0 10px 30px rgba(0, 138, 96, 0.12)')
+              : '0 4px 14px rgba(16, 24, 40, 0.04)',
+            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+          }}
+        >
+          {/* Section Header */}
+          <div
+            onClick={() => setHrDepartmentOpen(prev => !prev)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              cursor: 'pointer',
+              userSelect: 'none',
+              gap: '16px',
+              flexWrap: 'wrap'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '12px' : '16px' }}>
+              <div style={{
+                width: isMobile ? '46px' : '54px',
+                height: isMobile ? '46px' : '54px',
+                borderRadius: '16px',
+                background: 'linear-gradient(135deg, #008A60 0%, #047857 100%)',
+                color: '#FFFFFF',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: isMobile ? '20px' : '24px',
+                flexShrink: 0,
+                boxShadow: '0 4px 14px rgba(0, 138, 96, 0.3)'
+              }}>
+                <FaBuilding />
+              </div>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <h2 style={{
+                    margin: 0,
+                    fontSize: isMobile ? '18px' : '22px',
+                    fontWeight: 800,
+                    color: C.text,
+                    letterSpacing: '-0.3px'
+                  }}>
+                    HR Department
+                  </h2>
+                  <span style={{
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    padding: '3px 9px',
+                    borderRadius: '12px',
+                    background: isDark ? 'rgba(0, 212, 170, 0.15)' : '#E6F4EA',
+                    color: isDark ? '#00D4AA' : '#008A60',
+                    border: `1px solid ${isDark ? 'rgba(0, 212, 170, 0.3)' : '#A7F3D0'}`
+                  }}>
+                    5 Modules
+                  </span>
+                </div>
+                <p style={{
+                  margin: '4px 0 0 0',
+                  fontSize: isMobile ? '12px' : '13.5px',
+                  color: C.textMid,
+                  lineHeight: 1.4
+                }}>
+                  Employee services hub: My Incentive, My Salary, Payslip, Document & Report
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setHrDepartmentOpen(prev => !prev);
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: hrDepartmentOpen ? (isDark ? '#334155' : '#E2E8F0') : (C.primaryButton || '#008A60'),
+                  color: hrDepartmentOpen ? C.text : '#FFFFFF',
+                  border: 'none',
+                  padding: isMobile ? '7px 14px' : '9px 18px',
+                  borderRadius: '12px',
+                  fontSize: isMobile ? '12px' : '13.5px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  boxShadow: hrDepartmentOpen ? 'none' : '0 2px 8px rgba(0, 138, 96, 0.25)'
+                }}
+              >
+                <span>{hrDepartmentOpen ? 'Collapse HR Department' : 'Open HR Department'}</span>
+                {hrDepartmentOpen ? <FaChevronUp size={12} /> : <FaChevronDown size={12} />}
+              </button>
+            </div>
+          </div>
+
+          {/* Expanded Content: 5 Modules */}
+          {hrDepartmentOpen && (
+            <div style={{ marginTop: '24px', borderTop: `1px solid ${C.border}`, paddingTop: '22px' }}>
+              {/* Tab Navigation across the 5 modules */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                overflowX: 'auto',
+                paddingBottom: '12px',
+                marginBottom: '20px',
+                scrollbarWidth: 'none'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setActiveHrModule(null)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 14px',
+                    borderRadius: '10px',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    border: activeHrModule === null ? `1.5px solid ${C.teal || '#008A60'}` : `1px solid ${C.border}`,
+                    background: activeHrModule === null ? (isDark ? 'rgba(0, 212, 170, 0.15)' : '#E6F4EA') : C.bgSecondary,
+                    color: activeHrModule === null ? (isDark ? '#00D4AA' : '#008A60') : C.text,
+                    whiteSpace: 'nowrap',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <FaBuilding size={13} />
+                  <span>All 5 Modules</span>
+                </button>
+
+                {hrDepartmentModules.map((mod) => {
+                  const isSelected = activeHrModule === mod.id;
+                  const ModIcon = mod.icon;
+                  return (
+                    <button
+                      key={mod.id}
+                      type="button"
+                      onClick={() => setActiveHrModule(mod.id)}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '8px 16px',
+                        borderRadius: '10px',
+                        fontSize: '13px',
+                        fontWeight: isSelected ? 800 : 600,
+                        cursor: 'pointer',
+                        border: isSelected ? `1.5px solid ${mod.color}` : `1px solid ${C.border}`,
+                        background: isSelected ? (isDark ? `${mod.color}25` : mod.bg) : C.bgSecondary,
+                        color: isSelected ? mod.color : C.text,
+                        whiteSpace: 'nowrap',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <ModIcon size={14} style={{ color: isSelected ? mod.color : C.textMid }} />
+                      <span>{mod.title}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Module Cards Grid View (when activeHrModule === null) */}
+              {activeHrModule === null ? (
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: isMobile ? '1fr' : (isTablet ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)'),
+                  gap: isMobile ? '12px' : '16px'
+                }}>
+                  {hrDepartmentModules.map((mod, idx) => {
+                    const ModIcon = mod.icon;
+                    return (
+                      <div
+                        key={mod.id}
+                        onClick={() => setActiveHrModule(mod.id)}
+                        style={{
+                          background: isDark ? '#1E293B' : '#FFFFFF',
+                          border: `1px solid ${C.border}`,
+                          borderRadius: '16px',
+                          padding: isMobile ? '16px' : '20px',
+                          cursor: 'pointer',
+                          transition: 'all 0.25s ease',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between',
+                          boxShadow: '0 4px 14px rgba(16, 24, 40, 0.04)'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.transform = 'translateY(-3px)';
+                          e.currentTarget.style.borderColor = mod.color;
+                          e.currentTarget.style.boxShadow = `0 8px 24px ${mod.color}20`;
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.transform = 'translateY(0)';
+                          e.currentTarget.style.borderColor = C.border;
+                          e.currentTarget.style.boxShadow = '0 4px 14px rgba(16, 24, 40, 0.04)';
+                        }}
+                      >
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                            <div style={{
+                              width: '48px',
+                              height: '48px',
+                              borderRadius: '14px',
+                              background: isDark ? `${mod.color}25` : mod.bg,
+                              color: mod.color,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '20px'
+                            }}>
+                              <ModIcon />
+                            </div>
+                            <span style={{
+                              fontSize: '11px',
+                              fontWeight: 800,
+                              padding: '3px 8px',
+                              borderRadius: '8px',
+                              background: isDark ? 'rgba(255,255,255,0.06)' : '#F1F5F9',
+                              color: C.textMid
+                            }}>
+                              Module {idx + 1}
+                            </span>
+                          </div>
+
+                          <h3 style={{ fontSize: '16px', fontWeight: 800, margin: '0 0 6px 0', color: C.text }}>
+                            {mod.title}
+                          </h3>
+                          <p style={{ fontSize: '13px', color: C.textMid, margin: '0 0 16px 0', lineHeight: 1.4 }}>
+                            {mod.desc}
+                          </p>
+                        </div>
+
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          borderTop: `1px solid ${C.border}`,
+                          paddingTop: '12px'
+                        }}>
+                          <span style={{ fontSize: '13px', fontWeight: 700, color: mod.color, display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                            View Module <FaArrowRight size={11} />
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(mod.route);
+                            }}
+                            title="Open in Dedicated Full Page"
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: C.textLight,
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              padding: '4px 6px'
+                            }}
+                          >
+                            <FaExternalLinkAlt size={10} /> Full Page
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                /* Selected Module View - Rendering the existing component directly inside HR Department */
+                <div style={{
+                  background: isDark ? '#0F172A' : '#FAFAFA',
+                  border: `1px solid ${C.border}`,
+                  borderRadius: '16px',
+                  padding: isMobile ? '12px 8px' : '20px',
+                  boxShadow: 'inset 0 2px 6px rgba(0,0,0,0.03)'
+                }}>
+                  {/* Module Header Bar */}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: '16px',
+                    paddingBottom: '12px',
+                    borderBottom: `1px solid ${C.border}`,
+                    flexWrap: 'wrap',
+                    gap: '10px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <button
+                        type="button"
+                        onClick={() => setActiveHrModule(null)}
+                        style={{
+                          background: C.card,
+                          border: `1px solid ${C.border}`,
+                          color: C.text,
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}
+                      >
+                        <FaArrowLeft size={10} /> Back to Modules
+                      </button>
+                      <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: C.text }}>
+                        {hrDepartmentModules.find(m => m.id === activeHrModule)?.title}
+                      </h3>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = hrDepartmentModules.find(m => m.id === activeHrModule)?.route;
+                        if (target) navigate(target);
+                      }}
+                      style={{
+                        background: C.card,
+                        border: `1px solid ${C.border}`,
+                        color: C.primary,
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      <FaExternalLinkAlt size={10} /> Open in Dedicated Full Page
+                    </button>
+                  </div>
+
+                  {/* Render the Existing Component */}
+                  <React.Suspense fallback={
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px' }}>
+                      <LoadingLogo size={80} />
+                    </div>
+                  }>
+                    {activeHrModule === 'incentive' && <MyIncentives />}
+                    {activeHrModule === 'salary' && <EmployeeMySalary />}
+                    {activeHrModule === 'payslip' && <EmployeePayslip />}
+                    {activeHrModule === 'document' && <EmployeeDocumentsReports />}
+                    {activeHrModule === 'report' && <EmployeeSalesReports />}
+                  </React.Suspense>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
       </div>

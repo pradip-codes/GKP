@@ -361,6 +361,7 @@ const AppRoutes = () => {
             <Route path="/employee/insurance/:insuranceTypeSlug" element={<PartnerEntityDetail />} />
             <Route path="/employee/insurance/:insuranceTypeSlug/product" element={<PartnerEntityDetail />} />
             <Route path="/employee/applications" element={<EmployeeApplications />} />
+            <Route path="/employee/hr-department" element={<EmployeeDashboard />} />
             <Route path="/employee/team" element={<MyTeam />} />
             <Route path="/employee/incentives" element={<MyIncentives />} />
             <Route path="/employee/contests" element={<EmployeeContests />} />
