@@ -182,7 +182,7 @@ const AdminLayout = () => {
 
     // Disallow /admin/kyc-operator for all panels
     if (location.pathname.startsWith('/admin/kyc-operator')) {
-      const fallback = isSuperAdmin ? '/super-admin/overview' : '/admin/applications';
+      const fallback = isSuperAdmin ? '/super-admin/overview' : (isKycOperator ? '/admin/kyc' : '/admin/applications');
       navigate(fallback, { replace: true });
       return;
     }
@@ -195,7 +195,7 @@ const AdminLayout = () => {
       const allowedPaths = ['/admin/applications', '/admin/kyc', '/admin/messenger', '/admin/attendance'];
       const isAllowed = allowedPaths.some(p => location.pathname.startsWith(p));
       if (!isAllowed) {
-        navigate('/admin/applications', { replace: true });
+        navigate('/admin/kyc', { replace: true });
       }
     } else if (isRemarkOperator || isQdOperator || isFinalStatusOperator || isQuerableOperator || isCurableOperator) {
       const allowedPaths = ['/admin/applications', '/admin/messenger', '/admin/attendance'];
@@ -291,6 +291,13 @@ const AdminLayout = () => {
               <NavLink to="/hr" style={navLinkStyle}>
                 <Icons.profile size={18} />
                 <span>HR</span>
+              </NavLink>
+            )}
+
+            {isKycOperator && (
+              <NavLink to="/admin/kyc" style={navLinkStyle}>
+                <Icons.profile size={18} />
+                <span>KYC Queue</span>
               </NavLink>
             )}
 

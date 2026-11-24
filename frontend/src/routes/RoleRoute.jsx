@@ -29,7 +29,7 @@ const getRoleDashboard = (user) => {
   const role = (user?.role || (typeof user === 'string' ? user : '')).toUpperCase();
   const designation = (user?.designation || '').toUpperCase();
   if (['KYC OPERATOR', 'KYC_OPERATOR'].includes(designation) || ['KYC OPERATOR', 'KYC_OPERATOR'].includes(role)) {
-    return '/admin/kyc-operator';
+    return '/admin/kyc';
   }
   if (isOperatorUser(user)) {
     return '/admin/applications';

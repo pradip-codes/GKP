@@ -77,7 +77,8 @@ export default function KycOperatorDashboard() {
           api.get('/banks').catch(() => null),
           api.get('/products').catch(() => null)
         ]);
-        if (banksRes?.data?.data) setAssignedBanks(banksRes.data.data);
+        // KYC Operator queue is HDFC only
+        if (banksRes?.data?.data) setAssignedBanks(banksRes.data.data.filter(b => /hdfc/i.test(`${b.name || ''} ${b.short_code || ''}`)));
         if (prodsRes?.data?.data) setAssignedProducts(prodsRes.data.data);
       } catch (err) {
         console.error('Error fetching bank/product assignments:', err);
@@ -240,7 +241,7 @@ export default function KycOperatorDashboard() {
               <FaShieldAlt /> KYC Operator Panel
             </span>
             <span style={{ fontSize: '12px', fontWeight: 700, color: '#10B981', background: '#D1FAE5', padding: '4px 10px', borderRadius: '6px' }}>
-              ✓ Bank-Specific Eligibility Active (SBI / HDFC)
+              ✓ HDFC KYC Link Queue
             </span>
           </div>
           <h1 style={{ fontSize: '26px', fontWeight: 900, margin: '8px 0 4px 0', color: C.text }}>
@@ -268,7 +269,7 @@ export default function KycOperatorDashboard() {
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '20px', boxShadow: '0 2px 10px rgba(0,0,0,0.02)' }}>
           <span style={{ fontSize: '12px', fontWeight: 800, color: C.textMid, textTransform: 'uppercase' }}>Eligible KYC Applications</span>
           <div style={{ fontSize: '28px', fontWeight: 900, color: C.text, marginTop: '6px' }}>{stats.total_kyc}</div>
-          <span style={{ fontSize: '11.5px', color: C.teal, fontWeight: 700 }}>SBI Soft Approval & HDFC IPA Active</span>
+          <span style={{ fontSize: '11.5px', color: C.teal, fontWeight: 700 }}>HDFC applications with KYC link</span>
         </div>
 
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '16px', padding: '20px', boxShadow: '0 2px 10px rgba(0,0,0,0.02)' }}>
@@ -315,7 +316,7 @@ export default function KycOperatorDashboard() {
               onChange={(e) => { setSelectedBank(e.target.value); setPagination(p => ({ ...p, page: 1 })); }}
               style={{ width: '100%', padding: '10px', borderRadius: '10px', border: `1px solid ${C.border}`, background: C.bgSecondary, color: C.text, fontSize: '13px', fontWeight: 700 }}
             >
-              <option value="">All Assigned Banks</option>
+              <option value="">All HDFC</option>
               {assignedBanks.map(b => (
                 <option key={b.id} value={b.id}>{b.name || b.short_code}</option>
               ))}

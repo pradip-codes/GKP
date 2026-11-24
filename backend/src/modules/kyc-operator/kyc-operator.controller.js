@@ -10,6 +10,54 @@ const logger = require('../../config/logger');
 // No runtime DDL needed
 const ensureKycColumns = async () => {};
 
+// ── KYC Operator scope: HDFC only, and only applications that carry a KYC (VKYC) link ──────────────
+// Link can live on applications.vkyc_link, applications.vkyc_url or physical_application_details.vkyc_url.
+const KYC_LINK_VALUE_SQL = `COALESCE(NULLIF(TRIM(a.vkyc_link), ''), NULLIF(TRIM(a.vkyc_url), ''), NULLIF(TRIM(pad.vkyc_url), ''), '')`;
+const KYC_HAS_LINK_SQL = `(UPPER(${KYC_LINK_VALUE_SQL}) NOT IN ('', 'N/A', 'NA', '-'))`;
+const KYC_HDFC_BANK_SQL = `(
+  LOWER(COALESCE(b.short_code, '')) LIKE '%hdfc%'
+  OR LOWER(COALESCE(b.name, '')) LIKE '%hdfc%'
+  OR LOWER(COALESCE(a.bank_name, '')) LIKE '%hdfc%'
+)`;
+
+/**
+ * Direct-by-id guard for detail / documents / verify / reject / request-info / update-stage.
+ * The queue (list) is already scoped; without this a KYC operator could act on ANY application by id.
+ * Rule: HDFC applications only, and only banks assigned to this operator (no assignment = all HDFC).
+ * Super Admin is exempt. Sends the 403 itself and returns false when access is denied.
+ */
+const ensureKycAppAccess = async (req, res, idOrNumber) => {
+  const role = String(req.user?.role || '').toUpperCase();
+  if (role === 'SUPER_ADMIN' || role === 'SUPERADMIN') return true;
+
+  const { rows } = await query(`
+    SELECT 1
+    FROM applications a
+    LEFT JOIN banks b ON (b.id = a.bank_id OR b.id::text = a.bank_id::text)
+    WHERE (a.id::text = $1 OR a.application_number = $1)
+      AND ${KYC_HDFC_BANK_SQL}
+      AND (
+        EXISTS (
+          SELECT 1 FROM admin_bank_assignments aba
+          WHERE aba.admin_id = $2::uuid
+            AND (aba.bank_id = a.bank_id OR aba.bank_id::text = a.bank_id::text OR aba.bank_id = b.id)
+        ) OR NOT EXISTS (
+          SELECT 1 FROM admin_bank_assignments WHERE admin_id = $2::uuid
+        )
+      )
+    LIMIT 1
+  `, [String(idOrNumber), req.user.id]);
+
+  if (rows.length === 0) {
+    res.status(403).json({
+      success: false,
+      message: 'Access Denied: KYC Operators can only access HDFC applications assigned to them.'
+    });
+    return false;
+  }
+  return true;
+};
+
 // Helper to format operator code
 const getOperatorCode = (user) => {
   if (!user) return 'ADM-KYC-0000';
@@ -96,28 +144,9 @@ const getKycApplications = async (req, res) => {
       paramIdx++;
     }
 
-    // 2. Bank-Specific Eligibility Rules:
-    // SBI -> Soft Approval Status: Approval Income 25K, Approval Income 30K, Approval NSDP Cibil Base
-    // HDFC -> IPA Status: IPA Approval CIBIL, IPA Approve Income
-    whereConditions.push(`(
-      (
-        (LOWER(COALESCE(b.short_code, '')) LIKE '%sbi%' OR LOWER(COALESCE(b.name, '')) LIKE '%sbi%' OR LOWER(COALESCE(a.bank_name, '')) LIKE '%sbi%')
-        AND LOWER(TRIM(COALESCE(NULLIF(a.soft_approval_status, ''), NULLIF(pad.soft_approval_status, ''), ''))) IN (
-          'approval income 25k', 'approval income 30k', 'approval nsdp cibil base',
-          'approval_income_25k', 'approval_income_30k', 'approval_nsdp_cibil_base',
-          'income 25k', 'income 30k', 'nsdp cibil base'
-        )
-      )
-      OR
-      (
-        (LOWER(COALESCE(b.short_code, '')) LIKE '%hdfc%' OR LOWER(COALESCE(b.name, '')) LIKE '%hdfc%' OR LOWER(COALESCE(a.bank_name, '')) LIKE '%hdfc%')
-        AND LOWER(TRIM(COALESCE(NULLIF(a.ipa_stage, ''), NULLIF(pad.ipa_stage, ''), NULLIF(a.soft_approval_status, ''), ''))) IN (
-          'ipa approval cibil', 'ipa approve income',
-          'ipa_approval_cibil', 'ipa_approve_income',
-          'approval cibil', 'approve income'
-        )
-      )
-    )`);
+    // 2. KYC queue rule: HDFC applications only, and only those that have a KYC (VKYC) link.
+    whereConditions.push(KYC_HDFC_BANK_SQL);
+    whereConditions.push(KYC_HAS_LINK_SQL);
 
     // 3. Optional Search Filter across App #, Bank App #, Customer Name, Mobile, PAN
     if (search && search.trim()) {
@@ -223,7 +252,7 @@ const getKycApplications = async (req, res) => {
         COALESCE(NULLIF(a.customer_mobile, ''), pad.mobile, 'N/A') as customer_mobile,
         COALESCE(NULLIF(a.pan_number, ''), NULLIF(pad.pan_number, ''), 'N/A') as pan_number,
         COALESCE(NULLIF(a.bank_application_number, ''), NULLIF(pad.bank_application_number, ''), 'N/A') as bank_application_number,
-        COALESCE(NULLIF(a.vkyc_link, ''), NULLIF(pad.vkyc_url, ''), '') as vkyc_link,
+        COALESCE(NULLIF(a.vkyc_link, ''), NULLIF(a.vkyc_url, ''), NULLIF(pad.vkyc_url, ''), '') as vkyc_link,
         COALESCE(NULLIF(a.user_remark, ''), NULLIF(pad.user_remark, ''), NULLIF(a.notes, ''), '') as user_remark,
         COALESCE(NULLIF(a.kyc_remarks, ''), NULLIF(pad.kyc_remarks, ''), '') as kyc_remarks,
         COALESCE(NULLIF(a.kyc_stage, ''), NULLIF(pad.kyc_stage, ''), 'Vkyc pending') as kyc_stage,
@@ -283,6 +312,7 @@ const getKycApplicationById = async (req, res) => {
   try {
     await ensureKycColumns();
     const { id } = req.params;
+    if (!(await ensureKycAppAccess(req, res, id))) return;
 
     const appRes = await query(`
       SELECT 
@@ -291,7 +321,7 @@ const getKycApplicationById = async (req, res) => {
         COALESCE(NULLIF(a.customer_mobile, ''), pad.mobile, 'N/A') as customer_mobile,
         COALESCE(NULLIF(a.pan_number, ''), NULLIF(pad.pan_number, ''), 'N/A') as pan_number,
         COALESCE(NULLIF(a.bank_application_number, ''), NULLIF(pad.bank_application_number, ''), 'N/A') as bank_application_number,
-        COALESCE(NULLIF(a.vkyc_link, ''), NULLIF(pad.vkyc_url, ''), '') as vkyc_link,
+        COALESCE(NULLIF(a.vkyc_link, ''), NULLIF(a.vkyc_url, ''), NULLIF(pad.vkyc_url, ''), '') as vkyc_link,
         COALESCE(NULLIF(a.user_remark, ''), NULLIF(pad.user_remark, ''), NULLIF(a.notes, ''), '') as user_remark,
         COALESCE(NULLIF(a.kyc_remarks, ''), NULLIF(pad.kyc_remarks, ''), '') as kyc_remarks,
         COALESCE(NULLIF(a.kyc_stage, ''), NULLIF(pad.kyc_stage, ''), 'Vkyc pending') as kyc_stage,
@@ -365,6 +395,7 @@ const getKycApplicationById = async (req, res) => {
 const getKycApplicationDocuments = async (req, res) => {
   try {
     const { id } = req.params;
+    if (!(await ensureKycAppAccess(req, res, id))) return;
 
     const appRes = await query(`
       SELECT a.id, COALESCE(NULLIF(a.soft_approval_status, ''), NULLIF(pad.soft_approval_status, ''), 'PENDING') as soft_approval_status
@@ -410,6 +441,7 @@ const verifyKycApplication = async (req, res) => {
   try {
     await ensureKycColumns();
     const { id } = req.params;
+    if (!(await ensureKycAppAccess(req, res, id))) return;
     const { remarks } = req.body;
 
     const appRes = await query(`
@@ -472,6 +504,7 @@ const rejectKycApplication = async (req, res) => {
   try {
     await ensureKycColumns();
     const { id } = req.params;
+    if (!(await ensureKycAppAccess(req, res, id))) return;
     const { remarks } = req.body;
 
     if (!remarks || !remarks.trim()) {
@@ -530,6 +563,7 @@ const requestInfoKycApplication = async (req, res) => {
   try {
     await ensureKycColumns();
     const { id } = req.params;
+    if (!(await ensureKycAppAccess(req, res, id))) return;
     const { remarks } = req.body;
 
     if (!remarks || !remarks.trim()) {
@@ -587,6 +621,7 @@ const updateKycStageAndDetails = async (req, res) => {
   try {
     await ensureKycColumns();
     const { id } = req.params;
+    if (!(await ensureKycAppAccess(req, res, id))) return;
     const { 
       kyc_stage, 
       vkyc_stage, 
