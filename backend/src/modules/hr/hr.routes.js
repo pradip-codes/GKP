@@ -303,7 +303,21 @@ router.post('/candidates/:id/interview', async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Candidate not found' });
     }
 
-    res.json({ success: true, message: 'Interview details updated', data: rows[0] });
+    const updated = rows[0];
+    const newStatus = String(interview_status || 'INTERVIEWED').toUpperCase();
+
+    // Keep the linked login account in sync with the candidate decision:
+    // REJECTED → block the shell account; SELECTED/EMPLOYEE_CREATED → activate it.
+    if (['REJECTED', 'SELECTED', 'EMPLOYEE_CREATED'].includes(newStatus)) {
+      const userStatus = newStatus === 'REJECTED' ? 'rejected' : 'active';
+      await query(
+        `UPDATE users SET status = $1, updated_at = NOW()
+         WHERE role = 'EMPLOYEE' AND (employee_id = $2 OR mobile = $3 OR LOWER(email) = LOWER($4))`,
+        [userStatus, updated.reference_code, updated.mobile_number, updated.email_id]
+      ).catch(e => logger.warn('Candidate status sync to user failed:', e.message));
+    }
+
+    res.json({ success: true, message: 'Interview details updated', data: updated });
   } catch (err) {
     next(err);
   }

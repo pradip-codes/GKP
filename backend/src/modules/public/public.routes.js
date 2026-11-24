@@ -546,7 +546,7 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
         const empCode = reference_code.replace('REF', 'EMP');
         const userRes = await query(
           `INSERT INTO users (full_name, mobile, email, role, status, employee_id, designation, department, password_hash)
-           VALUES ($1, $2, $3, 'EMPLOYEE', 'active', $4, $5, 'Sales & Support', '$2a$10$e8w.oF/9Z9sK.9J0U.Y0c.Z0/0.0.0.0.0.0.0.0.0.0')
+           VALUES ($1, $2, $3, 'EMPLOYEE', 'pending', $4, $5, 'Sales & Support', '$2a$10$e8w.oF/9Z9sK.9J0U.Y0c.Z0/0.0.0.0.0.0.0.0.0.0')
            ON CONFLICT (mobile) DO UPDATE SET employee_id = EXCLUDED.employee_id RETURNING id`,
           [full_name.trim(), mobile_number.trim(), email_id.trim().toLowerCase(), empCode, target_role || 'TC']
         );

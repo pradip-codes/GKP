@@ -264,13 +264,24 @@ async function syncAndSeedEmployees() {
     await query(`
       INSERT INTO users (full_name, mobile, email, role, status, employee_id, designation, department, password_hash)
       SELECT 
-        c.full_name, TRIM(c.mobile_number), LOWER(TRIM(c.email_id)), 'EMPLOYEE', 'active', 
+        c.full_name, TRIM(c.mobile_number), LOWER(TRIM(c.email_id)), 'EMPLOYEE',
+        CASE WHEN UPPER(COALESCE(c.interview_status, '')) IN ('EMPLOYEE_CREATED', 'SELECTED') THEN 'active' ELSE 'pending' END,
         COALESCE(c.reference_code, c.employee_id, 'CAND' || FLOOR(10000 + RANDOM() * 90000)::text), COALESCE(c.offered_designation, c.target_role, 'TC'), 'Sales & Support',
         '$2a$10$e8w.oF/9Z9sK.9J0U.Y0c.Z0/0.0.0.0.0.0.0.0.0.0'
       FROM employee_candidates c
       WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.mobile = TRIM(c.mobile_number) OR (u.email IS NOT NULL AND LOWER(u.email) = LOWER(TRIM(c.email_id))))
       ON CONFLICT (mobile) DO UPDATE SET role = 'EMPLOYEE'
     `).catch(e => logger.warn('User candidate sync note:', e.message));
+
+    // Downgrade shell accounts of candidates not yet selected by HR back to 'pending'
+    // (blocks password-reset/OTP login until HR selects or rejects them)
+    await query(`
+      UPDATE users u SET status = 'pending', updated_at = NOW()
+      FROM employee_candidates c
+      WHERE u.role = 'EMPLOYEE' AND u.status = 'active'
+        AND u.employee_id = c.reference_code
+        AND UPPER(COALESCE(c.interview_status, '')) NOT IN ('EMPLOYEE_CREATED', 'SELECTED')
+    `).catch(e => logger.warn('Candidate pending-status sync note:', e.message));
 
     // 2. Sync candidates into employees table
     await query(`

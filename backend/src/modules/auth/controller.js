@@ -490,7 +490,10 @@ const login = async (req, res, next) => {
 
     if (user.is_active === false || user.status === 'inactive') return error(res, 'Your account has been deactivated. Please contact administrator.', 403);
     if (user.status === 'suspended') return error(res, 'Your account has been suspended. Please contact support.', 403);
-    if (user.status === 'blocked') return error(res, 'Your account has been blocked by the administrator. Please contact support.', 403);
+    if (user.status === 'blocked' || user.status === 'rejected') return error(res, 'Your account has been blocked by the administrator. Please contact support.', 403);
+    if (String(user.role).toUpperCase() === 'EMPLOYEE' && user.status === 'pending') {
+      return error(res, 'Your account is pending HR approval. You can log in once the HR team selects you.', 403);
+    }
 
     // Check Working Hours Restriction
     const workingHoursService = require('./workingHours.service.js');
@@ -664,7 +667,10 @@ const loginWithMsg91 = async (req, res, next) => {
     // Permanent/administrative blocks are handled by status check below.
     if (user.is_active === false || user.status === 'inactive') return error(res, 'Your account has been deactivated. Please contact administrator.', 403);
     if (user.status === 'suspended') return error(res, 'Your account has been suspended. Please contact support.', 403);
-    if (user.status === 'blocked') return error(res, 'Your account has been blocked by the administrator. Please contact support.', 403);
+    if (user.status === 'blocked' || user.status === 'rejected') return error(res, 'Your account has been blocked by the administrator. Please contact support.', 403);
+    if (String(user.role).toUpperCase() === 'EMPLOYEE' && user.status === 'pending') {
+      return error(res, 'Your account is pending HR approval. You can log in once the HR team selects you.', 403);
+    }
 
     // Check Working Hours Restriction
     const workingHoursService = require('./workingHours.service.js');
@@ -764,7 +770,7 @@ const refresh = async (req, res, next) => {
       return error(res, 'Invalid or expired refresh token', 401);
     }
 
-    if (tokenRecord.is_active === false || ['inactive', 'suspended', 'blocked'].includes(String(tokenRecord.status || '').toLowerCase())) {
+    if (tokenRecord.is_active === false || ['inactive', 'suspended', 'blocked', 'rejected'].includes(String(tokenRecord.status || '').toLowerCase())) {
       await query(`UPDATE refresh_tokens SET revoked = true, revoked_at = NOW() WHERE user_id = $1`, [tokenRecord.user_id]);
       clearRefreshTokenCookie(res);
       return error(res, 'Your account has been deactivated. Please contact administrator.', 403);
@@ -1337,7 +1343,10 @@ const loginPassword = async (req, res, next) => {
 
     if (user.is_active === false || user.status === 'inactive') return error(res, 'Your account has been deactivated. Please contact administrator.', 403);
     if (user.status === 'suspended') return error(res, 'Your account has been suspended. Please contact support.', 403);
-    if (user.status === 'blocked') return error(res, 'Your account has been blocked by the administrator. Please contact support.', 403);
+    if (user.status === 'blocked' || user.status === 'rejected') return error(res, 'Your account has been blocked by the administrator. Please contact support.', 403);
+    if (String(user.role).toUpperCase() === 'EMPLOYEE' && user.status === 'pending') {
+      return error(res, 'Your account is pending HR approval. You can log in once the HR team selects you.', 403);
+    }
 
     // Check Working Hours Restriction BEFORE password verification
     const workingHoursService = require('./workingHours.service.js');
@@ -1421,10 +1430,15 @@ const forgotPassword = async (req, res, next) => {
     const { email } = req.body;
     if (!email) return error(res, 'Email required', 400);
 
-    const { rows: [user] } = await query(`SELECT id, email FROM users WHERE LOWER(email) = LOWER($1)`, [email]);
+    const { rows: [user] } = await query(`SELECT id, email, role, status FROM users WHERE LOWER(email) = LOWER($1)`, [email]);
 
     // Always return success to avoid account enumeration
     if (!user) return res.json({ success: true, message: 'If an account exists, a reset link has been sent.' });
+
+    // Pending HR-approval candidate accounts cannot reset passwords
+    if (String(user.role).toUpperCase() === 'EMPLOYEE' && user.status === 'pending') {
+      return res.json({ success: true, message: 'If an account exists, a reset link has been sent.' });
+    }
 
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
@@ -1498,10 +1512,13 @@ const resetPassword = async (req, res, next) => {
     const { token, password } = req.body;
     if (!token || !password) return error(res, 'Token and new password required', 400);
 
-    const { rows: [user] } = await query(`SELECT id, password_hash, reset_token_expires_at FROM users WHERE reset_token = $1`, [token]);
+    const { rows: [user] } = await query(`SELECT id, password_hash, reset_token_expires_at, role, status FROM users WHERE reset_token = $1`, [token]);
     if (!user) return error(res, 'Invalid or expired token', 400);
     if (user.reset_token_expires_at && new Date() > new Date(user.reset_token_expires_at)) {
       return error(res, 'Reset token has expired', 400);
+    }
+    if (String(user.role).toUpperCase() === 'EMPLOYEE' && user.status === 'pending') {
+      return error(res, 'Your account is pending HR approval. You can set a password once the HR team selects you.', 403);
     }
 
     await security.savePassword(user.id, password, user.password_hash);
