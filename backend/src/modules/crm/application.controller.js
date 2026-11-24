@@ -2045,9 +2045,10 @@ const listApplications = async (req, res, next) => {
       const hasValidBaseBank = baseBankAccessClean && baseBankAccessClean !== '1=0';
 
       if (hasValidBaseBank) {
-        // Sales Executive sees ONLY applications of their assigned banks —
-        // no punching-process, dispatch, claim or other previous-rule filters.
-        salesExecFilterSQL = ` AND (${baseBankAccessClean})`;
+        // Sales Executive sees ONLY punching-process applications of their assigned banks —
+        // lead_punching / partner_punch / digital_punching etc. Other process types are hidden.
+        const punchingProcessFilter = ` AND (LOWER(COALESCE(combined.process_by, '')) LIKE '%punch%' OR LOWER(COALESCE(combined.process_type, '')) LIKE '%punch%')`;
+        salesExecFilterSQL = ` AND (${baseBankAccessClean})${punchingProcessFilter}`;
       } else {
         // No banks assigned → nothing visible
         salesExecFilterSQL = ' AND 1=0';
@@ -4449,10 +4450,10 @@ const exportApplicationsCSV = async (req, res, next) => {
     if (isSalesExecUser && userId) {
       const cleanWhere = (whereClause || '').replace(/^\s*WHERE\s*/i, '').trim();
       const hasValidBase = cleanWhere && cleanWhere !== '1=0';
-      // Sales Executive sees ONLY applications of their assigned banks —
-      // no punching-process, dispatch, claim or other previous-rule filters.
+      // Sales Executive sees ONLY punching-process applications of their assigned banks.
+      const punchingProcessFilter = ` AND (LOWER(COALESCE(combined.process_by, '')) LIKE '%punch%')`;
       if (hasValidBase) {
-        whereClause = `WHERE (${cleanWhere})`;
+        whereClause = `WHERE (${cleanWhere})${punchingProcessFilter}`;
       } else {
         whereClause = `WHERE 1=0`;
       }
