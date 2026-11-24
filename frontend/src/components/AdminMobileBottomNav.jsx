@@ -92,7 +92,7 @@ export default function AdminMobileBottomNav({ isHR = false, mobileMenuOpen, onT
 
         {/* 2. Applications / Attendance */}
         <div
-          onClick={() => handleNav(isHR ? '/admin/attendance' : '/admin/applications')}
+          onClick={() => handleNav(isHR ? '/hr/attendance' : '/admin/applications')}
           style={{
             display: 'flex',
             flexDirection: 'column',
@@ -102,10 +102,10 @@ export default function AdminMobileBottomNav({ isHR = false, mobileMenuOpen, onT
             flex: 1
           }}
         >
-          <div style={{ color: isActive(isHR ? '/admin/attendance' : '/admin/applications') && !mobileMenuOpen ? activeColor : inactiveColor }}>
+          <div style={{ color: isActive(isHR ? '/hr/attendance' : '/admin/applications') && !mobileMenuOpen ? activeColor : inactiveColor }}>
             <HiOutlineDocumentText size={22} />
           </div>
-          <span style={{ fontSize: '11px', fontWeight: isActive(isHR ? '/admin/attendance' : '/admin/applications') && !mobileMenuOpen ? 800 : 600, color: isActive(isHR ? '/admin/attendance' : '/admin/applications') && !mobileMenuOpen ? activeColor : inactiveColor }}>
+          <span style={{ fontSize: '11px', fontWeight: isActive(isHR ? '/hr/attendance' : '/admin/applications') && !mobileMenuOpen ? 800 : 600, color: isActive(isHR ? '/hr/attendance' : '/admin/applications') && !mobileMenuOpen ? activeColor : inactiveColor }}>
             {isHR ? 'Attendance' : 'Apps'}
           </span>
         </div>

@@ -160,6 +160,10 @@ export default function LoginScreen() {
       setErrorMsg('Please enter your email or mobile number to receive OTP');
       return;
     }
+    if (cooldownSeconds > 0) {
+      setErrorMsg(`Too many attempts. Please wait ${formatCooldown(cooldownSeconds)} before requesting OTP.`);
+      return;
+    }
 
     setErrorMsg(null);
     setLoading(true);
@@ -475,11 +479,16 @@ export default function LoginScreen() {
                     <TouchableOpacity
                       style={[styles.submitBtn, { backgroundColor: colors.primary, marginTop: 12 }]}
                       onPress={handleSendOtp}
-                      disabled={loading}
+                      disabled={loading || cooldownSeconds > 0}
                       activeOpacity={0.85}
                     >
                       {loading ? (
                         <ActivityIndicator size="small" color="#FFF" />
+                      ) : cooldownSeconds > 0 ? (
+                        <>
+                          <Icon name="time" size={15} color="#FFF" />
+                          <Text style={styles.submitBtnText}>Wait {formatCooldown(cooldownSeconds)}</Text>
+                        </>
                       ) : (
                         <>
                           <Text style={styles.submitBtnText}>{t('auth.sendVerificationOtp')}</Text>

@@ -206,6 +206,74 @@ export default function PartnerLogin() {
   const [toast, setToast] = useState(null);
   const [otpSentTime, setOtpSentTime] = useState(null);
 
+  // Failed login attempts & progressive lockout state
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [lockoutTimer, setLockoutTimer] = useState(0);
+  const [isLocked, setIsLocked] = useState(false);
+  const [requireOtp, setRequireOtp] = useState(false);
+  const [verifyChanceGiven, setVerifyChanceGiven] = useState(false);
+
+  const clearLoginAttemptState = () => {
+    setFailedAttempts(0);
+    setLockoutTimer(0);
+    setIsLocked(false);
+    setRequireOtp(false);
+    setVerifyChanceGiven(false);
+    const ident = (formData.identity || "").trim().toLowerCase();
+    try {
+      if (ident) localStorage.removeItem(`gkp_lock_until_${ident}`);
+    } catch (e) {}
+  };
+
+  // Check persisted lockout timer on mount or identity change
+  useEffect(() => {
+    const ident = (formData.identity || "").trim().toLowerCase();
+    if (!ident) {
+      setLockoutTimer(0);
+      setIsLocked(false);
+      return;
+    }
+    try {
+      const lockKey = `gkp_lock_until_${ident}`;
+      const savedLockUntil = localStorage.getItem(lockKey);
+      if (savedLockUntil) {
+        const remaining = Math.ceil((parseInt(savedLockUntil, 10) - Date.now()) / 1000);
+        if (remaining > 0) {
+          setLockoutTimer(remaining);
+          setIsLocked(true);
+        } else {
+          localStorage.removeItem(lockKey);
+          setIsLocked(false);
+          setVerifyChanceGiven(true);
+        }
+      }
+    } catch (e) {}
+  }, [formData.identity]);
+
+  // Countdown timer for 2-minute lockout
+  useEffect(() => {
+    let interval = null;
+    if (lockoutTimer > 0) {
+      interval = setInterval(() => {
+        setLockoutTimer((prev) => {
+          if (prev <= 1) {
+            setIsLocked(false);
+            setVerifyChanceGiven(true);
+            const ident = (formData.identity || "").trim().toLowerCase();
+            try {
+              if (ident) localStorage.removeItem(`gkp_lock_until_${ident}`);
+            } catch (e) {}
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [lockoutTimer, formData.identity]);
+
   // OTP 6 digit inputs
   const otpInputs = useRef([]);
   const [otpDigits, setOtpDigits] = useState(["", "", "", "", "", ""]);
@@ -383,6 +451,7 @@ export default function PartnerLogin() {
               loginRes = await loginWithMsg91(formData.identity.trim(), tokenVal);
               const profile = await getMe();
               loginStore(profile, loginRes.idToken);
+              clearLoginAttemptState();
 
               setStatus("success");
               setTimeout(() => {
@@ -417,6 +486,7 @@ export default function PartnerLogin() {
       loginRes = await loginWithOtp(formData.identity.trim(), finalOtp);
       const profile = await getMe();
       loginStore(profile, loginRes.idToken);
+      clearLoginAttemptState();
 
       setStatus("success");
       setTimeout(() => {
@@ -666,6 +736,7 @@ export default function PartnerLogin() {
                 loginRes = await loginWithMsg91(formData.identity.trim(), tokenVal);
                 const profile = await getMe();
                 loginStore(profile, loginRes.idToken);
+                clearLoginAttemptState();
 
                 const rawFrom = location.state?.from?.pathname;
                 const dest = resolveDestination(profile, rawFrom);
@@ -703,6 +774,7 @@ export default function PartnerLogin() {
 
       const profile = await getMe();
       loginStore(profile, loginRes.idToken);
+      clearLoginAttemptState();
 
       const needsProfileCompletion =
         inviteToken &&
@@ -720,9 +792,30 @@ export default function PartnerLogin() {
     } catch (e) {
       setOtpDigits(["", "", "", "", "", ""]);
       setTimeout(() => otpInputs.current[0]?.focus(), 50);
-      setErr(
-        e.message || t("partner.errors.invalidCredentials", "Invalid credentials. Please try again.")
-      );
+
+      const errData = e.data || e.response?.data || {};
+      const newAttempts = errData.failed_attempts || (failedAttempts + 1);
+      setFailedAttempts(newAttempts);
+
+      if (errData.locked || errData.lockout_seconds > 0 || (newAttempts >= 3 && !verifyChanceGiven && !errData.require_otp)) {
+        const seconds = errData.lockout_seconds || 120;
+        setLockoutTimer(seconds);
+        setIsLocked(true);
+        const ident = (formData.identity || "").trim().toLowerCase();
+        try {
+          if (ident) localStorage.setItem(`gkp_lock_until_${ident}`, String(Date.now() + seconds * 1000));
+        } catch (storageErr) {}
+        setErr(errData.message || t("partner.errors.maxAttemptsWait", "Maximum attempts reached. Please wait 2 minutes before trying again."));
+      } else if (errData.require_otp || (verifyChanceGiven && newAttempts > 3) || newAttempts >= 4) {
+        setRequireOtp(true);
+        setIsLocked(false);
+        setLockoutTimer(0);
+        setErr(errData.message || t("partner.errors.maxAttemptsOtp", "Maximum attempts exceeded. Please log in using OTP."));
+      } else {
+        setErr(
+          e.message || t("partner.errors.invalidCredentials", "Invalid credentials. Please try again.")
+        );
+      }
       setLoading((l) => ({ ...l, login: false }));
     } finally {
       verifyingRef.current = false;
@@ -875,9 +968,11 @@ export default function PartnerLogin() {
                       type={showPassword ? "text" : "password"}
                       value={formData.password}
                       onChange={handleChange}
+                      disabled={lockoutTimer > 0 || requireOtp}
                       placeholder={t("partner.password", "Password")}
                       className="form-input password-input"
                       autoComplete="current-password"
+                      style={lockoutTimer > 0 || requireOtp ? { opacity: 0.6, cursor: "not-allowed", background: "#f8fafc" } : {}}
                     />
                     <label className="float-label" htmlFor="password">
                       {t("partner.password", "Password")}
@@ -886,12 +981,130 @@ export default function PartnerLogin() {
                     <button
                       type="button"
                       className="password-toggle"
+                      disabled={lockoutTimer > 0 || requireOtp}
                       onClick={() => setShowPassword((prev) => !prev)}
                       aria-label={showPassword ? t("login.hidePassword", "Hide password") : t("login.showPassword", "Show password")}
                     >
                       {showPassword ? <EyeOff size={21} /> : <Eye size={21} />}
                     </button>
                   </div>
+                </div>
+              )}
+
+              {/* LOCKOUT 2-MINUTE COUNTDOWN TIMER BANNER */}
+              {loginType === "password" && lockoutTimer > 0 && (
+                <div
+                  style={{
+                    marginTop: "14px",
+                    background: "#FFFBEB",
+                    border: "1.5px solid #FCD34D",
+                    borderRadius: "14px",
+                    padding: "14px 18px",
+                    color: "#92400E",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    boxShadow: "0 4px 12px rgba(245, 158, 11, 0.12)"
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "36px",
+                      height: "36px",
+                      borderRadius: "50%",
+                      background: "#FEF3C7",
+                      border: "1.5px solid #F59E0B",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0
+                    }}
+                  >
+                    <AlertCircle size={20} color="#D97706" />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 800, fontSize: "13.5px", color: "#92400E" }}>
+                      Maximum attempts reached
+                    </div>
+                    <div style={{ fontSize: "12.5px", marginTop: "2px", color: "#B45309" }}>
+                      Please wait{" "}
+                      <strong style={{ color: "#B45309", fontFamily: "monospace", fontSize: "14px", fontWeight: 800 }}>
+                        {Math.floor(lockoutTimer / 60)}:{(lockoutTimer % 60).toString().padStart(2, "0")}
+                      </strong>{" "}
+                      before trying again.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* POST-LOCKOUT CHANCE TO VERIFY NOTICE */}
+              {loginType === "password" && verifyChanceGiven && lockoutTimer === 0 && !requireOtp && (
+                <div
+                  style={{
+                    marginTop: "14px",
+                    background: "#F0FDF4",
+                    border: "1.5px solid #86EFAC",
+                    borderRadius: "14px",
+                    padding: "12px 16px",
+                    color: "#166534",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                  }}
+                >
+                  <Check size={18} color="#16A34A" />
+                  <span>You can now enter your credentials to verify.</span>
+                </div>
+              )}
+
+              {/* REQUIRE OTP LOGIN BANNER & DIRECT BUTTON */}
+              {loginType === "password" && requireOtp && (
+                <div
+                  style={{
+                    marginTop: "14px",
+                    background: "#FEF2F2",
+                    border: "1.5px solid #FCA5A5",
+                    borderRadius: "14px",
+                    padding: "16px",
+                    textAlign: "center"
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", color: "#991B1B", fontWeight: 800, fontSize: "14px", marginBottom: "6px" }}>
+                    <AlertCircle size={18} color="#DC2626" />
+                    <span>Maximum Attempts Exceeded</span>
+                  </div>
+                  <p style={{ margin: "0 0 12px", fontSize: "13px", color: "#7F1D1D" }}>
+                    Verification failed. Please log in using OTP.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginType("otp");
+                      setErr("");
+                    }}
+                    className="login-submit"
+                    style={{
+                      width: "100%",
+                      padding: "12px",
+                      background: "linear-gradient(135deg, #2563EB, #1D4ED8)",
+                      color: "#fff",
+                      fontWeight: 700,
+                      fontSize: "14px",
+                      borderRadius: "12px",
+                      border: "none",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "8px"
+                    }}
+                  >
+                    <Smartphone size={18} />
+                    <span>Login using OTP</span>
+                    <ArrowRight size={18} />
+                  </button>
                 </div>
               )}
 
@@ -1009,18 +1222,21 @@ export default function PartnerLogin() {
               )}
 
               {/* LOGIN BUTTON */}
-              {!(loginType === "otp" && otpSent) && (
+              {!(loginType === "otp" && otpSent) && !requireOtp && (
                 <button
                   type={loginType === "password" ? "submit" : "button"}
                   onClick={loginType === "otp" ? handleSendOtp : undefined}
-                  disabled={loginType === "password" ? loading.login : loading.otp}
+                  disabled={loginType === "password" ? (loading.login || lockoutTimer > 0) : loading.otp}
                   className="login-submit"
+                  style={loginType === "password" && lockoutTimer > 0 ? { opacity: 0.65, cursor: "not-allowed" } : {}}
                 >
                   <Lock size={22} />
 
                   <span>
                     {loginType === "password"
-                      ? loading.login
+                      ? lockoutTimer > 0
+                        ? `Please wait ${Math.floor(lockoutTimer / 60)}:${(lockoutTimer % 60).toString().padStart(2, "0")}`
+                        : loading.login
                         ? t("partner.verifying", "Verifying Credentials...")
                         : t("login.loginToAccount", "Login to Account")
                       : loading.otp

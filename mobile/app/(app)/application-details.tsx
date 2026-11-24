@@ -64,12 +64,17 @@ interface OperatorHistoryItem {
 
 const maskPan = (pan?: string) => {
   if (!pan || pan.length < 10) return pan || 'N/A';
-  return `${pan.substring(0, 2)}XXXX${pan.substring(6)}`;
+  return `${pan.substring(0, 5)}*****`;
 };
 
 const maskMobile = (mobile?: string) => {
   if (!mobile || mobile.length < 10) return mobile || 'N/A';
-  return `${mobile.substring(0, 2)}XXXXXX${mobile.substring(8)}`;
+  const clean = mobile.replace(/\D/g, '');
+  if (clean.length >= 10) {
+    const main = clean.slice(-10);
+    return `${main.substring(0, 5)}*****`;
+  }
+  return `${mobile.substring(0, mobile.length - 5)}*****`;
 };
 
 export default function ApplicationDetailsScreen() {

@@ -378,11 +378,12 @@ const AppRoutes = () => {
       {/* HR Protected Routes */}
       <Route element={<ProtectedRoute />}>
         <Route element={<RoleRoute allowedRoles={['HR', 'ADMIN', 'SUPER_ADMIN']} />}>
-          <Route element={<AdminLayout />}>
+          <Route element={<AttendanceGate><AdminLayout /></AttendanceGate>}>
             <Route path="/hr" element={<HRDashboard />} />
             <Route path="/hr/dashboard" element={<HRDashboard />} />
             <Route path="/hr/candidates" element={<HRDashboard />} />
             <Route path="/hr/payroll" element={<HRPayroll />} />
+            <Route path="/hr/attendance" element={<EmployeeAttendance />} />
             <Route path="/admin/profile" element={<AdminProfile />} />
             <Route path="/hr/profile" element={<AdminProfile />} />
           </Route>
@@ -392,8 +393,9 @@ const AppRoutes = () => {
       {/* Admin & KYC Operator Protected Routes */}
       <Route element={<ProtectedRoute />}>
         <Route element={<RoleRoute allowedRoles={['ADMIN', 'SUPER_ADMIN', 'KYC_OPERATOR']} />}>
-          <Route element={<AdminLayout />}>
+          <Route element={<AttendanceGate><AdminLayout /></AttendanceGate>}>
             <Route path="/admin/dashboard" element={<AdminDashboard />} />
+            <Route path="/admin/attendance" element={<EmployeeAttendance />} />
             <Route path="/admin/kyc-operator" element={<KycOperatorDashboard />} />
             <Route path="/admin/kyc" element={<KycOperatorDashboard />} />
             <Route path="/admin/applications" element={<ManageApplications />} />

@@ -98,50 +98,7 @@ async function ensureTasksTableExists() {
   }
 }
 
-/**
- * Helper: Resolve UUID employee ID from reqUser
- */
-async function resolveEmployeeId(reqUser) {
-  if (!reqUser) return null;
-  const isValidUuid = (str) => typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
-
-  if (reqUser.id) {
-    try {
-      const { rows: [emp] } = await query(`SELECT id FROM employees WHERE user_id = $1 LIMIT 1`, [reqUser.id]);
-      if (emp && emp.id) return emp.id;
-    } catch (e) {}
-  }
-
-  const candidate = reqUser.employeeId || reqUser.employee_id || reqUser.employee_code || reqUser.emp_code;
-  if (candidate && isValidUuid(candidate)) {
-    try {
-      const { rows: [emp] } = await query(`SELECT id FROM employees WHERE id = $1 LIMIT 1`, [candidate]);
-      if (emp && emp.id) return emp.id;
-    } catch (e) {}
-  }
-
-  if (candidate && typeof candidate === 'string') {
-    try {
-      const { rows: [emp] } = await query(
-        `SELECT id FROM employees WHERE employee_id = $1 OR candidate_id::text = $1 LIMIT 1`,
-        [candidate.trim()]
-      );
-      if (emp && emp.id) return emp.id;
-    } catch (e) {}
-  }
-
-  if (reqUser.mobile || reqUser.email) {
-    try {
-      const { rows: [emp] } = await query(
-        `SELECT id FROM employees WHERE mobile_number = $1 OR official_email = $2 OR personal_email = $2 LIMIT 1`,
-        [reqUser.mobile || null, reqUser.email || null]
-      );
-      if (emp && emp.id) return emp.id;
-    } catch (e) {}
-  }
-
-  return null;
-}
+const { resolveEmployeeId } = require('../attendance/resolve-employee.helper');
 
 /**
  * Helper: Server date in Asia/Kolkata (YYYY-MM-DD)

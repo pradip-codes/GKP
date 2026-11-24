@@ -3,8 +3,8 @@ const bcrypt = require('bcryptjs');
 const { query } = require('../../config/database');
 const { sendEmail } = require('../../services/email/email.service');
 
-const MAX_FAILED_ATTEMPTS = 5;
-const LOCK_MINUTES = 30;
+const MAX_FAILED_ATTEMPTS = 3;
+const LOCK_MINUTES = 2;
 
 const clientContext = (req) => {
   const userAgent = String(req.get('user-agent') || 'Unknown device');
@@ -72,8 +72,19 @@ const resetFailures = (userId) => query(`UPDATE users SET failed_login_attempts=
 const recordFailedLogin = async (user, req, reason) => {
   await loginRecord(user?.id, req, 'failed', reason);
   if (!user) return null;
-  const { rows: [updated] } = await query(`UPDATE users SET failed_login_attempts=failed_login_attempts+1, locked_until=CASE WHEN failed_login_attempts+1 >= $1 THEN NOW()+INTERVAL '${LOCK_MINUTES} minutes' ELSE locked_until END WHERE id=$2 RETURNING failed_login_attempts,locked_until`, [MAX_FAILED_ATTEMPTS, user.id]);
-  if (updated?.locked_until) await query(`INSERT INTO security_alerts (user_id,type,message) VALUES ($1,'account_locked',$2)`, [user.id, `Account locked for ${LOCK_MINUTES} minutes after repeated failed sign-in attempts.`]);
+  const { rows: [updated] } = await query(`
+    UPDATE users 
+    SET failed_login_attempts = failed_login_attempts + 1, 
+        locked_until = CASE 
+          WHEN failed_login_attempts + 1 = $1 THEN NOW() + INTERVAL '${LOCK_MINUTES} minutes' 
+          ELSE locked_until 
+        END 
+    WHERE id = $2 
+    RETURNING failed_login_attempts, locked_until
+  `, [MAX_FAILED_ATTEMPTS, user.id]);
+  if (updated?.locked_until && new Date(updated.locked_until) > new Date()) {
+    await query(`INSERT INTO security_alerts (user_id,type,message) VALUES ($1,'account_locked',$2)`, [user.id, `Account locked for ${LOCK_MINUTES} minutes after repeated failed sign-in attempts.`]).catch(() => {});
+  }
   return updated;
 };
 

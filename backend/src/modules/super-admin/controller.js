@@ -301,17 +301,35 @@ const createAdmin = async (req, res, next) => {
           status = 'active'
       `, [dbUser.id, uniqueEmployeeId, fullName, email, formattedMobile, designation || 'HR Manager', department || 'Human Resources']).catch(e => logger.warn('HR profile sync note:', e.message));
 
-      // Ensure HR is removed from employees table (and clean up child FK records)
-      const targetEmpSubquery = `SELECT id FROM employees WHERE user_id = $1 OR mobile_number = $2`;
-      await query(`DELETE FROM employee_onboarding_checklist WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
-      await query(`DELETE FROM employee_hierarchy WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
-      await query(`DELETE FROM employee_joining_details WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
-      await query(`DELETE FROM employee_kyc WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
-      await query(`DELETE FROM employee_documents WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
-      await query(`DELETE FROM employee_terms_acceptance WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
-      await query(`DELETE FROM employee_product_links WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
-      await query(`DELETE FROM employee_incentive_transactions WHERE employee_id IN (${targetEmpSubquery})`, [dbUser.id, formattedMobile]).catch(() => {});
-      await query(`DELETE FROM employees WHERE user_id = $1 OR mobile_number = $2`, [dbUser.id, formattedMobile]).catch(() => {});
+      // Ensure HR is also registered in employees table for full attendance connection
+      await query(`
+        INSERT INTO employees (
+          employee_id, user_id, full_name, mobile_number, email_id, designation, department, joining_date, employment_type, offered_salary, employee_status, activation_status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_DATE, 'Full-time', 0, 'ACTIVE', 'APPROVED')
+        ON CONFLICT (mobile_number) DO UPDATE SET
+          user_id = EXCLUDED.user_id,
+          employee_id = EXCLUDED.employee_id,
+          full_name = EXCLUDED.full_name,
+          designation = EXCLUDED.designation,
+          department = EXCLUDED.department,
+          employee_status = 'ACTIVE',
+          activation_status = 'APPROVED'
+      `, [uniqueEmployeeId, dbUser.id, fullName, formattedMobile, email, designation || 'HR Manager', department || 'Human Resources']).catch(e => logger.warn('Employees sync note for HR:', e.message));
+    } else if (role === 'ADMIN') {
+      // Ensure Admin / Operator is also registered in employees table for attendance
+      await query(`
+        INSERT INTO employees (
+          employee_id, user_id, full_name, mobile_number, email_id, designation, department, joining_date, employment_type, offered_salary, employee_status, activation_status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_DATE, 'Full-time', 0, 'ACTIVE', 'APPROVED')
+        ON CONFLICT (mobile_number) DO UPDATE SET
+          user_id = EXCLUDED.user_id,
+          employee_id = EXCLUDED.employee_id,
+          full_name = EXCLUDED.full_name,
+          designation = EXCLUDED.designation,
+          department = EXCLUDED.department,
+          employee_status = 'ACTIVE',
+          activation_status = 'APPROVED'
+      `, [uniqueEmployeeId, dbUser.id, fullName, formattedMobile, email, designation || 'Administrator', department || 'Operations']).catch(e => logger.warn('Employees sync note for Admin:', e.message));
     }
 
     const isNewUserOpHead = ['Operational Head', 'OPERATIONAL_HEAD', 'OPERATIONAL HEAD', 'OPERATIONS HEAD', 'OPERATIONS_HEAD'].includes(dbUser.designation)
