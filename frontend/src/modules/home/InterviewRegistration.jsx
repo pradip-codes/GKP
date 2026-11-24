@@ -138,7 +138,7 @@ export default function InterviewRegistration() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await axios.get(`${getApiV1Url()}/public/hr-list`);
+        const res = await axios.get(`${getApiV1Url()}/public/careers/hr-list`);
         if (!cancelled && res.data?.success && Array.isArray(res.data.data)) {
           setHrOptions(res.data.data);
         }

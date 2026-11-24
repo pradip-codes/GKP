@@ -271,13 +271,14 @@ router.post('/verify-otp', async (req, res, next) => {
 });
 
 // GET /api/v1/public/hr-list — Active HR accounts for the interview registration "Select HR" dropdown.
-// Returns minimal public-safe fields only (id + display name).
+// Reads from hr_profiles (synced from users role=HR); returns user_id so assignment links to the login account.
 router.get('/hr-list', async (req, res, next) => {
   try {
     const { rows } = await query(
-      `SELECT id, full_name FROM users
-       WHERE UPPER(role) = 'HR' AND status = 'active' AND full_name IS NOT NULL AND full_name <> ''
-       ORDER BY full_name ASC`
+      `SELECT hp.user_id AS id, hp.full_name
+       FROM hr_profiles hp
+       WHERE hp.status = 'active' AND hp.full_name IS NOT NULL AND hp.full_name <> ''
+       ORDER BY hp.full_name ASC`
     );
     res.json({ success: true, data: rows });
   } catch (err) {
