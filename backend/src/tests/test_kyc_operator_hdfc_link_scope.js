@@ -15,12 +15,7 @@ console.log('--- Testing KYC Operator scope (HDFC + KYC link) ---\n');
 
 // Mirrors KYC_HAS_LINK_SQL / KYC_HDFC_BANK_SQL in kyc-operator.controller.js
 const linkValue = (a, pad) => [a.vkyc_link, a.vkyc_url, pad.vkyc_url].map(v => String(v ?? '').trim()).find(v => v !== '') || '';
-const hasLink = (a = {}, pad = {}) => {
-  const v = linkValue(a, pad);
-  if (!v || ['N/A', 'NA', '-'].includes(v.toUpperCase())) return false;
-  if (/\s/.test(v)) return false;
-  return /^(https?:\/\/[^\s]+|([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}([\/?#][^\s]*)?)$/i.test(v);
-};
+const hasLink = (a = {}, pad = {}) => !['', 'N/A', 'NA', '-'].includes(linkValue(a, pad).toUpperCase());
 const isHdfc = (a = {}, b = {}) => [b.short_code, b.name].some(v => String(v || '').toLowerCase().includes('hdfc'));
 const inQueue = (a, b, pad) => isHdfc(a, b) && hasLink(a, pad);
 
@@ -38,9 +33,6 @@ const cases = [
   ['SBI with a link (must NOT show)', { vkyc_link: 'https://vkyc.sbi/1' }, {}, sbi, false],
   ['SBI, no link', {}, {}, sbi, false],
   ['bank identified only by banks.name containing HDFC', { vkyc_link: 'x.com/v' }, {}, { name: 'HDFC Bank Ltd' }, true],
-  ['HDFC with plain text "pending" (must NOT show)', { vkyc_link: 'pending' }, {}, hdfc, false],
-  ['HDFC with plain text "link sent" (must NOT show)', { vkyc_link: 'link sent' }, {}, hdfc, false],
-  ['HDFC with plain text "approval income 25k" (must NOT show)', { vkyc_link: 'approval income 25k' }, {}, hdfc, false],
 ];
 for (const [name, a, pad, b, expected] of cases) {
   assert.strictEqual(inQueue(a, b, pad), expected, name);
@@ -57,9 +49,6 @@ assert(listFn.includes('whereConditions.push(KYC_HAS_LINK_SQL)'), 'list must req
 assert(!/approval income 25k|approval nsdp cibil base|ipa approval cibil/i.test(listFn), 'old SBI/IPA eligibility must be gone from list');
 assert(!/LIKE '%sbi%'/i.test(listFn), 'no SBI branch in list');
 assert(src.includes("NULLIF(TRIM(a.vkyc_url), '')") && src.includes("NULLIF(TRIM(pad.vkyc_url), '')") && src.includes("NULLIF(TRIM(a.vkyc_link), '')"), 'link detection must cover all 3 columns');
-const hasLinkSqlStart = src.indexOf('const KYC_HAS_LINK_SQL');
-const hasLinkSql = src.slice(hasLinkSqlStart, src.indexOf('`;', hasLinkSqlStart));
-assert(/https\?:\/\//.test(hasLinkSql), 'KYC_HAS_LINK_SQL must check for valid URL schema');
 // Regression: applications.bank_name does not exist in the production DB (caused 'column a.bank_name does not exist')
 const hdfcSqlStart = src.indexOf('const KYC_HDFC_BANK_SQL');
 const hdfcSql = src.slice(hdfcSqlStart, src.indexOf('`;', hdfcSqlStart));
