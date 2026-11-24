@@ -238,7 +238,18 @@ const createAdmin = async (req, res, next) => {
     }
 
     let uniqueEmployeeId = req.body.employeeId || req.body.employee_id || '';
-    if (!uniqueEmployeeId || !/^CAND\d+$/.test(uniqueEmployeeId)) {
+    if (normRole === 'HR') {
+      // HR accounts get employee_id in YOH-HR#### format
+      if (!/^YOH-HR\d{4}$/.test(uniqueEmployeeId)) {
+        let isUnique = false;
+        while (!isUnique) {
+          const num = String(Math.floor(1000 + Math.random() * 9000));
+          uniqueEmployeeId = `YOH-HR${num}`;
+          const { rows: [existingEmployee] } = await query(`SELECT id FROM users WHERE employee_id = $1`, [uniqueEmployeeId]);
+          if (!existingEmployee) isUnique = true;
+        }
+      }
+    } else if (!uniqueEmployeeId || !/^CAND\d+$/.test(uniqueEmployeeId)) {
       try {
         const { rows } = await query(`SELECT nextval('candidate_reference_seq') AS seq`);
         if (rows[0]?.seq) {
