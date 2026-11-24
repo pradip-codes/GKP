@@ -13,7 +13,11 @@ const ensureKycColumns = async () => {};
 // ── KYC Operator scope: HDFC only, and only applications that carry a KYC (VKYC) link ──────────────
 // Link can live on applications.vkyc_link, applications.vkyc_url or physical_application_details.vkyc_url.
 const KYC_LINK_VALUE_SQL = `COALESCE(NULLIF(TRIM(a.vkyc_link), ''), NULLIF(TRIM(a.vkyc_url), ''), NULLIF(TRIM(pad.vkyc_url), ''), '')`;
-const KYC_HAS_LINK_SQL = `(UPPER(${KYC_LINK_VALUE_SQL}) NOT IN ('', 'N/A', 'NA', '-'))`;
+// Only show applications with a valid VKYC link (exclude empty, N/A, and plain text without a valid URL)
+const KYC_HAS_LINK_SQL = `(
+  ${KYC_LINK_VALUE_SQL} ~* '^https?://[^[:space:]]+'
+  OR (${KYC_LINK_VALUE_SQL} ~* '^([a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,}([/\\?#][^[:space:]]*)?$' AND ${KYC_LINK_VALUE_SQL} !~* '[[:space:]]')
+)`;
 // NOTE: do NOT reference a.bank_name here - applications.bank_name does not exist in the production DB.
 const KYC_HDFC_BANK_SQL = `(
   LOWER(COALESCE(b.short_code, '')) LIKE '%hdfc%'
@@ -253,6 +257,7 @@ const getKycApplications = async (req, res) => {
         COALESCE(NULLIF(a.pan_number, ''), NULLIF(pad.pan_number, ''), 'N/A') as pan_number,
         COALESCE(NULLIF(a.bank_application_number, ''), NULLIF(pad.bank_application_number, ''), 'N/A') as bank_application_number,
         COALESCE(NULLIF(a.vkyc_link, ''), NULLIF(a.vkyc_url, ''), NULLIF(pad.vkyc_url, ''), '') as vkyc_link,
+        COALESCE(NULLIF(to_jsonb(a)->>'vkyc_executive_code', ''), NULLIF(a.metadata->>'vkyc_executive_code', ''), NULLIF(pad.metadata->>'vkyc_executive_code', ''), '') as vkyc_executive_code,
         COALESCE(NULLIF(a.user_remark, ''), NULLIF(pad.user_remark, ''), NULLIF(a.notes, ''), '') as user_remark,
         COALESCE(NULLIF(a.kyc_remarks, ''), NULLIF(pad.kyc_remarks, ''), '') as kyc_remarks,
         COALESCE(NULLIF(a.kyc_stage, ''), NULLIF(pad.kyc_stage, ''), 'Vkyc pending') as kyc_stage,
@@ -322,6 +327,7 @@ const getKycApplicationById = async (req, res) => {
         COALESCE(NULLIF(a.pan_number, ''), NULLIF(pad.pan_number, ''), 'N/A') as pan_number,
         COALESCE(NULLIF(a.bank_application_number, ''), NULLIF(pad.bank_application_number, ''), 'N/A') as bank_application_number,
         COALESCE(NULLIF(a.vkyc_link, ''), NULLIF(a.vkyc_url, ''), NULLIF(pad.vkyc_url, ''), '') as vkyc_link,
+        COALESCE(NULLIF(to_jsonb(a)->>'vkyc_executive_code', ''), NULLIF(a.metadata->>'vkyc_executive_code', ''), NULLIF(pad.metadata->>'vkyc_executive_code', ''), '') as vkyc_executive_code,
         COALESCE(NULLIF(a.user_remark, ''), NULLIF(pad.user_remark, ''), NULLIF(a.notes, ''), '') as user_remark,
         COALESCE(NULLIF(a.kyc_remarks, ''), NULLIF(pad.kyc_remarks, ''), '') as kyc_remarks,
         COALESCE(NULLIF(a.kyc_stage, ''), NULLIF(pad.kyc_stage, ''), 'Vkyc pending') as kyc_stage,
@@ -629,6 +635,7 @@ const updateKycStageAndDetails = async (req, res) => {
       digilocker_stage, 
       bank_application_number, 
       vkyc_link, 
+      vkyc_executive_code,
       user_remark, 
       kyc_remarks, 
       pan_number, 
@@ -738,6 +745,17 @@ const updateKycStageAndDetails = async (req, res) => {
       params.push(vkyc_link);
       pIdx++;
       fieldChanges.vkyc_link = vkyc_link;
+    }
+
+    if (vkyc_executive_code !== undefined) {
+      const execCode = vkyc_executive_code ? String(vkyc_executive_code).trim() : '';
+      updates.push(`metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{vkyc_executive_code}', to_jsonb($${pIdx}::text))`);
+      params.push(execCode);
+      pIdx++;
+      fieldChanges.vkyc_executive_code = execCode;
+      try {
+        await query(`UPDATE applications SET vkyc_executive_code = $1 WHERE id = $2`, [execCode || null, appId]).catch(() => {});
+      } catch (_) {}
     }
 
     if (user_remark !== undefined) {

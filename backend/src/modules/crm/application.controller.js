@@ -2447,6 +2447,7 @@ const listApplications = async (req, res, next) => {
           COALESCE(NULLIF(a.pan_checker_code, ''), NULLIF(pad.pan_checker_code, '')) as pan_checker_code,
           COALESCE(NULLIF(a.remark_operator_code, ''), NULLIF(pad.remark_operator_code, '')) as remark_operator_code,
           COALESCE(NULLIF(a.remark_operator_code, ''), NULLIF(pad.remark_operator_code, '')) as remark_opretor_code,
+          COALESCE(NULLIF(to_jsonb(a)->>'vkyc_executive_code', ''), NULLIF(a.metadata->>'vkyc_executive_code', ''), NULLIF(pad.metadata->>'vkyc_executive_code', ''), '') as vkyc_executive_code,
           COALESCE(NULLIF(a.backend_remark, ''), NULLIF(pad.backend_remark, '')) as backend_remark,
           COALESCE(NULLIF(a.user_remark, ''), NULLIF(pad.user_remark, '')) as cureble_stage,
           COALESCE(NULLIF(a.primary_decline_code, ''), NULLIF(pad.primary_decline_code, ''), NULLIF(a.decline_code, ''), NULLIF(pad.decline_code, '')) as primary_code,
@@ -4900,6 +4901,7 @@ const updateApplicationDetails = async (req, res, next) => {
       decline_remark,
       vkyc_status,
       vkyc_url,
+      vkyc_executive_code,
       salary_slip_url,
       pan_card_url,
       monthly_salary,
@@ -5431,6 +5433,28 @@ const updateApplicationDetails = async (req, res, next) => {
       } catch (opCodeErr) {
         await client.query('ROLLBACK TO SAVEPOINT op_code_sp').catch(err => logger.warn('Silent catch warning:', err.message));
         logger.warn('Failed to save operator codes:', opCodeErr.message);
+      }
+    }
+
+    const rawVkycExecCode = vkyc_executive_code !== undefined ? vkyc_executive_code : req.body.vkyc_executive_code;
+    if (rawVkycExecCode !== undefined) {
+      const execCodeVal = rawVkycExecCode ? String(rawVkycExecCode).trim() : '';
+      try {
+        await client.query('SAVEPOINT vkyc_exec_sp');
+        await client.query(`
+          UPDATE applications SET
+            metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{vkyc_executive_code}', to_jsonb($1::text))
+          WHERE id = $2
+        `, [execCodeVal, app.id]);
+        await client.query(`
+          UPDATE applications SET vkyc_executive_code = $1 WHERE id = $2
+        `, [execCodeVal || null, app.id]).catch(() => {});
+        await client.query(`
+          UPDATE physical_application_details SET vkyc_executive_code = $1 WHERE application_id = $2
+        `, [execCodeVal || null, app.id]).catch(() => {});
+        await client.query('RELEASE SAVEPOINT vkyc_exec_sp');
+      } catch (execErr) {
+        await client.query('ROLLBACK TO SAVEPOINT vkyc_exec_sp').catch(() => {});
       }
     }
 

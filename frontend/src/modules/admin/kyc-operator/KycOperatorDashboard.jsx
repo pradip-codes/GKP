@@ -3,7 +3,7 @@ import { useTheme } from '../../../contexts/ThemeContext';
 import { 
   FaSearch, FaCheckCircle, FaTimesCircle, 
   FaExclamationTriangle, FaEye, FaSync, FaFileAlt, FaUserCheck, 
-  FaExternalLinkAlt, FaShieldAlt, FaHistory
+  FaExternalLinkAlt, FaShieldAlt, FaHistory, FaEdit
 } from 'react-icons/fa';
 import api from '../../../services/api';
 
@@ -19,6 +19,16 @@ export default function KycOperatorDashboard() {
   // Assigned Banks & Products for filtering
   const [assignedBanks, setAssignedBanks] = useState([]);
   const [assignedProducts, setAssignedProducts] = useState([]);
+  const [manualEditCode, setManualEditCode] = useState(false);
+
+  // Validate VKYC link (exclude empty, placeholders, and plain text)
+  const isValidVkycLink = (url) => {
+    if (!url) return false;
+    const s = String(url).trim();
+    if (!s || ['N/A', 'NA', '-', 'NONE', 'NULL'].includes(s.toUpperCase())) return false;
+    if (/\s/.test(s)) return false;
+    return /^(https?:\/\/[^\s]+|([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}([\/?#][^\s]*)?)$/i.test(s);
+  };
 
   // Filters
   const [search, setSearch] = useState('');
@@ -105,7 +115,8 @@ export default function KycOperatorDashboard() {
 
       const res = await api.get('/kyc-operator/applications', { params });
       if (res.data?.success) {
-        setApplications(res.data.data || []);
+        const validApps = (res.data.data || []).filter(app => isValidVkycLink(app.vkyc_link));
+        setApplications(validApps);
         if (res.data.stats) setStats(res.data.stats);
         if (res.data.pagination) setPagination(prev => ({ ...prev, ...res.data.pagination }));
       }
@@ -454,7 +465,7 @@ export default function KycOperatorDashboard() {
 
                     {/* VKYC Link */}
                     <td style={{ padding: '14px 18px' }}>
-                      {app.vkyc_link ? (
+                      {isValidVkycLink(app.vkyc_link) ? (
                         <a 
                           href={app.vkyc_link.startsWith('http') ? app.vkyc_link : `https://${app.vkyc_link}`}
                           target="_blank"
@@ -684,6 +695,38 @@ export default function KycOperatorDashboard() {
                       </div>
                     </div>
 
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                        <label style={{ color: C.textMid, fontSize: '11px', fontWeight: 800 }}>VKYC EXECUTIVE CODE</label>
+                        <button
+                          type="button"
+                          onClick={() => setManualEditCode(prev => !prev)}
+                          style={{
+                            background: manualEditCode ? '#DBEAFE' : 'transparent',
+                            color: manualEditCode ? '#1D4ED8' : C.teal,
+                            border: `1px solid ${manualEditCode ? '#93C5FD' : C.border}`,
+                            padding: '2px 8px',
+                            borderRadius: '6px',
+                            fontSize: '10.5px',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          <FaEdit /> {manualEditCode ? 'Manual Edit Active' : 'Edit Manually'}
+                        </button>
+                      </div>
+                      <input 
+                        type="text"
+                        value={appDetails.vkyc_executive_code || ''}
+                        onChange={(e) => setAppDetails(prev => ({ ...prev, vkyc_executive_code: e.target.value.toUpperCase() }))}
+                        placeholder="Enter VKYC Executive Code..."
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: manualEditCode ? '1.5px solid #2563EB' : `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: '12px', fontWeight: 700, fontFamily: 'monospace' }}
+                      />
+                    </div>
+
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
                       <div>
                         <label style={{ color: C.textMid, fontSize: '11px', display: 'block', fontWeight: 800, marginBottom: '4px' }}>KYC STAGE (REMARK FORM)</label>
@@ -753,6 +796,7 @@ export default function KycOperatorDashboard() {
                             digilocker_stage: appDetails.digilocker_stage,
                             bank_application_number: appDetails.bank_application_number,
                             vkyc_link: appDetails.vkyc_link,
+                            vkyc_executive_code: appDetails.vkyc_executive_code,
                             user_remark: appDetails.user_remark,
                             kyc_remarks: appDetails.kyc_remarks,
                             pan_number: appDetails.pan_number

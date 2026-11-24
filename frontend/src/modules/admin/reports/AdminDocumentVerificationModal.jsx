@@ -6,7 +6,7 @@ import {
   X, CheckCircle, XCircle, Eye, Send, ShieldCheck, 
   Building2, User, Clock, AlertTriangle, FileText, Check, ArrowRight, ArrowLeft, Lock,
   Share2, Copy, MessageSquare, Smartphone, Save, Sliders, Activity, Sparkles, ExternalLink, Link as LinkIcon,
-  Calendar
+  Calendar, Edit2
 } from 'lucide-react';
 import {
   HDFC_DECLINE_CODES,
@@ -485,6 +485,13 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
   const [cardApprovalStage, setCardApprovalStage] = useState(sanitizeVal(application?.card_approval_stage) || sanitizeVal(application?.physical_details?.card_approval_stage) || 'None');
   const [digitalCardIssued, setDigitalCardIssued] = useState(sanitizeVal(application?.digital_card_issued) || sanitizeVal(application?.physical_details?.digital_card_issued) || 'None');
   const [cardActivationStage, setCardActivationStage] = useState(sanitizeVal(application?.card_activation_stage) || sanitizeVal(application?.physical_details?.card_activation_stage) || 'None');
+  const [vkycExecutiveCode, setVkycExecutiveCode] = useState(
+    sanitizeVal(application?.vkyc_executive_code) ||
+    sanitizeVal(application?.physical_details?.vkyc_executive_code) ||
+    sanitizeVal(application?.metadata?.vkyc_executive_code) ||
+    ''
+  );
+  const [isManualVkycCodeEdit, setIsManualVkycCodeEdit] = useState(false);
   const initialPrimaryDecline = sanitizeVal(application?.primary_decline_code) || sanitizeVal(application?.physical_details?.primary_decline_code) || sanitizeVal(application?.decline_code) || sanitizeVal(application?.physical_details?.decline_code) || (isHdfcCcApp ? 'None' : '');
   const initialSecondaryDecline = sanitizeVal(application?.secondary_decline_code) || sanitizeVal(application?.physical_details?.secondary_decline_code) || 'None';
   const [primaryDeclineCode, setPrimaryDeclineCode] = useState(initialPrimaryDecline);
@@ -819,6 +826,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
         setCardApprovalStage(sanitizeVal(app.card_approval_stage) || sanitizeVal(pd.card_approval_stage) || 'None');
         setDigitalCardIssued(sanitizeVal(app.digital_card_issued) || sanitizeVal(pd.digital_card_issued) || 'None');
         setCardActivationStage(sanitizeVal(app.card_activation_stage) || sanitizeVal(pd.card_activation_stage) || 'None');
+        setVkycExecutiveCode(sanitizeVal(app.vkyc_executive_code) || sanitizeVal(pd.vkyc_executive_code) || sanitizeVal(app.metadata?.vkyc_executive_code) || '');
         const fetchedPrimaryDecline = sanitizeVal(app.primary_decline_code) || sanitizeVal(pd.primary_decline_code) || sanitizeVal(app.decline_code) || sanitizeVal(pd.decline_code) || (isHdfcCcApp ? 'None' : '');
         const fetchedSecondaryDecline = sanitizeVal(app.secondary_decline_code) || sanitizeVal(pd.secondary_decline_code) || 'None';
         setPrimaryDeclineCode(fetchedPrimaryDecline);
@@ -1008,6 +1016,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           user_remark: userRemarkToSave,
           bank_remark: effectiveRemarkToSave,
           backend_remark: backendRemark,
+          vkyc_executive_code: vkycExecutiveCode ? vkycExecutiveCode.trim() : '',
           notes: userRemarkToSave,
           operational_remarks: userRemarkToSave,
           // LOC / EOC updated 6 fields
@@ -1139,6 +1148,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           decline_reason: declineReason || offerDeclineReason || declineRemark || effectiveRemarkToSave,
           user_remark: userRemarkToSave,
           backend_remark: backendRemark,
+          vkyc_executive_code: vkycExecutiveCode ? vkycExecutiveCode.trim() : '',
           notes: userRemarkToSave,
           operational_remarks: userRemarkToSave,
           final_status: isLocOrEoc 
@@ -1269,11 +1279,12 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                 <> | Bank App No: <strong style={{ color: hasBankAppNumber ? '#0284c7' : '#94a3b8' }}>{bankRefNumber || application?.bank_application_number || application?.bank_ref_number || 'Not Filled'}</strong> | PAN: <strong style={{ color: hasBankAppNumber ? '#16a34a' : '#dc2626' }}>{hasBankAppNumber ? (panNumber || application.pan_number || application.pan || 'N/A') : '🔒 Hidden (Fill Bank App No Required)'}</strong></>
               )}
             </p>
-            {(isOpsOrAdmin || isSuperAdminOrAdmin) && (application.sales_operator_code || application.pan_checker_code || application.remark_operator_code) && (
-              <div style={{ display: 'flex', gap: '12px', fontSize: '11px', fontWeight: 700, color: '#475569', marginTop: '6px', background: '#f1f5f9', padding: '3px 10px', borderRadius: '6px' }}>
+            {(isOpsOrAdmin || isSuperAdminOrAdmin) && (application.sales_operator_code || application.pan_checker_code || application.remark_operator_code || vkycExecutiveCode || application.vkyc_executive_code) && (
+              <div style={{ display: 'flex', gap: '12px', fontSize: '11px', fontWeight: 700, color: '#475569', marginTop: '6px', background: '#f1f5f9', padding: '3px 10px', borderRadius: '6px', flexWrap: 'wrap' }}>
                 {application.sales_operator_code && <span>Sales Op Code: <strong style={{ color: '#2563eb' }}>{application.sales_operator_code}</strong></span>}
                 {application.pan_checker_code && <span>PAN Checker Code: <strong style={{ color: '#059669' }}>{application.pan_checker_code}</strong></span>}
                 {application.remark_operator_code && <span>Remark Op Code: <strong style={{ color: '#d97706' }}>{application.remark_operator_code}</strong></span>}
+                {(vkycExecutiveCode || application.vkyc_executive_code) && <span>VKYC Exec Code: <strong style={{ color: '#7c3aed' }}>{vkycExecutiveCode || application.vkyc_executive_code}</strong></span>}
               </div>
             )}
           </div>
@@ -3101,6 +3112,56 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                           )}
                         </select>
                       </div>
+
+                      {/* 8. VKYC EXECUTIVE CODE */}
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', textTransform: 'uppercase', margin: 0 }}>
+                            8. VKYC EXECUTIVE CODE
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setIsManualVkycCodeEdit(prev => !prev)}
+                            style={{
+                              background: isManualVkycCodeEdit ? '#dbeafe' : '#f1f5f9',
+                              color: isManualVkycCodeEdit ? '#1d4ed8' : '#475569',
+                              border: `1px solid ${isManualVkycCodeEdit ? '#93c5fd' : '#cbd5e1'}`,
+                              padding: '2px 8px',
+                              borderRadius: '6px',
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                            title="Click to toggle manual edit mode"
+                          >
+                            <Edit2 size={11} /> {isManualVkycCodeEdit ? 'Manual Edit Active' : 'Edit Manually'}
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          disabled={!canEditRemark && !isManualVkycCodeEdit}
+                          value={vkycExecutiveCode}
+                          onChange={(e) => setVkycExecutiveCode(e.target.value.toUpperCase())}
+                          placeholder="Enter VKYC Executive Code..."
+                          style={{
+                            width: '100%',
+                            padding: '10px 12px',
+                            borderRadius: '8px',
+                            border: isManualVkycCodeEdit ? '1.5px solid #2563eb' : '1px solid #cbd5e1',
+                            fontSize: '13px',
+                            fontWeight: 700,
+                            fontFamily: 'monospace',
+                            background: (!canEditRemark && !isManualVkycCodeEdit) ? '#f8fafc' : '#fff',
+                            color: '#0f172a'
+                          }}
+                        />
+                        <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px', fontWeight: 500 }}>
+                          VKYC Executive ID / Code assigned to this customer session.
+                        </div>
+                      </div>
                     </>
                   ) : isTataCobrandHdfc ? (
                     /* 🆃 TATA CO-BRAND HDFC WORKFLOW */
@@ -3227,6 +3288,53 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                             <option value={digitalCardIssued}>{digitalCardIssued}</option>
                           )}
                         </select>
+                      </div>
+
+                      {/* 8. VKYC EXECUTIVE CODE */}
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', textTransform: 'uppercase', margin: 0 }}>
+                            8. VKYC EXECUTIVE CODE
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setIsManualVkycCodeEdit(prev => !prev)}
+                            style={{
+                              background: isManualVkycCodeEdit ? '#dbeafe' : '#f1f5f9',
+                              color: isManualVkycCodeEdit ? '#1d4ed8' : '#475569',
+                              border: `1px solid ${isManualVkycCodeEdit ? '#93c5fd' : '#cbd5e1'}`,
+                              padding: '2px 8px',
+                              borderRadius: '6px',
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                            title="Click to toggle manual edit mode"
+                          >
+                            <Edit2 size={11} /> {isManualVkycCodeEdit ? 'Manual Edit Active' : 'Edit Manually'}
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          disabled={!canEditRemark && !isManualVkycCodeEdit}
+                          value={vkycExecutiveCode}
+                          onChange={(e) => setVkycExecutiveCode(e.target.value.toUpperCase())}
+                          placeholder="Enter VKYC Executive Code..."
+                          style={{
+                            width: '100%',
+                            padding: '10px 12px',
+                            borderRadius: '8px',
+                            border: isManualVkycCodeEdit ? '1.5px solid #2563eb' : '1px solid #cbd5e1',
+                            fontSize: '13px',
+                            fontWeight: 700,
+                            fontFamily: 'monospace',
+                            background: (!canEditRemark && !isManualVkycCodeEdit) ? '#f8fafc' : '#fff',
+                            color: '#0f172a'
+                          }}
+                        />
                       </div>
                     </>
                   ) : (
