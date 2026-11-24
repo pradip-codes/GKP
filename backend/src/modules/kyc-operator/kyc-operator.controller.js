@@ -14,10 +14,10 @@ const ensureKycColumns = async () => {};
 // Link can live on applications.vkyc_link, applications.vkyc_url or physical_application_details.vkyc_url.
 const KYC_LINK_VALUE_SQL = `COALESCE(NULLIF(TRIM(a.vkyc_link), ''), NULLIF(TRIM(a.vkyc_url), ''), NULLIF(TRIM(pad.vkyc_url), ''), '')`;
 const KYC_HAS_LINK_SQL = `(UPPER(${KYC_LINK_VALUE_SQL}) NOT IN ('', 'N/A', 'NA', '-'))`;
+// NOTE: do NOT reference a.bank_name here - applications.bank_name does not exist in the production DB.
 const KYC_HDFC_BANK_SQL = `(
   LOWER(COALESCE(b.short_code, '')) LIKE '%hdfc%'
   OR LOWER(COALESCE(b.name, '')) LIKE '%hdfc%'
-  OR LOWER(COALESCE(a.bank_name, '')) LIKE '%hdfc%'
 )`;
 
 /**

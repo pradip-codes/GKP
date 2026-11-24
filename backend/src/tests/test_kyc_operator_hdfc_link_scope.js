@@ -16,7 +16,7 @@ console.log('--- Testing KYC Operator scope (HDFC + KYC link) ---\n');
 // Mirrors KYC_HAS_LINK_SQL / KYC_HDFC_BANK_SQL in kyc-operator.controller.js
 const linkValue = (a, pad) => [a.vkyc_link, a.vkyc_url, pad.vkyc_url].map(v => String(v ?? '').trim()).find(v => v !== '') || '';
 const hasLink = (a = {}, pad = {}) => !['', 'N/A', 'NA', '-'].includes(linkValue(a, pad).toUpperCase());
-const isHdfc = (a = {}, b = {}) => [b.short_code, b.name, a.bank_name].some(v => String(v || '').toLowerCase().includes('hdfc'));
+const isHdfc = (a = {}, b = {}) => [b.short_code, b.name].some(v => String(v || '').toLowerCase().includes('hdfc'));
 const inQueue = (a, b, pad) => isHdfc(a, b) && hasLink(a, pad);
 
 console.log('Test 1: Queue membership');
@@ -32,7 +32,7 @@ const cases = [
   ["HDFC, link is '-'", { vkyc_url: '-' }, {}, hdfc, false],
   ['SBI with a link (must NOT show)', { vkyc_link: 'https://vkyc.sbi/1' }, {}, sbi, false],
   ['SBI, no link', {}, {}, sbi, false],
-  ['bank only known via applications.bank_name = HDFC Bank', { bank_name: 'HDFC Bank', vkyc_link: 'x.com/v' }, {}, {}, true],
+  ['bank identified only by banks.name containing HDFC', { vkyc_link: 'x.com/v' }, {}, { name: 'HDFC Bank Ltd' }, true],
 ];
 for (const [name, a, pad, b, expected] of cases) {
   assert.strictEqual(inQueue(a, b, pad), expected, name);
@@ -49,6 +49,11 @@ assert(listFn.includes('whereConditions.push(KYC_HAS_LINK_SQL)'), 'list must req
 assert(!/approval income 25k|approval nsdp cibil base|ipa approval cibil/i.test(listFn), 'old SBI/IPA eligibility must be gone from list');
 assert(!/LIKE '%sbi%'/i.test(listFn), 'no SBI branch in list');
 assert(src.includes("NULLIF(TRIM(a.vkyc_url), '')") && src.includes("NULLIF(TRIM(pad.vkyc_url), '')") && src.includes("NULLIF(TRIM(a.vkyc_link), '')"), 'link detection must cover all 3 columns');
+// Regression: applications.bank_name does not exist in the production DB (caused 'column a.bank_name does not exist')
+const hdfcSqlStart = src.indexOf('const KYC_HDFC_BANK_SQL');
+const hdfcSql = src.slice(hdfcSqlStart, src.indexOf('`;', hdfcSqlStart));
+assert(!/a\.bank_name/.test(hdfcSql), 'KYC_HDFC_BANK_SQL must not reference a.bank_name');
+assert(!/a\.bank_name/.test(listFn), 'list query must not reference a.bank_name');
 console.log('✓ list: HDFC-only + link required, SBI/IPA rule removed');
 
 const guarded = ['getKycApplicationById', 'getKycApplicationDocuments', 'verifyKycApplication', 'rejectKycApplication', 'requestInfoKycApplication', 'updateKycStageAndDetails'];
