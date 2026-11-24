@@ -1,0 +1,234 @@
+# GharKaPaisa — Comprehensive System Architecture & Developer Context (LLM Full Reference)
+
+> Complete, consolidated specification of the GharKaPaisa enterprise FinTech ecosystem for Large Language Models and AI engineering agents. Covers monorepo structure, database schemas, API routing, authentication security, operator state machines, geospatial attendance algorithms, and operational workflows.
+
+---
+
+## 1. Executive Summary & Monorepo Structure
+
+GharKaPaisa is an end-to-end Indian financial technology platform that bridges direct-to-consumer financial product comparison with high-throughput distribution operations. The platform operates across three integrated software tiers:
+1. **Backend REST API (`backend/`)**: Node.js v18+, Express.js, PostgreSQL 15+, Redis 6, Socket.IO, AWS SDK (S3, SES, Rekognition, STS), Razorpay, MSG91 SMS.
+2. **Web Application (`frontend/`)**: React 19, Vite 8, Tailwind CSS, Lucide icons, Recharts, Zustand 5, Framer Motion 12, AWS Amplify Liveness.
+3. **Mobile Application (`mobile/`)**: React Native 0.88, Expo 58, Expo Router, Expo Location, Expo LocalAuthentication, Victory Native charts.
+
+### Directory Layout
+```text
+yohesa/
+├── backend/
+│   ├── src/
+│   │   ├── config/              # Database pool, Redis, AWS, SMS, Logger configurations
+│   │   ├── constants/           # Roles (ROLES, DESIGNATIONS), status enums, decline codes
+│   │   ├── database/            # Schema migrations, seeders, connection pool
+│   │   ├── middleware/          # JWT auth, role guards, compression, rate-limiting, error handler
+│   │   ├── modules/             # 35+ domain-specific modules (controllers, routes, services)
+│   │   │   ├── admin/           # Administrative operations, user management, bank mapping
+│   │   │   ├── attendance/      # Clock-in/out, GPS geofencing, polygon ray-casting, face recognition
+│   │   │   ├── auth/            # Multi-identifier login, password lockout, OTP fallback, refresh tokens
+│   │   │   ├── crm/             # Application lifecycle, punch leads, bank sync, curable desks
+│   │   │   ├── customer/        # Customer tracking, self-service applications
+│   │   │   ├── hr/              # Employee records, onboarding, leave management, interviews
+│   │   │   ├── kyc-operator/    # VKYC, biometric, DigiLocker tracking desks
+│   │   │   ├── messenger/       # Real-time chat, SSE streaming, 48-hour auto-purge
+│   │   │   ├── partner/         # Partner portal, referral tree, marketing kits, team hierarchy
+│   │   │   ├── payroll/         # Salary slips, incentives, TDS, bank export formats
+│   │   │   ├── super-admin/     # System configuration, role assignment, financial reconciliation
+│   │   │   └── travel-utilities/# BBPS utilities, recharges, bill payments, bus/flight booking
+│   │   ├── routes/              # Central route index (mounted at /api/v1)
+│   │   ├── services/            # Shared AWS, notification, SMS, cache services
+│   │   ├── utils/               # Sanitizers, token generators, formatters
+│   │   └── server.js            # Express server entry point, HTTP + Socket.IO initialization
+│   └── package.json
+├── frontend/
+│   ├── public/                  # Static assets, locales, favicon, robots.txt, sitemap.xml, llms.txt
+│   ├── src/
+│   │   ├── assets/              # Branding, icons, imagery
+│   │   ├── components/          # Reusable UI primitives, modals, tables, charts, navigation bars
+│   │   ├── context/             # React context providers (AuthContext, ThemeContext)
+│   │   ├── layouts/             # PublicLayout, PartnerLayout, AdminLayout, EmployeeLayout, SuperAdminLayout
+│   │   ├── pages/               # Route components grouped by portal and public features
+│   │   ├── services/            # Axios API client, interceptors, endpoints
+│   │   ├── store/               # Zustand global state slices
+│   │   ├── App.jsx              # Application router configuration
+│   │   └── main.jsx             # React 19 root bootstrap
+│   └── package.json
+├── mobile/
+│   ├── app/                     # Expo Router file-based navigation
+│   │   ├── (auth)/              # Login, register, forgot-password, OTP verification screens
+│   │   ├── (app)/               # Authenticated role dashboards (partner, employee, admin, HR)
+│   │   ├── (public)/            # Public catalog, product details, share links
+│   │   └── _layout.tsx          # Root navigation container and authentication state guards
+│   ├── components/              # Native UI components, headers, bottom sheets, camera views
+│   ├── hooks/                   # Custom React hooks (useLocation, useBiometrics, useAuth)
+│   ├── services/                # Mobile API clients, offline caching, push token registration
+│   └── package.json
+└── documentation/               # Comprehensive system architecture, schema, and audit documents
+```
+
+---
+
+## 2. Authentication, Security & Progressive Lockout
+
+Authentication supports multiple identity types across one unified endpoint (`/api/v1/auth/login`):
+- **Identities**: Email address, 10-digit Indian mobile number, or internal Employee Code (e.g., `GKP-EMP-001`).
+- **Tokens**: Dual-token architecture using HTTP-only Secure SameSite Cookies or Bearer Authorization headers:
+  - Access Token: Short-lived JWT (15–60 minutes) containing `userId`, `role`, `designation`, and `email`.
+  - Refresh Token: Long-lived cryptographically signed token (7–30 days) stored in database with rotation.
+
+### Progressive Security Lockout Algorithm
+To protect against brute-force attacks while preserving employee operational efficiency:
+1. **Initial Attempts (1 to 2 failures)**: User is notified of invalid credentials; failed counter increments in `users.failed_login_attempts`.
+2. **Third Failure (3 attempts)**: Trigger progressive cooldown:
+   - Sets `users.password_lockout_until = NOW() + INTERVAL '2 minutes'`.
+   - Returns HTTP 429: `"Maximum password attempts reached. Please log in using OTP or wait 2 minutes."`
+3. **OTP Emergency Bypass**:
+   - The user can instantly request a one-time password via MSG91 SMS (`/api/v1/auth/request-otp` and `/api/v1/auth/verify-otp`).
+   - Logging in via verified OTP immediately bypasses any active password lockout timer and resets `failed_login_attempts = 0` and `password_lockout_until = NULL` across all matched identity records.
+4. **Successful Password Login**:
+   - Immediately clears `failed_login_attempts = 0` and `password_lockout_until = NULL`.
+
+---
+
+## 3. Role-Based Access Control (RBAC) & Designations
+
+Source of truth: `backend/src/constants/roles.js`.
+
+### Primary PostgreSQL Roles (`user_role` enum)
+- `SUPER_ADMIN`: Unrestricted platform authority, financial settings, bank commission slabs, and system audits.
+- `ADMIN`: Operational management, employee assignment, lead supervision, and report generation.
+- `EMPLOYEE`: Field sales executives, internal operators, HR personnel, and telecallers.
+- `PARTNER`: Independent business distributors (DSA / Direct Selling Agents) earning tier-based referral commissions.
+- `TEAM_MEMBER`: Sub-agents under an existing partner hierarchy.
+
+### Granular Operational Designations
+Within `ADMIN` and `EMPLOYEE` roles, operators are restricted to dedicated functional desks via the `designation` attribute:
+1. **Operational Head**: Oversees overall product queues and reassigns stalled applications.
+2. **Administrative Operator**: General administrative processing and document checks.
+3. **Administrative Sales Executive**: Dedicated sales punching and application routing.
+4. **PAN Checker**: Reviews PAN card validity, duplicate checking, and CIBIL status.
+5. **Remark Operator**: Updates real-time bank status remarks, queries, and internal operational notes.
+6. **QD Operator (Quick Decision)**: Evaluates fast-track digital approval credit cards.
+7. **Final Status Operator**: Confirms final bank disbursement, sanction letters, and commission eligibility.
+8. **Querable Operator**: Manages bank-rejected and queried applications requiring customer clarification.
+9. **Physical Curable Operator**: Resolves physical documentation deficiencies with dedicated current and office address cure fields.
+10. **Digital Curable Operator**: Resolves digital VKYC or web portal drop-offs.
+11. **Email Curable Operator**: Handles bank queries communicated via official email communication channels.
+
+---
+
+## 4. Attendance & Polygon Geofencing Engine
+
+The platform enforces strict location-verified attendance for physical office personnel:
+
+### Key Constants & Rules
+- **Pune Main Office Geofence Polygon**: Defined by 4 precise GPS coordinates in `backend/src/modules/attendance/geofence.service.js`:
+  1. `(18.6195302, 73.8747686)`
+  2. `(18.6196235, 73.8748301)`
+  3. `(18.6194721, 73.8749892)`
+  4. `(18.6193854, 73.8749214)`
+- **Perimeter Tolerance**: 10 meters boundary buffer around official office polygons.
+- **Accuracy Threshold**: Maximum acceptable device GPS accuracy is **50 meters**.
+  - Accuracy $> 50\text{m}$ is immediately rejected with `LOW_ACCURACY` to prevent cell-tower or WiFi IP spoofing.
+  - Accuracy $\le 0\text{m}$ or `NaN` is rejected as invalid coordinates.
+- **Ray-Casting Algorithm**: Employs Jordan curve theorem (point-in-polygon) to verify whether device coordinates fall inside the defined polygon.
+- **Biometric Liveness**: Optional face check using AWS Rekognition CompareFaces with a minimum 90% confidence score against enrolled employee profile photos.
+
+---
+
+## 5. Core API Routing Specification (`/api/v1`)
+
+Central entry point: `backend/src/routes/index.js`.
+
+| Mount Path | Primary Controller / Router | Description | Authentication |
+| :--- | :--- | :--- | :--- |
+| `/auth` | `modules/auth/route.js` | Login, Register, Request OTP, Verify OTP, Refresh Token, Logout | Public / Guarded |
+| `/public/products` | `modules/products/route.js` | Catalog of credit cards, personal loans, business loans | Public (Cached 120s) |
+| `/banners` | `modules/banner/route.js` | Promotional banners, carousels, marketing widgets | Public (Cached 300s) |
+| `/applications` | `modules/crm/route.js` | Main CRM lead pipeline, filtering, status updates, cure forms | Admin / Operator / Partner |
+| `/kyc-operator` | `modules/kyc-operator/kyc-operator.routes.js` | VKYC, biometric, and DigiLocker operational queues | KYC Operators / Admin |
+| `/attendance` | `modules/attendance/attendance.routes.js` | Clock-in, clock-out, geofence validation, today status | Employee / HR |
+| `/attendance/admin` | `modules/attendance-admin/attendance-admin.routes.js` | Attendance regularization, daily roster, department audit | HR / Admin / Super Admin |
+| `/hr` | `modules/hr/hr.routes.js` | Interview registration, candidate onboarding, employee records | HR / Super Admin |
+| `/employees` | `modules/employee-management/employee-management.routes.js` | Staff directory, department assignments, bank allocations | Admin / Super Admin |
+| `/wallet` | `modules/wallet/route.js` | Partner wallet balance, ledger, withdrawal requests, Razorpay | Partner / Super Admin |
+| `/messenger` | `modules/messenger/messenger.routes.js` | Real-time internal team messaging, SSE streams, attachment upload | Authenticated Users |
+| `/customer-portal` | `modules/customer/customer_portal.routes.js` | Customer public tracking, OTP-authenticated loan tracking | Public / Customer OTP |
+| `/travel-utilities`| `modules/travel-utilities/routes.js` | BBPS utility bills, recharges, flight/bus bookings, commissions | Partner / Employee |
+| `/super-admin` | `modules/super-admin/route.js` | Global configs, audit logs, bank creation, commission matrices | Super Admin only |
+
+---
+
+## 6. Critical Database Tables & Schema Safety
+
+Primary database: PostgreSQL. Complete schema reference in `documentation/DATABASE_SCHEMA.md`.
+
+### Core Tables
+1. `users`:
+   - Columns: `id (UUID PK)`, `email`, `mobile`, `password_hash`, `role (user_role enum)`, `designation`, `is_active`, `failed_login_attempts (INT)`, `password_lockout_until (TIMESTAMPTZ)`, `created_at`, `updated_at`.
+2. `applications`:
+   - Columns: `id (UUID PK)`, `application_number`, `user_id`, `partner_id`, `product_id`, `bank_id`, `customer_name`, `customer_mobile`, `customer_email`, `pan_number`, `status`, `stage`, `curing_designation`, `vkyc_stage`, `bio_stage`, `digilocker_stage`, `metadata (JSONB)`.
+3. `physical_application_details`:
+   - Linked 1-to-1 with `applications` via `application_id`.
+   - Columns: `pan_number` (Note: never query `pad.pan`), `full_name`, `mobile`, `bank_application_number`, `vkyc_url`, `user_remark`, `kyc_remarks`, `current_address_manual`, `office_address_manual`, `soft_approval_status`.
+4. `employee_profiles`:
+   - Columns: `id`, `user_id`, `employee_id (code)`, `full_name`, `department`, `designation`, `profile_photo_url`, `office_branch_id`, `geofence_id`.
+5. `attendance_logs`:
+   - Columns: `id`, `employee_id`, `punch_type (IN/OUT)`, `latitude`, `longitude`, `accuracy_meters`, `geofence_status (ACCEPTED/LOCATION_MISMATCH/LOW_ACCURACY)`, `face_match_confidence`, `created_at`.
+6. `wallet_transactions`:
+   - Columns: `id`, `wallet_id`, `user_id`, `amount`, `transaction_type (CREDIT/DEBIT)`, `status`, `reference_id`, `description`, `created_at`.
+
+### Developer Safety Rules for SQL
+- **No Non-Existent Columns**: Always verify columns against `documentation/DATABASE_SCHEMA.md`. For example, `physical_application_details` contains `pan_number` (NOT `pan`), and `applications` does not possess direct `assigned_to` (use JSONB or `application_employee_assignments`).
+- **Resilient JSONB Fallbacks**: When querying flexible metadata, use:
+  ```sql
+  COALESCE(NULLIF(a.pan_number, ''), NULLIF(pad.pan_number, ''), 'N/A') AS pan_number
+  ```
+- **Strict Parameter Indexing**: When building dynamic queries, maintain an unbroken sequence of `$1, $2, ...` with explicit casts:
+  ```javascript
+  whereConditions.push(`a.created_at >= $${paramIdx}::timestamptz`);
+  queryParams.push(startDate);
+  paramIdx++;
+  ```
+
+---
+
+## 7. Verification Test Suite & Quality Assurance
+
+The codebase includes an automated regression verification suite located in `backend/src/tests/`:
+```bash
+# Run all core verification test suites
+node backend/src/tests/test_sql_schema_and_parameter_mapping.js
+node backend/src/tests/test_career_and_admin_form.js
+node backend/src/tests/test_three_curable_operator_designations.js
+node backend/src/tests/test_attendance_gps_geofence.js
+node backend/src/tests/test_hdfc_masking_verification.js
+```
+
+These suites mathematically prove:
+1. Unbroken 0-gap SQL parameter mapping and type-casting.
+2. Safe `to_jsonb` column extraction and absence of non-existent column queries.
+3. Accurate ray-casting polygon boundary evaluations (Pune polygon, 10m buffer, $\le 50\text{m}$ accuracy filter).
+4. Strict HDFC CSV export masking (`XXXXXX1234` for mobile, `XXXXX1234X` for PAN).
+5. Curable operator designation filtering and bank assignment integrity.
+
+---
+
+## 8. Deployment & Process Management (Ubuntu EC2)
+
+Production backend is hosted on AWS EC2 Ubuntu under PM2:
+- **Application Directory**: `/home/ubuntu/GKP/backend` (or `~/GKP/backend`)
+- **Process Name**: `gharkapaisa-backend`
+- **Reverse Proxy**: Nginx forwarding `/api/v1` to `http://localhost:5000`
+- **Zero-Downtime Deployment Routine**:
+  ```bash
+  cd ~/GKP/backend
+  git pull origin master
+  pm2 reload gharkapaisa-backend --update-env
+  pm2 save
+  ```
+- **Process Troubleshooting**: If PM2 points to a legacy directory, reset cleanly via:
+  ```bash
+  cd ~/GKP/backend
+  pm2 delete gharkapaisa-backend
+  pm2 start src/server.js --name gharkapaisa-backend
+  pm2 save
+  ```

@@ -7,6 +7,7 @@ import { spacing } from '../../theme/spacing';
 import { getTickets, createTicket, SupportTicket } from '../../services/support.service';
 import { FaqAccordion } from '../../components/FaqAccordion';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTranslation } from 'react-i18next';
 
 // Role-specific FAQ categories shown on the Support screen
 const ROLE_FAQ_CATEGORIES: Record<string, string[]> = {
@@ -18,10 +19,21 @@ const ROLE_FAQ_CATEGORIES: Record<string, string[]> = {
   SUPER_ADMIN: ['general', 'super-admin', 'admin'],
 };
 
+// Operator designations that get the Operator Panel FAQ instead of full Admin FAQ
+const OPERATOR_DESIGNATIONS = [
+  'KYC', 'PAN', 'QD', 'QUER', 'REMARK', 'FINAL', 'CURABLE', 'CUREABLE',
+  'SALES EXECUTIVE', 'TELECALLER', 'ADMINISTRATIVE',
+];
+
 export default function SupportScreen() {
-  const { userRole } = useAuth() as any;
+  const { userRole, userDesignation } = useAuth() as any;
+  const { t } = useTranslation();
   const role = (userRole || '').toUpperCase();
-  const faqCategories = ROLE_FAQ_CATEGORIES[role] || ['general', 'credit-cards', 'loans', 'insurance'];
+  const desig = (userDesignation || '').toUpperCase();
+  const isOperator = role === 'ADMIN' && OPERATOR_DESIGNATIONS.some((d) => desig.includes(d));
+  const faqCategories = isOperator
+    ? ['general', 'operator']
+    : ROLE_FAQ_CATEGORIES[role] || ['general', 'credit-cards', 'loans', 'insurance'];
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -83,11 +95,11 @@ export default function SupportScreen() {
         {/* Header */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.title}>Support Desk</Text>
-            <Text style={styles.subtitle}>Connect & resolve operational issues</Text>
+            <Text style={styles.title}>{t('support.title')}</Text>
+            <Text style={styles.subtitle}>{t('support.subtitle')}</Text>
           </View>
           <TouchableOpacity style={styles.createBtn} onPress={() => setModalVisible(true)}>
-            <Text style={styles.createBtnText}>+ New Ticket</Text>
+            <Text style={styles.createBtnText}>+ {t('support.newTicket')}</Text>
           </TouchableOpacity>
         </View>
 
@@ -108,8 +120,8 @@ export default function SupportScreen() {
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
-                <Text style={styles.emptyTitle}>No Support Tickets</Text>
-                <Text style={styles.emptyText}>Create a ticket if you experience any issue.</Text>
+                <Text style={styles.emptyTitle}>{t('support.noTickets')}</Text>
+                <Text style={styles.emptyText}>{t('support.subtitle')}</Text>
               </View>
             }
             renderItem={({ item }) => (
@@ -142,13 +154,13 @@ export default function SupportScreen() {
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Create Support Ticket</Text>
+                <Text style={styles.modalTitle}>{t('support.newTicket')}</Text>
                 <TouchableOpacity onPress={() => setModalVisible(false)}>
                   <Text style={styles.modalClose}>✕</Text>
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.inputLabel}>Subject</Text>
+              <Text style={styles.inputLabel}>{t('support.subject')}</Text>
               <TextInput
                 style={styles.textInput}
                 placeholder="Brief summary of your issue..."
@@ -156,7 +168,7 @@ export default function SupportScreen() {
                 onChangeText={setSubject}
               />
 
-              <Text style={styles.inputLabel}>Priority</Text>
+              <Text style={styles.inputLabel}>{t('support.priority')}</Text>
               <View style={styles.priorityGroup}>
                 {['LOW', 'MEDIUM', 'HIGH', 'URGENT'].map((p) => (
                   <TouchableOpacity
@@ -164,12 +176,12 @@ export default function SupportScreen() {
                     style={[styles.priorityChip, priority === p && styles.priorityActive]}
                     onPress={() => setPriority(p)}
                   >
-                    <Text style={[styles.priorityChipText, priority === p && styles.priorityActiveText]}>{p}</Text>
+                    <Text style={[styles.priorityChipText, priority === p && styles.priorityActiveText]}>{t(`support.${p.toLowerCase()}`)}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
-              <Text style={styles.inputLabel}>Detailed Description</Text>
+              <Text style={styles.inputLabel}>{t('support.description')}</Text>
               <TextInput
                 style={[styles.textInput, styles.textArea]}
                 placeholder="Describe your issue or request..."
@@ -187,7 +199,7 @@ export default function SupportScreen() {
                 {creating ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.submitBtnText}>Submit Support Ticket</Text>
+                  <Text style={styles.submitBtnText}>{t('support.submitTicket')}</Text>
                 )}
               </TouchableOpacity>
             </View>

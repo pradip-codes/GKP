@@ -1,11 +1,12 @@
 # GharKaPaisa
 
-> GharKaPaisa (https://gharkapaisa.in) is an India-focused financial product discovery platform. Users compare and apply online for credit cards, lifetime-free credit cards, personal loans, home loans, business loans, insurance, and everyday financial services such as money transfer, recharges, bill payments, FASTag, and travel bookings.
+> GharKaPaisa (https://gharkapaisa.in) is an India-focused financial product discovery platform, credit marketplace, and operational FinTech aggregator. Users compare and apply online for credit cards, lifetime-free credit cards, personal loans, home loans, business loans, insurance, and everyday financial services such as money transfer, recharges, bill payments, FASTag, and travel bookings.
 
 GharKaPaisa aggregates offers from leading Indian banks and NBFCs (including HDFC, SBI, ICICI, Axis, Kotak, IDFC FIRST, AU Small Finance Bank, and more) and publishes free financial education guides. All product comparison content is publicly accessible; authenticated partner, employee, HR, and admin dashboards are not part of the public site.
 
-Sitemap: https://gharkapaisa.in/sitemap.xml
-Robots: https://gharkapaisa.in/robots.txt
+- Sitemap: https://gharkapaisa.in/sitemap.xml
+- Robots: https://gharkapaisa.in/robots.txt
+- Full Developer & Technical Reference: https://gharkapaisa.in/llms-full.txt
 
 ## Credit Cards
 - [Credit Cards](https://gharkapaisa.in/credit-cards): Compare and apply for credit cards from major Indian banks, with details on fees, rewards, and eligibility.
@@ -44,5 +45,6 @@ Robots: https://gharkapaisa.in/robots.txt
 - [Terms and Conditions](https://gharkapaisa.in/terms-and-conditions): Official terms for using the GharKaPaisa platform.
 - [Privacy Policy](https://gharkapaisa.in/privacy-policy): Data protection, user security, and confidentiality practices.
 
-## Optional
+## Optional & Deep Dive
+- [Full LLM Specification](https://gharkapaisa.in/llms-full.txt): Complete technical architecture, database models, and operational desks for AI agents.
 - [Sitemap](https://gharkapaisa.in/sitemap.xml): Full XML sitemap of indexable public pages.

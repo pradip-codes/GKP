@@ -81,6 +81,20 @@ export const FAQ_CATEGORIES = [
     ],
   },
   {
+    id: 'operator',
+    label: 'Operator Panel',
+    items: [
+      { q: 'What is my queue?', a: 'Your queue shows only the applications assigned to your designation and bank scope. KYC Operators verify documents, PAN Checkers validate PAN, QD Operators update qualification details, Remark Operators add remarks, and Curable Operators cure rejected bank applications.' },
+      { q: 'Why do I see only some applications?', a: 'Access is controlled by your designation and the banks assigned to you in the Super Admin panel. If an application belongs to a bank outside your scope, it will not appear in your queue.' },
+      { q: 'What do the queue tabs mean?', a: 'All shows your full queue. Operational Verified lists cases pending operator action. Declined/Rejected shows cases you have declined or the bank rejected. Cured & Approved shows cases you solved and approved.' },
+      { q: 'How does curing work for Physical/Digital Curable?', a: 'Open the application, fill the Current Address and Office Address, add the Curebal Sales Remark and Digital Remark, then choose a CUREABLE REMARK: PHYSICAL SOLVED / DIGITAL SOLVED moves it to Cured & Approved, PHYSICAL PENDING / DIGITAL PENDING keeps it in Operational Verified, and NOT REQUIRED moves it to Declined/Rejected.' },
+      { q: 'I cleared an address field but it still shows the old value. Why?', a: 'Make sure you click Save Remarks & Stage after clearing the field — the empty value is only persisted on save. If it still reappears, raise a ticket from Support with the application number.' },
+      { q: 'How do I approve or decline an application?', a: 'Open the application from your queue, review the customer and bank details, then use Approve Application or the Decline/Reject action. Always add a remark explaining the decision — it is visible to admins and the customer.' },
+      { q: 'What is the difference between Queryable and Curable?', a: 'Queryable Operators handle rejected/declined cases that need re-querying with the bank. Curable Operators (Physical, Digital, Email) actually cure the case — fixing addresses, remarks and journey links until the bank approves it.' },
+      { q: 'An application is stuck or showing wrong data. What do I do?', a: 'Re-open the application and check the remarks/stage you saved. If the status does not match the CUREABLE REMARK you selected, note the application number and raise a Support ticket — admins can correct the stage from their panel.' },
+    ],
+  },
+  {
     id: 'hr',
     label: 'HR Panel',
     items: [

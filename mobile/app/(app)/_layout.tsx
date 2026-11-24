@@ -4,12 +4,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, View, StyleSheet, AppState, Modal, TouchableOpacity, ScrollView, Image, BackHandler } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '../../contexts/ThemeContext';
 import { LoadingState } from '../../components/LoadingState';
 import { MinimalDock } from '../../components/MinimalDock';
 import { PartnerDock } from '../../components/PartnerDock';
 import { PartnerTopBar } from '../../components/PartnerTopBar';
 import { EmployeeTopBar } from '../../components/EmployeeTopBar';
+import { SuperAdminTopBar, SuperAdminNavDrawer } from '../../components/SuperAdminTopBar';
+import { PanelTopBar, PanelNavDrawer, ADMIN_NAV_SECTIONS, HR_NAV_SECTIONS, OPERATOR_NAV_SECTIONS, isOperatorDesignation } from '../../components/PanelChrome';
+import { notificationService } from '../../services/notification.service';
 import { typography } from '../../theme/typography';
 import { getUnreadCount } from '../../services/messenger.service';
 import { getMessengerSocket } from '../../services/messengerSocket';
@@ -40,13 +44,17 @@ const TabIcon = ({ label, focused, badgeCount }: { label: string; focused: boole
 
 export default function AppLayout() {
   const { isAuthenticated, isLoading, userRole, userDesignation, user } = useAuth();
+  const { t } = useTranslation();
   const { colors, isDark } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const routeParams = useGlobalSearchParams<{ category?: string }>();
   const [unreadCount, setUnreadCount] = useState<number>(0);
+  const [notificationUnread, setNotificationUnread] = useState<number>(0);
   const [partnerMenuOpen, setPartnerMenuOpen] = useState(false);
   const [employeeMenuOpen, setEmployeeMenuOpen] = useState(false);
+  const [superAdminMenuOpen, setSuperAdminMenuOpen] = useState(false);
+  const [panelMenuOpen, setPanelMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!partnerMenuOpen) return;
@@ -69,6 +77,26 @@ export default function AppLayout() {
   }, [employeeMenuOpen]);
 
   useEffect(() => {
+    if (!superAdminMenuOpen) return;
+    const backAction = () => {
+      setSuperAdminMenuOpen(false);
+      return true;
+    };
+    const handler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => handler.remove();
+  }, [superAdminMenuOpen]);
+
+  useEffect(() => {
+    if (!panelMenuOpen) return;
+    const backAction = () => {
+      setPanelMenuOpen(false);
+      return true;
+    };
+    const handler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => handler.remove();
+  }, [panelMenuOpen]);
+
+  useEffect(() => {
     if (!isAuthenticated) return;
     
     let isMounted = true;
@@ -79,6 +107,12 @@ export default function AppLayout() {
       if (isMounted) {
         setUnreadCount(count);
       }
+      try {
+        const notif = await notificationService.fetchUnreadCount();
+        if (isMounted) {
+          setNotificationUnread(notif.unread_count || 0);
+        }
+      } catch (_) {}
     };
 
     // Initial fetch
@@ -144,7 +178,7 @@ export default function AppLayout() {
 
   const roleHome = (() => {
     if (role === 'SUPER_ADMIN') return '/super-admin';
-    if (role === 'ADMIN') return '/admin-dashboard';
+    if (role === 'ADMIN') return isOperatorDesignation(userDesignation, role) ? '/op-queue' : '/admin-dashboard';
     if (role === 'HR') return '/hr-dashboard';
     if (role === 'EMPLOYEE') return hasDesignation ? '/dashboard' : '/employee-dashboard';
     // Website PartnerLogin routes TEAM_MEMBER to /partner/dashboard
@@ -298,6 +332,40 @@ export default function AppLayout() {
       {showEmployeeNav && (
         <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
           <EmployeeTopBar onMenuPress={() => setEmployeeMenuOpen(true)} unreadCount={unreadCount} isManager={isManagerOrTL} />
+        </View>
+      )}
+      {/* Super Admin navbar — mirrors the website SuperAdminLayout mobile header on every panel page */}
+      {role === 'SUPER_ADMIN' && (
+        <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+          <SuperAdminTopBar
+            onMenuPress={() => setSuperAdminMenuOpen(true)}
+            messengerUnread={unreadCount}
+            notificationUnread={notificationUnread}
+          />
+        </View>
+      )}
+      {/* Admin navbar — mirrors the website AdminLayout mobile header */}
+      {role === 'ADMIN' && (
+        <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+          <PanelTopBar
+            brand={isOperatorDesignation(userDesignation, role) ? t('panels.operator') : t('panels.admin')}
+            subtitle={isOperatorDesignation(userDesignation, role) ? String(userDesignation || t('panels.adminSubtitle')) : t('panels.adminSubtitle')}
+            onMenuPress={() => setPanelMenuOpen(true)}
+            messengerUnread={unreadCount}
+            notificationUnread={notificationUnread}
+          />
+        </View>
+      )}
+      {/* HR navbar — mirrors the website HR view of AdminLayout */}
+      {role === 'HR' && (
+        <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+          <PanelTopBar
+            brand={t('panels.hr')}
+            subtitle={t('panels.hrSubtitle')}
+            onMenuPress={() => setPanelMenuOpen(true)}
+            messengerUnread={unreadCount}
+            notificationUnread={notificationUnread}
+          />
         </View>
       )}
       <Tabs
@@ -468,6 +536,30 @@ export default function AppLayout() {
             </View>
           </View>
         </View>
+      )}
+
+      {/* Super Admin navigation drawer — mirrors website sidebar categories */}
+      {role === 'SUPER_ADMIN' && (
+        <SuperAdminNavDrawer visible={superAdminMenuOpen} onClose={() => setSuperAdminMenuOpen(false)} />
+      )}
+      {/* Admin / HR navigation drawers — mirror website AdminLayout sidebar */}
+      {role === 'ADMIN' && (
+        <PanelNavDrawer
+          visible={panelMenuOpen}
+          onClose={() => setPanelMenuOpen(false)}
+          sections={isOperatorDesignation(userDesignation, role) ? OPERATOR_NAV_SECTIONS : ADMIN_NAV_SECTIONS}
+          brand={isOperatorDesignation(userDesignation, role) ? t('panels.operator') : t('panels.admin')}
+          subtitle={isOperatorDesignation(userDesignation, role) ? String(userDesignation || t('panels.adminSubtitle')) : t('panels.adminSubtitle')}
+        />
+      )}
+      {role === 'HR' && (
+        <PanelNavDrawer
+          visible={panelMenuOpen}
+          onClose={() => setPanelMenuOpen(false)}
+          sections={HR_NAV_SECTIONS}
+          brand={t('panels.hr')}
+          subtitle={t('panels.hrSubtitle')}
+        />
       )}
 
       {/* Employee feature sidebar — mirrors the website EmployeeLayout nav */}

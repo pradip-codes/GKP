@@ -19,9 +19,11 @@ import {
 } from '../../services/biometric.service';
 import { useAuth } from '../../contexts/AuthContext';
 import { FloatingInput } from '../../components/FloatingInput';
+import { useTranslation } from 'react-i18next';
 
 export default function LoginScreen() {
   const { loginSession } = useAuth();
+  const { t } = useTranslation();
   const { colors, isDark } = useTheme();
 
   // Login Mode: 'password' | 'otp'
@@ -296,14 +298,14 @@ export default function LoginScreen() {
             <View style={styles.welcomeBadge}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Icon name="hand-left" size={14} color={colors.primary} />
-                <Text style={styles.welcomeBadgeText}>Welcome Back!</Text>
+                <Text style={styles.welcomeBadgeText}>{t('auth.welcomeBack')}</Text>
               </View>
             </View>
 
             {/* Headline */}
             <Text style={[styles.loginTitle, { color: colors.text }]}>
-              Login to Your{' '}
-              <Text style={{ color: colors.primary }}>Account</Text>
+              {t('auth.loginToYour')}{' '}
+              <Text style={{ color: colors.primary }}>{t('auth.accountWord')}</Text>
             </Text>
 
             {/* ── TABS SWITCHER: Password vs OTP ── */}
@@ -330,7 +332,7 @@ export default function LoginScreen() {
                     { color: loginMode === 'password' ? colors.primary : colors.textLight },
                   ]}
                 >
-                  Password
+                  {t('auth.passwordTab')}
                 </Text>
               </TouchableOpacity>
 
@@ -356,7 +358,7 @@ export default function LoginScreen() {
                     { color: loginMode === 'otp' ? colors.primary : colors.textLight },
                   ]}
                 >
-                  Instant OTP
+                  {t('auth.otpTab')}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -374,7 +376,7 @@ export default function LoginScreen() {
               {/* Email / Mobile Input */}
               {!(loginMode === 'otp' && otpSent) && (
                 <FloatingInput
-                  label="Email or Mobile Number"
+                  label={t('auth.emailOrMobile')}
                   icon="person"
                   value={identity}
                   onChangeText={(t) => {
@@ -393,7 +395,7 @@ export default function LoginScreen() {
                 <>
                   <View>
                     <FloatingInput
-                      label="Password"
+                      label={t('auth.password')}
                       icon="lock"
                       value={password}
                       onChangeText={(t) => {
@@ -410,7 +412,7 @@ export default function LoginScreen() {
                     />
                     <View style={{ alignItems: 'flex-end', marginTop: 6 }}>
                       <TouchableOpacity onPress={() => setForgotModalVisible(true)}>
-                        <Text style={[styles.forgotLink, { color: colors.primary }]}>Forgot Password?</Text>
+                        <Text style={[styles.forgotLink, { color: colors.primary }]}>{t('auth.forgotPassword')}</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -427,11 +429,11 @@ export default function LoginScreen() {
                     ) : otpRequired ? (
                       <>
                         <Icon name="shield" size={15} color="#FFF" />
-                        <Text style={styles.submitBtnText}>OTP Verification Required</Text>
+                        <Text style={styles.submitBtnText}>{t('auth.otpVerificationRequired')}</Text>
                       </>
                     ) : (
                       <>
-                        <Text style={styles.submitBtnText}>Sign In to Account</Text>
+                        <Text style={styles.submitBtnText}>{t('auth.signInToAccount')}</Text>
                         <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '800' }}> →</Text>
                       </>
                     )}
@@ -440,7 +442,7 @@ export default function LoginScreen() {
                   {otpRequired && (
                     <TouchableOpacity onPress={() => setLoginMode('otp')} style={{ alignItems: 'center', marginTop: 4 }}>
                       <Text style={{ fontSize: 12.5, fontWeight: '700', color: colors.primary }}>
-                        Switch to OTP login →
+                        {t('auth.switchToOtp')}
                       </Text>
                     </TouchableOpacity>
                   )}
@@ -455,7 +457,7 @@ export default function LoginScreen() {
                     >
                       <Icon name="finger-print" size={18} color={colors.text} />
                       <Text style={[styles.biometricBtnText, { color: colors.text }]}>
-                        Sign In with {biometricName}
+                        {t('auth.biometricSignIn', { method: biometricName })}
                       </Text>
                     </TouchableOpacity>
                   )}
@@ -469,7 +471,7 @@ export default function LoginScreen() {
                     <View style={[styles.otpInfoBox, { backgroundColor: '#F59E0B15', borderColor: '#F59E0B40' }]}>
                       <Icon name="shield" size={14} color="#F59E0B" />
                       <Text style={{ flex: 1, fontSize: 12, fontWeight: '700', color: '#B45309' }}>
-                        Password attempts exceeded — please verify with OTP to continue.
+                        {t('auth.otpRequiredInfo')}
                       </Text>
                     </View>
                   )}
@@ -489,7 +491,7 @@ export default function LoginScreen() {
                         </>
                       ) : (
                         <>
-                          <Text style={styles.submitBtnText}>Send Verification OTP</Text>
+                          <Text style={styles.submitBtnText}>{t('auth.sendVerificationOtp')}</Text>
                           <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '800' }}> →</Text>
                         </>
                       )}
@@ -498,7 +500,7 @@ export default function LoginScreen() {
                     <>
                       <View style={[styles.otpInfoBox, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
                         <View style={{ flex: 1 }}>
-                          <Text style={[styles.otpSentLabel, { color: colors.textLight }]}>OTP Sent To</Text>
+                          <Text style={[styles.otpSentLabel, { color: colors.textLight }]}>{t('auth.otpSentTo')}</Text>
                           <Text style={[styles.otpSentTarget, { color: colors.text }]}>{maskedIdentity}</Text>
                         </View>
                         <TouchableOpacity
@@ -507,12 +509,12 @@ export default function LoginScreen() {
                             setOtp('');
                           }}
                         >
-                          <Text style={[styles.editLink, { color: colors.primary }]}>Change</Text>
+                          <Text style={[styles.editLink, { color: colors.primary }]}>{t('auth.change')}</Text>
                         </TouchableOpacity>
                       </View>
 
                       <View style={styles.inputGroup}>
-                        <Text style={[styles.fieldLabel, { color: colors.text }]}>6-Digit Verification Code</Text>
+                        <Text style={[styles.fieldLabel, { color: colors.text }]}>{t('auth.sixDigitCode')}</Text>
                         <View style={[styles.inputWrapper, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
                           <Icon name="key" size={16} color={colors.textLight} />
                           <TextInput
@@ -534,12 +536,12 @@ export default function LoginScreen() {
                       <View style={styles.resendRow}>
                         {timer > 0 ? (
                           <Text style={[styles.timerText, { color: colors.textLight }]}>
-                            Resend code in {timer}s
+                            {t('auth.resendCodeIn', { seconds: timer })}
                           </Text>
                         ) : (
                           <TouchableOpacity onPress={handleSendOtp} disabled={loading}>
                             <Text style={[styles.resendLink, { color: colors.primary }]}>
-                              Resend Verification OTP
+                              {t('auth.sendVerificationOtp')}
                             </Text>
                           </TouchableOpacity>
                         )}
@@ -556,7 +558,7 @@ export default function LoginScreen() {
                           <ActivityIndicator size="small" color="#FFF" />
                         ) : (
                           <>
-                            <Text style={styles.submitBtnText}>Verify & Sign In</Text>
+                            <Text style={styles.submitBtnText}>{t('auth.verifyAndSignIn')}</Text>
                             <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '800' }}> →</Text>
                           </>
                         )}
@@ -570,10 +572,10 @@ export default function LoginScreen() {
             {/* ── REGISTER PROMPT LINK ── */}
             <View style={styles.signUpPromptRow}>
               <Text style={[styles.promptText, { color: colors.textMid }]}>
-                Don't have an account?{' '}
+                {t('auth.dontHaveAccount')}{' '}
               </Text>
               <TouchableOpacity onPress={() => router.push('/(auth)/register')}>
-                <Text style={[styles.signUpLink, { color: colors.primary }]}>Sign Up as Partner</Text>
+                <Text style={[styles.signUpLink, { color: colors.primary }]}>{t('auth.signUpAsPartner')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -582,7 +584,7 @@ export default function LoginScreen() {
           <View style={styles.trustRow}>
             <Icon name="shield" size={14} color={colors.textLight} />
             <Text style={[styles.trustText, { color: colors.textLight }]}>
-              Bank-Grade 256-bit SSL Encrypted & Protected
+              {t('auth.trustText')}
             </Text>
           </View>
 
@@ -605,7 +607,7 @@ export default function LoginScreen() {
         >
           <View style={styles.modalOverlay}>
             <View style={[styles.modalBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Reset Password</Text>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('auth.resetPassword')}</Text>
               <Text style={[styles.modalSubtitle, { color: colors.textMid }]}>
                 Enter your registered email address to receive password reset instructions.
               </Text>
@@ -625,7 +627,7 @@ export default function LoginScreen() {
                   style={[styles.modalCancelBtn, { borderColor: colors.border }]}
                   onPress={() => setForgotModalVisible(false)}
                 >
-                  <Text style={[styles.modalCancelText, { color: colors.textMid }]}>Cancel</Text>
+                  <Text style={[styles.modalCancelText, { color: colors.textMid }]}>{t('common.cancel')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -636,7 +638,7 @@ export default function LoginScreen() {
                   {forgotLoading ? (
                     <ActivityIndicator size="small" color="#FFF" />
                   ) : (
-                    <Text style={styles.modalSendText}>Send Link</Text>
+                    <Text style={styles.modalSendText}>{t('auth.sendLink')}</Text>
                   )}
                 </TouchableOpacity>
               </View>
