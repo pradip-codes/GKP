@@ -10,10 +10,24 @@ const logger = require('../../config/logger');
 // No runtime DDL needed
 const ensureKycColumns = async () => {};
 
-// ── KYC Operator scope: HDFC only, and only applications that carry a KYC (VKYC) link ──────────────
+// ── KYC Operator scope: HDFC only, and only applications that carry a VALID KYC (VKYC) link ─────────
 // Link can live on applications.vkyc_link, applications.vkyc_url or physical_application_details.vkyc_url.
-const KYC_LINK_VALUE_SQL = `COALESCE(NULLIF(TRIM(a.vkyc_link), ''), NULLIF(TRIM(a.vkyc_url), ''), NULLIF(TRIM(pad.vkyc_url), ''), '')`;
-const KYC_HAS_LINK_SQL = `(UPPER(${KYC_LINK_VALUE_SQL}) NOT IN ('', 'N/A', 'NA', '-'))`;
+// A value counts as a link ONLY if it is a single http(s) URL (no spaces). Any other text such as
+// 'PROCESS DONE', 'NA', 'None', bank app numbers or remarks is NOT a link -> application is hidden.
+const KYC_URL_REGEX_SQL = `'^https?://[^[:space:]]+$'`;
+// Picks the FIRST column that holds a valid URL (so junk text in one column cannot mask a valid link in another).
+const KYC_LINK_VALUE_SQL = `(CASE
+  WHEN TRIM(COALESCE(a.vkyc_link, '')) ~* ${KYC_URL_REGEX_SQL} THEN TRIM(a.vkyc_link)
+  WHEN TRIM(COALESCE(a.vkyc_url, '')) ~* ${KYC_URL_REGEX_SQL} THEN TRIM(a.vkyc_url)
+  WHEN TRIM(COALESCE(pad.vkyc_url, '')) ~* ${KYC_URL_REGEX_SQL} THEN TRIM(pad.vkyc_url)
+  ELSE ''
+END)`;
+const KYC_HAS_LINK_SQL = `(${KYC_LINK_VALUE_SQL} <> '')`;
+// JS twin of the SQL rule (used to validate operator input before saving)
+const isValidKycLink = (v) => /^https?:\/\/\S+$/i.test(String(v || '').trim());
+// Manual VKYC Executive Code: letters, digits, '-', '_' only, max 30 chars
+const normalizeVkycExecutiveCode = (v) => String(v || '').trim().toUpperCase();
+const isValidVkycExecutiveCode = (v) => v === '' || /^[A-Z0-9_-]{1,30}$/.test(v);
 // NOTE: do NOT reference a.bank_name here - applications.bank_name does not exist in the production DB.
 const KYC_HDFC_BANK_SQL = `(
   LOWER(COALESCE(b.short_code, '')) LIKE '%hdfc%'
@@ -33,9 +47,11 @@ const ensureKycAppAccess = async (req, res, idOrNumber) => {
   const { rows } = await query(`
     SELECT 1
     FROM applications a
+    LEFT JOIN physical_application_details pad ON (pad.application_id = a.id OR pad.application_id::text = a.id::text)
     LEFT JOIN banks b ON (b.id = a.bank_id OR b.id::text = a.bank_id::text)
     WHERE (a.id::text = $1 OR a.application_number = $1)
       AND ${KYC_HDFC_BANK_SQL}
+      AND ${KYC_HAS_LINK_SQL}
       AND (
         EXISTS (
           SELECT 1 FROM admin_bank_assignments aba
@@ -51,7 +67,7 @@ const ensureKycAppAccess = async (req, res, idOrNumber) => {
   if (rows.length === 0) {
     res.status(403).json({
       success: false,
-      message: 'Access Denied: KYC Operators can only access HDFC applications assigned to them.'
+      message: 'Access Denied: KYC Operators can only access HDFC applications that have a valid VKYC link and are assigned to them.'
     });
     return false;
   }
@@ -252,7 +268,8 @@ const getKycApplications = async (req, res) => {
         COALESCE(NULLIF(a.customer_mobile, ''), pad.mobile, 'N/A') as customer_mobile,
         COALESCE(NULLIF(a.pan_number, ''), NULLIF(pad.pan_number, ''), 'N/A') as pan_number,
         COALESCE(NULLIF(a.bank_application_number, ''), NULLIF(pad.bank_application_number, ''), 'N/A') as bank_application_number,
-        COALESCE(NULLIF(a.vkyc_link, ''), NULLIF(a.vkyc_url, ''), NULLIF(pad.vkyc_url, ''), '') as vkyc_link,
+        ${KYC_LINK_VALUE_SQL} as vkyc_link,
+        COALESCE(NULLIF(TRIM(to_jsonb(a)->>'vkyc_executive_code'), ''), '') as vkyc_executive_code,
         COALESCE(NULLIF(a.user_remark, ''), NULLIF(pad.user_remark, ''), NULLIF(a.notes, ''), '') as user_remark,
         COALESCE(NULLIF(a.kyc_remarks, ''), NULLIF(pad.kyc_remarks, ''), '') as kyc_remarks,
         COALESCE(NULLIF(a.kyc_stage, ''), NULLIF(pad.kyc_stage, ''), 'Vkyc pending') as kyc_stage,
@@ -321,7 +338,8 @@ const getKycApplicationById = async (req, res) => {
         COALESCE(NULLIF(a.customer_mobile, ''), pad.mobile, 'N/A') as customer_mobile,
         COALESCE(NULLIF(a.pan_number, ''), NULLIF(pad.pan_number, ''), 'N/A') as pan_number,
         COALESCE(NULLIF(a.bank_application_number, ''), NULLIF(pad.bank_application_number, ''), 'N/A') as bank_application_number,
-        COALESCE(NULLIF(a.vkyc_link, ''), NULLIF(a.vkyc_url, ''), NULLIF(pad.vkyc_url, ''), '') as vkyc_link,
+        ${KYC_LINK_VALUE_SQL} as vkyc_link,
+        COALESCE(NULLIF(TRIM(to_jsonb(a)->>'vkyc_executive_code'), ''), '') as vkyc_executive_code,
         COALESCE(NULLIF(a.user_remark, ''), NULLIF(pad.user_remark, ''), NULLIF(a.notes, ''), '') as user_remark,
         COALESCE(NULLIF(a.kyc_remarks, ''), NULLIF(pad.kyc_remarks, ''), '') as kyc_remarks,
         COALESCE(NULLIF(a.kyc_stage, ''), NULLIF(pad.kyc_stage, ''), 'Vkyc pending') as kyc_stage,
@@ -629,6 +647,7 @@ const updateKycStageAndDetails = async (req, res) => {
       digilocker_stage, 
       bank_application_number, 
       vkyc_link, 
+      vkyc_executive_code,
       user_remark, 
       kyc_remarks, 
       pan_number, 
@@ -731,6 +750,21 @@ const updateKycStageAndDetails = async (req, res) => {
       params.push(bank_application_number);
       pIdx++;
       fieldChanges.bank_application_number = bank_application_number;
+    }
+
+    if (vkyc_link !== undefined && String(vkyc_link).trim() !== '' && !isValidKycLink(vkyc_link)) {
+      return res.status(400).json({ success: false, message: 'VKYC link must be a valid URL starting with http:// or https://' });
+    }
+
+    if (vkyc_executive_code !== undefined) {
+      const execCode = normalizeVkycExecutiveCode(vkyc_executive_code);
+      if (!isValidVkycExecutiveCode(execCode)) {
+        return res.status(400).json({ success: false, message: 'VKYC Executive Code may contain only letters, numbers, - and _ (max 30 characters).' });
+      }
+      updates.push(`vkyc_executive_code = $${pIdx}`);
+      params.push(execCode || null);
+      pIdx++;
+      fieldChanges.vkyc_executive_code = execCode || null;
     }
 
     if (vkyc_link !== undefined) {

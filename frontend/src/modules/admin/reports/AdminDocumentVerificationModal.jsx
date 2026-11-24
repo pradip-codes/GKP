@@ -440,6 +440,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
   const [motherName, setMotherName] = useState(application?.mother_name || '');
   const [appNumber, setAppNumber] = useState(application?.app_number || application?.application_no || '');
   const [vkycUrl, setVkycUrl] = useState(application?.vkyc_url || application?.vkyc_link || '');
+  const [vkycExecutiveCode, setVkycExecutiveCode] = useState(String(application?.vkyc_executive_code || ''));
   const [digitalJourneyUrl, setDigitalJourneyUrl] = useState(
     application?.digital_journey_url || application?.digital_link || application?.redirect_url || application?.product_url || application?.product?.partner_url || application?.product?.public_url || ''
   );
@@ -774,6 +775,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           app.app_number || application?.app_number
         ));
         if (app.vkyc_url || pd.vkyc_url) setVkycUrl(app.vkyc_url || pd.vkyc_url || '');
+        if (app.vkyc_executive_code !== undefined && app.vkyc_executive_code !== null) setVkycExecutiveCode(String(app.vkyc_executive_code));
         const realDigitalUrl = app.digital_journey_url || pd.digital_journey_url || app.digital_link || app.redirect_url || app.product_url || app.product?.partner_url || app.product?.public_url || '';
         if (realDigitalUrl) setDigitalJourneyUrl(realDigitalUrl);
 
@@ -968,6 +970,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           bank_ref_number: (bankRefNumber || losNo || '').trim() || undefined,
           los_no: (bankRefNumber || losNo || '').trim() || undefined,
           vkyc_url: vkycUrl,
+          vkyc_executive_code: String(vkycExecutiveCode || '').trim().toUpperCase(),
           status: 'submitted'
         };
       } else if (formType === 'remark') {
@@ -1001,6 +1004,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           vkyc_status: kycStage || vkycStage || 'None',
           vkyc_stage: vkycStage || kycStage || 'None',
           vkyc_url: vkycUrl,
+          vkyc_executive_code: String(vkycExecutiveCode || '').trim().toUpperCase(),
           dispatch_status: dispatchStatus || 'None',
           in_process_stage: inProcessStage || 'None',
           bank_current_lead_status: bankCurrentLeadStatus || 'None',
@@ -1269,11 +1273,12 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                 <> | Bank App No: <strong style={{ color: hasBankAppNumber ? '#0284c7' : '#94a3b8' }}>{bankRefNumber || application?.bank_application_number || application?.bank_ref_number || 'Not Filled'}</strong> | PAN: <strong style={{ color: hasBankAppNumber ? '#16a34a' : '#dc2626' }}>{hasBankAppNumber ? (panNumber || application.pan_number || application.pan || 'N/A') : '🔒 Hidden (Fill Bank App No Required)'}</strong></>
               )}
             </p>
-            {(isOpsOrAdmin || isSuperAdminOrAdmin) && (application.sales_operator_code || application.pan_checker_code || application.remark_operator_code) && (
+            {(isOpsOrAdmin || isSuperAdminOrAdmin) && (application.sales_operator_code || application.pan_checker_code || application.remark_operator_code || vkycExecutiveCode) && (
               <div style={{ display: 'flex', gap: '12px', fontSize: '11px', fontWeight: 700, color: '#475569', marginTop: '6px', background: '#f1f5f9', padding: '3px 10px', borderRadius: '6px' }}>
                 {application.sales_operator_code && <span>Sales Op Code: <strong style={{ color: '#2563eb' }}>{application.sales_operator_code}</strong></span>}
                 {application.pan_checker_code && <span>PAN Checker Code: <strong style={{ color: '#059669' }}>{application.pan_checker_code}</strong></span>}
                 {application.remark_operator_code && <span>Remark Op Code: <strong style={{ color: '#d97706' }}>{application.remark_operator_code}</strong></span>}
+                {vkycExecutiveCode && <span>VKYC Exec Code: <strong style={{ color: '#7c3aed' }}>{vkycExecutiveCode}</strong></span>}
               </div>
             )}
           </div>
@@ -3100,6 +3105,34 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                             <option value={cardApprovalStage}>{cardApprovalStage}</option>
                           )}
                         </select>
+                      </div>
+
+                      {/* 8. VKYC EXECUTIVE CODE (manual / editable) */}
+                      <div>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>8. VKYC EXECUTIVE CODE</label>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <input
+                            type="text"
+                            maxLength={30}
+                            disabled={!canEditRemark}
+                            value={vkycExecutiveCode}
+                            onChange={(e) => setVkycExecutiveCode(e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 30))}
+                            placeholder="e.g. GKP-EMP-001 (manual entry)"
+                            style={{ flex: 1, padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', background: !canEditRemark ? '#f8fafc' : '#fff' }}
+                          />
+                          {canEditRemark && (user?.employee_id || user?.employee_code) && (
+                            <button
+                              type="button"
+                              onClick={() => setVkycExecutiveCode(String(user.employee_id || user.employee_code).replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 30))}
+                              style={{ padding: '0 12px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#f1f5f9', fontSize: '11px', fontWeight: 800, color: '#334155', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                            >
+                              Use my code
+                            </button>
+                          )}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#0284c7', marginTop: '4px', fontWeight: 600 }}>
+                          Editable manually. Letters, numbers, - and _ only. Leave empty to clear.
+                        </div>
                       </div>
                     </>
                   ) : isTataCobrandHdfc ? (

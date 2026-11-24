@@ -684,6 +684,18 @@ export default function KycOperatorDashboard() {
                       </div>
                     </div>
 
+                    <div>
+                      <label style={{ color: C.textMid, fontSize: '11px', display: 'block', fontWeight: 800, marginBottom: '4px' }}>VKYC EXECUTIVE CODE</label>
+                      <input
+                        type="text"
+                        maxLength={30}
+                        value={appDetails.vkyc_executive_code || ''}
+                        onChange={(e) => setAppDetails(prev => ({ ...prev, vkyc_executive_code: e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 30) }))}
+                        placeholder="e.g. GKP-EMP-001"
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: `1px solid ${C.border}`, background: C.card, color: C.text, fontWeight: 700, fontFamily: 'monospace' }}
+                      />
+                    </div>
+
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
                       <div>
                         <label style={{ color: C.textMid, fontSize: '11px', display: 'block', fontWeight: 800, marginBottom: '4px' }}>KYC STAGE (REMARK FORM)</label>
@@ -753,6 +765,7 @@ export default function KycOperatorDashboard() {
                             digilocker_stage: appDetails.digilocker_stage,
                             bank_application_number: appDetails.bank_application_number,
                             vkyc_link: appDetails.vkyc_link,
+                            vkyc_executive_code: appDetails.vkyc_executive_code || '',
                             user_remark: appDetails.user_remark,
                             kyc_remarks: appDetails.kyc_remarks,
                             pan_number: appDetails.pan_number

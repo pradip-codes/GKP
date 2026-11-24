@@ -5045,6 +5045,17 @@ const updateApplicationDetails = async (req, res, next) => {
       return notFound(res, 'Application or Lead record not found');
     }
 
+    // VKYC Executive Code (manual, editable). Staff only; '' clears it; undefined leaves it untouched.
+    let vkycExecCodeToSave = null;
+    if (req.body.vkyc_executive_code !== undefined && !['PARTNER', 'TEAM_MEMBER'].includes((req.user?.role || '').toUpperCase())) {
+      const execCode = String(req.body.vkyc_executive_code || '').trim().toUpperCase();
+      if (execCode !== '' && !/^[A-Z0-9_-]{1,30}$/.test(execCode)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ success: false, message: 'VKYC Executive Code may contain only letters, numbers, - and _ (max 30 characters).' });
+      }
+      vkycExecCodeToSave = execCode;
+    }
+
     const userRole = (req.user?.role || '').toUpperCase();
     if (['PARTNER', 'TEAM_MEMBER'].includes(userRole)) {
       const { rows: [partner] } = await client.query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
@@ -5431,6 +5442,17 @@ const updateApplicationDetails = async (req, res, next) => {
       } catch (opCodeErr) {
         await client.query('ROLLBACK TO SAVEPOINT op_code_sp').catch(err => logger.warn('Silent catch warning:', err.message));
         logger.warn('Failed to save operator codes:', opCodeErr.message);
+      }
+    }
+
+    if (vkycExecCodeToSave !== null) {
+      try {
+        await client.query('SAVEPOINT vkyc_exec_sp');
+        await client.query(`UPDATE applications SET vkyc_executive_code = NULLIF($1::text, '') WHERE id = $2`, [vkycExecCodeToSave, app.id]);
+        await client.query('RELEASE SAVEPOINT vkyc_exec_sp');
+      } catch (vkycExecErr) {
+        await client.query('ROLLBACK TO SAVEPOINT vkyc_exec_sp').catch(err => logger.warn('Silent catch warning:', err.message));
+        logger.warn('Failed to save vkyc_executive_code:', vkycExecErr.message);
       }
     }
 

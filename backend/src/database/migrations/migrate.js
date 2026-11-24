@@ -408,6 +408,7 @@ const migrate = async () => {
     ADD COLUMN IF NOT EXISTS approved_amount DECIMAL(15,2);
 
     ALTER TABLE applications 
+    ADD COLUMN IF NOT EXISTS vkyc_executive_code VARCHAR(100),
     ADD COLUMN IF NOT EXISTS backend_remark TEXT,
     ADD COLUMN IF NOT EXISTS sales_operator_code VARCHAR(100),
     ADD COLUMN IF NOT EXISTS pan_checker_code VARCHAR(100),
