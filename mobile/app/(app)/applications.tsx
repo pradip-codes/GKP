@@ -19,7 +19,7 @@ import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { spacing } from '../../theme/spacing';
 import { Card, Input, Button, StatusBadge, LoadingState, ErrorState } from '../../components';
-import { fetchApplications, ApplicationQueryParams, fetchBanks, fetchProducts, exportApplicationsCSV } from '../../services/application.service';
+import { fetchApplications, ApplicationQueryParams, fetchApplicationDashboard, fetchBanks, fetchProducts, exportApplicationsCSV } from '../../services/application.service';
 import { ApplicationItem } from '../../types';
 
 const STATUS_OPTIONS = [
@@ -59,6 +59,7 @@ export default function ApplicationsScreen() {
   const [appScope, setAppScope] = useState<string>(scopeParam === 'team' && user?.role !== 'TEAM_MEMBER' ? 'team' : 'my');
 
   const [applications, setApplications] = useState<ApplicationItem[]>([]);
+  const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -69,6 +70,7 @@ export default function ApplicationsScreen() {
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
+  const [selectedCommission, setSelectedCommission] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedPeriod, setSelectedPeriod] = useState('all');
   const [selectedBank, setSelectedBank] = useState('');
@@ -145,6 +147,7 @@ export default function ApplicationsScreen() {
         period: selectedPeriod !== 'all' ? selectedPeriod : undefined,
         bank_id: selectedBank || undefined,
         product_id: selectedProduct || undefined,
+        commission_status: selectedCommission || undefined,
         scope: isPartnerRole ? appScope : undefined,
       };
 
@@ -180,13 +183,27 @@ export default function ApplicationsScreen() {
         isFetchingRef.current = false;
       }
     },
-    [debouncedSearch, selectedStatus, selectedCategory, selectedPeriod, isPartnerRole, appScope]
+    [debouncedSearch, selectedStatus, selectedCommission, selectedCategory, selectedPeriod, isPartnerRole, appScope]
   );
 
   // Trigger Reload on Filter / Debounced Search change
   useEffect(() => {
     loadData(1);
-  }, [debouncedSearch, selectedStatus, selectedCategory, selectedPeriod, selectedBank, selectedProduct, isPartnerRole, appScope]);
+  }, [debouncedSearch, selectedStatus, selectedCommission, selectedCategory, selectedPeriod, selectedBank, selectedProduct, isPartnerRole, appScope]);
+
+  // Dashboard stats — same endpoint the website uses (/applications/dashboard)
+  const fetchStats = useCallback(async () => {
+    try {
+      const res = await fetchApplicationDashboard(isPartnerRole ? appScope : undefined);
+      if (res?.success) setStats(res.data?.stats || null);
+    } catch {
+      /* silent — stats are best-effort */
+    }
+  }, [isPartnerRole, appScope]);
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
 
   // Pull-to-Refresh
   const handleRefresh = () => {
@@ -225,6 +242,7 @@ export default function ApplicationsScreen() {
     setSearchInput('');
     setDebouncedSearch('');
     setSelectedStatus('');
+    setSelectedCommission('');
     setSelectedCategory('');
     setSelectedPeriod('all');
     setSelectedBank('');
@@ -254,6 +272,7 @@ export default function ApplicationsScreen() {
         period: selectedPeriod !== 'all' ? selectedPeriod : undefined,
         bank_id: selectedBank || undefined,
         product_id: selectedProduct || undefined,
+        commission_status: selectedCommission || undefined,
         scope: isPartnerRole ? appScope : undefined,
       };
 
@@ -341,6 +360,51 @@ export default function ApplicationsScreen() {
     return null;
   };
 
+  // Analytics funnel — mirrors website PartnerApplications stat cards
+  const commPendingCount = (applications || []).filter((a: any) =>
+    ['pending', 'unpaid', 'initiated', 'due'].includes(String(a.commission_status || '').toLowerCase())
+  ).length;
+  const commReceivedCount = (applications || []).filter((a: any) =>
+    ['released', 'paid', 'received', 'credited', 'commission_released', 'commission_received'].includes(String(a.commission_status || '').toLowerCase())
+  ).length;
+  const rejectedCount = (applications || []).filter((a: any) => a.status === 'rejected').length;
+
+  const statCards = [
+    {
+      label: 'Total Leads',
+      value: stats?.total ?? stats?.total_applications ?? applications.length,
+      color: colors.primary,
+      commKey: '',
+      statusKey: '',
+    },
+    {
+      label: 'Commission Pending',
+      value: stats?.commission_pending ?? commPendingCount,
+      color: '#f59e0b',
+      commKey: 'pending',
+      statusKey: '',
+    },
+    {
+      label: 'Commission Received',
+      value: stats?.commission_received ?? stats?.commission_approved ?? stats?.commission_released ?? commReceivedCount,
+      color: '#06b6d4',
+      commKey: 'released',
+      statusKey: '',
+    },
+    {
+      label: 'Rejected',
+      value: stats?.rejected ?? rejectedCount,
+      color: '#ef4444',
+      commKey: '',
+      statusKey: 'rejected',
+    },
+  ];
+
+  const handleStatPress = (stat: (typeof statCards)[number]) => {
+    setSelectedStatus(stat.statusKey);
+    setSelectedCommission(stat.commKey);
+  };
+
   return (
     <View style={styles.container}>
       {/* Search & Filter Header */}
@@ -392,6 +456,34 @@ export default function ApplicationsScreen() {
           </View>
         )}
       </View>
+
+      {/* Analytics Funnel — same 4 stat cards as the website */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.statsRow}
+      >
+        {statCards.map((stat) => {
+          const isSelected = stat.commKey
+            ? selectedCommission === stat.commKey && !selectedStatus
+            : (selectedStatus === stat.statusKey && !selectedCommission);
+          return (
+            <TouchableOpacity
+              key={stat.label}
+              style={[
+                styles.statCard,
+                { borderLeftColor: stat.color },
+                isSelected && { borderColor: stat.color, borderWidth: 1.5 },
+              ]}
+              onPress={() => handleStatPress(stat)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.statLabel}>{stat.label}</Text>
+              <Text style={styles.statValue}>{stat.value ?? 0}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
 
       {/* Main Content Area */}
       {loading && page === 1 ? (
@@ -692,6 +784,39 @@ const styles = StyleSheet.create({
   },
   scopeBtnTextActive: {
     color: '#FFF',
+  },
+  statsRow: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+  },
+  statCard: {
+    minWidth: 110,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderLeftWidth: 4,
+    paddingHorizontal: spacing.sm + 4,
+    paddingVertical: spacing.sm,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  statLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.textLight,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  statValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: colors.text,
   },
   listContent: {
     padding: spacing.md,

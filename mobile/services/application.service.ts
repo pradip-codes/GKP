@@ -23,6 +23,17 @@ export const fetchApplications = async (params: ApplicationQueryParams = {}) => 
   }
 };
 
+export const fetchApplicationDashboard = async (scope?: string) => {
+  try {
+    const res = await apiClient.get('/applications/dashboard', {
+      params: { scope: scope || undefined },
+    });
+    return res.data;
+  } catch (err: any) {
+    throw err.response?.data || { success: false, message: 'Failed to load dashboard stats' };
+  }
+};
+
 export const fetchApplicationDetails = async (id: string) => {
   try {
     const res = await apiClient.get(`/applications/${id}`);
