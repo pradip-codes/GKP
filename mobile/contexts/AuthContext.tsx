@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { UserProfile, UserRole } from '../types';
 import { getSecureItem, setSecureItem } from '../services/storage.service';
 import { fetchCurrentUser, logoutSession } from '../services/auth.service';
+import { registerUnauthorizedListener } from '../services/api';
 import { disconnectMessengerSocket } from '../services/messengerSocket';
 import {
   getAndClearPendingDestination,
@@ -36,6 +37,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     restoreSession();
+    // When token refresh fails, api.ts clears storage and fires this — drop local session so UI redirects to login
+    registerUnauthorizedListener(() => {
+      disconnectMessengerSocket();
+      setToken(null);
+      setUser(null);
+      setIsAuthenticated(false);
+    });
   }, []);
 
   const restoreSession = async () => {

@@ -58,10 +58,14 @@ apiClient.interceptors.response.use(
           }
         }
       } catch (refreshErr) {
-        // Refresh token failed -> Clear session
+        // Refresh token failed -> Clear session and notify app to log out
         await removeSecureItem('auth_token');
         await removeSecureItem('refresh_token');
         await removeSecureItem('auth_user');
+        setAuthToken(null);
+        if (typeof onUnauthorizedCallback === 'function') {
+          onUnauthorizedCallback();
+        }
       }
     }
 
@@ -78,9 +82,14 @@ export interface WorkingHoursPayload {
 type WorkingHoursListener = (payload: WorkingHoursPayload) => void;
 
 let onWorkingHoursCallback: WorkingHoursListener | null = null;
+let onUnauthorizedCallback: (() => void) | null = null;
 
 export const registerWorkingHoursListener = (callback: WorkingHoursListener) => {
   onWorkingHoursCallback = callback;
+};
+
+export const registerUnauthorizedListener = (callback: () => void) => {
+  onUnauthorizedCallback = callback;
 };
 
 export const setAuthToken = (token: string | null) => {
