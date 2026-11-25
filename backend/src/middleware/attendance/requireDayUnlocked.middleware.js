@@ -43,7 +43,20 @@ const EXEMPT_PATHS = [
   '/kyc',
   '/upload-document',
   '/verification-status',
-  '/submit-verification'
+  '/submit-verification',
+  // Read-only own-data endpoints needed to render the dashboard
+  '/applications',
+  '/employee/applications',
+  '/attendance/today',
+  '/attendance/my-attendance',
+  '/attendance/my-summary',
+  '/attendance/enrollment/status',
+  '/attendance/tasks/today',
+  '/employee/credit-cards',
+  '/employee/incentives',
+  '/employee/sales-reports',
+  '/employee/settings',
+  '/employee/team'
 ];
 
 async function requireDayUnlocked(req, res, next) {
