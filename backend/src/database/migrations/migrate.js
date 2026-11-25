@@ -5178,6 +5178,14 @@ const migrate = async () => {
     logger.error('HR Profiles & Bank Requirements migration error note:', hrBankErr.message);
   }
 
+  // HR rename -> candidate name sync trigger + assigned_hr_id index
+  try {
+    const { migrateHrCandidateNameSync } = require('./migrate_hr_candidate_name_sync');
+    await migrateHrCandidateNameSync();
+  } catch (hrNameSyncErr) {
+    logger.error('HR candidate name sync migration error note:', hrNameSyncErr.message);
+  }
+
   // Device Push Token Registration Migration
   try {
     const { migrateDeviceTokens } = require('./migrate_device_tokens');

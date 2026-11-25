@@ -59,6 +59,13 @@ export default function HRDashboard() {
   // Create HR Account modal state
   const [createHRModalOpen, setCreateHRModalOpen] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
+
+  // Transfer Candidates modal state (Super Admin)
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [activeHrList, setActiveHrList] = useState([]);
+  const [transferForm, setTransferForm] = useState({ from_hr_id: '', to_hr_id: '', include_closed: false });
+  const [transferPreview, setTransferPreview] = useState(null);
+  const [transferLoading, setTransferLoading] = useState(false);
   const [hrForm, setHrForm] = useState({
     fullName: '',
     email: '',
@@ -115,6 +122,59 @@ export default function HRDashboard() {
       fetchHRAccounts();
     }
   }, [isSuperAdmin, fetchHRAccounts]);
+
+  // Fetch Active HR List for candidate transfer target dropdown
+  const fetchActiveHrList = useCallback(async () => {
+    try {
+      const res = await api.get('/public/careers/hr-list');
+      if (res.data && res.data.success) {
+        setActiveHrList(res.data.data || []);
+      }
+    } catch (err) {
+      console.error('Fetch active HR list error:', err);
+    }
+  }, []);
+
+  // Open Candidate Transfer modal
+  const openTransferModal = () => {
+    setTransferForm({ from_hr_id: '', to_hr_id: '', include_closed: false });
+    setTransferPreview(null);
+    setTransferModalOpen(true);
+    fetchActiveHrList();
+  };
+
+  // Preview or execute candidate transfer (by from_hr_id or orphaned_only)
+  const runCandidateTransfer = async ({ dryRun = false, orphanedOnly = false } = {}) => {
+    if (!transferForm.to_hr_id) {
+      alert('Please select a target active HR account.');
+      return;
+    }
+    if (!orphanedOnly && !transferForm.from_hr_id) {
+      alert('Please select a source HR account or use "Fix orphaned candidates".');
+      return;
+    }
+    setTransferLoading(true);
+    try {
+      const payload = orphanedOnly
+        ? { orphaned_only: true, to_hr_id: transferForm.to_hr_id, include_closed: transferForm.include_closed, dry_run: dryRun }
+        : { from_hr_id: transferForm.from_hr_id, to_hr_id: transferForm.to_hr_id, include_closed: transferForm.include_closed, dry_run: dryRun };
+      const res = await api.post('/hr/candidates/transfer', payload);
+      if (res.data && res.data.success) {
+        if (dryRun) {
+          setTransferPreview(res.data.data);
+        } else {
+          alert(res.data.message || 'Candidates transferred successfully.');
+          setTransferModalOpen(false);
+          setTransferPreview(null);
+          fetchHRData();
+        }
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to transfer candidates');
+    } finally {
+      setTransferLoading(false);
+    }
+  };
 
   // Handle HR Account creation
   const handleCreateHRSubmit = async (e) => {
@@ -361,24 +421,44 @@ export default function HRDashboard() {
               <FaSync style={{ fontSize: '11px', color: C.textMid }} /> Refresh
             </button>
             {isSuperAdmin && (
-              <button 
-                onClick={() => setCreateHRModalOpen(true)}
-                style={{ 
-                  background: C.teal || '#0F766E', 
-                  color: '#ffffff', 
-                  border: 'none', 
-                  padding: '7px 14px', 
-                  borderRadius: '6px', 
-                  fontSize: '13px', 
-                  fontWeight: 600, 
-                  cursor: 'pointer', 
-                  display: 'inline-flex', 
-                  alignItems: 'center', 
-                  gap: '6px'
-                }}
-              >
-                <FaUserPlus style={{ fontSize: '12px' }} /> Provision HR Account
-              </button>
+              <>
+                <button
+                  onClick={openTransferModal}
+                  style={{
+                    background: C.bgSecondary,
+                    color: C.text,
+                    border: `1px solid ${C.border}`,
+                    padding: '7px 12px',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <FaArrowRight style={{ fontSize: '11px', color: C.teal || '#0F766E' }} /> Transfer Candidates
+                </button>
+                <button 
+                  onClick={() => setCreateHRModalOpen(true)}
+                  style={{ 
+                    background: C.teal || '#0F766E', 
+                    color: '#ffffff', 
+                    border: 'none', 
+                    padding: '7px 14px', 
+                    borderRadius: '6px', 
+                    fontSize: '13px', 
+                    fontWeight: 600, 
+                    cursor: 'pointer', 
+                    display: 'inline-flex', 
+                    alignItems: 'center', 
+                    gap: '6px'
+                  }}
+                >
+                  <FaUserPlus style={{ fontSize: '12px' }} /> Provision HR Account
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -1305,6 +1385,99 @@ export default function HRDashboard() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Transfer Candidates Between HR Accounts (Super Admin) */}
+        {transferModalOpen && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px', width: '100%', maxWidth: '500px', overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.25)' }}>
+              <div style={{ padding: '16px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: C.text }}>Transfer Candidates Between HRs</h3>
+                  <p style={{ margin: '2px 0 0', fontSize: '12px', color: C.textMid }}>Reassign candidates when an HR leaves, is suspended, or is replaced</p>
+                </div>
+                <button type="button" onClick={() => setTransferModalOpen(false)} style={{ background: 'transparent', border: 'none', color: C.textMid, fontSize: '16px', cursor: 'pointer' }}>
+                  <FaTimes />
+                </button>
+              </div>
+              <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>From HR (any HR, including inactive)</label>
+                  <select
+                    value={transferForm.from_hr_id}
+                    onChange={(e) => { setTransferForm({ ...transferForm, from_hr_id: e.target.value }); setTransferPreview(null); }}
+                    style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }}
+                  >
+                    <option value="">-- Select Source HR --</option>
+                    {hrAccounts.map((hr) => {
+                      const hrId = hr.id || hr._id;
+                      const hrName = hr.fullName || hr.full_name || hr.email;
+                      const hrStatus = hr.status ? ` (${hr.status})` : '';
+                      return <option key={hrId} value={hrId}>{hrName}{hrStatus}</option>;
+                    })}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>To HR (active HR) *</label>
+                  <select
+                    value={transferForm.to_hr_id}
+                    onChange={(e) => { setTransferForm({ ...transferForm, to_hr_id: e.target.value }); setTransferPreview(null); }}
+                    style={{ width: '100%', padding: '8px 12px', background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: '6px', fontSize: '13px', color: C.text, boxSizing: 'border-box' }}
+                  >
+                    <option value="">-- Select Target Active HR --</option>
+                    {activeHrList.map((hr) => (
+                      <option key={hr.id} value={hr.id}>{hr.full_name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: C.textMid, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={transferForm.include_closed}
+                    onChange={(e) => { setTransferForm({ ...transferForm, include_closed: e.target.checked }); setTransferPreview(null); }}
+                  />
+                  Include closed candidates (Rejected / Suspended / Onboarded)
+                </label>
+
+                {transferPreview && (
+                  <div style={{ padding: '10px 12px', borderRadius: '6px', background: C.bgSecondary, border: `1px solid ${C.border}`, fontSize: '13px', color: C.text }}>
+                    <strong>{transferPreview.would_transfer}</strong> candidate(s) would move to <strong>{transferPreview.to_hr?.name}</strong>.
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'space-between', borderTop: `1px solid ${C.border}`, paddingTop: '14px' }}>
+                  <button
+                    type="button"
+                    disabled={transferLoading || !transferForm.to_hr_id}
+                    onClick={() => runCandidateTransfer({ dryRun: false, orphanedOnly: true })}
+                    style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '7px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    Fix orphaned candidates
+                  </button>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      type="button"
+                      disabled={transferLoading || !transferForm.from_hr_id || !transferForm.to_hr_id}
+                      onClick={() => runCandidateTransfer({ dryRun: true })}
+                      style={{ background: C.bgSecondary, border: `1px solid ${C.border}`, color: C.text, padding: '7px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}
+                    >
+                      Preview
+                    </button>
+                    <button
+                      type="button"
+                      disabled={transferLoading || !transferForm.from_hr_id || !transferForm.to_hr_id}
+                      onClick={() => runCandidateTransfer({ dryRun: false })}
+                      style={{ background: C.teal || '#0F766E', color: '#fff', border: 'none', padding: '7px 14px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+                    >
+                      {transferLoading ? 'Transferring...' : 'Transfer'}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}

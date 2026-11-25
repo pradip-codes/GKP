@@ -12,14 +12,14 @@ const isUuid = (v) => typeof v === 'string' && UUID_RE.test(v.trim());
 async function listActiveHrAccounts() {
   const { rows } = await query(
     `SELECT u.id,
-            COALESCE(NULLIF(TRIM(hp.full_name), ''), NULLIF(TRIM(u.full_name), '')) AS full_name
+            COALESCE(NULLIF(TRIM(u.full_name), ''), NULLIF(TRIM(hp.full_name), '')) AS full_name
        FROM users u
        LEFT JOIN LATERAL (
          SELECT full_name FROM hr_profiles WHERE user_id = u.id ORDER BY updated_at DESC NULLS LAST LIMIT 1
        ) hp ON TRUE
       WHERE UPPER(u.role::text) = 'HR'
         AND LOWER(u.status::text) = 'active'
-        AND COALESCE(NULLIF(TRIM(hp.full_name), ''), NULLIF(TRIM(u.full_name), '')) IS NOT NULL
+        AND COALESCE(NULLIF(TRIM(u.full_name), ''), NULLIF(TRIM(hp.full_name), '')) IS NOT NULL
       ORDER BY 2 ASC`
   );
   return rows;

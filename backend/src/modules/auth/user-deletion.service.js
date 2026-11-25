@@ -1082,6 +1082,8 @@ const deleteUserAccount = async (inputId) => {
       await safeExec(`UPDATE employee_terms_acceptance SET verified_by = NULL WHERE verified_by = $1`, [actualUserId]);
       await safeExec(`DELETE FROM contest_participants WHERE employee_id = $1`, [actualUserId]);
       await safeExec(`DELETE FROM hr_profiles WHERE user_id = $1`, [actualUserId]);
+      // Candidates of a deleted HR become unassigned (assignable by Super Admin) instead of pointing to a dead account
+      await safeExec(`UPDATE employee_candidates SET assigned_hr_id = NULL WHERE assigned_hr_id = $1`, [actualUserId]);
 
       await safeExec(
         `UPDATE employee_candidates 

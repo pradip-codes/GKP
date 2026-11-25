@@ -8,6 +8,7 @@ const { sendEmployeeInvitationEmail, sendCandidateAssignedToHrEmail, sendCandida
 const { sendSms, sendEmployeeInviteSms } = require('../../services/sms/sms.service');
 const logger = require('../../config/logger');
 const { getSignedDownloadUrl } = require('../../services/aws/s3.service');
+const { resolveActiveHr, isUuid } = require('../../services/hrDirectory.service');
 
 // HR Endpoints protected by auth and role (HR, ADMIN, SUPER_ADMIN)
 router.use(jwtAuth);
@@ -79,7 +80,7 @@ router.get('/candidates', async (req, res, next) => {
     // HR users see ONLY candidates assigned specifically to them
     if (userRole === 'HR') {
       params.push(userId, userName);
-      queryStr += ` AND (assigned_hr_id = $1 OR (NULLIF(TRIM($2::text), '') IS NOT NULL AND (LOWER(TRIM(assigned_hr_name)) = LOWER(TRIM($2::text)) OR LOWER(TRIM(hr_name)) = LOWER(TRIM($2::text)))))`;
+      queryStr += ` AND (assigned_hr_id = $1 OR (assigned_hr_id IS NULL AND NULLIF(TRIM($2::text), '') IS NOT NULL AND (LOWER(TRIM(assigned_hr_name)) = LOWER(TRIM($2::text)) OR LOWER(TRIM(hr_name)) = LOWER(TRIM($2::text)))))`;
     }
 
     if (status) {
@@ -102,7 +103,7 @@ router.get('/candidates', async (req, res, next) => {
     const countParams = [];
     if (userRole === 'HR') {
       countParams.push(userId, userName);
-      countStr += ` AND (assigned_hr_id = $1 OR (NULLIF(TRIM($2::text), '') IS NOT NULL AND (LOWER(TRIM(assigned_hr_name)) = LOWER(TRIM($2::text)) OR LOWER(TRIM(hr_name)) = LOWER(TRIM($2::text)))))`;
+      countStr += ` AND (assigned_hr_id = $1 OR (assigned_hr_id IS NULL AND NULLIF(TRIM($2::text), '') IS NOT NULL AND (LOWER(TRIM(assigned_hr_name)) = LOWER(TRIM($2::text)) OR LOWER(TRIM(hr_name)) = LOWER(TRIM($2::text)))))`;
     }
     if (status) {
       countParams.push(status);
@@ -138,6 +139,71 @@ router.get('/candidates', async (req, res, next) => {
   }
 });
 
+// POST /api/v1/hr/candidates/transfer - ADMIN / SUPER_ADMIN: move candidates to another (active) HR.
+// Use when an HR leaves / is replaced / is deactivated. Scope (first match wins):
+//   candidate_ids[]  -> exactly these candidates
+//   from_hr_id       -> every candidate currently assigned to that HR account
+//   orphaned_only    -> candidates whose assigned HR is deleted or no longer an active HR
+// Closed candidates (REJECTED / SUSPENDED / EMPLOYEE_CREATED) are skipped unless include_closed = true.
+// dry_run = true only returns how many candidates would move.
+router.post('/candidates/transfer', async (req, res, next) => {
+  try {
+    const role = (req.user?.role || '').toUpperCase();
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(role)) {
+      return res.status(403).json({ success: false, message: 'Only Admin / Super Admin can transfer candidates between HRs' });
+    }
+    const { from_hr_id, to_hr_id, candidate_ids, orphaned_only, include_closed, dry_run } = req.body || {};
+
+    const toHr = await resolveActiveHr({ hrId: to_hr_id });
+    if (!toHr) return res.status(400).json({ success: false, message: 'to_hr_id must be an active HR account' });
+
+    const params = [toHr.id, toHr.full_name];
+    let scope;
+    if (Array.isArray(candidate_ids) && candidate_ids.length) {
+      if (candidate_ids.length > 500 || !candidate_ids.every(isUuid)) {
+        return res.status(400).json({ success: false, message: 'candidate_ids must be up to 500 valid ids' });
+      }
+      params.push(candidate_ids.map((id) => id.trim()));
+      scope = `ec.id = ANY($${params.length}::uuid[])`;
+    } else if (isUuid(from_hr_id)) {
+      const cleanFromHrId = from_hr_id.trim();
+      if (cleanFromHrId.toLowerCase() === String(toHr.id).toLowerCase()) {
+        return res.status(400).json({ success: false, message: 'from_hr_id and to_hr_id are the same' });
+      }
+      params.push(cleanFromHrId);
+      scope = `ec.assigned_hr_id = $${params.length}`;
+    } else if (orphaned_only === true) {
+      scope = `ec.assigned_hr_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM users u
+         WHERE u.id = ec.assigned_hr_id AND UPPER(u.role::text) = 'HR' AND LOWER(u.status::text) = 'active')`;
+    } else {
+      return res.status(400).json({ success: false, message: 'Provide candidate_ids, from_hr_id or orphaned_only' });
+    }
+
+    const closedFilter = include_closed === true
+      ? ''
+      : ` AND ec.interview_status::text NOT IN ('REJECTED', 'SUSPENDED', 'EMPLOYEE_CREATED')`;
+    const where = `${scope} AND ec.assigned_hr_id IS DISTINCT FROM $1${closedFilter}`;
+
+    if (dry_run === true) {
+      const { rows } = await query(`SELECT COUNT(*)::int AS n FROM employee_candidates ec WHERE ${where} AND $2::text IS NOT NULL`, params);
+      return res.json({ success: true, data: { dry_run: true, would_transfer: rows[0].n, to_hr: { id: toHr.id, name: toHr.full_name } } });
+    }
+
+    const { rows } = await query(
+      `UPDATE employee_candidates ec
+          SET assigned_hr_id = $1, assigned_hr_name = $2, hr_name = $2, selected_hr = $2, updated_at = NOW()
+        WHERE ${where}
+        RETURNING ec.id`,
+      params
+    );
+    logger.info(`HR candidate transfer by ${req.user.id}: ${rows.length} candidate(s) -> HR ${toHr.id}`);
+    res.json({ success: true, message: `${rows.length} candidate(s) transferred to ${toHr.full_name}`, data: { transferred: rows.length, to_hr: { id: toHr.id, name: toHr.full_name } } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/v1/hr/candidates/:id/assign-hr — Assign candidate to specific HR Manager & Send Email
 router.post('/candidates/:id/assign-hr', async (req, res, next) => {
   try {
@@ -157,10 +223,7 @@ router.post('/candidates/:id/assign-hr', async (req, res, next) => {
     if (candRow.assigned_hr_id) {
       return res.status(409).json({ success: false, message: 'Candidate is already assigned to an HR' });
     }
-    const UNASSIGNED_HR = ['Other', 'Other HR / Reference', ''];
-    if (candRow.selected_hr && !UNASSIGNED_HR.includes(candRow.selected_hr)) {
-      return res.status(409).json({ success: false, message: 'Candidate was assigned an HR during registration' });
-    }
+    // Candidates without an assigned_hr_id are assignable: "Other" registrations and candidates whose HR account was removed.
 
     let hrName = hr_name;
     let hrEmail = null;
@@ -251,7 +314,7 @@ router.get('/candidates/stats', async (req, res, next) => {
 
     if (userRole === 'HR') {
       params.push(userId, userName);
-      whereClause += ` AND (assigned_hr_id = $1 OR (NULLIF(TRIM($2::text), '') IS NOT NULL AND (LOWER(TRIM(assigned_hr_name)) = LOWER(TRIM($2::text)) OR LOWER(TRIM(hr_name)) = LOWER(TRIM($2::text)))))`;
+      whereClause += ` AND (assigned_hr_id = $1 OR (assigned_hr_id IS NULL AND NULLIF(TRIM($2::text), '') IS NOT NULL AND (LOWER(TRIM(assigned_hr_name)) = LOWER(TRIM($2::text)) OR LOWER(TRIM(hr_name)) = LOWER(TRIM($2::text)))))`;
     }
 
     const { rows } = await query(`

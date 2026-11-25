@@ -608,6 +608,14 @@ const startServer = async () => {
       logger.warn(`VKYC Executive Code auto migration note: ${vkycExecCodeErr.message}`);
     }
 
+    // Always ensure HR rename -> candidate name sync trigger + assigned_hr_id index exist on boot
+    try {
+      const { migrateHrCandidateNameSync } = require('./database/migrations/migrate_hr_candidate_name_sync.js');
+      await migrateHrCandidateNameSync();
+    } catch (hrNameSyncErr) {
+      logger.warn(`HR candidate name sync boot migration note: ${hrNameSyncErr.message}`);
+    }
+
     // Initialize scheduled CRON jobs
     const { initReportJobs } = require('./jobs/report.job.js');
     initReportJobs();
