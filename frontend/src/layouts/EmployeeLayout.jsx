@@ -31,6 +31,7 @@ export default function EmployeeLayout() {
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [hrDepartmentOpen, setHrDepartmentOpen] = useState(() => location.pathname.startsWith('/employee/hr/'));
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 1024 : false);
   const [imgError, setImgError] = useState(false);
   const dropdownRef = useRef(null);
@@ -137,6 +138,7 @@ export default function EmployeeLayout() {
   const navItems = isApproved ? [
     { path: '/employee/dashboard', label: 'Dashboard', icon: <FaChartPie /> },
     { path: '/employee/attendance', label: 'My Attendance', icon: <FaCalendarCheck /> },
+    { path: '/employee/referrals', label: 'My Referrals', icon: <FaUserPlus /> },
     { path: '/employee/credit-cards', label: 'Credit Cards', icon: <FaCreditCard /> },
     { path: '/employee/loan-on-credit-card', label: 'Loan on Credit Card', icon: <FaCoins /> },
     { path: '/employee/smart-emi', label: 'Smart EMI on Credit Card', icon: <FaCreditCard /> },
@@ -145,15 +147,28 @@ export default function EmployeeLayout() {
     { path: '/employee/applications', label: 'My Applications', icon: <FaFileAlt /> },
     { path: '/employee/messenger', label: 'Messenger', icon: <FaFileAlt /> },
     { path: '/employee/contests', label: 'Contests', icon: <FaTrophy /> },
-    { path: '/employee/hr-department', label: 'HR Department', icon: <FaBuilding /> },
     ...(isManagerOrTL ? [{ path: '/employee/team', label: 'My Team Architecture', icon: <FaUsers /> }] : []),
     { path: '/employee/settings', label: 'Settings & Preferences', icon: <FaCog /> }
   ] : [
     { path: '/employee/dashboard', label: 'Dashboard', icon: <FaChartPie /> },
+    { path: '/employee/referrals', label: 'My Referrals', icon: <FaUserPlus /> },
     { path: '/employee/kyc', label: 'Employee Onboarding & KYC', icon: <FaCheckCircle /> },
     { path: '/employee/profile', label: 'Employee Profile', icon: <FaUserCircle /> },
     { path: '/employee/settings', label: 'Settings & Preferences', icon: <FaCog /> }
   ];
+
+  const hrDepartmentItems = [
+    { path: '/employee/hr/documents', label: 'Documents & Reports', icon: <FaFolderOpen /> },
+    { path: '/employee/hr/salary', label: 'My Salary', icon: <FaRupeeSign /> },
+    { path: '/employee/hr/payslips', label: 'My Payslip Requests', icon: <FaFileInvoiceDollar /> }
+  ];
+  const showHrDepartment = isApproved && String(user?.role || '').toUpperCase() === 'EMPLOYEE';
+
+  useEffect(() => {
+    if (location.pathname.startsWith('/employee/hr/')) {
+      setHrDepartmentOpen(true);
+    }
+  }, [location.pathname]);
 
   return (
     <>
@@ -259,6 +274,76 @@ export default function EmployeeLayout() {
               </Link>
             );
           })}
+          {showHrDepartment && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <button
+                type="button"
+                onClick={() => setHrDepartmentOpen((open) => !open)}
+                aria-expanded={hrDepartmentOpen}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  padding: '11px 14px',
+                  border: location.pathname.startsWith('/employee/hr/') ? '1px solid rgba(255,255,255,0.15)' : '1px solid transparent',
+                  borderRadius: '12px',
+                  background: location.pathname.startsWith('/employee/hr/') ? C.navyMid : 'transparent',
+                  color: location.pathname.startsWith('/employee/hr/') ? '#FFFFFF' : C.sidebarInactive,
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  transition: 'background-color 0.18s ease'
+                }}
+                onMouseEnter={(e) => {
+                  if (!location.pathname.startsWith('/employee/hr/')) {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!location.pathname.startsWith('/employee/hr/')) {
+                    e.currentTarget.style.background = 'transparent';
+                  }
+                }}
+              >
+                <span style={{ fontSize: '18px', color: location.pathname.startsWith('/employee/hr/') ? '#FFFFFF' : C.sidebarIconInactive }}><FaBuilding /></span>
+                <span style={{ flex: 1 }}>HR Department</span>
+                <FaChevronDown style={{ fontSize: '12px', transform: hrDepartmentOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+              </button>
+              {hrDepartmentOpen && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '14px', marginTop: '2px' }}>
+                  {hrDepartmentItems.map((item) => {
+                    const active = location.pathname === item.path;
+                    return (
+                      <Link
+                        key={item.path}
+                        to={item.path}
+                        onClick={() => isMobile && setMobileMenuOpen(false)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          padding: '9px 12px',
+                          borderRadius: '10px',
+                          fontSize: '13px',
+                          fontWeight: active ? 600 : 500,
+                          color: active ? '#FFFFFF' : C.sidebarInactive,
+                          background: active ? C.navyMid : 'transparent',
+                          textDecoration: 'none',
+                          border: active ? '1px solid rgba(255,255,255,0.15)' : '1px solid transparent',
+                          transition: 'background-color 0.18s ease'
+                        }}
+                      >
+                        <span style={{ fontSize: '14px', color: active ? '#FFFFFF' : C.sidebarIconInactive }}>{item.icon}</span>
+                        <span>{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </nav>
 
         {/* Sidebar Footer */}
@@ -346,11 +431,13 @@ export default function EmployeeLayout() {
             )}
             <h2 style={{ fontSize: isMobile ? '15px' : '18px', fontWeight: 700, color: C.text, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: isMobile ? '140px' : 'none' }}>
               {navItems.find(n => n.path === location.pathname)?.label || 
+                hrDepartmentItems.find(n => n.path === location.pathname)?.label ||
                 (location.pathname === '/employee/incentives' ? 'My Incentive' :
                  location.pathname === '/employee/salary' ? 'My Salary' :
                  location.pathname === '/employee/payslip' ? 'Payslip' :
                  location.pathname === '/employee/documents' ? 'Document' :
                  location.pathname === '/employee/sales-reports' ? 'Report' :
+                 location.pathname === '/employee/hr-department' ? 'HR Department' :
                  'Employee Workspace')}
             </h2>
           </div>

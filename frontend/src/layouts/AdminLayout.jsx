@@ -248,6 +248,24 @@ const AdminLayout = () => {
               <span>HR Dashboard & Candidates</span>
             </NavLink>
 
+            {/* Employee Referrals */}
+            <NavLink to="/hr/referrals" style={navLinkStyle}>
+              <Icons.profile size={18} />
+              <span>Employee Referrals</span>
+            </NavLink>
+
+            {/* Attendance History */}
+            <NavLink to="/hr/attendance-history" style={navLinkStyle}>
+              <Icons.calendar size={18} />
+              <span>Attendance History</span>
+            </NavLink>
+
+            {/* Payslip Requests */}
+            <NavLink to="/hr/payslip-requests" style={navLinkStyle}>
+              <Icons.creditCard size={18} />
+              <span>Payslip Requests</span>
+            </NavLink>
+
             {/* HR Attendance */}
             <NavLink to="/hr/attendance" style={navLinkStyle}>
               <Icons.calendar size={18} />

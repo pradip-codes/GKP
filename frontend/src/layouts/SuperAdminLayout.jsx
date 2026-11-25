@@ -11,7 +11,7 @@ import Chatbot from '../components/Chatbot/Chatbot';
 import AnnouncementBanner from '../components/AnnouncementBanner';
 import SEO from '../components/SEO';
 import { MdNotifications } from 'react-icons/md';
-import { FaWhatsapp, FaComments, FaCommentDots, FaCoins } from 'react-icons/fa';
+import { FaWhatsapp, FaComments, FaCommentDots, FaCoins, FaUserPlus } from 'react-icons/fa';
 import { getMessengerSocket } from '../services/messengerSocket';
 import SuperAdminMobileBottomNav from '../components/SuperAdminMobileBottomNav';
 
@@ -224,6 +224,7 @@ const SuperAdminLayout = () => {
         { path: '/super-admin/working-hours', label: 'Working Hours', icon: <Icons.clock size={16} /> },
         { path: '/super-admin/partners', label: 'Partners', icon: <Icons.profile size={16} /> },
         { path: '/super-admin/employees', label: 'Employees', icon: <Icons.profile size={16} /> },
+        { path: '/super-admin/referrals', label: 'Employee Referrals', icon: <FaUserPlus size={16} /> },
         { path: '/super-admin/attendance', label: 'Employee Attendance', icon: <Icons.clock size={16} /> },
         { path: '/super-admin/hr', label: 'HR', icon: <Icons.profile size={16} /> },
       ]

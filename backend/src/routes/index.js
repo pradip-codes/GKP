@@ -120,6 +120,7 @@ router.use('/support/tickets',   supportRoute);
 router.use('/marketing/materials', marketingRoute);
 
 const teamRoute                             = require('../modules/team/team.routes.js');
+const referralsRoute                        = require('../modules/referrals/referrals.routes.js');
 const messengerRoute                        = require('../modules/messenger/messenger.routes.js');
 const whatsappRoute                         = require('../modules/whatsapp/whatsapp.routes.js');
 const attendanceEnrollmentRoute             = require('../modules/attendance-enrollment/attendance-enrollment.routes.js');
@@ -130,6 +131,7 @@ const attendanceRoute                       = require('../modules/attendance/att
 
 // ── Referrals & Team Routes ──
 router.use('/team', teamRoute);
+router.use('/employee-referrals', referralsRoute);
 router.use('/partner/team-dashboard', teamRoute);
 router.use('/messenger', messengerRoute);
 router.use('/whatsapp', whatsappRoute);
