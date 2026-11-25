@@ -1047,6 +1047,26 @@ const deleteUserAccount = async (inputId) => {
       await safeExec(`DELETE FROM contest_participants WHERE employee_id = ANY($1::uuid[])`, [empUuids]);
       await safeExec(`DELETE FROM hr_profiles WHERE employee_id = ANY($1::uuid[])`, [empUuids]);
       await safeExec(`DELETE FROM employee_candidates WHERE converted_to_employee_id = ANY($1::uuid[])`, [empUuids]);
+
+      // Payroll, payslips & official documents
+      await safeExec(`DELETE FROM payslip_requests WHERE employee_id = ANY($1::uuid[])`, [empUuids]);
+      await safeExec(`DELETE FROM payroll_records WHERE employee_id = ANY($1::uuid[])`, [empUuids]);
+      await safeExec(`DELETE FROM employee_salary_structures WHERE employee_id = ANY($1::uuid[])`, [empUuids]);
+      await safeExec(`DELETE FROM employee_official_documents WHERE employee_id = ANY($1::uuid[])`, [empUuids]);
+
+      // Referrals made BY this employee (keep the referred candidates themselves)
+      await safeExec(`DELETE FROM employee_referrals WHERE referring_employee_id = ANY($1::uuid[])`, [empUuids]);
+
+      // Hierarchy / tasks / settings / deletion requests / assignments
+      await safeExec(`DELETE FROM employee_hierarchy WHERE employee_id = ANY($1::uuid[]) OR team_leader_id = ANY($1::uuid[]) OR manager_id = ANY($1::uuid[])`, [empUuids]);
+      await safeExec(`DELETE FROM employee_tasks WHERE employee_id = ANY($1::uuid[])`, [empUuids]);
+      await safeExec(`DELETE FROM employee_settings WHERE employee_id = ANY($1::uuid[])`, [empUuids]);
+      await safeExec(`DELETE FROM employee_deletion_requests WHERE employee_id = ANY($1::uuid[])`, [empUuids]);
+      await safeExec(`DELETE FROM employee_assignments WHERE employee_id = ANY($1::uuid[])`, [empUuids]);
+
+      // Candidates who listed this employee as referrer -> unassign, don't delete applicant
+      await safeExec(`UPDATE employee_candidates SET referred_by_employee_id = NULL WHERE referred_by_employee_id = ANY($1::uuid[])`, [empUuids]);
+
       await safeExec(`DELETE FROM employees WHERE id = ANY($1::uuid[])`, [empUuids]);
     }
 
@@ -1079,6 +1099,9 @@ const deleteUserAccount = async (inputId) => {
       await safeExec(`DELETE FROM operator_history WHERE operator_id = $1`, [actualUserId]);
       await safeExec(`UPDATE employee_joining_details SET reviewed_by = NULL WHERE reviewed_by = $1`, [actualUserId]);
       await safeExec(`UPDATE employee_kyc SET reviewed_by = NULL WHERE reviewed_by = $1`, [actualUserId]);
+      await safeExec(`UPDATE payslip_requests SET reviewed_by = NULL WHERE reviewed_by = $1`, [actualUserId]);
+      await safeExec(`UPDATE payroll_records SET approved_by = NULL WHERE approved_by = $1`, [actualUserId]);
+      await safeExec(`UPDATE payroll_records SET processed_by = NULL WHERE processed_by = $1`, [actualUserId]);
       await safeExec(`UPDATE employee_terms_acceptance SET verified_by = NULL WHERE verified_by = $1`, [actualUserId]);
       await safeExec(`DELETE FROM contest_participants WHERE employee_id = $1`, [actualUserId]);
       await safeExec(`DELETE FROM hr_profiles WHERE user_id = $1`, [actualUserId]);
