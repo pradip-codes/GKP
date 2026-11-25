@@ -3,7 +3,7 @@ const { success, created, error, notFound, forbidden } = require('../../utils/re
 const { logAction } = require('../admin/audit.service');
 const { ensureBankDirectProcessLinksTable } = require('../../database/migrations/migrate_bank_direct_process_links');
 const logger = require('../../config/logger');
-const { validateDirectProcessUrl: serviceValidateUrl, resolveDirectProcessLinkForProductRow: serviceResolveLink, getBankApplyLinkBackend } = require('../../services/bankLink.service');
+const { validateDirectProcessUrl: serviceValidateUrl, resolveDirectProcessLinkForProductRow: serviceResolveLink, getBankApplyLinkBackend, isHdfcProductRow, pickValidProductLevelLink } = require('../../services/bankLink.service');
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SENSITIVE_QUERY_PARAM_REGEX = /^(token|access_token|refresh_token|id_token|secret|client_secret|password|pass|pwd|key|api_key|apikey|auth|authorization|pan|pan_number|mobile|phone|aadhaar|otp|ssn|credential|session| sessionid|jwt|signature|sig)$/i;
@@ -289,12 +289,19 @@ const upsertBankDirectProcessLink = async (req, res, next) => {
 /**
  * Helper to resolve the effective Direct Process link for a product record.
  * Precedence:
+ * 0. HDFC cards only: the card's own product-level link (card-wise DSA link)
  * 1. Bank-specific Direct Process link configured for the product's bank (bank_direct_process_links)
  * 2. Product-level or Direct Process fallback (partner_url / public_url / getBankApplyLinkBackend)
  * 3. null if no valid link exists anywhere
  */
 const resolveDirectProcessLinkForProductRow = (product, fallbackFn = null) => {
   if (!product) return { url: null, source: 'none' };
+
+  // HDFC links are card-wise: the card's own product-level link beats the single bank-level link.
+  if (isHdfcProductRow(product)) {
+    const cardLink = pickValidProductLevelLink(product);
+    if (cardLink) return { url: cardLink, source: 'product_fallback' };
+  }
 
   const bankDirectUrl = typeof product.bank_direct_process_link === 'string'
     ? product.bank_direct_process_link.trim()

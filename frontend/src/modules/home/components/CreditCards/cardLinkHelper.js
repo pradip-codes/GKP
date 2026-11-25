@@ -108,9 +108,24 @@ export const isTataNeuPlusOrInfinity = (product) => {
   return true;
 };
 
+const HDFC_BANK_IDS = ['f0b5742d-f04d-4a91-b162-6009ddf6e345', TATA_BANK_ID];
+
+/**
+ * HDFC / Tata co-brand HDFC card? HDFC links are CARD-WISE (each card has its own CHANNELSOURCE / DSA link
+ * stored on the product), so for these the product-level link must win over the single bank-level link.
+ */
+export const isHdfcProduct = (product) => {
+  if (!product || typeof product !== 'object') return false;
+  const id = String(product.bank_id || '').trim().toLowerCase();
+  if (HDFC_BANK_IDS.includes(id)) return true;
+  const text = `${product.bank_name || ''} ${product.bank_code || ''} ${product.name || product.cardName || ''}`.toLowerCase();
+  return text.includes('hdfc');
+};
+
 /**
  * Resolves the Direct Process link for a product when the user chooses Direct Process (direct_bank).
  * Precedence:
+ * 0. HDFC cards only: the card's own product-level link (card-wise DSA link).
  * 1. Configured bank-specific Direct Process link (bank_direct_process_link) for the product's bank.
  * 2. Existing product-level or Direct Process fallback (getBankApplyLink).
  * 3. Last-resort default for Tata Neu Plus / Tata Neu Infinity.
@@ -119,6 +134,17 @@ export const isTataNeuPlusOrInfinity = (product) => {
 export const getDirectProcessLink = (productObj, cardName = '', bankId = '') => {
   const product = productObj || (typeof cardName === 'object' ? cardName : null);
   if (!product && !cardName) return null;
+
+  if (isHdfcProduct(product)) {
+    const cardLink = getBankApplyLink(
+      cardName || product?.name || '',
+      bankId || product?.bank_code || product?.bank_name || '',
+      product
+    );
+    if (cardLink && isSafeHttpUrl(cardLink)) {
+      return String(cardLink).trim();
+    }
+  }
 
   const bankConfiguredLink =
     product?.bank_direct_process_link ||

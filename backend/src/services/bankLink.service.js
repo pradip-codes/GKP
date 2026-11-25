@@ -137,15 +137,55 @@ function getBankApplyLinkBackend(productName, bankName, productObj = null) {
   return cleanUrl;
 }
 
+// HDFC Bank + Tata Co-brand HDFC bank ids. HDFC card links are CARD-WISE (each card variant has its own
+// CHANNELSOURCE / DSA link), so for these products the product-level link must beat the single bank-level link.
+const HDFC_BANK_IDS = [
+  'f0b5742d-f04d-4a91-b162-6009ddf6e345',
+  '1eacfa67-1187-48c7-adde-8a6edcfe9969'
+];
+
+const isHdfcProductRow = (product) => {
+  if (!product) return false;
+  const bankId = String(product.bank_id || '').trim().toLowerCase();
+  if (HDFC_BANK_IDS.includes(bankId)) return true;
+  const text = `${product.bank_name || ''} ${product.bank_code || ''} ${product.name || ''}`.toLowerCase();
+  return text.includes('hdfc');
+};
+
+const pickValidProductLevelLink = (product) => {
+  const candidates = [
+    product.employee_referral_url,
+    product.partner_url,
+    product.application_url,
+    product.apply_url,
+    product.redirect_url,
+    product.public_url,
+    product.bank_link
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      const check = validateDirectProcessUrl(candidate.trim());
+      if (check.valid) return check.url;
+    }
+  }
+  return null;
+};
+
 /**
  * Resolves the effective Direct Process link for a product record.
  * Precedence:
+ * 0. HDFC cards only: the card's own product-level link (card-wise DSA link) - beats the bank-level link
  * 1. Bank-specific Direct Process link configured for the product's bank (bank_direct_process_links)
  * 2. Product-level or Direct Process fallback (partner_url / public_url / getBankApplyLinkBackend)
  * 3. null if no valid link exists anywhere
  */
 const resolveDirectProcessLinkForProductRow = (product, fallbackFn = getBankApplyLinkBackend) => {
   if (!product) return { url: null, source: 'none' };
+
+  if (isHdfcProductRow(product)) {
+    const cardLink = pickValidProductLevelLink(product);
+    if (cardLink) return { url: cardLink, source: 'product_fallback' };
+  }
 
   const bankDirectUrl = typeof product.bank_direct_process_link === 'string'
     ? product.bank_direct_process_link.trim()
@@ -192,6 +232,9 @@ const resolveDirectProcessLinkForProductRow = (product, fallbackFn = getBankAppl
 
 module.exports = {
   FINANCE_PRODUCT_LINKS_BACKEND,
+  HDFC_BANK_IDS,
+  isHdfcProductRow,
+  pickValidProductLevelLink,
   validateDirectProcessUrl,
   getBankApplyLinkBackend,
   resolveDirectProcessLinkForProductRow
