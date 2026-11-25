@@ -2008,7 +2008,8 @@ const listApplications = async (req, res, next) => {
         if (bName && bName !== sCode) {
           matchParts.push(`LOWER(COALESCE(combined.bank_name, '')) LIKE '%${bName}%'`);
         }
-        if (matchParts.length === 0) matchParts.push('1=1');
+        // Strict: an assignment row we cannot resolve to a bank must grant NOTHING (it used to match every bank)
+        if (matchParts.length === 0) matchParts.push('1=0');
 
         return `((${matchParts.join(' OR ')})${tataClause})`;
       };

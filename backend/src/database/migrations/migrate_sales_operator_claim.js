@@ -69,25 +69,10 @@ const migrateSalesOperatorClaim = async () => {
         `);
       }
 
-      // 4. Ensure HDFC and SBI Bank assignments for Administrative Sales Executive / Operator users
-      await query(`
-        INSERT INTO admin_bank_assignments (admin_id, bank_id, category, is_active)
-        SELECT u.id, b.id, 'credit_card', true
-        FROM users u
-        CROSS JOIN banks b
-        WHERE (
-          UPPER(COALESCE(u.designation, '')) IN ('ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR')
-          OR UPPER(COALESCE(u.role::text, '')) IN ('ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR')
-        )
-        AND (
-          (LOWER(COALESCE(b.short_code, '')) IN ('hdfc', 'sbi') OR LOWER(COALESCE(b.name, '')) LIKE '%hdfc%' OR LOWER(COALESCE(b.name, '')) LIKE '%sbi%' OR LOWER(COALESCE(b.name, '')) LIKE '%state bank of india%')
-          AND LOWER(COALESCE(b.name, '')) NOT LIKE '%tata%'
-          AND LOWER(COALESCE(b.short_code, '')) NOT LIKE '%tata%'
-        )
-        ON CONFLICT DO NOTHING
-      `).catch(err => {
-        logger.warn('admin_bank_assignments auto-assignment notice:', err.message);
-      });
+      // 4. (removed) This migration used to auto-insert HDFC + SBI bank assignments for EVERY Administrative
+      //    Sales Executive on each server start / deploy. That silently re-added banks (e.g. SBI) that the Super
+      //    Admin had NOT selected. Bank access is now ONLY what is saved in Super Admin > Bank Assignment
+      //    (admin_bank_assignments). Do not auto-assign banks here.
 
       logger.info('Administrative Sales Operator Claim Schema Migration completed successfully.');
       migrationDone = true;

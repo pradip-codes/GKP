@@ -5,6 +5,7 @@ const { logAction } = require('../admin/audit.service.js');
 const { getPaginationParams, sanitizeMobile, normalizeAssignmentCategory } = require('../../utils/helpers/helpers');
 const { success, created, error, paginate, notFound } = require('../../utils/response/response');
 const logger = require('../../config/logger');
+const cache = require('../../services/cache.service');
 const isUuid = (str) => typeof str === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str.trim());
 
 const resolveBankId = async (bId, client = null) => {
@@ -702,6 +703,9 @@ const updateAdmin = async (req, res, next) => {
         }
       }
 
+      // Assignments changed: drop the cached copy so the new bank scope applies immediately (cache TTL is 5 min)
+      await cache.del(`admin_bank_assignments:${existing.id}`).catch(() => {});
+
       if (req.body.has_loc_eoc !== undefined || req.body.hasLocEoc !== undefined) {
         const val = req.body.has_loc_eoc !== undefined ? Boolean(req.body.has_loc_eoc) : Boolean(req.body.hasLocEoc);
         await query(`UPDATE users SET has_loc_eoc = $1 WHERE id = $2`, [val, existing.id]).catch(() => {});
@@ -864,6 +868,9 @@ const updateAdminBanks = async (req, res, next) => {
 
     logger.info('[BANK ASSIGNMENT] COMMIT');
     await client.query('COMMIT');
+
+    // Assignments changed: drop the cached copy so the new bank scope applies immediately (cache TTL is 5 min)
+    await cache.del(`admin_bank_assignments:${userRec.id}`).catch(() => {});
 
     logAction(req, 'UPDATE_ADMIN_BANKS', userRec.id, { assignmentPairs }).catch(() => {});
 
