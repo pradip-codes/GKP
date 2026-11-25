@@ -392,7 +392,7 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
       const cleanCode = rawRefCode.trim();
       try {
         const empMatch = await query(
-          `SELECT id FROM employees WHERE LOWER(employee_id) = LOWER($1) OR id::text = $1 OR LOWER(mobile_number) = LOWER($1) LIMIT 1`,
+          `SELECT id FROM employees WHERE LOWER(employee_id) = LOWER($1) OR id::text = $1 OR LOWER(mobile_number) = LOWER($1) OR LOWER(referral_code) = LOWER($1) LIMIT 1`,
           [cleanCode]
         );
         if (empMatch.rows.length > 0) {

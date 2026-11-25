@@ -23,7 +23,7 @@ router.use(roleCheck('EMPLOYEE', 'HR', 'ADMIN', 'SUPER_ADMIN'));
 
 async function resolveCurrentEmployee(userId) {
   const { rows } = await query(
-    `SELECT id, employee_id, full_name, mobile_number FROM employees WHERE user_id = $1 LIMIT 1`,
+    `SELECT id, employee_id, full_name, mobile_number, user_id, referral_code FROM employees WHERE user_id = $1 LIMIT 1`,
     [userId]
   );
   return rows[0] || null;
@@ -183,7 +183,14 @@ router.get('/', async (req, res, next) => {
 router.get('/meta', async (req, res, next) => {
   try {
     const employee = await resolveCurrentEmployee(req.user.id);
-    const referralCode = String(employee?.employee_id || req.user?.employee_id || '').trim();
+    // Share the opaque hashed referral code — never expose the raw employee_id
+    let referralCode = String(employee?.referral_code || '').trim();
+    if (!referralCode && employee?.id) {
+      const { createHash } = require('crypto');
+      referralCode = 'REF-' + createHash('md5').update(`${employee.employee_id || ''}:${employee.user_id || employee.id}`).digest('hex').slice(0, 10).toUpperCase();
+      await query(`UPDATE employees SET referral_code = $1 WHERE id = $2 AND referral_code IS NULL`, [referralCode, employee.id]).catch(() => {});
+    }
+    if (!referralCode) referralCode = String(req.user?.employee_id || '').trim();
 
     const hrRows = await listActiveHrAccounts().catch((e) => {
       logger.warn(`employee-referrals/meta hr list failed: ${e.message}`);
@@ -262,7 +269,7 @@ router.post('/', roleCheck('EMPLOYEE'), async (req, res, next) => {
          (referring_employee_id, candidate_name, mobile_number, relationship, preferred_hr_id, assigned_hr_id, referral_code, bonus_status)
        VALUES ($1, $2, $3, $4, $5, $5, $6, 'pending')
        RETURNING id, candidate_name, mobile_number, relationship, preferred_hr_id, referral_code, bonus_status, created_at`,
-      [emp.id, candidateName, cleanMobile, relationship, preferredHrUuid, emp.employee_id]
+      [emp.id, candidateName, cleanMobile, relationship, preferredHrUuid, emp.referral_code || emp.employee_id]
     );
 
     if (preferredHrUuid) {

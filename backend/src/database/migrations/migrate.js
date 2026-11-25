@@ -5186,6 +5186,14 @@ const migrate = async () => {
     logger.error('HR candidate name sync migration error note:', hrNameSyncErr.message);
   }
 
+  // Employee hashed referral_code column
+  try {
+    const { migrateEmployeeReferralCode } = require('./migrate_employee_referral_code');
+    await migrateEmployeeReferralCode();
+  } catch (refCodeErr) {
+    logger.error('Employee referral code migration error note:', refCodeErr.message);
+  }
+
   // Device Push Token Registration Migration
   try {
     const { migrateDeviceTokens } = require('./migrate_device_tokens');
