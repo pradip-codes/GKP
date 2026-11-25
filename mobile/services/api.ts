@@ -53,6 +53,10 @@ apiClient.interceptors.response.use(
           if (refreshRes.data?.token) {
             const newToken = refreshRes.data.token;
             await setSecureItem('auth_token', newToken);
+            // Backend rotates refresh tokens — persist the new one or the next refresh fails
+            if (refreshRes.data?.refreshToken) {
+              await setSecureItem('refresh_token', refreshRes.data.refreshToken);
+            }
             originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
             return apiClient(originalRequest);
           }
