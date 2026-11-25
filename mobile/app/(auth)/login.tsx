@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert, Modal, Image, KeyboardAvoidingView, Platform, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert, Modal, Image, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -590,11 +590,11 @@ export default function LoginScreen() {
 
           {/* Legal Links */}
           <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 16, marginTop: 10 }}>
-            <TouchableOpacity onPress={() => Linking.openURL('https://gharkapaisa.in/privacy-policy')}>
+            <TouchableOpacity onPress={() => router.push('/(public)/legal?doc=privacy')}>
               <Text style={{ fontSize: 12, color: colors.textLight }}>{t('auth.privacyPolicy', 'Privacy Policy')}</Text>
             </TouchableOpacity>
             <Text style={{ color: colors.border }}>•</Text>
-            <TouchableOpacity onPress={() => Linking.openURL('https://gharkapaisa.in/terms-and-conditions')}>
+            <TouchableOpacity onPress={() => router.push('/(public)/legal?doc=terms')}>
               <Text style={{ fontSize: 12, color: colors.textLight }}>{t('auth.termsConditions', 'Terms & Conditions')}</Text>
             </TouchableOpacity>
           </View>

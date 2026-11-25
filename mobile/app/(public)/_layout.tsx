@@ -18,6 +18,7 @@ export default function PublicLayout() {
       <Stack.Screen name="careers" />
       <Stack.Screen name="contact" />
       <Stack.Screen name="customer-upload" />
+      <Stack.Screen name="legal" />
       <Stack.Screen name="policy" />
       <Stack.Screen name="track-application" />
     </Stack>

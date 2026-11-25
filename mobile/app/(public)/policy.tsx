@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -16,25 +16,26 @@ const POLICIES = [
   {
     key: 'terms',
     title: 'Terms & Conditions',
-    content: `1. Platform Usage\nGharKaPaisa provides financial distribution and referral tracking technology to registered partners and verified users.\n\n2. Lead Fulfillment\nAll submitted leads are processed through regulated banking partners and credit bureaus strictly in compliance with RBI guidelines.\n\n3. Partner Responsibilities\nPartners must ensure accurate customer consent is acquired before submitting financial applications. Misrepresentation or fraudulent submissions will result in immediate account termination.`,
+    summary: 'Platform usage rules, lead fulfillment, partner responsibilities, and account terms.',
   },
   {
     key: 'privacy',
     title: 'Privacy Policy & DPDP',
-    content: `1. Data Collection\nWe collect personal identity, KYC documents, and application data solely to facilitate loan and credit card processing.\n\n2. Security Standards\nAll transmission is encrypted with 256-Bit SSL. Sensitive tokens and credentials are securely stored.\n\n3. Third-Party Sharing\nYour data is only shared with partnered financial institutions (Banks and NBFCs) for underwriting and credit verification with your explicit consent.`,
+    summary: 'How we collect, use, store, and protect your personal and financial data.',
   },
   {
     key: 'refund',
     title: 'Refund & Payout Policy',
-    content: `1. Commission Disbursals\nCommissions earned on approved and disbursed products are credited to the partner wallet in accordance with agreed payout cycles.\n\n2. Reversals & Adjustments\nIn the event of cancellation or fraudulent disbursal by customer, associated commission advances may be reversed.\n\n3. Wallet Settlements\nWithdrawal requests to verified bank accounts are typically settled within 24 to 48 business hours.`,
+    summary: 'Commission disbursals, reversals, and wallet settlement timelines.',
+  },
+  {
+    key: 'shipping',
+    title: 'Shipping Policy',
+    summary: 'Dispatch, delivery, and tracking for physical documents and cards.',
   },
 ];
 
 export default function PolicyScreen() {
-  const [selectedKey, setSelectedKey] = useState('terms');
-
-  const currentPolicy = POLICIES.find((p) => p.key === selectedKey) || POLICIES[0];
-
   return (
     <ScrollView contentContainerStyle={styles.container}>
       {/* Header */}
@@ -48,26 +49,23 @@ export default function PolicyScreen() {
         </View>
       </View>
 
-      {/* Policy Selector Pills */}
-      <View style={styles.pillsRow}>
-        {POLICIES.map((p) => (
+      {/* Policy Cards */}
+      {POLICIES.map((p) => (
+        <Card key={p.key} style={styles.card}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={styles.policyHeading}>{p.title}</Text>
+            <Icon name="document-text" size={22} color={colors.primary} />
+          </View>
+          <Text style={styles.policyBody}>{p.summary}</Text>
           <TouchableOpacity
-            key={p.key}
-            style={[styles.pill, selectedKey === p.key && styles.activePill]}
-            onPress={() => setSelectedKey(p.key)}
+            style={[styles.readBtn, { backgroundColor: colors.primary }]}
+            onPress={() => router.push(`/(public)/legal?doc=${p.key}`)}
           >
-            <Text style={[styles.pillText, selectedKey === p.key && styles.activePillText]}>
-              {p.title}
-            </Text>
+            <Text style={styles.readBtnText}>Read Full Policy</Text>
+            <Icon name="chevron-forward" size={16} color="#fff" />
           </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Content Card */}
-      <Card style={styles.card}>
-        <Text style={styles.policyHeading}>{currentPolicy.title}</Text>
-        <Text style={styles.policyBody}>{currentPolicy.content}</Text>
-      </Card>
+        </Card>
+      ))}
     </ScrollView>
   );
 }
@@ -99,48 +97,35 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#fff',
   },
-  pillsRow: {
-    flexDirection: 'row',
-    gap: spacing.xs,
-    marginBottom: spacing.md,
-  },
-  pill: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: '#1E293B',
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  activePill: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  pillText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.textLight,
-  },
-  activePillText: {
-    color: '#fff',
-    fontWeight: '700',
-  },
   card: {
-    padding: spacing.lg,
-    borderRadius: 20,
-    backgroundColor: '#1E293B',
-    borderWidth: 1,
-    borderColor: '#334155',
+    marginBottom: spacing.md,
+    padding: spacing.md,
   },
   policyHeading: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
     color: '#fff',
-    marginBottom: spacing.md,
+    flex: 1,
+    marginRight: spacing.sm,
   },
   policyBody: {
     fontSize: 13,
-    color: colors.textMid,
-    lineHeight: 22,
+    color: '#94A3B8',
+    lineHeight: 20,
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  readBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  readBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 13,
   },
 });
