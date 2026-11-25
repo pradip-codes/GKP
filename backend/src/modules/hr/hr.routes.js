@@ -573,6 +573,10 @@ router.post('/kyc/:id/verify', async (req, res, next) => {
   }
 });
 
+// ── HR Attendance History & Payslip Requests ──
+const hrPayslipsAttendanceRouter = require('./hr.payslips-attendance.routes.js');
+router.use('/', hrPayslipsAttendanceRouter);
+
 // ── Payroll Management (salary structures, payroll generation, approvals, documents) ──
 const hrPayrollRouter = require('../payroll/payroll.hr.routes.js');
 router.use('/payroll', hrPayrollRouter);

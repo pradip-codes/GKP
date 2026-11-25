@@ -592,6 +592,14 @@ const startServer = async () => {
       logger.warn('Payroll auto migration note:', payErr.message);
     }
 
+    // Always ensure HR Referrals & Payslip Requests schema extensions exist on boot
+    try {
+      const { migrateHrReferralsPayslips } = require('./database/migrations/migrate_hr_referrals_payslips.js');
+      await migrateHrReferralsPayslips();
+    } catch (hrRefPayErr) {
+      logger.warn('HR Referrals & Payslips auto migration note:', hrRefPayErr.message);
+    }
+
     // Initialize scheduled CRON jobs
     const { initReportJobs } = require('./jobs/report.job.js');
     initReportJobs();

@@ -2369,6 +2369,10 @@ router.post('/request-deletion', async (req, res, next) => {
   }
 });
 
+// ── Employee HR Department Data, Documents & Payslip Requests ──
+const employeeHrRouter = require('./employee.hr.routes.js');
+router.use('/', employeeHrRouter);
+
 // ── Payroll / Salary / Payslips / Documents (mounted after jwtAuth + resolveEmployee) ──
 const employeePayrollRouter = require('../payroll/payroll.employee.routes.js');
 router.use('/payroll', employeePayrollRouter);

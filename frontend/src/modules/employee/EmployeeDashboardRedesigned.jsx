@@ -9,6 +9,7 @@ import {
   FaExclamationCircle, FaExternalLinkAlt, FaExclamationTriangle, FaSignOutAlt,
   FaBuilding, FaRupeeSign, FaFileInvoiceDollar, FaFolderOpen, FaChevronDown, FaChevronUp, FaArrowLeft
 } from 'react-icons/fa';
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import api from '../../services/api';
 import { getApiV1Url } from '../../config/api';
 import LoadingLogo from '../../components/Loader/LoadingLogo';
@@ -111,6 +112,117 @@ const hrDepartmentModules = [
   }
 ];
 
+const PERFORMANCE_PRODUCTS = [
+  { key: 'credit_cards', label: 'Credit Cards' },
+  { key: 'loan_on_credit_card', label: 'Loan on Credit Cards' },
+  { key: 'loans', label: 'Loans' },
+  { key: 'smart_emi', label: 'Smart EMI on Credit Cards' },
+  { key: 'insurance', label: 'Insurance' }
+];
+
+const PERFORMANCE_PROCESSES = [
+  { key: 'lead_punching', label: 'Lead Punching' },
+  { key: 'linked_share', label: 'Linked Share' },
+  { key: 'direct_bank', label: 'Direct Bank' }
+];
+
+const normalizePerformanceValue = (value) =>
+  String(value || '').toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+const getApplicationPerformanceStatus = (application) => {
+  const status = normalizePerformanceValue(application.status);
+  const finalStatus = normalizePerformanceValue(application.final_status);
+  const declinedStatuses = ['declined', 'decline', 'rejected', 'technical error'];
+  const approvedStatuses = [
+    'approved', 'sanctioned', 'super admin approved', 'disbursed',
+    'commission received', 'commission released', 'released', 'credited', 'paid'
+  ];
+
+  if (declinedStatuses.some((value) => status.includes(value) || finalStatus.includes(value))) {
+    return 'rejected';
+  }
+  if (status.includes('cancel')) return null;
+  if (approvedStatuses.includes(status) || approvedStatuses.some((value) => finalStatus.includes(value))) {
+    return 'approved';
+  }
+  const pendingStatuses = [
+    'lead created', 'new', 'draft', 'initiated', 'link sent', 'confirmed',
+    'link pending', 'details submitted', 'submitted', 'bank form submitted',
+    'operational verified', 'under review', 'verification', 'in process',
+    'in progress', 'bank verification', 'vkyc completed', 'applied'
+  ];
+  if (
+    status.includes('pending') ||
+    finalStatus.includes('pending') ||
+    pendingStatuses.includes(status) ||
+    pendingStatuses.includes(finalStatus)
+  ) {
+    return 'pending';
+  }
+  return null;
+};
+
+const getApplicationPerformanceProduct = (application) => {
+  const category = normalizePerformanceValue(application.category);
+  const subCategory = normalizePerformanceValue(application.sub_category);
+  const productName = normalizePerformanceValue(application.product_name);
+  const productText = `${category} ${subCategory} ${productName}`;
+
+  if (productText.includes('insurance')) return 'insurance';
+  if (
+    subCategory === 'eoc' ||
+    category === 'smart emi' ||
+    productText.includes('smart emi') ||
+    productText.includes('emi on credit card')
+  ) {
+    return 'smart_emi';
+  }
+  if (
+    ['loc', 'loan on card', 'loan on credit card'].includes(subCategory) ||
+    productText.includes('loan on card') ||
+    productText.includes('loan on credit card') ||
+    (category === 'loc eoc' &&
+      ['loan', 'insta loan', 'instant loan', 'jumbo loan', 'encash', 'dial a draft']
+        .some((value) => productName.includes(value)))
+  ) {
+    return 'loan_on_credit_card';
+  }
+  if (category === 'loc eoc' || category === 'loc' || category === 'eoc') return null;
+  if (category.includes('loan') || subCategory.includes('loan') || productName.includes('loan')) {
+    return 'loans';
+  }
+  if (
+    category.includes('credit card') ||
+    ['creditcard', 'cards', 'card', 'co branded card', 'fd card'].includes(category) ||
+    subCategory.includes('credit card') ||
+    productName.includes('credit card')
+  ) {
+    return 'credit_cards';
+  }
+  return null;
+};
+
+const getApplicationPerformanceProcess = (application) => {
+  const process = normalizePerformanceValue(application.process_type || application.process_by);
+  if (process.includes('direct bank') || process === 'direct') return 'direct_bank';
+  if (process.includes('share') || process.includes('link')) return 'linked_share';
+  if (process.includes('lead') || process.includes('punch')) return 'lead_punching';
+  return null;
+};
+
+const getPerformanceStageStatus = (value) => {
+  const status = normalizePerformanceValue(value);
+  if (status.includes('not approved') || status.includes('not verified')) return 'pending';
+  if (status.includes('rejected') || status.includes('declined')) return null;
+  if (status.includes('approved') || status.includes('verified') || status.includes('completed') || status.includes('success')) {
+    return 'approved';
+  }
+  if (status.includes('pending') || status.includes('review') || status.includes('progress') || status.includes('submitted')) {
+    return 'pending';
+  }
+  return null;
+};
+
 export default function EmployeeDashboardRedesigned() {
   const { C, isDark } = useTheme();
   const navigate = useNavigate();
@@ -155,6 +267,14 @@ export default function EmployeeDashboardRedesigned() {
   const [totalApplicationsCount, setTotalApplicationsCount] = useState(null);
   const [applicationsLoading, setApplicationsLoading] = useState(true);
   const [applicationsError, setApplicationsError] = useState(false);
+  const [performanceMonth, setPerformanceMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [monthlyPerformanceApplications, setMonthlyPerformanceApplications] = useState([]);
+  const [monthlyPerformanceLoading, setMonthlyPerformanceLoading] = useState(true);
+  const [monthlyPerformanceError, setMonthlyPerformanceError] = useState(false);
+  const [performanceRetry, setPerformanceRetry] = useState(0);
   const [verState, setVerState] = useState(null);
   const [apiBanners, setApiBanners] = useState([]);
 
@@ -270,6 +390,88 @@ export default function EmployeeDashboardRedesigned() {
       setApplicationsLoading(false);
     }
   };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let isCurrentRequest = true;
+
+    const fetchMonthlyPerformance = async () => {
+      setMonthlyPerformanceLoading(true);
+      setMonthlyPerformanceError(false);
+      setMonthlyPerformanceApplications([]);
+
+      const monthParts = performanceMonth.split('-').map(Number);
+      if (monthParts.length !== 2 || !monthParts[0] || monthParts[1] < 1 || monthParts[1] > 12) {
+        setMonthlyPerformanceError(true);
+        setMonthlyPerformanceLoading(false);
+        return;
+      }
+
+      const [year, month] = monthParts;
+      const fromDate = `${performanceMonth}-01`;
+      const toDate = `${performanceMonth}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
+      const pageSize = 200;
+
+      try {
+        const firstResponse = await api.get('/applications', {
+          params: { scope: 'my', from_date: fromDate, to_date: toDate, page: 1, limit: pageSize },
+          signal: controller.signal,
+          skipLoader: true
+        });
+        const firstPayload = firstResponse.data;
+        if (!firstPayload?.success || !Array.isArray(firstPayload.data)) {
+          throw new Error('Monthly applications response is missing its data array.');
+        }
+
+        const pagination = firstPayload.pagination;
+        const reportedTotal = Number(pagination?.total);
+        if (!Number.isFinite(reportedTotal) || reportedTotal < 0) {
+          throw new Error('Monthly applications response is missing valid pagination totals.');
+        }
+
+        const responsePageSize = Number(pagination?.limit) || pageSize;
+        const pageCount = Math.max(Number(pagination.totalPages) || 0, Math.ceil(reportedTotal / responsePageSize));
+        const allApplications = [...firstPayload.data];
+
+        for (let page = 2; page <= pageCount; page += 1) {
+          const pageResponse = await api.get('/applications', {
+            params: { scope: 'my', from_date: fromDate, to_date: toDate, page, limit: pageSize },
+            signal: controller.signal,
+            skipLoader: true
+          });
+          const pagePayload = pageResponse.data;
+          if (!pagePayload?.success || !Array.isArray(pagePayload.data) || pagePayload.data.length === 0) {
+            throw new Error(`Monthly applications page ${page} could not be loaded completely.`);
+          }
+          allApplications.push(...pagePayload.data);
+        }
+
+        const uniqueApplications = new Map();
+        for (const application of allApplications) {
+          if (!application?.id) continue;
+          const id = String(application.id);
+          if (!uniqueApplications.has(id)) uniqueApplications.set(id, application);
+        }
+
+        if (isCurrentRequest) {
+          setMonthlyPerformanceApplications(Array.from(uniqueApplications.values()));
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error('Employee monthly performance fetch error:', error?.response?.status ? `HTTP ${error.response.status}` : error.message);
+          if (isCurrentRequest) setMonthlyPerformanceError(true);
+        }
+      } finally {
+        if (isCurrentRequest) setMonthlyPerformanceLoading(false);
+      }
+    };
+
+    void fetchMonthlyPerformance();
+    return () => {
+      isCurrentRequest = false;
+      controller.abort();
+    };
+  }, [performanceMonth, performanceRetry]);
 
   const fetchDashboardData = async (forceRefresh = false) => {
     setLoading(true);
@@ -502,6 +704,100 @@ export default function EmployeeDashboardRedesigned() {
   const missingItems = verState?.missing_items || [];
   const pendingTasksCount = Array.isArray(missingItems) ? missingItems.filter(i => i.status !== 'APPROVED' && i.status !== 'VERIFIED').length : 0;
   const isFullyVerified = verState?.overall_status === 'VERIFIED';
+
+  const monthlyPerformanceTotal = monthlyPerformanceApplications.length;
+  const monthlyStatusCounts = { approved: 0, pending: 0, rejected: 0 };
+  const monthlyProductCounts = Object.fromEntries(PERFORMANCE_PRODUCTS.map(({ key }) => [key, 0]));
+  const monthlyProcessCounts = Object.fromEntries(PERFORMANCE_PROCESSES.map(({ key }) => [key, 0]));
+  const monthlyKycCounts = { pending: 0, approved: 0 };
+  const monthlyIpaCounts = { pending: 0, approved: 0 };
+  const monthlyFinalCounts = { approved: 0, declined: 0 };
+
+  for (const application of monthlyPerformanceApplications) {
+    const status = getApplicationPerformanceStatus(application);
+    if (status) monthlyStatusCounts[status] += 1;
+
+    const product = getApplicationPerformanceProduct(application);
+    if (product && Object.prototype.hasOwnProperty.call(monthlyProductCounts, product)) {
+      monthlyProductCounts[product] += 1;
+    }
+
+    const process = getApplicationPerformanceProcess(application);
+    if (process && Object.prototype.hasOwnProperty.call(monthlyProcessCounts, process)) {
+      monthlyProcessCounts[process] += 1;
+    }
+
+    const kycStatus = getPerformanceStageStatus(application.kyc_stage || application.vkyc_stage || application.vkyc_status);
+    if (kycStatus) monthlyKycCounts[kycStatus] += 1;
+
+    const ipaStatus = getPerformanceStageStatus(application.ipa_stage || application.iqa_stage);
+    if (ipaStatus) monthlyIpaCounts[ipaStatus] += 1;
+
+    const finalStatus = normalizePerformanceValue(application.final_status);
+    if (finalStatus.includes('approved') || finalStatus.includes('sanctioned') || finalStatus.includes('disbursed')) {
+      monthlyFinalCounts.approved += 1;
+    } else if (finalStatus.includes('declin') || finalStatus.includes('reject')) {
+      monthlyFinalCounts.declined += 1;
+    }
+  }
+
+  const [selectedPerformanceYear, selectedPerformanceMonth] = performanceMonth.split('-').map(Number);
+  const daysInSelectedMonth = new Date(selectedPerformanceYear, selectedPerformanceMonth, 0).getDate();
+  const dailyApplicationCounts = Array.from({ length: daysInSelectedMonth }, (_, index) => ({
+    date: `${performanceMonth}-${String(index + 1).padStart(2, '0')}`,
+    count: 0
+  }));
+  const dailyCountsByDate = new Map(dailyApplicationCounts.map((day) => [day.date, day]));
+
+  for (const application of monthlyPerformanceApplications) {
+    const createdAt = new Date(application.created_at);
+    if (Number.isNaN(createdAt.getTime())) continue;
+    const date = [
+      createdAt.getFullYear(),
+      String(createdAt.getMonth() + 1).padStart(2, '0'),
+      String(createdAt.getDate()).padStart(2, '0')
+    ].join('-');
+    const day = dailyCountsByDate.get(date);
+    if (day) day.count += 1;
+  }
+
+  const performancePercentage = (count) =>
+    monthlyPerformanceTotal > 0 ? `${((count / monthlyPerformanceTotal) * 100).toFixed(1)}%` : '0.0%';
+
+  const renderPerformanceTable = (title, rows) => (
+    <div style={{
+      background: C.card,
+      border: `1px solid ${C.border}`,
+      borderRadius: '14px',
+      padding: isMobile ? '14px' : '18px',
+      minWidth: 0,
+      boxShadow: '0 4px 14px rgba(16,24,40,0.04)'
+    }}>
+      <h3 style={{ color: C.text, fontSize: '15px', fontWeight: 800, margin: '0 0 10px' }}>{title}</h3>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+        <thead>
+          <tr style={{ color: C.textMid, borderBottom: `1px solid ${C.border}` }}>
+            <th scope="col" style={{ textAlign: 'left', fontWeight: 600, padding: '7px 4px' }}>Category</th>
+            <th scope="col" style={{ textAlign: 'right', fontWeight: 600, padding: '7px 4px' }}>Count</th>
+            <th scope="col" style={{ textAlign: 'right', fontWeight: 600, padding: '7px 4px' }}>%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.label} style={{ borderBottom: `1px solid ${C.border}` }}>
+              <th scope="row" style={{ color: C.text, textAlign: 'left', fontWeight: 600, padding: '9px 4px' }}>{row.label}</th>
+              <td style={{ color: C.text, textAlign: 'right', padding: '9px 4px' }}>
+                {monthlyPerformanceLoading ? '...' : monthlyPerformanceError ? '—' : row.count}
+              </td>
+              <td style={{ color: C.textMid, textAlign: 'right', padding: '9px 4px' }}>
+                {monthlyPerformanceLoading || monthlyPerformanceError ? '—' : performancePercentage(row.count)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 
   return (
     <div style={{ 
@@ -929,6 +1225,152 @@ export default function EmployeeDashboardRedesigned() {
               </div>
             </div>
             <FaArrowRight style={{ color: C.gold, fontSize: '16px', flexShrink: 0 }} />
+          </div>
+        </div>
+
+        {/* Monthly Performance & Recharts Trend */}
+        <div style={{ marginBottom: '28px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+            <div>
+              <h2 style={{ fontSize: '20px', fontWeight: 800, color: C.text, margin: '0 0 4px' }}>Monthly Performance</h2>
+              <p style={{ fontSize: '13px', color: C.textMid, margin: 0 }}>Applications created during the selected month</p>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: C.textMid, fontSize: '12px', fontWeight: 600 }}>
+              Month
+              <input
+                type="month"
+                value={performanceMonth}
+                aria-label="Select month for performance"
+                onChange={(event) => setPerformanceMonth(event.target.value)}
+                style={{
+                  border: `1px solid ${C.border}`,
+                  background: C.card,
+                  color: C.text,
+                  borderRadius: '9px',
+                  padding: '8px 10px',
+                  font: 'inherit',
+                  colorScheme: isDark ? 'dark' : 'light'
+                }}
+              />
+            </label>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(150px, 1fr))', gap: '10px', overflowX: 'auto', paddingBottom: '4px', marginBottom: '16px' }}>
+            {[
+              { title: 'Total Applications', value: monthlyPerformanceTotal, description: 'For selected month', color: '#6366F1', background: '#EEF2FF', icon: FaFileAlt },
+              { title: 'Approved', value: monthlyStatusCounts.approved, description: 'Applications approved', color: '#059669', background: '#ECFDF5', icon: FaCheckCircle },
+              { title: 'Pending', value: monthlyStatusCounts.pending, description: 'Applications in progress', color: '#D97706', background: '#FFFBEB', icon: FaClock },
+              { title: 'Rejected', value: monthlyStatusCounts.rejected, description: 'Applications rejected', color: '#DC2626', background: '#FEF2F2', icon: FaExclamationCircle }
+            ].map((item) => {
+              const Icon = item.icon;
+              const value = monthlyPerformanceLoading ? '...' : monthlyPerformanceError ? '?' : item.value;
+              return (
+                <div key={item.title} style={{
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  background: C.card, border: `1px solid ${C.border}`,
+                  borderRadius: '14px', padding: isMobile ? '12px' : '15px',
+                  minWidth: 0, boxShadow: '0 4px 14px rgba(16,24,40,0.04)'
+                }}>
+                  <span style={{
+                    width: '34px', height: '34px', borderRadius: '10px', flexShrink: 0,
+                    background: item.background, color: item.color,
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center'
+                  }}>
+                    <Icon />
+                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: C.textMid, fontSize: '11px', fontWeight: 600, lineHeight: 1.3 }}>{item.title}</div>
+                    <div style={{ color: C.text, fontSize: '22px', fontWeight: 900, lineHeight: 1.2, margin: '3px 0' }}>{value}</div>
+                    <div style={{ color: C.textMid, fontSize: '10px', lineHeight: 1.3 }}>{item.description}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {monthlyPerformanceError && (
+            <div role="alert" style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
+              background: C.card, border: `1px solid ${C.border}`, borderRadius: '10px',
+              color: C.textMid, padding: '10px 12px', marginBottom: '16px', fontSize: '12px'
+            }}>
+              <span>Monthly performance data is unavailable.</span>
+              <button
+                type="button"
+                onClick={() => setPerformanceRetry((retry) => retry + 1)}
+                style={{
+                  border: `1px solid ${C.border}`, background: C.card, color: C.primary,
+                  borderRadius: '8px', padding: '6px 10px', fontWeight: 700, cursor: 'pointer'
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: '14px', marginBottom: '14px' }}>
+            {renderPerformanceTable('Product-wise', PERFORMANCE_PRODUCTS.map((item) => ({ label: item.label, count: monthlyProductCounts[item.key] })))}
+            {renderPerformanceTable('Process-wise', PERFORMANCE_PROCESSES.map((item) => ({ label: item.label, count: monthlyProcessCounts[item.key] })))}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr))', gap: '14px' }}>
+            {renderPerformanceTable('KYC', [{ label: 'Pending', count: monthlyKycCounts.pending }, { label: 'Approved', count: monthlyKycCounts.approved }])}
+            {renderPerformanceTable('IPA', [{ label: 'Pending', count: monthlyIpaCounts.pending }, { label: 'Approved', count: monthlyIpaCounts.approved }])}
+            {renderPerformanceTable('Final Status', [{ label: 'Approved', count: monthlyFinalCounts.approved }, { label: 'Declined', count: monthlyFinalCounts.declined }])}
+          </div>
+
+          <div style={{
+            background: C.card, border: `1px solid ${C.border}`, borderRadius: '14px',
+            padding: isMobile ? '14px' : '18px', marginTop: '14px', boxShadow: '0 4px 14px rgba(16,24,40,0.04)'
+          }}>
+            <h3 style={{ color: C.text, fontSize: '15px', fontWeight: 800, margin: '0 0 4px' }}>Monthly Application Trend</h3>
+            <p style={{ color: C.textMid, fontSize: '12px', margin: '0 0 12px' }}>Daily applications for the selected month</p>
+
+            {!monthlyPerformanceLoading && !monthlyPerformanceError && monthlyPerformanceTotal === 0 && (
+              <div role="status" style={{ color: C.textMid, fontSize: '12px', marginBottom: '8px' }}>
+                No applications recorded for this month. Daily counts are zero.
+              </div>
+            )}
+
+            <div style={{ width: '100%', height: isMobile ? '230px' : '270px' }}>
+              {monthlyPerformanceLoading || monthlyPerformanceError ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: C.textMid, fontSize: '12px' }}>
+                  {monthlyPerformanceLoading ? 'Loading monthly trend...' : 'Monthly trend is unavailable.'}
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={dailyApplicationCounts} margin={{ top: 8, right: 12, left: -18, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tickFormatter={(date) => String(Number(date.slice(-2)))}
+                      interval={daysInSelectedMonth > 20 ? 4 : daysInSelectedMonth > 15 ? 2 : 0}
+                      stroke={C.textMid}
+                      fontSize={10}
+                      tickLine={false}
+                      minTickGap={8}
+                    />
+                    <YAxis allowDecimals={false} domain={[0, (max) => Math.max(max, 1)]} stroke={C.textMid} fontSize={10} tickLine={false} />
+                    <Tooltip
+                      cursor={{ stroke: C.border, strokeDasharray: '3 3' }}
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null;
+                        const point = payload[0].payload;
+                        const [year, month, day] = point.date.split('-').map(Number);
+                        const formattedDate = new Date(year, month - 1, day).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+                        return (
+                          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '9px', padding: '9px 12px', boxShadow: '0 4px 14px rgba(16,24,40,0.12)' }}>
+                            <div style={{ color: C.textMid, fontSize: '11px', marginBottom: '4px' }}>{formattedDate}</div>
+                            <div style={{ color: C.text, fontSize: '12px', fontWeight: 700 }}>Applications: {point.count}</div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Line type="monotone" dataKey="count" name="Applications" stroke={C.primary} strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: C.primary }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
           </div>
         </div>
 
