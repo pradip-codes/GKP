@@ -5,6 +5,7 @@ const logger = require('../../config/logger');
 const { sendSmsOtp } = require('../../services/otp/msg91.service');
 const { sendOtpEmail, sendCandidateAssignedToHrEmail, sendCandidateRegistrationSuccessEmail } = require('../../services/email/email.service');
 const { uploadToS3 } = require('../../services/aws/s3.service');
+const { listActiveHrAccounts, resolveActiveHr } = require('../../services/hrDirectory.service');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
@@ -270,16 +271,11 @@ router.post('/verify-otp', async (req, res, next) => {
   }
 });
 
-// GET /api/v1/public/hr-list — Active HR accounts for the interview registration "Select HR" dropdown.
-// Reads from hr_profiles (synced from users role=HR); returns user_id so assignment links to the login account.
+// GET /api/v1/public/careers/hr-list — Active HR accounts for the interview registration "Select HR" dropdown.
 router.get('/hr-list', async (req, res, next) => {
   try {
-    const { rows } = await query(
-      `SELECT hp.user_id AS id, hp.full_name
-       FROM hr_profiles hp
-       WHERE hp.status = 'active' AND hp.full_name IS NOT NULL AND hp.full_name <> ''
-       ORDER BY hp.full_name ASC`
-    );
+    const rows = await listActiveHrAccounts();
+    res.set('Cache-Control', 'no-store');
     res.json({ success: true, data: rows });
   } catch (err) {
     next(err);
@@ -412,16 +408,9 @@ router.post('/register', upload.single('resume'), async (req, res, next) => {
     const cleanSelectedHr = cleanStr(selected_hr);
     const cleanHrName = cleanStr(hr_name);
 
-    // Resolve explicitly selected HR account (dropdown sends hr_id)
+    // Resolve explicitly selected HR account (dropdown sends hr_id; falls back to exact unique name)
     const requestedHrId = cleanStr(hr_id) || cleanStr(assigned_hr_id);
-    let assignedHrUser = null;
-    if (requestedHrId) {
-      const hrUserRes = await query(
-        `SELECT id, full_name, email FROM users WHERE id = $1 AND UPPER(role) = 'HR' AND status = 'active' LIMIT 1`,
-        [requestedHrId]
-      );
-      if (hrUserRes.rows.length > 0) assignedHrUser = hrUserRes.rows[0];
-    }
+    const assignedHrUser = await resolveActiveHr({ hrId: requestedHrId, hrName: cleanSelectedHr });
 
     const OTHER_HR_VALUES = ['Other HR / Reference', 'Other'];
     const isRealHrSelected = !!assignedHrUser;

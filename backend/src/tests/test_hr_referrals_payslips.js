@@ -142,7 +142,7 @@ function mockQuery(sql, params = []) {
   if (/FROM users WHERE id = \$1 AND UPPER\(role\) = 'HR'/i.test(s)) {
     return Promise.resolve({ rows: store.users.filter((u) => u.id === params[0] && u.role === 'HR' && u.status === 'active') });
   }
-  if (/FROM hr_profiles hp/i.test(s)) {
+  if (/FROM hr_profiles hp/i.test(s) || /FROM users u[\s\S]*hr_profiles/i.test(s)) {
     return Promise.resolve({
       rows: store.users.filter((u) => u.role === 'HR' && u.status === 'active').map((u) => ({ id: u.id, full_name: u.full_name }))
     });

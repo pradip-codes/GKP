@@ -6,6 +6,7 @@ const roleCheck = require('../../middleware/authorization/role.middleware');
 const { createNotification } = require('../notifications/service');
 const { success, created, error, notFound } = require('../../utils/response/response');
 const logger = require('../../config/logger');
+const { listActiveHrAccounts } = require('../../services/hrDirectory.service');
 const {
   ALLOWED_RELATIONSHIPS,
   normalizeIndianMobile,
@@ -184,28 +185,10 @@ router.get('/meta', async (req, res, next) => {
     const employee = await resolveCurrentEmployee(req.user.id);
     const referralCode = String(employee?.employee_id || req.user?.employee_id || '').trim();
 
-    let hrRows = [];
-    try {
-      const hpRes = await query(
-        `SELECT hp.user_id AS id, hp.full_name
-         FROM hr_profiles hp
-         WHERE hp.status = 'active' AND hp.full_name IS NOT NULL AND hp.full_name <> ''
-         ORDER BY hp.full_name ASC`
-      );
-      hrRows = hpRes.rows;
-    } catch (hpErr) {
-      logger.warn('employee-referrals/meta hr_profiles query failed:', hpErr.message);
-    }
-
-    if (hrRows.length === 0) {
-      const userHrRes = await query(
-        `SELECT id, full_name
-         FROM users
-         WHERE UPPER(role) = 'HR' AND status = 'active' AND full_name IS NOT NULL AND full_name <> ''
-         ORDER BY full_name ASC`
-      ).catch(() => ({ rows: [] }));
-      hrRows = userHrRes.rows;
-    }
+    const hrRows = await listActiveHrAccounts().catch((e) => {
+      logger.warn(`employee-referrals/meta hr list failed: ${e.message}`);
+      return [];
+    });
 
     const hrOptions = hrRows.map((hr) => ({
       id: hr.id,

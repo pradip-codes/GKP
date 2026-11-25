@@ -79,7 +79,7 @@ router.get('/candidates', async (req, res, next) => {
     // HR users see ONLY candidates assigned specifically to them
     if (userRole === 'HR') {
       params.push(userId, userName);
-      queryStr += ` AND (assigned_hr_id = $1 OR assigned_hr_name ILIKE $2 OR hr_name ILIKE $2)`;
+      queryStr += ` AND (assigned_hr_id = $1 OR (NULLIF(TRIM($2::text), '') IS NOT NULL AND (LOWER(TRIM(assigned_hr_name)) = LOWER(TRIM($2::text)) OR LOWER(TRIM(hr_name)) = LOWER(TRIM($2::text)))))`;
     }
 
     if (status) {
@@ -102,7 +102,7 @@ router.get('/candidates', async (req, res, next) => {
     const countParams = [];
     if (userRole === 'HR') {
       countParams.push(userId, userName);
-      countStr += ` AND (assigned_hr_id = $1 OR assigned_hr_name ILIKE $2 OR hr_name ILIKE $2)`;
+      countStr += ` AND (assigned_hr_id = $1 OR (NULLIF(TRIM($2::text), '') IS NOT NULL AND (LOWER(TRIM(assigned_hr_name)) = LOWER(TRIM($2::text)) OR LOWER(TRIM(hr_name)) = LOWER(TRIM($2::text)))))`;
     }
     if (status) {
       countParams.push(status);
@@ -251,7 +251,7 @@ router.get('/candidates/stats', async (req, res, next) => {
 
     if (userRole === 'HR') {
       params.push(userId, userName);
-      whereClause += ` AND (assigned_hr_id = $1 OR assigned_hr_name ILIKE $2 OR hr_name ILIKE $2)`;
+      whereClause += ` AND (assigned_hr_id = $1 OR (NULLIF(TRIM($2::text), '') IS NOT NULL AND (LOWER(TRIM(assigned_hr_name)) = LOWER(TRIM($2::text)) OR LOWER(TRIM(hr_name)) = LOWER(TRIM($2::text)))))`;
     }
 
     const { rows } = await query(`

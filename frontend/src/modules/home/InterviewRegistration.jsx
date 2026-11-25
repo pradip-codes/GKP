@@ -1963,7 +1963,7 @@ export default function InterviewRegistration() {
                 <select
                   name="selected_hr"
                   required
-                  value={formData.selected_hr}
+                  value={formData.hr_id || (formData.selected_hr === 'Other' ? 'Other' : '')}
                   onChange={(e) => {
                     const val = e.target.value;
                     if (val === 'Other') {
