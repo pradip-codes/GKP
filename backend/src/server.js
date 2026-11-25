@@ -600,6 +600,14 @@ const startServer = async () => {
       logger.warn('HR Referrals & Payslips auto migration note:', hrRefPayErr.message);
     }
 
+    // Always ensure applications.vkyc_executive_code column & index exist on boot
+    try {
+      const { migrateVkycExecutiveCode } = require('./database/migrations/migrate_vkyc_executive_code.js');
+      await migrateVkycExecutiveCode();
+    } catch (vkycExecCodeErr) {
+      logger.warn(`VKYC Executive Code auto migration note: ${vkycExecCodeErr.message}`);
+    }
+
     // Initialize scheduled CRON jobs
     const { initReportJobs } = require('./jobs/report.job.js');
     initReportJobs();

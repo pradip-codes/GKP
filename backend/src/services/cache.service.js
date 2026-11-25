@@ -173,11 +173,30 @@ async function del(key) {
       await withTimeout(redisClient.del(key), 500);
       return true;
     } catch (err) {
-      logger.error(`[Cache] Error deleting key ${key} from Redis:`, err.message);
+      logger.error(`[Cache] Error deleting key ${key} from Redis: ${err.message}`);
       return false;
     }
   }
   return true;
+}
+
+/**
+ * Delete Redis keys one key per command in bounded concurrent chunks so
+ * Redis Cluster / AWS ElastiCache Serverless never raises CROSSSLOT.
+ */
+async function deleteRedisKeysClusterSafe(client, keys, batchSize = 50) {
+  const uniqueKeys = Array.from(new Set(
+    (Array.isArray(keys) ? keys : []).filter((k) => typeof k === 'string' && k.length > 0)
+  ));
+  if (uniqueKeys.length === 0) return 0;
+
+  let deletedCount = 0;
+  for (let i = 0; i < uniqueKeys.length; i += batchSize) {
+    const chunk = uniqueKeys.slice(i, i + batchSize);
+    await withTimeout(Promise.all(chunk.map((k) => client.del(k))), 2000);
+    deletedCount += chunk.length;
+  }
+  return deletedCount;
 }
 
 /**
@@ -195,7 +214,7 @@ async function delPattern(pattern) {
       }
     }
   } catch (memErr) {
-    logger.warn('[Cache] Memory pattern clear warning:', memErr.message);
+    logger.warn(`[Cache] Memory pattern clear warning: ${memErr.message}`);
   }
 
   if (activeProvider === 'redis' && redisClient && redisClient.isOpen) {
@@ -204,10 +223,7 @@ async function delPattern(pattern) {
       const flushKeys = async () => {
         if (keysToDelete.length === 0) return;
         const batch = keysToDelete.splice(0, keysToDelete.length);
-        const validBatch = batch.filter(k => typeof k === 'string' && k.length > 0);
-        if (validBatch.length > 0) {
-          await redisClient.del(validBatch);
-        }
+        await deleteRedisKeysClusterSafe(redisClient, batch);
       };
 
       if (typeof redisClient.scanIterator === 'function') {
@@ -227,15 +243,12 @@ async function delPattern(pattern) {
       } else {
         const keys = await redisClient.keys(pattern);
         if (Array.isArray(keys) && keys.length > 0) {
-          const flatKeys = keys.flat().filter(k => typeof k === 'string' && k.length > 0);
-          if (flatKeys.length > 0) {
-            await redisClient.del(flatKeys);
-          }
+          await deleteRedisKeysClusterSafe(redisClient, keys.flat());
         }
       }
       return true;
     } catch (err) {
-      logger.error(`[Cache] Error deleting pattern ${pattern} from Redis:`, err.message);
+      logger.error(`[Cache] Error deleting pattern ${pattern} from Redis: ${err.message}`);
       return false;
     }
   }
@@ -263,6 +276,7 @@ module.exports = {
   set,
   del,
   delPattern,
+  deleteRedisKeysClusterSafe,
   isEnabled,
   getProvider,
   clearMemoryStore
