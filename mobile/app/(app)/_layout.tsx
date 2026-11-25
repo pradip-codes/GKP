@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Tabs, Redirect, useRouter, usePathname, useGlobalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Text, View, StyleSheet, AppState, Modal, TouchableOpacity, ScrollView, Image, BackHandler } from 'react-native';
+import { Text, View, StyleSheet, AppState, Modal, TouchableOpacity, ScrollView, Image, BackHandler, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -17,6 +17,7 @@ import { notificationService } from '../../services/notification.service';
 import { typography } from '../../theme/typography';
 import { getUnreadCount } from '../../services/messenger.service';
 import { getMessengerSocket } from '../../services/messengerSocket';
+import { registerDayLockedListener } from '../../services/api';
 
 const TabIcon = ({ label, focused, badgeCount }: { label: string; focused: boolean; badgeCount?: number }) => {
   const getIconName = (): keyof typeof Ionicons.glyphMap => {
@@ -160,6 +161,21 @@ export default function AppLayout() {
       isMounted = false;
       if (cleanupFn) cleanupFn();
     };
+  }, [isAuthenticated]);
+
+  // Surface DAY_LOCKED 403s as a single prompt to check in, instead of silent API errors
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let lastAlertAt = 0;
+    registerDayLockedListener(({ message }) => {
+      const now = Date.now();
+      if (now - lastAlertAt < 60000) return;
+      lastAlertAt = now;
+      Alert.alert('Attendance Required', message || 'Please mark attendance check-in to proceed.', [
+        { text: 'Later', style: 'cancel' },
+        { text: 'Check In Now', onPress: () => router.push('/(app)/attendance' as any) },
+      ]);
+    });
   }, [isAuthenticated]);
 
   if (isLoading) {

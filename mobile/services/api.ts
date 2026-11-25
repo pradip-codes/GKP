@@ -43,6 +43,16 @@ apiClient.interceptors.response.use(
       }
     }
 
+    // 1b. Day-Lock: employee panel locked until attendance check-in + commitments
+    if (responseData?.code === 'DAY_LOCKED') {
+      if (typeof onDayLockedCallback === 'function') {
+        onDayLockedCallback({
+          state: responseData.state,
+          message: responseData.message || 'Please mark attendance check-in to proceed.'
+        });
+      }
+    }
+
     // 2. Token Refresh on 401 Unauthorized
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
@@ -86,10 +96,15 @@ export interface WorkingHoursPayload {
 type WorkingHoursListener = (payload: WorkingHoursPayload) => void;
 
 let onWorkingHoursCallback: WorkingHoursListener | null = null;
+let onDayLockedCallback: ((payload: { state?: string; message: string }) => void) | null = null;
 let onUnauthorizedCallback: (() => void) | null = null;
 
 export const registerWorkingHoursListener = (callback: WorkingHoursListener) => {
   onWorkingHoursCallback = callback;
+};
+
+export const registerDayLockedListener = (callback: (payload: { state?: string; message: string }) => void) => {
+  onDayLockedCallback = callback;
 };
 
 export const registerUnauthorizedListener = (callback: () => void) => {
