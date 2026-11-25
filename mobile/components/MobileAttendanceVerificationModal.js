@@ -431,6 +431,7 @@ export default function MobileAttendanceVerificationModal({
                 domStorageEnabled={true}
                 mediaPlaybackRequiresUserAction={false}
                 allowsInlineMediaPlayback={true}
+                mediaCapturePermissionGrantType="grant"
               />
             ) : (
               <View style={styles.placeholderBox}>

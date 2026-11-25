@@ -29,6 +29,12 @@
     },
     "android": {
       "package": "com.gharkapaisa.app",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#ffffff"
       }
