@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuthStore } from "../../../app/store/authStore";
 import { useMsg91OTP } from "../../../hooks/useMsg91OTP";
@@ -1259,6 +1259,17 @@ export default function PartnerLogin() {
                 <strong>{t("login.dataSecureText2", "100% secure")}</strong>
                 {t("login.dataSecureText3", " with 256-bit SSL encryption")}
               </span>
+            </div>
+
+            {/* LEGAL LINKS */}
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginTop: '14px', flexWrap: 'wrap' }}>
+              <Link to="/privacy-policy" style={{ fontSize: '12px', color: '#64748b', textDecoration: 'none' }}>
+                {t("login.privacyPolicy", "Privacy Policy")}
+              </Link>
+              <span style={{ color: '#cbd5e1' }}>•</span>
+              <Link to="/terms-and-conditions" style={{ fontSize: '12px', color: '#64748b', textDecoration: 'none' }}>
+                {t("login.termsConditions", "Terms & Conditions")}
+              </Link>
             </div>
           </div>
         </section>
