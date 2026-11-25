@@ -363,7 +363,7 @@ export default function MobileAttendanceVerificationModal({
         </head>
         <body>
           <div class="container">
-            <div class="badge">🛡️ AWS Rekognition Face Liveness</div>
+            <div class="badge">🛡️ Secure Face Liveness Verification</div>
             <div class="oval">
               <span style="font-size: 42px;">👤</span>
             </div>
@@ -407,7 +407,7 @@ export default function MobileAttendanceVerificationModal({
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.title}>
-              {actionType === 'CHECK_IN' ? 'AWS Face Verification to Start Work' : 'AWS Face Verification to End Work'}
+              {actionType === 'CHECK_IN' ? 'Face Verification to Start Work' : 'Face Verification to End Work'}
             </Text>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
               <Text style={styles.closeText}>✕</Text>
@@ -416,7 +416,7 @@ export default function MobileAttendanceVerificationModal({
 
           {/* Subtitle */}
           <Text style={styles.subtitle}>
-            AWS Rekognition Face Liveness • KYC Biometric Face Match
+            Face Liveness Challenge • KYC Biometric Face Match
           </Text>
 
           {/* Camera / WebView Area */}
@@ -437,14 +437,14 @@ export default function MobileAttendanceVerificationModal({
                 <Text style={styles.cameraIcon}>🎥</Text>
                 <Text style={styles.placeholderText}>
                   {loading
-                    ? 'Creating AWS Liveness Session...'
+                    ? 'Creating Verification Session...'
                     : step === 'VERIFYING'
                     ? 'Matching with your registered KYC identity...'
                     : step === 'FAILED'
                     ? 'Verification Failed'
                     : step === 'SUCCESS'
                     ? 'Verification Passed!'
-                    : 'AWS Biometric Face Verification'}
+                    : 'Biometric Face Verification'}
                 </Text>
               </View>
             )}
@@ -458,7 +458,7 @@ export default function MobileAttendanceVerificationModal({
                 {livenessStatus === 'PASSED' ? '✓' : livenessStatus === 'FAILED' ? '✕' : '1'}
               </Text>
               <Text style={[styles.stepLabel, livenessStatus === 'PASSED' && styles.stepPassed]}>
-                1. AWS Rekognition Face Liveness Challenge
+                1. Face Liveness Challenge
               </Text>
               {livenessStatus === 'IN_PROGRESS' && <ActivityIndicator size="small" color="#0284C7" />}
             </View>
@@ -503,7 +503,7 @@ export default function MobileAttendanceVerificationModal({
                   <ActivityIndicator color="#FFF" />
                 ) : (
                   <Text style={styles.primaryBtnText}>
-                    {step === 'FAILED' ? 'Retry Verification 🔄' : actionType === 'CHECK_IN' ? 'Start Work (AWS Face) 🎥' : 'End Work (AWS Face) 🎥'}
+                    {step === 'FAILED' ? 'Retry Verification 🔄' : actionType === 'CHECK_IN' ? 'Start Work 🎥' : 'End Work 🎥'}
                   </Text>
                 )}
               </TouchableOpacity>
