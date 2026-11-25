@@ -311,26 +311,28 @@ export default function AppLayout() {
   const isManagerOrTL = ['Manager', 'Team Leader'].includes(userDesignation) || ['ADMIN', 'SUPER_ADMIN'].includes(role);
 
   // Employee sidebar — mirrors the website EmployeeLayout navItems exactly
-  const employeeSidebarItems: { id: string; label: string; icon: keyof typeof Ionicons.glyphMap; route: string; match: string }[] = empApproved ? [
+  const employeeSidebarItems: { id: string; label: string; icon: keyof typeof Ionicons.glyphMap; route: string; match: string; section?: boolean }[] = empApproved ? [
     { id: 'dashboard', label: 'Dashboard', icon: 'grid', route: roleHome, match: hasDesignation ? '/dashboard' : '/employee-dashboard' },
     { id: 'attendance', label: 'My Attendance', icon: 'calendar', route: '/(app)/attendance', match: '/attendance' },
+    { id: 'referrals', label: 'My Referrals', icon: 'person-add', route: '/(app)/employee-referrals', match: '/employee-referrals' },
     { id: 'credit-cards', label: 'Credit Cards', icon: 'card', route: '/(app)/employee-credit-cards', match: '/employee-credit-cards' },
     { id: 'loan-on-card', label: 'Loan on Credit Card', icon: 'cash', route: '/(app)/employee-loan-on-card', match: '/employee-loan-on-card' },
     { id: 'smart-emi', label: 'Smart EMI on Credit Card', icon: 'phone-portrait', route: '/(app)/employee-smart-emi', match: '/employee-smart-emi' },
     { id: 'loans', label: 'Loans', icon: 'business', route: '/(app)/employee-loans', match: '/employee-loans' },
     { id: 'insurance', label: 'Insurance', icon: 'shield', route: '/(app)/employee-insurance', match: '/employee-insurance' },
-    { id: 'sales-reports', label: 'Sales Reports', icon: 'document-text', route: '/(app)/employee-sales-report', match: '/employee-sales-report' },
     { id: 'applications', label: 'My Applications', icon: 'albums', route: '/(app)/applications', match: '/applications' },
     { id: 'messenger', label: 'Messenger', icon: 'chatbubble', route: '/(app)/messenger', match: '/messenger' },
     { id: 'contests', label: 'Contests', icon: 'trophy', route: '/(app)/employee-contests', match: '/employee-contests' },
-    { id: 'incentives', label: 'My Incentives', icon: 'gift', route: '/(app)/employee-incentives', match: '/employee-incentives' },
-    { id: 'salary', label: 'My Salary', icon: 'cash', route: '/(app)/employee-payroll?tab=salary', match: '/employee-payroll' },
-    { id: 'payslip', label: 'Payslip', icon: 'receipt', route: '/(app)/employee-payroll?tab=payslips', match: '/employee-payroll' },
-    { id: 'documents', label: 'Documents & Reports', icon: 'folder', route: '/(app)/employee-payroll?tab=documents', match: '/employee-payroll' },
     ...(isManagerOrTL ? [{ id: 'team', label: 'My Team Architecture', icon: 'people' as const, route: '/(app)/employee-team', match: '/employee-team' }] : []),
     { id: 'settings', label: 'Settings & Preferences', icon: 'settings', route: '/(app)/employee-settings', match: '/employee-settings' },
+    // HR Department section — same grouping as website EmployeeLayout
+    { id: 'hr-section', label: 'HR Department', icon: 'briefcase' as const, route: '', match: '', section: true },
+    { id: 'documents', label: 'Documents & Reports', icon: 'folder', route: '/(app)/employee-payroll?tab=documents', match: '/employee-payroll' },
+    { id: 'salary', label: 'My Salary', icon: 'cash', route: '/(app)/employee-payroll?tab=salary', match: '/employee-payroll' },
+    { id: 'payslip', label: 'My Payslip Requests', icon: 'receipt', route: '/(app)/employee-payroll?tab=payslips', match: '/employee-payroll' },
   ] : [
     { id: 'dashboard', label: 'Dashboard', icon: 'grid', route: roleHome, match: hasDesignation ? '/dashboard' : '/employee-dashboard' },
+    { id: 'referrals', label: 'My Referrals', icon: 'person-add', route: '/(app)/employee-referrals', match: '/employee-referrals' },
     { id: 'onboarding', label: 'Employee Onboarding & KYC', icon: 'checkmark-circle', route: '/(app)/employee-onboarding', match: '/employee-onboarding' },
     { id: 'profile', label: 'Employee Profile', icon: 'person', route: '/(app)/employee-profile', match: '/profile' },
     { id: 'settings', label: 'Settings & Preferences', icon: 'settings', route: '/(app)/employee-settings', match: '/employee-settings' },
@@ -596,6 +598,13 @@ export default function AppLayout() {
               </View>
               <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
                 {employeeSidebarItems.map((item) => {
+                  if (item.section) {
+                    return (
+                      <Text key={item.id} style={{ fontSize: 10, fontWeight: '800', color: colors.textLight, textTransform: 'uppercase', letterSpacing: 1, marginTop: 14, marginBottom: 4, marginLeft: 6 }}>
+                        {item.label}
+                      </Text>
+                    );
+                  }
                   const isActive = pathname === item.match || pathname.startsWith(item.match + '/');
                   return (
                     <TouchableOpacity
