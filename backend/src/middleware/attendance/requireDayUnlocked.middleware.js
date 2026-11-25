@@ -35,7 +35,15 @@ const EXEMPT_PATHS = [
   '/verify-otp',
   '/login',
   '/logout',
-  '/profile'
+  '/profile',
+  // Onboarding & KYC must be completable before first attendance check-in
+  '/onboarding-status',
+  '/joining-form',
+  '/terms-acceptance',
+  '/kyc',
+  '/upload-document',
+  '/verification-status',
+  '/submit-verification'
 ];
 
 async function requireDayUnlocked(req, res, next) {
