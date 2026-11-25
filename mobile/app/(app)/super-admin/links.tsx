@@ -241,7 +241,7 @@ export default function ManageLinksScreen() {
                         <Text
                           style={[
                             styles.modeBadgeText,
-                            { color: item.is_enabled ? '#10B981' : '#94A3B8' },
+                            { color: item.is_enabled ? colors.success : colors.textLight },
                           ]}
                         >
                           {item.is_enabled ? 'ENABLED' : 'DISABLED'}
@@ -367,7 +367,7 @@ const styles = StyleSheet.create({
   },
   headerSub: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   createHeaderBtn: {
@@ -398,7 +398,7 @@ const styles = StyleSheet.create({
   },
   subtleText: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 4,
     lineHeight: 18,
   },
@@ -489,7 +489,7 @@ const styles = StyleSheet.create({
   },
   modeText: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: colors.textLight,
   },
   actionBtn: {
     flexDirection: 'row',
@@ -513,7 +513,7 @@ const styles = StyleSheet.create({
   },
   emptySubText: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 4,
     textAlign: 'center',
   },
@@ -544,7 +544,7 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#E2E8F0',
+    color: colors.border,
     marginBottom: 6,
   },
   bankPillRow: {
@@ -567,7 +567,7 @@ const styles = StyleSheet.create({
   bankPillText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: colors.textLight,
   },
   bankPillTextActive: {
     color: '#FFFFFF',

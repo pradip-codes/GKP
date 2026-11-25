@@ -85,11 +85,11 @@ export default function SuperAdminSupportScreen() {
     switch (s) {
       case 'RESOLVED':
       case 'CLOSED':
-        return { bg: '#D1FAE5', text: '#065F46' };
+        return { bg: colors.successSoft, text: '#065F46' };
       case 'IN_PROGRESS':
-        return { bg: '#FEF3C7', text: '#92400E' };
+        return { bg: colors.warningSoft, text: '#92400E' };
       default:
-        return { bg: '#FEE2E2', text: '#991B1B' };
+        return { bg: colors.errorSoft, text: '#991B1B' };
     }
   };
 
@@ -256,7 +256,7 @@ export default function SuperAdminSupportScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
   },
   header: {
     backgroundColor: '#0F172A',
@@ -280,14 +280,14 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   filterWrap: {
     backgroundColor: '#fff',
     paddingVertical: spacing.sm,
     borderBottomWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   filterList: {
     paddingHorizontal: spacing.md,
@@ -297,7 +297,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
     borderRadius: 20,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
     marginRight: 6,
   },
   activeFilterChip: {
@@ -306,7 +306,7 @@ const styles = StyleSheet.create({
   filterChipText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textMid,
   },
   activeFilterChipText: {
     color: '#fff',
@@ -323,7 +323,7 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: spacing.sm,
     fontSize: 14,
-    color: '#64748B',
+    color: colors.textMid,
   },
   card: {
     backgroundColor: '#fff',
@@ -331,7 +331,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginBottom: spacing.sm,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -342,7 +342,7 @@ const styles = StyleSheet.create({
   ticketId: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#64748B',
+    color: colors.textMid,
   },
   statusBadge: {
     paddingHorizontal: 8,
@@ -369,13 +369,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: colors.borderLight,
     paddingTop: 6,
     marginBottom: 6,
   },
   metaText: {
     fontSize: 11,
-    color: '#64748B',
+    color: colors.textMid,
   },
   cardFooter: {
     flexDirection: 'row',
@@ -408,7 +408,7 @@ const styles = StyleSheet.create({
   },
   emptySub: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 4,
   },
   modalOverlay: {
@@ -458,7 +458,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
   },
   activeChip: {
     backgroundColor: '#2563EB',
@@ -466,14 +466,14 @@ const styles = StyleSheet.create({
   chipText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textMid,
   },
   activeChipText: {
     color: '#fff',
   },
   input: {
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.inputBorder,
     borderRadius: 8,
     padding: spacing.sm,
     fontSize: 14,
@@ -491,12 +491,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
   },
   cancelBtnText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textMid,
   },
   saveBtn: {
     paddingHorizontal: 16,

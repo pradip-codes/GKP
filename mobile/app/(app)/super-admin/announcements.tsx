@@ -159,13 +159,13 @@ export default function SuperAdminAnnouncementsScreen() {
           ) : (
             announcements.map((ann) => {
               const p = (ann.priority || 'NORMAL').toUpperCase();
-              let priorityBg = '#F1F5F9';
+              let priorityBg = colors.borderLight;
               let priorityColor = '#475569';
               if (p === 'URGENT') {
-                priorityBg = '#FEE2E2';
+                priorityBg = colors.errorSoft;
                 priorityColor = '#DC2626';
               } else if (p === 'HIGH') {
-                priorityBg = '#FEF3C7';
+                priorityBg = colors.warningSoft;
                 priorityColor = '#D97706';
               }
 
@@ -331,7 +331,7 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#94A3B8',
+    color: colors.textLight,
     letterSpacing: 1.5,
   },
   headerTitle: {
@@ -439,7 +439,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     paddingTop: spacing.xs,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: colors.borderLight,
   },
   dateText: {
     fontSize: 10,
@@ -474,9 +474,9 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   modalInput: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.inputBorder,
     borderRadius: 8,
     padding: 10,
     fontSize: 13,
@@ -494,8 +494,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
+    borderColor: colors.border,
+    backgroundColor: colors.bgTertiary,
   },
   activeToggleBtn: {
     backgroundColor: colors.primary,

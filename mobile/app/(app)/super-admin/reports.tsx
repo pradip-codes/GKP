@@ -107,21 +107,21 @@ export default function SuperAdminReportsScreen() {
       title: 'Attendance Report',
       description: 'Employee attendance summary and detailed records',
       icon: 'calendar',
-      color: '#3B82F6',
+      color: colors.primaryLight,
       path: '/super-admin/attendance',
     },
     {
       title: 'Partner KYC Report',
       description: 'Partner verification and KYC status',
       icon: 'shield',
-      color: '#10B981',
+      color: colors.success,
       path: '/super-admin/partners',
     },
     {
       title: 'Leads Report',
       description: 'Lead generation and conversion metrics',
       icon: 'list',
-      color: '#8B5CF6',
+      color: colors.purple,
       path: '/super-admin/leads',
     },
     {
@@ -187,7 +187,7 @@ export default function SuperAdminReportsScreen() {
               <Text style={styles.summaryLabel}>Total Records</Text>
             </View>
             <View style={styles.summaryItem}>
-              <Text style={[styles.summaryValue, { color: '#10B981' }]}>{summary.present_count}</Text>
+              <Text style={[styles.summaryValue, { color: colors.success }]}>{summary.present_count}</Text>
               <Text style={styles.summaryLabel}>Present</Text>
             </View>
             <View style={styles.summaryItem}>
@@ -195,7 +195,7 @@ export default function SuperAdminReportsScreen() {
               <Text style={styles.summaryLabel}>Late</Text>
             </View>
             <View style={styles.summaryItem}>
-              <Text style={[styles.summaryValue, { color: '#8B5CF6' }]}>{summary.half_day_count}</Text>
+              <Text style={[styles.summaryValue, { color: colors.purple }]}>{summary.half_day_count}</Text>
               <Text style={styles.summaryLabel}>Half Day</Text>
             </View>
           </View>
@@ -286,7 +286,7 @@ const styles = StyleSheet.create({
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEE2E2',
+    backgroundColor: colors.errorSoft,
     marginHorizontal: spacing.md,
     marginTop: spacing.md,
     padding: spacing.sm,

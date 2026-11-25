@@ -200,7 +200,7 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#94A3B8',
+    color: colors.textLight,
     letterSpacing: 1.5,
   },
   headerTitle: {
@@ -218,7 +218,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     gap: spacing.sm,
   },
   searchInput: {
@@ -241,7 +241,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   activeFilterPill: {
     backgroundColor: '#0F172A',
@@ -323,7 +323,7 @@ const styles = StyleSheet.create({
   detailsText: {
     fontSize: 12,
     color: colors.text,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     padding: spacing.xs,
     borderRadius: 6,
     marginTop: spacing.xs,
@@ -335,7 +335,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     paddingTop: spacing.xs,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: colors.borderLight,
   },
   ipText: {
     fontSize: 10,

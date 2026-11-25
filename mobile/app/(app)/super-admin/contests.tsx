@@ -152,13 +152,13 @@ export default function SuperAdminContestsScreen() {
                     <View
                       style={[
                         styles.statusBadge,
-                        { backgroundColor: isActive ? '#DCFCE7' : '#F1F5F9' },
+                        { backgroundColor: isActive ? '#DCFCE7' : colors.borderLight },
                       ]}
                     >
                       <Text
                         style={[
                           styles.statusBadgeText,
-                          { color: isActive ? '#15803D' : '#64748B' },
+                          { color: isActive ? '#15803D' : colors.textMid },
                         ]}
                       >
                         {isActive ? 'ACTIVE' : 'EXPIRED'}
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#94A3B8',
+    color: colors.textLight,
     letterSpacing: 1.5,
   },
   headerTitle: {
@@ -372,7 +372,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#FEF3C7',
+    backgroundColor: colors.warningSoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -403,7 +403,7 @@ const styles = StyleSheet.create({
   },
   rewardRow: {
     flexDirection: 'row',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 8,
     padding: spacing.sm,
     marginTop: spacing.sm,
@@ -427,7 +427,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     paddingTop: spacing.xs,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: colors.borderLight,
   },
   dateRange: {
     fontSize: 10,
@@ -462,9 +462,9 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   modalInput: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.inputBorder,
     borderRadius: 8,
     padding: 10,
     fontSize: 13,

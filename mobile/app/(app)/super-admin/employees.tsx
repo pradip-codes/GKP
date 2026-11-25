@@ -65,7 +65,7 @@ import {
 
 const HIERARCHY_LEVELS = [
   { key: 'BRANCH_HEAD', label: 'Branch Head', short: 'BH', color: '#6366F1', bg: '#EEF2FF' },
-  { key: 'SENIOR_MANAGER', label: 'Senior Manager', short: 'SM', color: '#8B5CF6', bg: '#F5F3FF' },
+  { key: 'SENIOR_MANAGER', label: 'Senior Manager', short: 'SM', color: colors.purple, bg: '#F5F3FF' },
   { key: 'MANAGER', label: 'Manager', short: 'MGR', color: '#0284C7', bg: '#F0F9FF' },
   { key: 'TEAM_LEADER', label: 'Team Leader', short: 'TL', color: '#D97706', bg: '#FFFBEB' },
   { key: 'TC', label: 'TC / Telecaller', short: 'TC', color: '#059669', bg: '#ECFDF5' },
@@ -800,7 +800,7 @@ export default function SuperAdminEmployeesScreen() {
                   </View>
                   <View style={styles.drawerInfoRow}>
                     <Text style={styles.drawerLabel}>Account Status</Text>
-                    <View style={[styles.statusBadge, { backgroundColor: emp?.activation_status === 'APPROVED' ? '#D1FAE5' : '#FEF3C7' }]}>
+                    <View style={[styles.statusBadge, { backgroundColor: emp?.activation_status === 'APPROVED' ? colors.successSoft : colors.warningSoft }]}>
                       <Text style={[styles.statusBadgeText, { color: emp?.activation_status === 'APPROVED' ? '#065F46' : '#92400E' }]}>
                         {emp?.activation_status === 'APPROVED' ? '✓ Active' : '● Pending'}
                       </Text>
@@ -828,7 +828,7 @@ export default function SuperAdminEmployeesScreen() {
                   </View>
                   <View style={styles.drawerInfoRow}>
                     <Text style={styles.drawerLabel}>Attendance Access</Text>
-                    <View style={[styles.statusBadge, { backgroundColor: (emp?.attendance_access === false || emp?.attendance_enabled === false) ? '#FEE2E2' : '#D1FAE5' }]}>
+                    <View style={[styles.statusBadge, { backgroundColor: (emp?.attendance_access === false || emp?.attendance_enabled === false) ? colors.errorSoft : colors.successSoft }]}>
                       <Text style={[styles.statusBadgeText, { color: (emp?.attendance_access === false || emp?.attendance_enabled === false) ? '#991B1B' : '#065F46' }]}>
                         {(emp?.attendance_access === false || emp?.attendance_enabled === false) ? '✕ Disabled' : '✓ Enabled'}
                       </Text>
@@ -904,7 +904,7 @@ export default function SuperAdminEmployeesScreen() {
               <View style={styles.statusCard}>
                 <Text style={styles.statusCardLabel}>KYC Status</Text>
                 <View style={styles.statusCardValueRow}>
-                  <View style={[styles.statusCardIcon, { backgroundColor: '#10B981' }]}>
+                  <View style={[styles.statusCardIcon, { backgroundColor: colors.success }]}>
                     <Icon name="check" size={12} color="#FFFFFF" />
                   </View>
                   <Text style={[styles.statusCardValue, { color: '#059669' }]}>Completed</Text>
@@ -926,7 +926,7 @@ export default function SuperAdminEmployeesScreen() {
               <View style={styles.statusCard}>
                 <Text style={styles.statusCardLabel}>Attendance</Text>
                 <View style={styles.statusCardValueRow}>
-                  <View style={[styles.statusCardIcon, { backgroundColor: '#10B981' }]}>
+                  <View style={[styles.statusCardIcon, { backgroundColor: colors.success }]}>
                     <Icon name="check" size={12} color="#FFFFFF" />
                   </View>
                   <Text style={[styles.statusCardValue, { color: '#059669' }]}>Enabled</Text>
@@ -963,7 +963,7 @@ export default function SuperAdminEmployeesScreen() {
               </View>
               <View style={styles.drawerInfoRow}>
                 <Text style={styles.drawerLabel}>Incentive Earned</Text>
-                <Text style={[styles.drawerValue, { color: '#10B981' }]}>{emp?.incentive_earned ? `₹${emp.incentive_earned.toLocaleString('en-IN')}` : '₹0'}</Text>
+                <Text style={[styles.drawerValue, { color: colors.success }]}>{emp?.incentive_earned ? `₹${emp.incentive_earned.toLocaleString('en-IN')}` : '₹0'}</Text>
               </View>
             </View>
 
@@ -1002,7 +1002,7 @@ export default function SuperAdminEmployeesScreen() {
               </View>
               <View style={styles.activityTimeline}>
                 <View style={styles.activityItem}>
-                  <View style={[styles.activityIcon, { backgroundColor: '#D1FAE5' }]}>
+                  <View style={[styles.activityIcon, { backgroundColor: colors.successSoft }]}>
                     <Icon name="check" size={12} color="#059669" />
                   </View>
                   <View style={styles.activityContent}>
@@ -1050,7 +1050,7 @@ export default function SuperAdminEmployeesScreen() {
           <ScrollView style={styles.drawerScroll}>
             {/* KYC Approval Status Banner */}
             <View style={[styles.kycBanner, { 
-              backgroundColor: emp?.activation_status === 'APPROVED' ? '#D1FAE5' : '#FEF3C7',
+              backgroundColor: emp?.activation_status === 'APPROVED' ? colors.successSoft : colors.warningSoft,
               borderColor: emp?.activation_status === 'APPROVED' ? '#A7F3D0' : '#FDE68A'
             }]}>
               <Text style={[styles.kycBannerText, { 
@@ -1175,7 +1175,7 @@ export default function SuperAdminEmployeesScreen() {
                 { key: 'offer_letter', label: 'Signed Offer Letter', icon: 'briefcase' },
               ].map((doc) => {
                 const status = docStatuses[doc.key] || { status: 'not_uploaded', reason: '', url: null };
-                const statusColor = status.status === 'verified' ? '#10B981' : 
+                const statusColor = status.status === 'verified' ? colors.success : 
                                    status.status === 'rejected' ? '#EF4444' : 
                                    status.status === 'submitted' ? '#F59E0B' : '#9CA3AF';
                 const isRejectingThis = rejectingDoc === doc.key;
@@ -1188,9 +1188,9 @@ export default function SuperAdminEmployeesScreen() {
                         <Text style={styles.docLabel}>{doc.label}</Text>
                       </View>
                       <View style={[styles.docStatusBadge, { 
-                        backgroundColor: status.status === 'verified' ? '#D1FAE5' : 
-                                       status.status === 'rejected' ? '#FEE2E2' : 
-                                       status.status === 'submitted' ? '#FEF3C7' : '#F3F4F6',
+                        backgroundColor: status.status === 'verified' ? colors.successSoft : 
+                                       status.status === 'rejected' ? colors.errorSoft : 
+                                       status.status === 'submitted' ? colors.warningSoft : '#F3F4F6',
                         borderColor: status.status === 'verified' ? '#A7F3D0' : 
                                      status.status === 'rejected' ? '#FCA5A5' : 
                                      status.status === 'submitted' ? '#FDE68A' : '#E5E7EB'
@@ -1299,7 +1299,7 @@ export default function SuperAdminEmployeesScreen() {
               /* Enrolled & Verified Callout Box */
               <View style={[styles.biometricCallout, { backgroundColor: '#F0FDF4', borderColor: '#86EFAC' }]}>
                 <View style={styles.biometricCalloutHeader}>
-                  <View style={[styles.biometricCalloutIcon, { backgroundColor: '#10B981' }]}>
+                  <View style={[styles.biometricCalloutIcon, { backgroundColor: colors.success }]}>
                     <Icon name="check" size={18} color="#FFFFFF" />
                   </View>
                   <View style={styles.biometricCalloutContent}>
@@ -1409,8 +1409,8 @@ export default function SuperAdminEmployeesScreen() {
               <View style={styles.faceRefCard}>
                 <Text style={styles.faceRefCardTitle}>Biometric Reference Template</Text>
                 <View style={[styles.faceImageContainer, { 
-                  borderColor: emp?.face_enrolled ? '#86EFAC' : '#CBD5E1',
-                  backgroundColor: emp?.face_enrolled ? '#F0FDF4' : '#F8FAFC'
+                  borderColor: emp?.face_enrolled ? '#86EFAC' : colors.inputBorder,
+                  backgroundColor: emp?.face_enrolled ? '#F0FDF4' : colors.bgTertiary
                 }]}>
                   {emp?.face_enrolled ? (
                     emp?.face_reference_url ? (
@@ -1424,10 +1424,10 @@ export default function SuperAdminEmployeesScreen() {
                     )
                   ) : (
                     <View style={styles.faceImagePlaceholder}>
-                      <View style={[styles.faceRefIcon, { borderColor: '#94A3B8' }]}>
-                        <Text style={{ fontSize: 24, color: '#64748B' }}>🔲</Text>
+                      <View style={[styles.faceRefIcon, { borderColor: colors.textLight }]}>
+                        <Text style={{ fontSize: 24, color: colors.textMid }}>🔲</Text>
                       </View>
-                      <Text style={[styles.faceImageText, { color: '#64748B' }]}>
+                      <Text style={[styles.faceImageText, { color: colors.textMid }]}>
                         No face biometric reference available yet.
                       </Text>
                     </View>
@@ -1536,11 +1536,11 @@ export default function SuperAdminEmployeesScreen() {
             {/* Summary Metrics Cards */}
             {attendanceData?.summary && (
               <View style={styles.attendanceSummaryCards}>
-                <View style={[styles.attSummaryCard, { backgroundColor: '#D1FAE5', borderColor: '#A7F3D0' }]}>
+                <View style={[styles.attSummaryCard, { backgroundColor: colors.successSoft, borderColor: '#A7F3D0' }]}>
                   <Text style={[styles.attSummaryLabel, { color: '#065F46' }]}>PRESENT</Text>
                   <Text style={[styles.attSummaryValue, { color: '#047857' }]}>{attendanceData.summary.totalPresent || 0}</Text>
                 </View>
-                <View style={[styles.attSummaryCard, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}>
+                <View style={[styles.attSummaryCard, { backgroundColor: colors.warningSoft, borderColor: '#FDE68A' }]}>
                   <Text style={[styles.attSummaryLabel, { color: '#92400E' }]}>LATE</Text>
                   <Text style={[styles.attSummaryValue, { color: '#D97706' }]}>{attendanceData.summary.totalLate || 0}</Text>
                 </View>
@@ -1548,7 +1548,7 @@ export default function SuperAdminEmployeesScreen() {
                   <Text style={[styles.attSummaryLabel, { color: '#9A3412' }]}>HALF DAY</Text>
                   <Text style={[styles.attSummaryValue, { color: '#C2410C' }]}>{attendanceData.summary.totalHalfDay || 0}</Text>
                 </View>
-                <View style={[styles.attSummaryCard, { backgroundColor: '#FEE2E2', borderColor: '#FCA5A5' }]}>
+                <View style={[styles.attSummaryCard, { backgroundColor: colors.errorSoft, borderColor: '#FCA5A5' }]}>
                   <Text style={[styles.attSummaryLabel, { color: '#991B1B' }]}>ABSENT / LEAVE</Text>
                   <Text style={[styles.attSummaryValue, { color: '#DC2626' }]}>
                     {(attendanceData.summary.totalAbsent || 0) + (attendanceData.summary.totalLeave || 0)}
@@ -1593,11 +1593,11 @@ export default function SuperAdminEmployeesScreen() {
                   }
 
                   const statusColors: any = {
-                    PRESENT: { bg: '#D1FAE5', color: '#065F46', label: '✓ PRESENT' },
-                    LATE: { bg: '#FEF3C7', color: '#92400E', label: '⚠️ LATE' },
+                    PRESENT: { bg: colors.successSoft, color: '#065F46', label: '✓ PRESENT' },
+                    LATE: { bg: colors.warningSoft, color: '#92400E', label: '⚠️ LATE' },
                     HALF_DAY: { bg: '#FFEDD5', color: '#C2410C', label: '🌗 HALF DAY' },
                     LEAVE: { bg: '#F3E8FF', color: '#6B21A8', label: '🏖 LEAVE' },
-                    ABSENT: { bg: '#FEE2E2', color: '#991B1B', label: '✕ ABSENT' },
+                    ABSENT: { bg: colors.errorSoft, color: '#991B1B', label: '✕ ABSENT' },
                   };
                   const st = statusColors[rec.attendance_status] || { bg: '#F3F4F6', color: '#374151', label: rec.attendance_status || 'NOT MARKED' };
 
@@ -1798,7 +1798,7 @@ export default function SuperAdminEmployeesScreen() {
                   }
                 }}
               >
-                <Icon name={emp?.activation_status === 'APPROVED' ? 'lock' : 'check'} size={20} color={emp?.activation_status === 'APPROVED' ? '#EF4444' : '#10B981'} />
+                <Icon name={emp?.activation_status === 'APPROVED' ? 'lock' : 'check'} size={20} color={emp?.activation_status === 'APPROVED' ? '#EF4444' : colors.success} />
                 <View style={styles.actionRowContent}>
                   <Text style={[styles.actionRowTitle, { 
                     color: emp?.activation_status === 'APPROVED' ? '#DC2626' : '#166534'
@@ -1870,8 +1870,8 @@ export default function SuperAdminEmployeesScreen() {
           <Text style={styles.kpiNumber}>{stats?.total_employees || employees.length}</Text>
           <Text style={styles.kpiLabel}>Total Staff</Text>
         </View>
-        <View style={[styles.kpiCard, { borderColor: '#10B981' }]}>
-          <Text style={[styles.kpiNumber, { color: '#10B981' }]}>
+        <View style={[styles.kpiCard, { borderColor: colors.success }]}>
+          <Text style={[styles.kpiNumber, { color: colors.success }]}>
             {stats?.active_employees || employees.filter(e => (e.employee_status || '').toLowerCase() === 'active').length}
           </Text>
           <Text style={styles.kpiLabel}>Active</Text>
@@ -1882,8 +1882,8 @@ export default function SuperAdminEmployeesScreen() {
           </Text>
           <Text style={styles.kpiLabel}>Supervisors</Text>
         </View>
-        <View style={[styles.kpiCard, { borderColor: '#3B82F6' }]}>
-          <Text style={[styles.kpiNumber, { color: '#3B82F6' }]}>{candidates.length}</Text>
+        <View style={[styles.kpiCard, { borderColor: colors.primaryLight }]}>
+          <Text style={[styles.kpiNumber, { color: colors.primaryLight }]}>{candidates.length}</Text>
           <Text style={styles.kpiLabel}>Candidates</Text>
         </View>
       </View>
@@ -2058,7 +2058,7 @@ export default function SuperAdminEmployeesScreen() {
                           style={[
                             styles.statusBadge,
                             {
-                              backgroundColor: isActive ? '#DCFCE7' : '#FEF3C7',
+                              backgroundColor: isActive ? '#DCFCE7' : colors.warningSoft,
                             },
                           ]}
                         >
@@ -2125,7 +2125,7 @@ export default function SuperAdminEmployeesScreen() {
 
                       {!isActive && (
                         <TouchableOpacity
-                          style={[styles.smallBtn, { backgroundColor: '#10B981', borderColor: '#10B981', flex: 1 }]}
+                          style={[styles.smallBtn, { backgroundColor: colors.success, borderColor: colors.success, flex: 1 }]}
                           onPress={() => handleActivate(emp.id, emp.full_name)}
                         >
                           <Icon name="check" size={13} color="#fff" />
@@ -2267,7 +2267,7 @@ export default function SuperAdminEmployeesScreen() {
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={[styles.smallBtn, { backgroundColor: '#10B981', borderColor: '#10B981', flex: 1 }]}
+                      style={[styles.smallBtn, { backgroundColor: colors.success, borderColor: colors.success, flex: 1 }]}
                       onPress={() => {
                         setSelectedCandidate(cand);
                         setOfferedDesignation(cand.target_role || 'TC');
@@ -3019,7 +3019,7 @@ export default function SuperAdminEmployeesScreen() {
             <ScrollView showsVerticalScrollIndicator={false}>
               <Text style={styles.inputLabel}>Employee Code / Username</Text>
               <TextInput
-                style={[styles.modalInput, { backgroundColor: '#F1F5F9' }]}
+                style={[styles.modalInput, { backgroundColor: colors.borderLight }]}
                 editable={false}
                 value={credentialsModalEmp?.employee_code || credentialsModalEmp?.employee_id || credentialsModalEmp?.id || 'EMP10001'}
               />
@@ -3140,7 +3140,7 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#94A3B8',
+    color: colors.textLight,
     letterSpacing: 1.5,
   },
   headerTitle: {
@@ -3154,16 +3154,16 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: colors.borderLight,
   },
   kpiCard: {
     flex: 1,
     alignItems: 'center',
     paddingVertical: spacing.sm,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   kpiNumber: {
     fontSize: 16,
@@ -3182,7 +3182,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
     borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: colors.border,
     gap: spacing.xs,
   },
   tabBtn: {
@@ -3216,7 +3216,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     gap: spacing.sm,
   },
   searchInput: {
@@ -3239,7 +3239,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   activePill: {
     backgroundColor: '#0F172A',
@@ -3351,7 +3351,7 @@ const styles = StyleSheet.create({
   },
   infoRow: {
     flexDirection: 'row',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 8,
     padding: spacing.sm,
     marginTop: spacing.sm,
@@ -3403,7 +3403,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   treeOverviewSub: {
-    color: '#94A3B8',
+    color: colors.textLight,
     fontSize: 11,
     marginTop: 4,
   },
@@ -3441,7 +3441,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
     paddingTop: spacing.xs,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: colors.borderLight,
   },
   treeEmptyMember: {
     fontSize: 11,
@@ -3455,7 +3455,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: spacing.xs,
     borderBottomWidth: 1,
-    borderBottomColor: '#F8FAFC',
+    borderBottomColor: colors.bgTertiary,
   },
   treeMemberInfo: {
     flex: 1,
@@ -3473,7 +3473,7 @@ const styles = StyleSheet.create({
   treeEditBtn: {
     padding: 6,
     borderRadius: 6,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
   },
   modalBackdrop: {
     flex: 1,
@@ -3525,8 +3525,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#F8FAFC',
+    borderColor: colors.inputBorder,
+    backgroundColor: colors.bgTertiary,
   },
   levelSelectorText: {
     fontSize: 11,
@@ -3558,7 +3558,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     backgroundColor: '#fff',
   },
   supervisorPillActive: {
@@ -3574,9 +3574,9 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   modalInput: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.inputBorder,
     borderRadius: 8,
     padding: 10,
     fontSize: 13,
@@ -3718,7 +3718,7 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: colors.border,
@@ -3844,15 +3844,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   activeText: {
-    color: '#10B981',
+    color: colors.success,
   },
   editRow: {
     marginBottom: spacing.sm,
   },
   editInput: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.inputBorder,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -3867,7 +3867,7 @@ const styles = StyleSheet.create({
   editCancelBtn: {
     flex: 1,
     paddingVertical: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
     borderRadius: 8,
     alignItems: 'center',
   },
@@ -3890,7 +3890,7 @@ const styles = StyleSheet.create({
   },
   // Document Verification Styles
   docCard: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 12,
     padding: spacing.md,
     marginBottom: spacing.sm,
@@ -3951,7 +3951,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 8,
-    backgroundColor: '#10B981',
+    backgroundColor: colors.success,
     borderRadius: 6,
     gap: 4,
   },
@@ -3979,9 +3979,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   rejectInput: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.inputBorder,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -3996,7 +3996,7 @@ const styles = StyleSheet.create({
   rejectCancelBtn: {
     flex: 1,
     paddingVertical: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
     borderRadius: 6,
     alignItems: 'center',
   },
@@ -4024,7 +4024,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F0F9FF',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#3B82F6',
+    borderColor: colors.primaryLight,
   },
   biometricTitle: {
     fontSize: 14,
@@ -4071,7 +4071,7 @@ const styles = StyleSheet.create({
   accessInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     padding: spacing.md,
     borderRadius: 8,
     gap: spacing.sm,
@@ -4086,7 +4086,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     padding: spacing.sm,
     borderRadius: 8,
     marginBottom: spacing.md,
@@ -4106,7 +4106,7 @@ const styles = StyleSheet.create({
   attStatBox: {
     flex: 1,
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     padding: spacing.md,
     borderRadius: 8,
   },
@@ -4148,7 +4148,7 @@ const styles = StyleSheet.create({
   approveKycBtn: {
     marginTop: 10,
     padding: 10,
-    backgroundColor: '#10B981',
+    backgroundColor: colors.success,
     borderRadius: 8,
     alignItems: 'center',
   },
@@ -4187,7 +4187,7 @@ const styles = StyleSheet.create({
     marginBottom: 3,
   },
   identityInput: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 8,
@@ -4214,7 +4214,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   docInspectionSection: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 14,
     padding: 18,
     borderWidth: 1,
@@ -4378,7 +4378,7 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 180,
     borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: 'center',
@@ -4420,7 +4420,7 @@ const styles = StyleSheet.create({
   },
   // Access & Team Tab Styles
   accessCard: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 12,
     padding: 14,
     borderWidth: 1,
@@ -4454,7 +4454,7 @@ const styles = StyleSheet.create({
   },
   // Attendance Tab Styles
   attendanceAccessCard: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 12,
     padding: 14,
     borderWidth: 1,
@@ -4519,7 +4519,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 5,
     borderRadius: 6,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderWidth: 1,
     borderColor: colors.border,
   },
@@ -4542,7 +4542,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 5,
     borderRadius: 6,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderWidth: 1,
     borderColor: colors.border,
   },
@@ -4579,7 +4579,7 @@ const styles = StyleSheet.create({
     fontWeight: 900,
   },
   workingHoursBar: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 8,
     padding: 8,
     borderWidth: 1,
@@ -4653,7 +4653,7 @@ const styles = StyleSheet.create({
   dailyRecordTimeGrid: {
     flexDirection: 'row',
     gap: 8,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     padding: 8,
     borderRadius: 6,
   },
@@ -4743,7 +4743,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     padding: 12,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 12,
@@ -4791,14 +4791,14 @@ const styles = StyleSheet.create({
   docPreviewContainer: {
     width: '100%',
     height: 320,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 12,
     marginVertical: spacing.md,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   docPreviewImage: {
     width: '100%',
@@ -4836,12 +4836,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   docCloseBtn: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   docCloseText: {
     color: colors.text,
@@ -4855,11 +4855,11 @@ const styles = StyleSheet.create({
   },
   auditTimeCard: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     padding: spacing.sm,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   auditTimeLabel: {
     fontSize: 11,
@@ -4873,10 +4873,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   auditTechnicalBox: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     padding: spacing.sm,
     marginVertical: spacing.xs,
   },
@@ -4885,7 +4885,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: colors.border,
     paddingBottom: spacing.xs,
     marginBottom: spacing.xs,
   },
@@ -4942,9 +4942,9 @@ const styles = StyleSheet.create({
     padding: spacing.sm,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     marginBottom: spacing.xs,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
   },
   deptBankRowChecked: {
     borderColor: colors.primary,
@@ -4955,7 +4955,7 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 4,
     borderWidth: 1.5,
-    borderColor: '#CBD5E1',
+    borderColor: colors.inputBorder,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: spacing.sm,
@@ -4974,10 +4974,10 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   bonusFormCard: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     padding: spacing.sm,
     marginBottom: spacing.md,
   },
@@ -4996,7 +4996,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     marginRight: spacing.xs,
   },
   bonusPickerPillActive: {
@@ -5048,10 +5048,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: spacing.sm,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     marginBottom: spacing.xs,
   },
   bonusRuleEmployee: {
@@ -5085,9 +5085,9 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   templatePreviewInput: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     borderRadius: 8,
     padding: spacing.sm,
     fontSize: 11.5,
@@ -5106,7 +5106,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#3B82F6',
+    backgroundColor: colors.primaryLight,
     borderRadius: 8,
     paddingVertical: 10,
   },
@@ -5126,12 +5126,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   credCancelBtn: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
     borderRadius: 8,
     paddingVertical: 8,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   credCancelText: {
     color: colors.text,

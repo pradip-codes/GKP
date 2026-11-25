@@ -232,13 +232,13 @@ export default function SuperAdminWalletScreen() {
               const status = (req.status || 'PENDING').toUpperCase();
               const isPending = status === 'PENDING';
 
-              let badgeBg = '#FEF3C7';
+              let badgeBg = colors.warningSoft;
               let badgeColor = '#B45309';
               if (status === 'APPROVED' || status === 'PAID') {
                 badgeBg = '#DCFCE7';
                 badgeColor = '#15803D';
               } else if (status === 'REJECTED') {
-                badgeBg = '#FEE2E2';
+                badgeBg = colors.errorSoft;
                 badgeColor = '#B91C1C';
               }
 
@@ -295,7 +295,7 @@ export default function SuperAdminWalletScreen() {
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        style={[styles.actionBtn, { backgroundColor: '#10B981', flex: 2 }]}
+                        style={[styles.actionBtn, { backgroundColor: colors.success, flex: 2 }]}
                         onPress={() => {
                           setSelectedWithdrawal(req);
                           setIsApproving(true);
@@ -351,7 +351,7 @@ export default function SuperAdminWalletScreen() {
               <TouchableOpacity
                 style={[
                   styles.modalConfirmBtn,
-                  { backgroundColor: isApproving ? '#10B981' : '#EF4444' },
+                  { backgroundColor: isApproving ? colors.success : '#EF4444' },
                 ]}
                 onPress={handleAction}
                 disabled={processing}
@@ -410,7 +410,7 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#94A3B8',
+    color: colors.textLight,
     letterSpacing: 1.5,
   },
   headerTitle: {
@@ -430,7 +430,7 @@ const styles = StyleSheet.create({
   },
   overviewLabel: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: colors.textLight,
     fontWeight: '600',
   },
   overviewAmount: {
@@ -440,7 +440,7 @@ const styles = StyleSheet.create({
   },
   overviewSub: {
     fontSize: 11,
-    color: '#CBD5E1',
+    color: colors.inputBorder,
   },
   kpiRow: {
     flexDirection: 'row',
@@ -454,7 +454,7 @@ const styles = StyleSheet.create({
   },
   miniKpiLabel: {
     fontSize: 10,
-    color: '#94A3B8',
+    color: colors.textLight,
     fontWeight: '600',
   },
   miniKpiValue: {
@@ -468,7 +468,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     padding: spacing.xs,
     borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: colors.border,
     gap: 4,
   },
   filterBtn: {
@@ -566,7 +566,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 8,
     padding: spacing.sm,
     marginTop: spacing.sm,
@@ -582,7 +582,7 @@ const styles = StyleSheet.create({
     color: colors.primary,
   },
   bankBox: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 8,
     padding: spacing.sm,
     marginTop: spacing.xs,
@@ -651,9 +651,9 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   modalInput: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.inputBorder,
     borderRadius: 8,
     padding: 10,
     fontSize: 13,

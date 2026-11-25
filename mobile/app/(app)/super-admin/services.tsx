@@ -232,8 +232,8 @@ export default function ManageServicesScreen() {
             <Text style={styles.summaryBadgeValue}>{services.length}</Text>
           </View>
           <View style={[styles.summaryBadge, { borderColor: '#10B98133' }]}>
-            <Text style={[styles.summaryBadgeLabel, { color: '#10B981' }]}>Active</Text>
-            <Text style={[styles.summaryBadgeValue, { color: '#10B981' }]}>
+            <Text style={[styles.summaryBadgeLabel, { color: colors.success }]}>Active</Text>
+            <Text style={[styles.summaryBadgeValue, { color: colors.success }]}>
               {services.filter((s) => s.status === 'active').length}
             </Text>
           </View>
@@ -292,7 +292,7 @@ export default function ManageServicesScreen() {
                     <Switch
                       value={svc.status === 'active'}
                       onValueChange={() => handleToggleStatus(svc)}
-                      trackColor={{ false: '#334155', true: '#10B981' }}
+                      trackColor={{ false: '#334155', true: colors.success }}
                       thumbColor="#FFFFFF"
                     />
                   </View>
@@ -321,7 +321,7 @@ export default function ManageServicesScreen() {
                           style={[
                             styles.statusBadgeText,
                             {
-                              color: svc.status === 'active' ? '#10B981' : '#94A3B8',
+                              color: svc.status === 'active' ? colors.success : colors.textLight,
                             },
                           ]}
                         >
@@ -433,7 +433,7 @@ export default function ManageServicesScreen() {
                   <Switch
                     value={status === 'active'}
                     onValueChange={(val) => setStatus(val ? 'active' : 'inactive')}
-                    trackColor={{ false: '#334155', true: '#10B981' }}
+                    trackColor={{ false: '#334155', true: colors.success }}
                     thumbColor="#FFFFFF"
                   />
                 </View>
@@ -500,11 +500,11 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.bgTertiary,
   },
   headerSubtitle: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   addButton: {
@@ -534,7 +534,7 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    color: '#F8FAFC',
+    color: colors.bgTertiary,
     fontSize: 14,
     padding: 0,
   },
@@ -556,14 +556,14 @@ const styles = StyleSheet.create({
   },
   summaryBadgeLabel: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: colors.textLight,
     fontWeight: '500',
     textTransform: 'uppercase',
   },
   summaryBadgeValue: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.bgTertiary,
     marginTop: 2,
   },
   scrollView: {
@@ -580,7 +580,7 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
   },
   loadingText: {
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: spacing.md,
     fontSize: 14,
   },
@@ -592,12 +592,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.bgTertiary,
     marginTop: spacing.md,
   },
   emptySubtitle: {
     fontSize: 13,
-    color: '#94A3B8',
+    color: colors.textLight,
     textAlign: 'center',
     marginTop: 6,
     paddingHorizontal: spacing.xl,
@@ -641,11 +641,11 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#F8FAFC',
+    color: colors.bgTertiary,
   },
   cardRoute: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   cardMetaRow: {
@@ -661,12 +661,12 @@ const styles = StyleSheet.create({
   },
   metaLabel: {
     fontSize: 11,
-    color: '#64748B',
+    color: colors.textMid,
   },
   metaValue: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#F8FAFC',
+    color: colors.bgTertiary,
     marginTop: 2,
   },
   statusBadge: {
@@ -699,7 +699,7 @@ const styles = StyleSheet.create({
   },
   actionBtnEditText: {
     fontSize: 13,
-    color: '#3B82F6',
+    color: colors.primaryLight,
     fontWeight: '600',
   },
   actionBtnDelete: {
@@ -737,7 +737,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.bgTertiary,
   },
   modalForm: {
     marginBottom: spacing.md,
@@ -745,7 +745,7 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#CBD5E1',
+    color: colors.inputBorder,
     marginTop: spacing.sm,
     marginBottom: 6,
   },
@@ -756,7 +756,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: spacing.md,
     paddingVertical: 10,
-    color: '#F8FAFC',
+    color: colors.bgTertiary,
     fontSize: 14,
   },
   iconPickerRow: {
@@ -790,7 +790,7 @@ const styles = StyleSheet.create({
   },
   statusToggleLabel: {
     fontSize: 14,
-    color: '#F8FAFC',
+    color: colors.bgTertiary,
     fontWeight: '500',
   },
   modalButtons: {
@@ -808,7 +808,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelBtnText: {
-    color: '#CBD5E1',
+    color: colors.inputBorder,
     fontWeight: '600',
     fontSize: 14,
   },

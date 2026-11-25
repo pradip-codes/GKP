@@ -243,13 +243,13 @@ export default function SuperAdminAttendanceScreen() {
   const getStatusColor = (status: string) => {
     switch (status.toUpperCase()) {
       case 'PRESENT':
-        return '#10B981';
+        return colors.success;
       case 'LATE':
         return '#F59E0B';
       case 'HALF_DAY':
-        return '#8B5CF6';
+        return colors.purple;
       case 'LEAVE':
-        return '#3B82F6';
+        return colors.primaryLight;
       case 'ABSENT':
         return '#EF4444';
       default:
@@ -342,8 +342,8 @@ export default function SuperAdminAttendanceScreen() {
             <Text style={styles.summaryValue}>{summary.totalEmployees}</Text>
             <Text style={styles.summaryLabel}>Total Employees</Text>
           </View>
-          <View style={[styles.summaryCard, { borderLeftColor: '#10B981' }]}>
-            <Text style={[styles.summaryValue, { color: '#10B981' }]}>{summary.totalPresent}</Text>
+          <View style={[styles.summaryCard, { borderLeftColor: colors.success }]}>
+            <Text style={[styles.summaryValue, { color: colors.success }]}>{summary.totalPresent}</Text>
             <Text style={styles.summaryLabel}>Present</Text>
           </View>
           <View style={[styles.summaryCard, { borderLeftColor: '#F59E0B' }]}>
@@ -381,7 +381,7 @@ export default function SuperAdminAttendanceScreen() {
                     <Text style={styles.recordDetail}>{emp.designation || emp.department || '—'}</Text>
                     <Text style={styles.recordDetail}>{emp.employee_id}</Text>
                   </View>
-                  <View style={[styles.statusBadge, { backgroundColor: '#FEF3C7' }]}>
+                  <View style={[styles.statusBadge, { backgroundColor: colors.warningSoft }]}>
                     <Text style={[styles.statusText, { color: '#B45309' }]}>PENDING</Text>
                   </View>
                 </View>
@@ -561,7 +561,7 @@ const styles = StyleSheet.create({
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEE2E2',
+    backgroundColor: colors.errorSoft,
     marginHorizontal: spacing.md,
     marginTop: spacing.md,
     padding: spacing.sm,

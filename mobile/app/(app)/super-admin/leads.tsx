@@ -91,12 +91,12 @@ export default function SuperAdminLeadsScreen() {
     switch (status?.toUpperCase()) {
       case 'CONVERTED':
       case 'APPROVED':
-        return { bg: '#D1FAE5', text: '#065F46' };
+        return { bg: colors.successSoft, text: '#065F46' };
       case 'IN_PROGRESS':
       case 'PROCESSING':
-        return { bg: '#FEF3C7', text: '#92400E' };
+        return { bg: colors.warningSoft, text: '#92400E' };
       case 'REJECTED':
-        return { bg: '#FEE2E2', text: '#991B1B' };
+        return { bg: colors.errorSoft, text: '#991B1B' };
       default:
         return { bg: '#E0F2FE', text: '#0369A1' };
     }
@@ -119,8 +119,8 @@ export default function SuperAdminLeadsScreen() {
               }
             }}>
               <View style={[styles.checkbox, { 
-                backgroundColor: isSelected ? '#2563EB' : '#F1F5F9',
-                borderColor: isSelected ? '#2563EB' : '#E2E8F0' 
+                backgroundColor: isSelected ? '#2563EB' : colors.borderLight,
+                borderColor: isSelected ? '#2563EB' : colors.border 
               }]}>
                 {isSelected && <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '900' }}>✓</Text>}
               </View>
@@ -331,7 +331,7 @@ export default function SuperAdminLeadsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
   },
   header: {
     backgroundColor: '#0F172A',
@@ -355,19 +355,19 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   searchBarWrap: {
     backgroundColor: '#fff',
     padding: spacing.md,
     borderBottomWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   searchInputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
     borderRadius: 8,
     paddingHorizontal: spacing.sm,
     marginBottom: spacing.sm,
@@ -386,7 +386,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
     borderRadius: 20,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
     marginRight: 6,
   },
   activeFilterChip: {
@@ -395,7 +395,7 @@ const styles = StyleSheet.create({
   filterChipText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textMid,
   },
   activeFilterChipText: {
     color: '#fff',
@@ -412,7 +412,7 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: spacing.sm,
     fontSize: 14,
-    color: '#64748B',
+    color: colors.textMid,
   },
   leadCard: {
     backgroundColor: '#fff',
@@ -420,7 +420,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginBottom: spacing.sm,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -439,7 +439,7 @@ const styles = StyleSheet.create({
   },
   contactText: {
     fontSize: 12,
-    color: '#64748B',
+    color: colors.textMid,
     marginBottom: 2,
   },
   statusBadge: {
@@ -454,7 +454,7 @@ const styles = StyleSheet.create({
   detailsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     padding: spacing.sm,
     borderRadius: 8,
     marginBottom: spacing.sm,
@@ -464,7 +464,7 @@ const styles = StyleSheet.create({
   },
   detailLabel: {
     fontSize: 10,
-    color: '#94A3B8',
+    color: colors.textLight,
     textTransform: 'uppercase',
     fontWeight: '600',
   },
@@ -478,7 +478,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: colors.borderLight,
     paddingTop: spacing.xs,
   },
   actionBtn: {
@@ -508,7 +508,7 @@ const styles = StyleSheet.create({
   },
   emptySub: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 4,
   },
   modalOverlay: {
@@ -550,9 +550,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   activeStatusOptionBtn: {
     backgroundColor: '#2563EB',
@@ -568,7 +568,7 @@ const styles = StyleSheet.create({
   },
   notesInput: {
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.inputBorder,
     borderRadius: 8,
     padding: spacing.sm,
     fontSize: 14,
@@ -586,12 +586,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
   },
   cancelBtnText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textMid,
   },
   saveBtn: {
     paddingHorizontal: 16,

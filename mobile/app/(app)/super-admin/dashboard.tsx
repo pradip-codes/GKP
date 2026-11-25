@@ -218,12 +218,12 @@ export default function SuperAdminDashboardScreen() {
   };
 
   const statCards: StatCard[] = [
-    { label: 'Total Admins', value: admins.length, icon: 'users', color: '#3B82F6', path: '/super-admin/dashboard' },
-    { label: 'Active Admins', value: admins.filter(a => a.status === 'active').length, icon: 'check-circle', color: '#10B981', path: '/super-admin/dashboard' },
+    { label: 'Total Admins', value: admins.length, icon: 'users', color: colors.primaryLight, path: '/super-admin/dashboard' },
+    { label: 'Active Admins', value: admins.filter(a => a.status === 'active').length, icon: 'check-circle', color: colors.success, path: '/super-admin/dashboard' },
     { label: 'Pending KYC', value: businessStats?.Partners?.pending_kyc || 0, icon: 'clock', color: '#F59E0B', path: '/super-admin/partners' },
-    { label: 'Total Leads', value: businessStats?.leads?.total_leads || 0, icon: 'list', color: '#8B5CF6', path: '/super-admin/leads' },
-    { label: 'Commission Paid', value: `₹${(businessStats?.withdrawal?.total_commission_paid || 0).toLocaleString('en-IN')}`, icon: 'credit-card', color: '#10B981', path: '/super-admin/commissions' },
-    { label: 'Total Banks', value: businessStats?.banks?.total_banks || 0, icon: 'shield', color: '#3B82F6', path: '/super-admin/banks' },
+    { label: 'Total Leads', value: businessStats?.leads?.total_leads || 0, icon: 'list', color: colors.purple, path: '/super-admin/leads' },
+    { label: 'Commission Paid', value: `₹${(businessStats?.withdrawal?.total_commission_paid || 0).toLocaleString('en-IN')}`, icon: 'credit-card', color: colors.success, path: '/super-admin/commissions' },
+    { label: 'Total Banks', value: businessStats?.banks?.total_banks || 0, icon: 'shield', color: colors.primaryLight, path: '/super-admin/banks' },
   ];
 
   const dashboardTabs = [
@@ -340,7 +340,7 @@ export default function SuperAdminDashboardScreen() {
                   <Text style={styles.adminEmail}>{admin.email}</Text>
                   <Text style={styles.adminMobile}>{admin.mobile}</Text>
                 </View>
-                <View style={[styles.statusBadge, { backgroundColor: admin.status === 'active' ? '#D1FAE5' : '#FEE2E2' }]}>
+                <View style={[styles.statusBadge, { backgroundColor: admin.status === 'active' ? colors.successSoft : colors.errorSoft }]}>
                   <Text style={[styles.statusText, { color: admin.status === 'active' ? '#065F46' : '#991B1B' }]}>
                     {admin.status.toUpperCase()}
                   </Text>
@@ -540,7 +540,7 @@ const styles = StyleSheet.create({
   roleBadge: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#94A3B8',
+    color: colors.textLight,
     letterSpacing: 1,
   },
   headerTitle: {
@@ -551,7 +551,7 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     fontSize: 13,
-    color: '#CBD5E1',
+    color: colors.inputBorder,
     marginTop: 2,
   },
   logoutBtn: {
@@ -560,7 +560,7 @@ const styles = StyleSheet.create({
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEE2E2',
+    backgroundColor: colors.errorSoft,
     marginHorizontal: spacing.md,
     marginTop: spacing.md,
     padding: spacing.sm,

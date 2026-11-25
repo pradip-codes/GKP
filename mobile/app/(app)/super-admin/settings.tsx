@@ -304,7 +304,7 @@ export default function SuperAdminSettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
   },
   header: {
     backgroundColor: '#0F172A',
@@ -328,14 +328,14 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   tabBar: {
     flexDirection: 'row',
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   tabBtn: {
     flex: 1,
@@ -349,7 +349,7 @@ const styles = StyleSheet.create({
   tabText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textMid,
   },
   activeTabText: {
     color: '#2563EB',
@@ -366,14 +366,14 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: spacing.sm,
     fontSize: 14,
-    color: '#64748B',
+    color: colors.textMid,
   },
   card: {
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: spacing.md,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   cardHeading: {
     fontSize: 16,
@@ -383,7 +383,7 @@ const styles = StyleSheet.create({
   },
   cardSub: {
     fontSize: 12,
-    color: '#64748B',
+    color: colors.textMid,
     marginBottom: spacing.md,
   },
   inputLabel: {
@@ -395,7 +395,7 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.inputBorder,
     borderRadius: 8,
     padding: spacing.sm,
     fontSize: 14,
@@ -443,7 +443,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   holidayInfo: {
     flex: 1,
@@ -455,7 +455,7 @@ const styles = StyleSheet.create({
   },
   holidayDateText: {
     fontSize: 12,
-    color: '#64748B',
+    color: colors.textMid,
     marginTop: 2,
   },
   deleteBtn: {
@@ -474,7 +474,7 @@ const styles = StyleSheet.create({
   },
   emptySub: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 4,
   },
   modalOverlay: {
@@ -509,12 +509,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
   },
   cancelBtnText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textMid,
   },
   saveBtnModal: {
     paddingHorizontal: 16,

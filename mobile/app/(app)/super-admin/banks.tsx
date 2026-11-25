@@ -103,7 +103,7 @@ export default function SuperAdminBanksScreen() {
           <Icon name="shield" size={18} color="#2563EB" />
           <Text style={styles.bankName}>{item.name || item.bank_name || 'Partner Bank'}</Text>
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: item.is_active !== false ? '#DCFCE7' : '#FEE2E2' }]}>
+        <View style={[styles.statusBadge, { backgroundColor: item.is_active !== false ? '#DCFCE7' : colors.errorSoft }]}>
           <Text style={[styles.statusText, { color: item.is_active !== false ? '#15803D' : '#991B1B' }]}>
             {item.is_active !== false ? 'ACTIVE' : 'INACTIVE'}
           </Text>
@@ -245,7 +245,7 @@ export default function SuperAdminBanksScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
   },
   header: {
     backgroundColor: '#0F172A',
@@ -269,19 +269,19 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   searchBarWrap: {
     backgroundColor: '#fff',
     padding: spacing.md,
     borderBottomWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   searchInputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
     borderRadius: 8,
     paddingHorizontal: spacing.sm,
   },
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: spacing.sm,
     fontSize: 14,
-    color: '#64748B',
+    color: colors.textMid,
   },
   card: {
     backgroundColor: '#fff',
@@ -312,7 +312,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginBottom: spacing.sm,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -341,7 +341,7 @@ const styles = StyleSheet.create({
   },
   detailsRow: {
     flexDirection: 'row',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 8,
     padding: spacing.sm,
     marginBottom: spacing.sm,
@@ -351,7 +351,7 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 10,
-    color: '#94A3B8',
+    color: colors.textLight,
     textTransform: 'uppercase',
     fontWeight: '600',
   },
@@ -365,7 +365,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: colors.borderLight,
     paddingTop: spacing.xs,
   },
   assignBtn: {
@@ -395,7 +395,7 @@ const styles = StyleSheet.create({
   },
   emptySub: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 4,
   },
   modalOverlay: {
@@ -423,7 +423,7 @@ const styles = StyleSheet.create({
   },
   modalSub: {
     fontSize: 13,
-    color: '#64748B',
+    color: colors.textMid,
     marginBottom: spacing.md,
   },
   bold: {
@@ -447,7 +447,7 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     marginBottom: 6,
   },
   activeAdminItem: {
@@ -464,7 +464,7 @@ const styles = StyleSheet.create({
   },
   adminItemSub: {
     fontSize: 11,
-    color: '#64748B',
+    color: colors.textMid,
   },
   modalActions: {
     flexDirection: 'row',
@@ -475,12 +475,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
   },
   cancelBtnText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textMid,
   },
   saveBtn: {
     paddingHorizontal: 16,

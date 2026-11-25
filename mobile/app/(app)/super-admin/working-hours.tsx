@@ -322,7 +322,7 @@ export default function AdminWorkingHoursScreen() {
           style={[styles.tabItem, activeTab === 'schedule' && styles.tabItemActive]}
           onPress={() => setActiveTab('schedule')}
         >
-          <Icon name="clock" size={15} color={activeTab === 'schedule' ? colors.primary : '#94A3B8'} />
+          <Icon name="clock" size={15} color={activeTab === 'schedule' ? colors.primary : colors.textLight} />
           <Text style={[styles.tabLabel, activeTab === 'schedule' && styles.tabLabelActive]}>Schedule</Text>
         </TouchableOpacity>
 
@@ -330,7 +330,7 @@ export default function AdminWorkingHoursScreen() {
           style={[styles.tabItem, activeTab === 'extensions' && styles.tabItemActive]}
           onPress={() => setActiveTab('extensions')}
         >
-          <Icon name="zap" size={15} color={activeTab === 'extensions' ? colors.primary : '#94A3B8'} />
+          <Icon name="zap" size={15} color={activeTab === 'extensions' ? colors.primary : colors.textLight} />
           <Text style={[styles.tabLabel, activeTab === 'extensions' && styles.tabLabelActive]}>
             Extensions ({extensions.length})
           </Text>
@@ -340,7 +340,7 @@ export default function AdminWorkingHoursScreen() {
           style={[styles.tabItem, activeTab === 'policies' && styles.tabItemActive]}
           onPress={() => setActiveTab('policies')}
         >
-          <Icon name="briefcase" size={15} color={activeTab === 'policies' ? colors.primary : '#94A3B8'} />
+          <Icon name="briefcase" size={15} color={activeTab === 'policies' ? colors.primary : colors.textLight} />
           <Text style={[styles.tabLabel, activeTab === 'policies' && styles.tabLabelActive]}>
             Shifts ({policies.length})
           </Text>
@@ -350,7 +350,7 @@ export default function AdminWorkingHoursScreen() {
           style={[styles.tabItem, activeTab === 'holidays' && styles.tabItemActive]}
           onPress={() => setActiveTab('holidays')}
         >
-          <Icon name="calendar" size={15} color={activeTab === 'holidays' ? colors.primary : '#94A3B8'} />
+          <Icon name="calendar" size={15} color={activeTab === 'holidays' ? colors.primary : colors.textLight} />
           <Text style={[styles.tabLabel, activeTab === 'holidays' && styles.tabLabelActive]}>
             Holidays ({holidays.length})
           </Text>
@@ -413,7 +413,7 @@ export default function AdminWorkingHoursScreen() {
                           <View
                             style={[
                               styles.dayIndicator,
-                              { backgroundColor: dayCfg.is_working ? '#10B981' : '#64748B' },
+                              { backgroundColor: dayCfg.is_working ? colors.success : colors.textMid },
                             ]}
                           />
                           <Text style={styles.dayLabel}>{day.label}</Text>
@@ -438,7 +438,7 @@ export default function AdminWorkingHoursScreen() {
                             />
                           </View>
                           <View style={{ justifyContent: 'center', paddingTop: 16 }}>
-                            <Text style={{ color: '#64748B', fontWeight: '700' }}>→</Text>
+                            <Text style={{ color: colors.textMid, fontWeight: '700' }}>→</Text>
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text style={styles.timeLabel}>End Shift</Text>
@@ -836,7 +836,7 @@ const styles = StyleSheet.create({
   },
   headerSub: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   tabBar: {
@@ -861,7 +861,7 @@ const styles = StyleSheet.create({
   tabLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: colors.textLight,
   },
   tabLabelActive: {
     color: '#FFFFFF',
@@ -881,7 +881,7 @@ const styles = StyleSheet.create({
   },
   subtleText: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 4,
     lineHeight: 18,
   },
@@ -914,7 +914,7 @@ const styles = StyleSheet.create({
   },
   toggleSub: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   inputGroup: {
@@ -923,7 +923,7 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#E2E8F0',
+    color: colors.border,
     marginBottom: 6,
   },
   textInput: {
@@ -979,7 +979,7 @@ const styles = StyleSheet.create({
   timeLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: colors.textLight,
     marginBottom: 4,
   },
   timeInput: {
@@ -995,7 +995,7 @@ const styles = StyleSheet.create({
   },
   offDayNotice: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 8,
     fontStyle: 'italic',
   },
@@ -1055,12 +1055,12 @@ const styles = StyleSheet.create({
   },
   itemDate: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   itemReason: {
     fontSize: 12,
-    color: '#E2E8F0',
+    color: colors.border,
     fontStyle: 'italic',
     marginTop: 8,
   },
@@ -1097,7 +1097,7 @@ const styles = StyleSheet.create({
   },
   emptySubText: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 4,
     textAlign: 'center',
   },
@@ -1145,7 +1145,7 @@ const styles = StyleSheet.create({
   scopeBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#94A3B8',
+    color: colors.textLight,
   },
   scopeBtnTextActive: {
     color: '#FFFFFF',

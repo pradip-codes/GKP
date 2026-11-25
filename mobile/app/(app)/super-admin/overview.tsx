@@ -203,25 +203,25 @@ export default function SuperAdminOverviewScreen() {
   });
 
   const topMetrics = [
-    { tab: 'customers' as TabId, label: 'Total Customers', value: stats.customers.toLocaleString('en-IN'), sub: 'Registered Customer Network', color: '#3B82F6' },
-    { tab: 'partners' as TabId, label: 'Partners Network', value: stats.partners.toLocaleString('en-IN'), sub: `${stats.activePartners} Active Partners`, color: '#10B981' },
+    { tab: 'customers' as TabId, label: 'Total Customers', value: stats.customers.toLocaleString('en-IN'), sub: 'Registered Customer Network', color: colors.primaryLight },
+    { tab: 'partners' as TabId, label: 'Partners Network', value: stats.partners.toLocaleString('en-IN'), sub: `${stats.activePartners} Active Partners`, color: colors.success },
     { tab: 'employees' as TabId, label: 'Employees Network', value: stats.employees.toLocaleString('en-IN'), sub: `${stats.activeEmployees} Active Employees`, color: '#6366F1' },
     { tab: 'team' as TabId, label: 'Team Members', value: stats.teamMembers.toLocaleString('en-IN'), sub: 'Sub-agents & Field Network', color: '#06B6D4' },
-    { tab: 'applications' as TabId, label: 'Total Applications', value: stats.totalApps.toLocaleString('en-IN'), sub: `${stats.approvedApps} Approved Applications`, color: '#8B5CF6' },
+    { tab: 'applications' as TabId, label: 'Total Applications', value: stats.totalApps.toLocaleString('en-IN'), sub: `${stats.approvedApps} Approved Applications`, color: colors.purple },
     { tab: 'admins' as TabId, label: 'System Admins', value: stats.admins.toLocaleString('en-IN'), sub: 'Operations Administrators', color: '#F59E0B' },
     { tab: 'financials' as TabId, label: 'Payouts & Ledger', value: inr(stats.totalCommissionPaid), sub: `Pending: ${stats.pendingWithdrawals}`, color: '#EC4899' },
   ];
 
   const kpis = [
     { label: 'Total Admins', value: stats.admins, color: '#F59E0B', tab: 'admins' as TabId },
-    { label: 'Active Admins', value: stats.activeAdmins, color: '#10B981', tab: 'admins' as TabId },
+    { label: 'Active Admins', value: stats.activeAdmins, color: colors.success, tab: 'admins' as TabId },
     { label: 'Total Employees', value: stats.employees, color: '#6366F1', tab: 'employees' as TabId },
     { label: 'Pending KYC', value: stats.pendingKycPartners, color: '#F97316', tab: 'partners' as TabId },
-    { label: 'Total Leads', value: stats.totalApps, color: '#3B82F6', tab: 'applications' as TabId },
+    { label: 'Total Leads', value: stats.totalApps, color: colors.primaryLight, tab: 'applications' as TabId },
     { label: 'Pending Leads', value: stats.pendingApps, color: '#EAB308', tab: 'applications' as TabId },
     { label: 'Approved Leads', value: stats.approvedApps, color: '#059669', tab: 'applications' as TabId },
     { label: 'Rejected Leads', value: stats.rejectedApps, color: '#EF4444', tab: 'applications' as TabId },
-    { label: 'Total Withdrawals', value: inr(stats.totalWithdrawalAmount), color: '#8B5CF6', tab: 'financials' as TabId },
+    { label: 'Total Withdrawals', value: inr(stats.totalWithdrawalAmount), color: colors.purple, tab: 'financials' as TabId },
     { label: 'Pending Withdrawals', value: stats.pendingWithdrawals, color: '#EC4899', tab: 'financials' as TabId },
     { label: 'Total Banks', value: stats.banks, color: '#06B6D4', tab: null },
     { label: 'Total Products', value: stats.products, color: '#6366F1', tab: null },
@@ -240,10 +240,10 @@ export default function SuperAdminOverviewScreen() {
 
   const processBadge = (pt?: string) => {
     const map: Record<string, { label: string; color: string; bg: string }> = {
-      lead_punching: { label: 'Partner Punch', color: '#3B82F6', bg: '#EFF6FF' },
-      linked_share: { label: 'Linked Share', color: '#8B5CF6', bg: '#F5F3FF' },
+      lead_punching: { label: 'Partner Punch', color: colors.primaryLight, bg: '#EFF6FF' },
+      linked_share: { label: 'Linked Share', color: colors.purple, bg: '#F5F3FF' },
       direct_bank: { label: 'Direct Bank', color: '#06B6D4', bg: '#ECFEFF' },
-      physical_process: { label: 'Physical Process', color: '#F59E0B', bg: '#FEF3C7' },
+      physical_process: { label: 'Physical Process', color: '#F59E0B', bg: colors.warningSoft },
     };
     const b = map[pt || 'lead_punching'] || { label: pt || 'Partner Punch', color: '#6B7280', bg: '#F3F4F6' };
     return (
@@ -458,7 +458,7 @@ export default function SuperAdminOverviewScreen() {
                 </View>
                 <View style={{ alignItems: 'flex-end', marginRight: 10 }}>
                   <Text style={{ fontSize: 12, fontWeight: '800', color: textPrimary }}>{c.total_applications || 0} apps</Text>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#10B981' }}>{c.approved_cards || 0} approved</Text>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: colors.success }}>{c.approved_cards || 0} approved</Text>
                 </View>
                 <TouchableOpacity style={styles.viewBtn} onPress={() => handleViewCustomer(c)}>
                   <Text style={styles.viewBtnText}>View Details</Text>
@@ -622,10 +622,10 @@ export default function SuperAdminOverviewScreen() {
           <View style={{ gap: 14 }}>
             <View style={styles.finGrid}>
               {[
-                { label: 'RazorpayX Live Balance', value: razorpayBalance !== null ? inr(razorpayBalance) : '₹0.00', color: '#3B82F6' },
-                { label: 'Total Withdrawals', value: inr(stats.totalWithdrawalAmount), color: '#10B981' },
+                { label: 'RazorpayX Live Balance', value: razorpayBalance !== null ? inr(razorpayBalance) : '₹0.00', color: colors.primaryLight },
+                { label: 'Total Withdrawals', value: inr(stats.totalWithdrawalAmount), color: colors.success },
                 { label: 'Pending Withdrawals', value: `${stats.pendingWithdrawals} Requests`, color: '#F59E0B' },
-                { label: 'Total Transactions', value: `${financialsLedger.length} Entries`, color: '#8B5CF6' },
+                { label: 'Total Transactions', value: `${financialsLedger.length} Entries`, color: colors.purple },
               ].map((f) => (
                 <View key={f.label} style={[styles.finCell, { backgroundColor: cardBg, borderColor }]}>
                   <Text style={{ fontSize: 10, fontWeight: '700', color: textMuted }}>{f.label}</Text>
@@ -675,7 +675,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.bg },
   pageTitle: { fontSize: 22, fontWeight: '900', letterSpacing: -0.5 },
   refreshBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: colors.primary + '40', backgroundColor: colors.primary + '10' },
-  warnBox: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FEF3C7', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#FDE68A' },
+  warnBox: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.warningSoft, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#FDE68A' },
   metricCard: { width: 150, borderRadius: 16, padding: 14, borderWidth: 1 },
   metricLabel: { fontSize: 11, fontWeight: '700' },
   metricValue: { fontSize: 18, fontWeight: '900', marginTop: 4 },

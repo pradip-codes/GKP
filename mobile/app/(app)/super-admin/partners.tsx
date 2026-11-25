@@ -284,14 +284,14 @@ export default function SuperAdminPartnersScreen() {
               const status = (partner.status || partner.partner_status || 'ACTIVE').toUpperCase();
               const isKycPending = (partner.kyc_status || '').toUpperCase() === 'PENDING' || (partner.kyc_status || '').toUpperCase() === 'SUBMITTED';
 
-              let badgeColor = '#10B981';
+              let badgeColor = colors.success;
               let badgeBg = '#DCFCE7';
               if (status === 'SUSPENDED' || status === 'BLOCKED') {
                 badgeColor = '#EF4444';
-                badgeBg = '#FEE2E2';
+                badgeBg = colors.errorSoft;
               } else if (status === 'PENDING') {
                 badgeColor = '#F59E0B';
-                badgeBg = '#FEF3C7';
+                badgeBg = colors.warningSoft;
               }
 
               return (
@@ -343,7 +343,7 @@ export default function SuperAdminPartnersScreen() {
                   {isKycPending && (
                     <View style={styles.kycActionRow}>
                       <TouchableOpacity
-                        style={[styles.kycBtn, { backgroundColor: '#10B981' }]}
+                        style={[styles.kycBtn, { backgroundColor: colors.success }]}
                         onPress={() => handleKYCAction(partner.id, partner.full_name || partner.name, true)}
                       >
                         <Icon name="check" size={14} color="#fff" />
@@ -402,7 +402,7 @@ export default function SuperAdminPartnersScreen() {
             </Text>
 
             <TouchableOpacity
-              style={[styles.statusOption, { borderColor: '#10B981', backgroundColor: '#F0FDF4' }]}
+              style={[styles.statusOption, { borderColor: colors.success, backgroundColor: '#F0FDF4' }]}
               onPress={() => handleStatusChange('ACTIVE')}
               disabled={updatingStatus}
             >
@@ -471,7 +471,7 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#94A3B8',
+    color: colors.textLight,
     letterSpacing: 1.5,
   },
   headerTitle: {
@@ -489,7 +489,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     gap: spacing.sm,
   },
   searchInput: {
@@ -512,7 +512,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   activeFilterPill: {
     backgroundColor: '#0F172A',
@@ -601,7 +601,7 @@ const styles = StyleSheet.create({
   },
   infoRow: {
     flexDirection: 'row',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
     borderRadius: 8,
     padding: spacing.sm,
     marginTop: spacing.sm,
@@ -643,7 +643,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     paddingTop: spacing.xs,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: colors.borderLight,
     flexDirection: 'row',
     justifyContent: 'flex-end',
   },

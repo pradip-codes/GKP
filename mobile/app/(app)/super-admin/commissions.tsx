@@ -297,7 +297,7 @@ export default function SuperAdminCommissionsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.bgTertiary,
   },
   flex1: {
     flex: 1,
@@ -342,14 +342,14 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   tabBar: {
     flexDirection: 'row',
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   tabBtn: {
     flex: 1,
@@ -363,7 +363,7 @@ const styles = StyleSheet.create({
   tabText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textMid,
   },
   activeTabText: {
     color: '#2563EB',
@@ -406,7 +406,7 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: spacing.sm,
     fontSize: 14,
-    color: '#64748B',
+    color: colors.textMid,
   },
   card: {
     backgroundColor: '#fff',
@@ -414,7 +414,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginBottom: spacing.sm,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -425,7 +425,7 @@ const styles = StyleSheet.create({
   tierBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF3C7',
+    backgroundColor: colors.warningSoft,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
@@ -455,12 +455,12 @@ const styles = StyleSheet.create({
   },
   subDetail: {
     fontSize: 12,
-    color: '#64748B',
+    color: colors.textMid,
     marginBottom: 4,
   },
   dateText: {
     fontSize: 10,
-    color: '#94A3B8',
+    color: colors.textLight,
   },
   metricCard: {
     backgroundColor: '#fff',
@@ -468,12 +468,12 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     marginBottom: spacing.md,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   metricLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textMid,
     textTransform: 'uppercase',
   },
   metricValue: {
@@ -495,7 +495,7 @@ const styles = StyleSheet.create({
   },
   emptySub: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 4,
   },
   modalOverlay: {
@@ -537,7 +537,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 6,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
   },
   activeChip: {
     backgroundColor: '#2563EB',
@@ -545,14 +545,14 @@ const styles = StyleSheet.create({
   chipText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textMid,
   },
   activeChipText: {
     color: '#fff',
   },
   input: {
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.inputBorder,
     borderRadius: 8,
     padding: spacing.sm,
     fontSize: 14,
@@ -568,12 +568,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.borderLight,
   },
   cancelBtnText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textMid,
   },
   saveBtn: {
     paddingHorizontal: 16,

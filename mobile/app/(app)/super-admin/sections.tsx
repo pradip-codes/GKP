@@ -197,7 +197,7 @@ export default function ManageSectionsScreen() {
                         <Text
                           style={[
                             styles.statusBadgeText,
-                            { color: item.is_active ? '#10B981' : '#94A3B8' },
+                            { color: item.is_active ? colors.success : colors.textLight },
                           ]}
                         >
                           {item.is_active ? 'VISIBLE' : 'HIDDEN'}
@@ -276,7 +276,7 @@ export default function ManageSectionsScreen() {
 
             <Text style={styles.inputLabel}>Section Key (Identifier)</Text>
             <TextInput
-              style={[styles.textInput, { backgroundColor: '#0F172A80', color: '#94A3B8' }]}
+              style={[styles.textInput, { backgroundColor: '#0F172A80', color: colors.textLight }]}
               value={sectionKey}
               editable={false}
             />
@@ -350,7 +350,7 @@ const styles = StyleSheet.create({
   },
   headerSub: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   container: {
@@ -367,7 +367,7 @@ const styles = StyleSheet.create({
   },
   subtleText: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 4,
     lineHeight: 18,
   },
@@ -403,7 +403,7 @@ const styles = StyleSheet.create({
   },
   itemKey: {
     fontSize: 11,
-    color: '#64748B',
+    color: colors.textMid,
     marginTop: 2,
     fontFamily: 'monospace',
   },
@@ -457,7 +457,7 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#E2E8F0',
+    color: colors.border,
     marginTop: 12,
     marginBottom: 6,
   },

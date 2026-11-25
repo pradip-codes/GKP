@@ -244,7 +244,7 @@ export default function ManageBannersScreen() {
                     <Icon name="image" size={32} color="#64748B" />
                   </View>
                 )}
-                <View style={[styles.statusBadge, { backgroundColor: item.is_active ? '#10B981' : '#64748B' }]}>
+                <View style={[styles.statusBadge, { backgroundColor: item.is_active ? colors.success : colors.textMid }]}>
                   <Text style={styles.statusBadgeText}>{item.is_active ? 'ACTIVE' : 'INACTIVE'}</Text>
                 </View>
               </View>
@@ -423,7 +423,7 @@ const styles = StyleSheet.create({
   },
   headerSub: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   createHeaderBtn: {
@@ -454,7 +454,7 @@ const styles = StyleSheet.create({
   },
   subtleText: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 8,
   },
   emptyTitle: {
@@ -465,7 +465,7 @@ const styles = StyleSheet.create({
   },
   emptySubText: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 6,
     textAlign: 'center',
     paddingHorizontal: 24,
@@ -539,7 +539,7 @@ const styles = StyleSheet.create({
   },
   bannerDesc: {
     fontSize: 12,
-    color: '#CBD5E1',
+    color: colors.inputBorder,
     marginTop: 4,
     lineHeight: 18,
   },
@@ -559,7 +559,7 @@ const styles = StyleSheet.create({
   },
   positionText: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: colors.textLight,
     fontWeight: '600',
   },
   editBtn: {
@@ -621,7 +621,7 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#E2E8F0',
+    color: colors.border,
     marginTop: 10,
     marginBottom: 6,
   },
@@ -661,7 +661,7 @@ const styles = StyleSheet.create({
   },
   uploadPromptSub: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: colors.textLight,
     marginTop: 2,
   },
   rowBetweenModal: {
