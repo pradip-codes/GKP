@@ -386,9 +386,18 @@ async function resolveEmployee(req, res, next) {
         await query(`UPDATE employees SET user_id = $1 WHERE id = $2`, [req.user.id, req.employee.id]).catch(() => {});
         req.employee.user_id = req.user.id;
       }
-      // Ensure users table employee_id is strictly in sync with the employee's true code
+      // Ensure users table employee_id is strictly in sync with the employee's true code (skip if another user already owns that code)
       if (req.user?.id && req.employee.employee_id && req.user.employee_id !== req.employee.employee_id) {
-        await query(`UPDATE users SET employee_id = $1 WHERE id = $2`, [req.employee.employee_id, req.user.id]).catch(() => {});
+        await query(
+          `UPDATE users
+              SET employee_id = $1
+            WHERE id = $2
+              AND employee_id IS DISTINCT FROM $1
+              AND NOT EXISTS (
+                SELECT 1 FROM users u2 WHERE u2.employee_id = $1 AND u2.id <> $2
+              )`,
+          [req.employee.employee_id, req.user.id]
+        ).catch(() => {});
         req.user.employee_id = req.employee.employee_id;
       }
       return next();

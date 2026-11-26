@@ -78,7 +78,7 @@ const resolveEmployeeId = async (reqUser) => {
   if (reqUser.id && isValidUuid(reqUser.id)) {
     try {
       const { rows: [userRow] } = await query(
-        `SELECT id, email, mobile, name, role, designation FROM users WHERE id = $1 LIMIT 1`,
+        `SELECT id, email, mobile, full_name, role, designation FROM users WHERE id = $1 LIMIT 1`,
         [reqUser.id]
       );
       if (userRow) {
@@ -100,7 +100,7 @@ const resolveEmployeeId = async (reqUser) => {
         // Provision a linked employee record for staff
         const rolePrefix = userRow.role === 'HR' ? 'HR' : (userRow.role === 'ADMIN' ? 'ADM' : (userRow.role === 'SUPER_ADMIN' ? 'SA' : 'EMP'));
         const empCode = `${rolePrefix}${Date.now().toString().slice(-6)}`;
-        const empName = userRow.name || reqUser.name || 'Staff Member';
+        const empName = userRow.full_name || reqUser.full_name || reqUser.name || 'Staff Member';
         const empDesignation = userRow.designation || (userRow.role === 'HR' ? 'HR Manager' : (userRow.role === 'ADMIN' ? 'Administrator' : (userRow.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Employee')));
         const empDepartment = userRow.role === 'HR' ? 'Human Resources' : 'Operations';
         const safeMobile = effectiveMobile || `+91${Date.now().toString().slice(-10)}`;
@@ -126,7 +126,7 @@ const resolveEmployeeId = async (reqUser) => {
         }
       }
     } catch (err) {
-      logger.warn('Failed auto-provisioning employee profile:', err.message);
+      logger.warn(`Failed auto-provisioning employee profile: ${err.message}`);
       // Secondary check in case of concurrent insert
       try {
         const { rows: [emp] } = await query(`SELECT id FROM employees WHERE user_id = $1 LIMIT 1`, [reqUser.id]);
