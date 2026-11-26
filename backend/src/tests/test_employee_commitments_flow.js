@@ -8,7 +8,7 @@ const assert = require('assert');
 const mockDb = {
   attendance: [],
   tasks: [],
-  employees: [{ id: '11111111-1111-1111-1111-111111111111', user_id: 'user-emp-1', employee_id: 'EMP1001' }]
+  employees: [{ id: '11111111-1111-1111-1111-111111111111', user_id: '22222222-2222-2222-2222-222222222222', employee_id: 'EMP1001' }]
 };
 
 // Module mock for database
@@ -176,14 +176,74 @@ Module.prototype.require = function (request) {
         query: async (sql, params = []) => {
           const text = sql.trim().toLowerCase();
           if (text === 'begin' || text === 'commit' || text === 'rollback') return { rows: [] };
+          if (text.includes('from attendance_verification_sessions') && text.startsWith('select')) {
+            return {
+              rows: [{
+                id: params[0],
+                employee_id: '11111111-1111-1111-1111-111111111111',
+                status: 'PASSED',
+                face_status: 'PASSED',
+                environment_status: 'PASSED',
+                matched_environment_code: 'BKG1',
+                expires_at: new Date(Date.now() + 600000).toISOString(),
+                consumed_at: null
+              }]
+            };
+          }
+          if (text.startsWith('update attendance_verification_sessions')) {
+            return { rowCount: 1, rows: [] };
+          }
+          if (text.includes('from employee_attendance') && text.startsWith('select')) {
+            const empId = params[0];
+            const date = params[1];
+            const row = mockDb.attendance.find(a => a.employee_id === empId && a.attendance_date === date);
+            return { rows: row ? [row] : [] };
+          }
+          if (text.startsWith('update employee_attendance')) {
+            const row = mockDb.attendance[0];
+            if (text.includes('check_out_time')) row.check_out_time = new Date().toISOString();
+            return { rows: [row] };
+          }
+          if (text.startsWith('update employee_tasks') && text.includes("status = 'completed'")) {
+            const completedIds = params[2] || [];
+            mockDb.tasks.forEach(t => {
+              if (completedIds.includes(t.id)) {
+                t.status = 'completed';
+                t.completed_at = new Date().toISOString();
+              }
+            });
+            return { rows: [] };
+          }
+          if (text.startsWith('update employee_tasks') && text.includes("status = 'pending'")) {
+            const completedIds = params[2] || [];
+            mockDb.tasks.forEach(t => {
+              if (t.employee_id === params[0] && t.task_date === params[1] && !completedIds.includes(t.id)) {
+                t.status = 'pending';
+                t.completed_at = null;
+              }
+            });
+            return { rows: [] };
+          }
           // Carry-over check
           if (text.includes('from employee_tasks t') && text.includes('t.status = \'pending\'')) {
             const empId = params[0];
             const today = params[1];
             // Previous pending tasks where submitted_at is not null
             const prevPending = mockDb.tasks.filter(t => t.employee_id === empId && t.task_date < today && t.status === 'pending' && t.submitted_at !== null);
-            // Filter out if already copied to today
-            const needed = prevPending.filter(pt => !mockDb.tasks.some(ct => ct.employee_id === empId && ct.task_date === today && (ct.original_task_id === pt.id || ct.title.toLowerCase() === pt.title.toLowerCase())));
+            // Filter out if any newer copy exists (task_date > pt.task_date && task_date <= today) — completed or superseded
+            const needed = prevPending.filter(pt => {
+              const rootId = pt.original_task_id || pt.id;
+              return !mockDb.tasks.some(newer =>
+                newer.employee_id === empId &&
+                newer.task_date > pt.task_date &&
+                newer.task_date <= today &&
+                (
+                  newer.id === rootId ||
+                  newer.original_task_id === rootId ||
+                  newer.title.toLowerCase().trim() === pt.title.toLowerCase().trim()
+                )
+              );
+            });
             return { rows: needed };
           }
           if (text.startsWith('insert into employee_tasks')) {
@@ -217,7 +277,7 @@ const requireDayUnlocked = require('../middleware/attendance/requireDayUnlocked.
 async function runTests() {
   console.log('--- Starting Attendance-Gated Employee Commitments Test Suite ---\n');
 
-  const reqUser = { id: 'user-emp-1', role: 'EMPLOYEE' };
+  const reqUser = { id: '22222222-2222-2222-2222-222222222222', role: 'EMPLOYEE', employeeId: 'EMP1001' };
 
   // TEST 1: Initial state before check-in -> NOT_CHECKED_IN
   const s1 = await service.getDayStatus({ reqUser });
@@ -226,7 +286,7 @@ async function runTests() {
 
   // TEST 2: Middleware blocks when NOT_CHECKED_IN
   let blockedCode = null;
-  const mockReq = { user: reqUser, path: '/applications' };
+  const mockReq = { user: reqUser, path: '/leads' };
   const mockRes = {
     status: (code) => {
       blockedCode = code;
@@ -298,7 +358,8 @@ async function runTests() {
 
   const checkOutRes = await service.executeCheckOut({
     reqUser,
-    completedTaskIds: [t1.data.id] // tick task 1, leave task 3 pending
+    completedTaskIds: [t1.data.id], // tick task 1, leave task 3 pending
+    verificationSessionId: 'ver-session-1'
   });
   assert.strictEqual(checkOutRes.success, true);
   assert.strictEqual(checkOutRes.state, 'CHECKED_OUT');
@@ -321,6 +382,25 @@ async function runTests() {
   const day2TasksAfter = mockDb.tasks.filter(t => t.task_date === '2026-11-18');
   assert.strictEqual(day2TasksAfter.length, 1, 'Carry-over must be idempotent');
   console.log('✅ TEST 9 PASSED: Next-day carry-over carries forward uncompleted task with incremented carry_count (idempotent)');
+
+  // TEST 10: Once carried task is ticked COMPLETED on Day 2, it must NOT carry forward to Day 3 (even though Day 1 row is still pending)
+  day2TasksAfter[0].status = 'completed';
+  day2TasksAfter[0].completed_at = new Date().toISOString();
+  await service.carryOverPendingTasks('11111111-1111-1111-1111-111111111111', '2026-11-19');
+  const day3Tasks = mockDb.tasks.filter(t => t.task_date === '2026-11-19');
+  assert.strictEqual(day3Tasks.length, 0, 'Completed carried-over task must NOT carry forward to Day 3');
+  console.log('✅ TEST 10 PASSED: Ticking a carried task complete prevents any further carry-forward');
+
+  // TEST 11: Late check-in (> 9:35 AM IST) and Half-Day check-out (11:00 AM - 5:00 PM IST) rules
+  assert.strictEqual(service.evaluateAttendanceType(new Date('2026-11-26T09:35:00+05:30')).status, 'PRESENT');
+  assert.strictEqual(service.evaluateAttendanceType(new Date('2026-11-26T09:36:00+05:30')).status, 'LATE');
+  assert.strictEqual(service.evaluateAttendanceType(new Date('2026-11-26T10:15:00+05:30')).status, 'LATE');
+  assert.strictEqual(service.evaluateCheckOutStatus(new Date('2026-11-26T11:00:00+05:30'), 'PRESENT'), 'HALF_DAY');
+  assert.strictEqual(service.evaluateCheckOutStatus(new Date('2026-11-26T14:30:00+05:30'), 'LATE'), 'HALF_DAY');
+  assert.strictEqual(service.evaluateCheckOutStatus(new Date('2026-11-26T17:00:00+05:30'), 'PRESENT'), 'HALF_DAY');
+  assert.strictEqual(service.evaluateCheckOutStatus(new Date('2026-11-26T17:01:00+05:30'), 'PRESENT'), 'PRESENT');
+  assert.strictEqual(service.evaluateCheckOutStatus(new Date('2026-11-26T17:01:00+05:30'), 'LATE'), 'LATE');
+  console.log('✅ TEST 11 PASSED: Late (>9:35 AM) & Half-Day (11:00 AM - 5:00 PM) evaluation rules verified');
 
   console.log('\n===============================================================');
   console.log('ALL 9 ATTENDANCE COMMITMENTS TESTS PASSED SUCCESSFULLY!');

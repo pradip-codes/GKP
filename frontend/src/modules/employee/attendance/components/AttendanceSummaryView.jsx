@@ -16,11 +16,15 @@ export default function AttendanceSummaryView({
     ? history 
     : (Array.isArray(history?.records) ? history.records : []);
 
-  // Compute metrics from real backend summary & history records
-  const totalDays = summary?.totalWorkingDays ?? summary?.total_working_days ?? summary?.working_days ?? summary?.totalDays ?? summary?.total_days ?? summary?.total ?? safeHistory.length ?? 0;
+  // Compute calendar days dynamically for the selected month/year (instead of working-days-only e.g. 25)
+  const calendarDaysInMonth = (selectedYear && selectedMonth)
+    ? new Date(selectedYear, selectedMonth, 0).getDate()
+    : 0;
+  const totalDays = summary?.calendarDays ?? summary?.calendar_days ?? summary?.totalDays ?? summary?.total_days ?? (calendarDaysInMonth || summary?.total || 0);
+  const workingDaysDenominator = summary?.totalWorkingDays ?? summary?.total_working_days ?? summary?.working_days ?? totalDays;
   const presentDays = summary?.present ?? summary?.totalPresent ?? summary?.present_days ?? safeHistory.filter(item => item?.check_in_time).length;
-  const lateDays = summary?.late ?? summary?.totalLate ?? summary?.late_days ?? safeHistory.filter(item => (item?.status || '').toUpperCase() === 'LATE').length;
-  const halfDays = summary?.halfDay ?? summary?.totalHalfDay ?? summary?.half_days ?? safeHistory.filter(item => (item?.status || '').toUpperCase() === 'HALF_DAY').length;
+  const lateDays = summary?.late ?? summary?.totalLate ?? summary?.late_days ?? safeHistory.filter(item => (item?.status || '').toUpperCase() === 'LATE' || item?.is_late).length;
+  const halfDays = summary?.halfDay ?? summary?.totalHalfDay ?? summary?.half_days ?? safeHistory.filter(item => (item?.status || '').toUpperCase() === 'HALF_DAY' || item?.is_half_day).length;
   const leaveDays = summary?.leave ?? summary?.totalLeave ?? summary?.leave_days ?? safeHistory.filter(item => (item?.status || '').toUpperCase() === 'LEAVE').length;
   const absentDays = summary?.absent ?? summary?.totalAbsent ?? summary?.absent_days ?? safeHistory.filter(item => (item?.status || '').toUpperCase() === 'ABSENT').length;
 
@@ -43,7 +47,7 @@ export default function AttendanceSummaryView({
     ? summary.attendancePercentage
     : typeof summary?.attendance_percentage === 'number'
       ? summary.attendance_percentage
-      : (totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : (presentDays > 0 ? 100 : 0));
+      : (workingDaysDenominator > 0 ? Math.round((presentDays / workingDaysDenominator) * 100) : (presentDays > 0 ? 100 : 0));
   const monthName = new Date(selectedYear, selectedMonth - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
   return (
@@ -177,7 +181,7 @@ export default function AttendanceSummaryView({
             {totalDays}
           </div>
           <div style={{ fontSize: '12.5px', color: '#9CA3AF', marginTop: '4px' }}>
-            Recorded days in {monthName}
+            Calendar days in {monthName}
           </div>
         </div>
 

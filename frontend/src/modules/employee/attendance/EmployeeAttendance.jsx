@@ -109,19 +109,22 @@ export default function EmployeeAttendance() {
 
       if (summaryRes.status === 'fulfilled' && summaryRes.value) {
         const s = summaryRes.value?.data || summaryRes.value || {};
-        const summaryData = {
-          present: s.totalPresent ?? s.present_days ?? s.present ?? s.total_present ?? 0,
-          completed: s.totalCompleted ?? s.completed_days ?? s.completed ?? s.total_completed ?? 0,
-          late: s.totalLate ?? s.late_days ?? s.late ?? s.total_late ?? 0,
-          halfDay: s.totalHalfDay ?? s.half_days ?? s.total_half_day ?? 0,
-          leave: s.totalLeave ?? s.leave_days ?? s.total_leave ?? 0,
-          absent: s.totalAbsent ?? s.absent_days ?? s.absent ?? s.total_absent ?? 0,
-          total: s.totalWorkingDays ?? s.total_working_days ?? s.working_days ?? s.totalDays ?? s.total_days ?? s.totalMarkedDays ?? 0,
-          totalWorkingDays: s.totalWorkingDays ?? s.total_working_days ?? s.working_days ?? s.totalDays ?? s.total_days ?? 0,
-          attendancePercentage: s.attendancePercentage ?? s.attendance_percentage ?? s.attendancePct ?? 0,
-          formattedHours: s.totalWorkingHoursFormatted || s.total_working_hours_formatted || '0h 0m',
-          totalHours: typeof s.totalHours === 'number' ? s.totalHours : (s.total_hours ?? 0)
-        };
+          const calendarDaysInMonth = new Date(selectedYear, selectedMonth, 0).getDate();
+          const summaryData = {
+            present: s.totalPresent ?? s.present_days ?? s.present ?? s.total_present ?? 0,
+            completed: s.totalCompleted ?? s.completed_days ?? s.completed ?? s.total_completed ?? 0,
+            late: s.totalLate ?? s.late_days ?? s.late ?? s.total_late ?? 0,
+            halfDay: s.totalHalfDay ?? s.half_days ?? s.total_half_day ?? 0,
+            leave: s.totalLeave ?? s.leave_days ?? s.total_leave ?? 0,
+            absent: s.totalAbsent ?? s.absent_days ?? s.absent ?? s.total_absent ?? 0,
+            calendarDays: s.calendar_days ?? s.calendarDays ?? calendarDaysInMonth,
+            totalDays: s.calendar_days ?? s.calendarDays ?? s.totalDays ?? s.total_days ?? calendarDaysInMonth,
+            total: s.calendar_days ?? s.calendarDays ?? s.totalDays ?? s.total_days ?? calendarDaysInMonth,
+            totalWorkingDays: s.totalWorkingDays ?? s.total_working_days ?? s.working_days ?? calendarDaysInMonth,
+            attendancePercentage: s.attendancePercentage ?? s.attendance_percentage ?? s.attendancePct ?? 0,
+            formattedHours: s.totalWorkingHoursFormatted || s.total_working_hours_formatted || '0h 0m',
+            totalHours: typeof s.totalHours === 'number' ? s.totalHours : (s.total_hours ?? 0)
+          };
         setSummary(summaryData);
         setCache(`summary_${cacheKey}`, summaryData);
       }

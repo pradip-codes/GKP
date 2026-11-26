@@ -577,7 +577,9 @@ export default function AttendanceScreen() {
 
           <View style={styles.histStatsRow}>
             <View style={styles.histStat}>
-              <Text style={styles.histStatValue}>{monthlySummary?.totalMarkedDays || 0}</Text>
+              <Text style={styles.histStatValue}>
+                {monthlySummary?.calendar_days ?? monthlySummary?.totalDays ?? new Date(selectedYear, selectedMonth, 0).getDate()}
+              </Text>
               <Text style={styles.histStatLabel}>Total Days</Text>
             </View>
             <View style={styles.histStat}>
@@ -627,6 +629,8 @@ export default function AttendanceScreen() {
                   <View style={styles.recordStatusWrap}>
                     <Text style={styles.recordStatus}>
                       {record.display_status === 'COMPLETED' ? 'Work Completed'
+                        : record.display_status === 'HALF_DAY' || String(record.status || '').toUpperCase() === 'HALF_DAY' ? 'Half Day'
+                        : record.display_status === 'LATE' || String(record.status || '').toUpperCase() === 'LATE' ? 'Late'
                         : record.display_status === 'WORKING' ? 'Working'
                         : record.display_status === 'CHECKOUT_MISSING' ? 'Checkout Missing'
                         : record.check_in_time && record.check_out_time ? 'Work Completed'
@@ -684,7 +688,9 @@ export default function AttendanceScreen() {
 
           <View style={styles.histStatsRow}>
             <View style={styles.histStat}>
-              <Text style={styles.histStatValue}>{monthlySummary?.totalMarkedDays || 0}</Text>
+              <Text style={styles.histStatValue}>
+                {monthlySummary?.calendar_days ?? monthlySummary?.totalDays ?? new Date(selectedYear, selectedMonth, 0).getDate()}
+              </Text>
               <Text style={styles.histStatLabel}>Total Days</Text>
             </View>
             <View style={styles.histStat}>

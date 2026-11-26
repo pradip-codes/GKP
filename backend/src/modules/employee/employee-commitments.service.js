@@ -121,12 +121,13 @@ async function getKolkataDateString() {
 }
 
 /**
- * Helper: Determine Part-Time vs Full-Time attendance based on Asia/Kolkata check-in time
- * Rule: Check-in at or after 7:00 PM (19:00:00) IST -> PART_TIME
- *       Check-in before 7:00 PM (19:00:00) IST -> FULL_TIME
+ * Helper: Extract Asia/Kolkata clock parts (hour 0-23, minute 0-59, second 0-59, totalMinutes)
  */
-function evaluateAttendanceType(checkInTimestamp = new Date()) {
-  const dateObj = checkInTimestamp instanceof Date ? checkInTimestamp : new Date(checkInTimestamp);
+function getKolkataClockParts(timestamp = new Date()) {
+  const dateObj = timestamp instanceof Date ? timestamp : new Date(timestamp);
+  if (isNaN(dateObj.getTime())) {
+    return { hour: NaN, minute: NaN, second: NaN, totalMinutes: NaN };
+  }
   const timeFormatter = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Kolkata',
     hour12: false,
@@ -135,16 +136,69 @@ function evaluateAttendanceType(checkInTimestamp = new Date()) {
     second: 'numeric'
   });
   const parts = timeFormatter.formatToParts(dateObj);
-  const hour = parseInt(parts.find(p => p.type === 'hour')?.value, 10);
+  let hour = parseInt(parts.find(p => p.type === 'hour')?.value, 10);
+  if (hour === 24) hour = 0;
   const minute = parseInt(parts.find(p => p.type === 'minute')?.value, 10);
+  const second = parseInt(parts.find(p => p.type === 'second')?.value, 10);
+  const totalMinutes = (!isNaN(hour) && !isNaN(minute)) ? (hour * 60 + minute) : NaN;
+  return { hour, minute, second, totalMinutes };
+}
+
+/**
+ * Helper: Check whether check-in occurred after 9:35 AM IST (excluding >= 7:00 PM evening part-time shift)
+ */
+function isLateCheckIn(checkInTimestamp) {
+  if (!checkInTimestamp) return false;
+  const { hour, totalMinutes } = getKolkataClockParts(checkInTimestamp);
+  if (isNaN(totalMinutes) || isNaN(hour) || hour >= 19) return false;
+  // Strictly after 09:35 AM (i.e. 09:36 AM onwards)
+  return totalMinutes > (9 * 60 + 35);
+}
+
+/**
+ * Helper: Check whether check-out occurred between 11:00 AM and 5:00 PM IST (inclusive) -> Half Day
+ */
+function isHalfDayCheckOut(checkOutTimestamp) {
+  if (!checkOutTimestamp) return false;
+  const { totalMinutes } = getKolkataClockParts(checkOutTimestamp);
+  if (isNaN(totalMinutes)) return false;
+  return totalMinutes >= (11 * 60) && totalMinutes <= (17 * 60);
+}
+
+/**
+ * Helper: Determine Part-Time vs Full-Time and Late/Present status based on Asia/Kolkata check-in time
+ * Rules:
+ *   - Check-in at or after 7:00 PM (19:00:00) IST -> PART_TIME
+ *   - Check-in after 9:35 AM IST (09:36 - 18:59) -> FULL_TIME, status = 'LATE'
+ *   - Check-in up to 9:35 AM IST -> FULL_TIME, status = 'PRESENT'
+ */
+function evaluateAttendanceType(checkInTimestamp = new Date()) {
+  const { hour, minute, totalMinutes } = getKolkataClockParts(checkInTimestamp);
   const isPartTime = !isNaN(hour) && hour >= 19;
+  const isLate = !isPartTime && !isNaN(totalMinutes) && totalMinutes > (9 * 60 + 35);
   return {
     attendanceType: isPartTime ? 'PART_TIME' : 'FULL_TIME',
-    status: isPartTime ? 'PART_TIME' : 'PRESENT',
+    status: isPartTime ? 'PART_TIME' : (isLate ? 'LATE' : 'PRESENT'),
     hour,
     minute,
-    isPartTime
+    isPartTime,
+    isLate
   };
+}
+
+/**
+ * Helper: Determine final attendance status on check-out based on Asia/Kolkata time
+ * Rule: Check-out between 11:00 AM and 5:00 PM IST -> HALF_DAY (unless LEAVE / ABSENT / PART_TIME)
+ */
+function evaluateCheckOutStatus(checkOutTimestamp = new Date(), currentStatus = 'PRESENT') {
+  const normalized = String(currentStatus || 'PRESENT').toUpperCase();
+  if (normalized === 'LEAVE' || normalized === 'ABSENT' || normalized === 'PART_TIME') {
+    return normalized;
+  }
+  if (isHalfDayCheckOut(checkOutTimestamp)) {
+    return 'HALF_DAY';
+  }
+  return normalized;
 }
 
 /**
@@ -171,8 +225,9 @@ async function carryOverPendingTasks(employeeId, todayDate) {
   try {
     await client.query('BEGIN');
 
-    // Query pending previous submitted tasks
-    // If the employee forgot to check out yesterday, yesterday's tasks stayed 'pending' with submitted_at set.
+    // Query pending previous submitted tasks that have NOT been completed or superseded on any later day.
+    // Checking newer.task_date > t.task_date AND newer.task_date <= $2 prevents an old ancestor row (still 'pending')
+    // from being carried forward again once its carried-over copy was ticked 'completed' on an intermediate day.
     const { rows: pendingTasks } = await client.query(
       `SELECT t.* 
        FROM employee_tasks t
@@ -183,9 +238,11 @@ async function carryOverPendingTasks(employeeId, todayDate) {
          AND NOT EXISTS (
            SELECT 1 FROM employee_tasks newer 
            WHERE newer.employee_id = t.employee_id 
-             AND newer.task_date = $2
+             AND newer.task_date > t.task_date
+             AND newer.task_date <= $2
              AND (
-               newer.original_task_id = COALESCE(t.original_task_id, t.id)
+               newer.id = COALESCE(t.original_task_id, t.id)
+               OR newer.original_task_id = COALESCE(t.original_task_id, t.id)
                OR LOWER(TRIM(newer.title)) = LOWER(TRIM(t.title))
              )
          )
@@ -728,7 +785,7 @@ async function executeCheckOut({ reqUser, completedTaskIds = [], extraTasks = []
 
     // 4. Fetch today's attendance record FOR UPDATE
     const { rows: [attendance] } = await client.query(
-      `SELECT id, check_in_time, check_out_time, commitments_submitted_at 
+      `SELECT id, check_in_time, check_out_time, commitments_submitted_at, status 
        FROM employee_attendance 
        WHERE employee_id = $1 AND attendance_date = $2 FOR UPDATE`,
       [employeeId, todayDate]
@@ -804,17 +861,19 @@ async function executeCheckOut({ reqUser, completedTaskIds = [], extraTasks = []
       );
     }
 
-    // 7. Update attendance check_out_time and link verification session
+    // 7. Update attendance check_out_time, apply half-day rule if check-out is between 11:00 AM and 5:00 PM IST, and link verification session
+    const nextCheckOutStatus = evaluateCheckOutStatus(new Date(), attendance.status);
     const { rows: [updatedAttendance] } = await client.query(
       `UPDATE employee_attendance 
        SET check_out_time = NOW(), 
            check_out = NOW(), 
+           status = $4,
            verification_session_id = COALESCE(verification_session_id, $2),
            matched_environment_code = COALESCE(matched_environment_code, $3),
            updated_at = NOW() 
        WHERE id = $1
-       RETURNING check_in_time, check_out_time`,
-      [attendance.id, session.id, session.matched_environment_code || null]
+       RETURNING check_in_time, check_out_time, status`,
+      [attendance.id, session.id, session.matched_environment_code || null, nextCheckOutStatus]
     );
 
     // 8. Compute stats
@@ -899,12 +958,13 @@ async function cancelCheckOut({ reqUser }) {
     throw error;
   }
 
-  // Clear check_out_time and check_out
+  // Clear check_out_time and check_out, and restore check-in derived status (undoing any half-day check-out mark)
+  const restoredStatus = evaluateAttendanceType(attendance.check_in_time || new Date()).status;
   await query(
     `UPDATE employee_attendance 
-     SET check_out_time = NULL, check_out = NULL, updated_at = NOW() 
+     SET check_out_time = NULL, check_out = NULL, status = $2, updated_at = NOW() 
      WHERE id = $1`,
-    [attendance.id]
+    [attendance.id, restoredStatus]
   );
 
   const statusInfo = await getDayStatus({ reqUser });
@@ -921,7 +981,11 @@ module.exports = {
   ensureTasksTableExists,
   resolveEmployeeId,
   getKolkataDateString,
+  getKolkataClockParts,
+  isLateCheckIn,
+  isHalfDayCheckOut,
   evaluateAttendanceType,
+  evaluateCheckOutStatus,
   carryOverPendingTasks,
   getDayStatus,
   executeCheckIn,

@@ -2,7 +2,13 @@ const { query, getClient } = require('../../config/database');
 const logger = require('../../config/logger');
 const { logAction } = require('../admin/audit.service');
 const penaltyService = require('./attendance-penalty.service');
-const { evaluateAttendanceType, ensureTasksTableExists } = require('../employee/employee-commitments.service');
+const {
+  evaluateAttendanceType,
+  evaluateCheckOutStatus,
+  isLateCheckIn,
+  isHalfDayCheckOut,
+  ensureTasksTableExists
+} = require('../employee/employee-commitments.service');
 
 const isValidUuid = (str) => typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 
@@ -527,12 +533,13 @@ const checkOut = async ({ verificationSessionId, reqUser, source = 'WEB' }) => {
       throw error;
     }
 
+    const nextStatus = evaluateCheckOutStatus(new Date(), existing.status);
     const { rows: [updated] } = await client.query(
       `UPDATE employee_attendance 
-       SET check_out_time = NOW(), updated_at = NOW() 
+       SET check_out_time = NOW(), check_out = NOW(), status = $2, updated_at = NOW() 
        WHERE id = $1 
        RETURNING *`,
-      [existing.id]
+      [existing.id, nextStatus]
     );
 
     // Mark verification session as consumed atomically (keep status = 'PASSED', record consumed_at)
@@ -707,17 +714,31 @@ const getMyAttendance = async ({ reqUser, month, year, limit = 31, page = 1 }) =
     const isActiveToday = Boolean(r.check_in_time && !r.check_out_time && r.attendance_date === todayDate);
     const isMissingCheckout = Boolean(r.check_in_time && !r.check_out_time && r.attendance_date < todayDate);
 
-    let displayStatus = (r.status || 'PRESENT').toUpperCase();
+    const storedStatus = (r.status || 'PRESENT').toUpperCase();
+    const isNonWorkingOverride = storedStatus === 'LEAVE' || storedStatus === 'ABSENT';
+    const lateFlag = !isNonWorkingOverride && (storedStatus === 'LATE' || (r.check_in_time && storedStatus !== 'PART_TIME' && isLateCheckIn(r.check_in_time)));
+    const halfDayFlag = !isNonWorkingOverride && (storedStatus === 'HALF_DAY' || (r.check_out_time && storedStatus !== 'PART_TIME' && isHalfDayCheckOut(r.check_out_time)));
+
+    let effectiveStatus = storedStatus;
+    if (!isNonWorkingOverride) {
+      if (halfDayFlag) effectiveStatus = 'HALF_DAY';
+      else if (lateFlag) effectiveStatus = 'LATE';
+    }
+
+    let displayStatus = effectiveStatus;
     if (isCompleted) {
-      displayStatus = 'COMPLETED';
+      displayStatus = effectiveStatus === 'HALF_DAY' ? 'HALF_DAY' : (effectiveStatus === 'LATE' ? 'LATE' : 'COMPLETED');
     } else if (isActiveToday) {
-      displayStatus = 'WORKING';
+      displayStatus = effectiveStatus === 'LATE' ? 'LATE' : 'WORKING';
     } else if (isMissingCheckout) {
       displayStatus = 'CHECKOUT_MISSING';
     }
 
     return {
       ...r,
+      status: effectiveStatus,
+      is_late: Boolean(lateFlag),
+      is_half_day: Boolean(halfDayFlag),
       duration_formatted: formatHumanDuration(r.duration_seconds),
       display_status: displayStatus,
       is_active: isActiveToday,
@@ -752,6 +773,7 @@ const getMySummary = async ({ reqUser, month, year }) => {
   const now = new Date();
   const targetMonth = month ? parseInt(month, 10) : now.getMonth() + 1;
   const targetYear = year ? parseInt(year, 10) : now.getFullYear();
+  const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
 
   const authEmpId = await resolveEmployeeId(reqUser);
   if (!authEmpId) {
@@ -782,11 +804,13 @@ const getMySummary = async ({ reqUser, month, year }) => {
       absent: 0,
       totalWorkingDays: 0,
       total_working_days: 0,
-      total_days: 0,
-      totalDays: 0,
+      calendar_days: daysInMonth,
+      calendarDays: daysInMonth,
+      total_days: daysInMonth,
+      totalDays: daysInMonth,
       totalMarkedDays: 0,
       total_marked_days: 0,
-      total: 0,
+      total: daysInMonth,
       attendance_percentage: 0,
       attendancePercentage: 0,
       attendance_rate: 0,
@@ -841,7 +865,6 @@ const getMySummary = async ({ reqUser, month, year }) => {
   };
 
   // 2. Fetch active holidays in target month
-  const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
   const startOfMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
   const endOfMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
 
@@ -922,6 +945,15 @@ const getMySummary = async ({ reqUser, month, year }) => {
     const rawStatus = (rec.status || 'PRESENT').toUpperCase();
     const hasCheckIn = Boolean(rec.check_in_time);
     const hasCheckOut = Boolean(rec.check_out_time);
+    const isNonWorkingOverride = rawStatus === 'LEAVE' || rawStatus === 'ABSENT';
+    const isLate = !isNonWorkingOverride && (
+      rawStatus === 'LATE' ||
+      (hasCheckIn && rawStatus !== 'PART_TIME' && isLateCheckIn(rec.check_in_time))
+    );
+    const isHalfDay = !isNonWorkingOverride && (
+      rawStatus === 'HALF_DAY' ||
+      (hasCheckOut && rawStatus !== 'PART_TIME' && isHalfDayCheckOut(rec.check_out_time))
+    );
 
     if (rawStatus === 'LEAVE') {
       leaveCount++;
@@ -929,8 +961,8 @@ const getMySummary = async ({ reqUser, month, year }) => {
       absentCount++;
     }
 
-    if (rawStatus === 'LATE') lateCount++;
-    if (rawStatus === 'HALF_DAY') halfDayCount++;
+    if (isLate) lateCount++;
+    if (isHalfDay) halfDayCount++;
 
     if (hasCheckIn || ['PRESENT', 'LATE', 'HALF_DAY'].includes(rawStatus)) {
       presentCount++;
@@ -964,13 +996,14 @@ const getMySummary = async ({ reqUser, month, year }) => {
     month: targetMonth,
     year: targetYear,
 
-    // Core KPIs
+    // Core KPIs (totalDays matches actual calendar days in the selected month)
     totalWorkingDays,
     total_working_days: totalWorkingDays,
-    totalDays: totalWorkingDays,
-    total_days: totalWorkingDays,
+    totalDays: daysInMonth,
+    total_days: daysInMonth,
     working_days: totalWorkingDays,
     calendar_days: daysInMonth,
+    calendarDays: daysInMonth,
     elapsed_working_days: elapsedWorkingDays,
 
     totalPresent: presentCount,
@@ -1008,7 +1041,7 @@ const getMySummary = async ({ reqUser, month, year }) => {
 
     totalMarkedDays: attRecords.length,
     total_marked_days: attRecords.length,
-    total: totalWorkingDays,
+    total: daysInMonth,
 
     totalWorkingHoursFormatted: hoursFormatted,
     total_working_hours_formatted: hoursFormatted,
