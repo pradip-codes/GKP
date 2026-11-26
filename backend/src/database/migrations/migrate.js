@@ -5178,6 +5178,14 @@ const migrate = async () => {
     logger.error('HR Profiles & Bank Requirements migration error note:', hrBankErr.message);
   }
 
+  // Employee/user account status columns used by Suspend / Activate / Temporary Delete
+  try {
+    const { migrateEmployeeAccountStatusColumns } = require('./migrate_employee_account_status_columns');
+    await migrateEmployeeAccountStatusColumns();
+  } catch (accStatusColsErr) {
+    logger.error('Employee account status columns migration error note:', accStatusColsErr.message);
+  }
+
   // HR rename -> candidate name sync trigger + assigned_hr_id index
   try {
     const { migrateHrCandidateNameSync } = require('./migrate_hr_candidate_name_sync');

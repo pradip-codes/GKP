@@ -229,7 +229,7 @@ router.post('/candidates/:id/assign-hr', async (req, res, next) => {
     let hrEmail = null;
 
     if (hr_id) {
-      const hrRes = await query(`SELECT full_name, email FROM users WHERE id = $1 AND UPPER(role) = 'HR' AND status = 'active'`, [hr_id]);
+      const hrRes = await query(`SELECT full_name, email FROM users WHERE id = $1 AND UPPER(role::text) = 'HR' AND status::text = 'active'`, [hr_id]);
       if (hrRes.rows.length === 0) {
         return res.status(400).json({ success: false, message: 'Selected user is not an active HR account' });
       }

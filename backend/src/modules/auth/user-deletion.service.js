@@ -173,19 +173,19 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
     const empParams = [];
     if (userUuids.length > 0) {
       empParams.push(userUuids);
-      empConditions.push(`user_id = ANY(${empParams.length}::uuid[])`);
+      empConditions.push(`user_id = ANY({empParams.length}::uuid[])`);
     }
     if (codeList.length > 0) {
       empParams.push(codeList);
-      empConditions.push(`employee_id = ANY(${empParams.length}::text[])`);
+      empConditions.push(`employee_id = ANY({empParams.length}::text[])`);
     }
     if (emailList.length > 0) {
       empParams.push(emailList);
-      empConditions.push(`LOWER(email_id) = ANY(${empParams.length}::text[])`);
+      empConditions.push(`LOWER(email_id) = ANY({empParams.length}::text[])`);
     }
     if (mobileList.length > 0) {
       empParams.push(mobileList);
-      empConditions.push(`mobile_number = ANY(${empParams.length}::text[])`);
+      empConditions.push(`mobile_number = ANY({empParams.length}::text[])`);
     }
 
     if (empConditions.length > 0) {
@@ -212,23 +212,23 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
     const userParams = [];
     if (userUuids.length > 0) {
       userParams.push(userUuids);
-      userConditions.push(`id = ANY(${userParams.length}::uuid[])`);
+      userConditions.push(`id = ANY({userParams.length}::uuid[])`);
     }
     if (finalEmpUuids.length > 0) {
       userParams.push(finalEmpUuids);
-      userConditions.push(`id IN (SELECT user_id FROM employees WHERE id = ANY(${userParams.length}::uuid[]) AND user_id IS NOT NULL)`);
+      userConditions.push(`id IN (SELECT user_id FROM employees WHERE id = ANY({userParams.length}::uuid[]) AND user_id IS NOT NULL)`);
     }
     if (finalCodeList.length > 0) {
       userParams.push(finalCodeList);
-      userConditions.push(`employee_id = ANY(${userParams.length}::text[])`);
+      userConditions.push(`employee_id = ANY({userParams.length}::text[])`);
     }
     if (finalEmailList.length > 0) {
       userParams.push(finalEmailList);
-      userConditions.push(`LOWER(email) = ANY(${userParams.length}::text[])`);
+      userConditions.push(`LOWER(email) = ANY({userParams.length}::text[])`);
     }
     if (finalMobileList.length > 0) {
       userParams.push(finalMobileList);
-      userConditions.push(`mobile = ANY(${userParams.length}::text[])`);
+      userConditions.push(`mobile = ANY({userParams.length}::text[])`);
     }
 
     if (userConditions.length > 0) {
@@ -264,16 +264,16 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
       const pParams = [];
       if (resolvedPartnerUuids.length > 0) {
         pParams.push(resolvedPartnerUuids);
-        pConds.push(`id = ANY(${pParams.length}::uuid[])`);
-        pConds.push(`parent_partner_id = ANY(${pParams.length}::uuid[])`);
+        pConds.push(`id = ANY({pParams.length}::uuid[])`);
+        pConds.push(`parent_partner_id = ANY({pParams.length}::uuid[])`);
       }
       if (resolvedUserUuids.length > 0) {
         pParams.push(resolvedUserUuids);
-        pConds.push(`user_id = ANY(${pParams.length}::uuid[])`);
+        pConds.push(`user_id = ANY({pParams.length}::uuid[])`);
       }
       if (resolvedCodes.length > 0) {
         pParams.push(resolvedCodes);
-        pConds.push(`partner_code = ANY(${pParams.length}::text[])`);
+        pConds.push(`partner_code = ANY({pParams.length}::text[])`);
       }
       if (pConds.length > 0) {
         await safeExec(`UPDATE partner_profiles SET status = 'suspended', updated_at = NOW() WHERE ${pConds.join(' OR ')}`, pParams);
@@ -289,11 +289,11 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
       const wParams = [];
       if (resolvedPartnerUuids.length > 0) {
         wParams.push(resolvedPartnerUuids);
-        wConds.push(`partner_id = ANY(${wParams.length}::uuid[])`);
+        wConds.push(`partner_id = ANY({wParams.length}::uuid[])`);
       }
       if (resolvedUserUuids.length > 0) {
         wParams.push(resolvedUserUuids);
-        wConds.push(`user_id = ANY(${wParams.length}::uuid[])`);
+        wConds.push(`user_id = ANY({wParams.length}::uuid[])`);
       }
       if (wConds.length > 0) {
         await safeExec(`UPDATE partner_wallets SET status = 'inactive', updated_at = NOW() WHERE ${wConds.join(' OR ')}`, wParams);
@@ -306,23 +306,23 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
     const empUpdParams = [];
     if (resolvedEmpUuids.length > 0) {
       empUpdParams.push(resolvedEmpUuids);
-      empUpdConds.push(`id = ANY(${empUpdParams.length}::uuid[])`);
+      empUpdConds.push(`id = ANY({empUpdParams.length}::uuid[])`);
     }
     if (resolvedUserUuids.length > 0) {
       empUpdParams.push(resolvedUserUuids);
-      empUpdConds.push(`user_id = ANY(${empUpdParams.length}::uuid[])`);
+      empUpdConds.push(`user_id = ANY({empUpdParams.length}::uuid[])`);
     }
     if (resolvedCodes.length > 0) {
       empUpdParams.push(resolvedCodes);
-      empUpdConds.push(`employee_id = ANY(${empUpdParams.length}::text[])`);
+      empUpdConds.push(`employee_id = ANY({empUpdParams.length}::text[])`);
     }
     if (resolvedEmails.length > 0) {
       empUpdParams.push(resolvedEmails);
-      empUpdConds.push(`LOWER(email_id) = ANY(${empUpdParams.length}::text[])`);
+      empUpdConds.push(`LOWER(email_id) = ANY({empUpdParams.length}::text[])`);
     }
     if (resolvedMobiles.length > 0) {
       empUpdParams.push(resolvedMobiles);
-      empUpdConds.push(`mobile_number = ANY(${empUpdParams.length}::text[])`);
+      empUpdConds.push(`mobile_number = ANY({empUpdParams.length}::text[])`);
     }
 
     if (empUpdConds.length > 0) {
@@ -354,15 +354,15 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
     const candParams = [];
     if (resolvedCodes.length > 0) {
       candParams.push(resolvedCodes);
-      candConds.push(`reference_code = ANY(${candParams.length}::text[]) OR employee_id = ANY(${candParams.length}::text[])`);
+      candConds.push(`reference_code = ANY({candParams.length}::text[]) OR employee_id = ANY({candParams.length}::text[])`);
     }
     if (resolvedMobiles.length > 0) {
       candParams.push(resolvedMobiles);
-      candConds.push(`mobile_number = ANY(${candParams.length}::text[])`);
+      candConds.push(`mobile_number = ANY({candParams.length}::text[])`);
     }
     if (resolvedEmails.length > 0) {
       candParams.push(resolvedEmails);
-      candConds.push(`LOWER(email_id) = ANY(${candParams.length}::text[])`);
+      candConds.push(`LOWER(email_id) = ANY({candParams.length}::text[])`);
     }
     if (candConds.length > 0) {
       await safeExec(
@@ -376,19 +376,19 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
     const userUpdParams = [];
     if (resolvedUserUuids.length > 0) {
       userUpdParams.push(resolvedUserUuids);
-      userUpdConds.push(`id = ANY(${userUpdParams.length}::uuid[])`);
+      userUpdConds.push(`id = ANY({userUpdParams.length}::uuid[])`);
     }
     if (resolvedCodes.length > 0) {
       userUpdParams.push(resolvedCodes);
-      userUpdConds.push(`employee_id = ANY(${userUpdParams.length}::text[])`);
+      userUpdConds.push(`employee_id = ANY({userUpdParams.length}::text[])`);
     }
     if (resolvedEmails.length > 0) {
       userUpdParams.push(resolvedEmails);
-      userUpdConds.push(`LOWER(email) = ANY(${userUpdParams.length}::text[])`);
+      userUpdConds.push(`LOWER(email) = ANY({userUpdParams.length}::text[])`);
     }
     if (resolvedMobiles.length > 0) {
       userUpdParams.push(resolvedMobiles);
-      userUpdConds.push(`mobile = ANY(${userUpdParams.length}::text[])`);
+      userUpdConds.push(`mobile = ANY({userUpdParams.length}::text[])`);
     }
     if (userUpdConds.length > 0) {
       await safeExec(
@@ -464,6 +464,28 @@ const deleteUserAccount = async (inputId) => {
       } catch (err) {
         logger.warn(`Savepoint statement skipped/rolled back: ${sql}`, err.message);
         await client.query('ROLLBACK TO SAVEPOINT sp_del');
+      }
+    };
+
+    // Generic safety net: every NULLABLE uuid foreign key that points at users/employees is set to NULL for the
+    // rows being deleted. Tables added after this service was written can then never block a permanent delete.
+    // (NOT NULL references are untouched - they must be purged explicitly or the delete reports a clear 409.)
+    const nullifyNullableForeignKeys = async (refTable, ids) => {
+      if (!Array.isArray(ids) || ids.length === 0) return;
+      const { rows } = await safeQuery(
+        `SELECT c.conrelid::regclass::text AS tbl, a.attname AS col
+           FROM pg_constraint c
+           JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+          WHERE c.contype = 'f'
+            AND c.confrelid = $1::regclass
+            AND array_length(c.conkey, 1) = 1
+            AND NOT a.attnotnull
+            AND a.atttypid = 'uuid'::regtype`,
+        [refTable]
+      );
+      for (const r of rows) {
+        const col = `"${String(r.col).replace(/"/g, '""')}"`;
+        await safeExec(`UPDATE ${r.tbl} SET ${col} = NULL WHERE ${col} = ANY($1::uuid[])`, [ids]);
       }
     };
 
@@ -1067,6 +1089,7 @@ const deleteUserAccount = async (inputId) => {
       // Candidates who listed this employee as referrer -> unassign, don't delete applicant
       await safeExec(`UPDATE employee_candidates SET referred_by_employee_id = NULL WHERE referred_by_employee_id = ANY($1::uuid[])`, [empUuids]);
 
+      await nullifyNullableForeignKeys('employees', empUuids);
       await safeExec(`DELETE FROM employees WHERE id = ANY($1::uuid[])`, [empUuids]);
     }
 
@@ -1243,6 +1266,7 @@ const deleteUserAccount = async (inputId) => {
     // ── 11. FINAL PURGE: DELETE USER RECORD ─────────────────────────────────
     let deletedCount = 0;
     if (actualUserId) {
+      await nullifyNullableForeignKeys('users', [actualUserId]);
       const delRes = await client.query(`DELETE FROM users WHERE id = $1`, [actualUserId]);
       deletedCount = delRes.rowCount || 0;
     }
@@ -1301,7 +1325,16 @@ const deleteUserAccount = async (inputId) => {
     };
   } catch (err) {
     await client.query('ROLLBACK');
-    logger.error(`Error executing permanent deletion for ${inputId}:`, err);
+    logger.error(`Error permanently deleting account ${inputId}: ${err.message}`, { code: err.code, table: err.table, constraint: err.constraint, detail: err.detail });
+    if (err && err.code === '23503') {
+      const blocked = new Error(
+        `Cannot permanently delete this account: it is still referenced by "${err.table || 'another table'}"` +
+        `${err.constraint ? ` (${err.constraint})` : ''}. Use Temporary Delete (Suspend) or transfer/remove those records first.`
+      );
+      blocked.statusCode = 409;
+      blocked.code = 'FK_VIOLATION';
+      throw blocked;
+    }
     throw err;
   } finally {
     client.release();

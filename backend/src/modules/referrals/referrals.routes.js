@@ -247,7 +247,7 @@ router.post('/', roleCheck('EMPLOYEE'), async (req, res, next) => {
         return error(res, 'Invalid HR representative selected', 400);
       }
       const { rows: hrCheck } = await query(
-        `SELECT id FROM users WHERE id = $1 AND UPPER(role) = 'HR' AND status = 'active' LIMIT 1`,
+        `SELECT id FROM users WHERE id = $1 AND UPPER(role::text) = 'HR' AND status::text = 'active' LIMIT 1`,
         [rawPreferredHr]
       );
       if (hrCheck.length === 0) {
@@ -331,7 +331,7 @@ router.post('/:id/assign', roleCheck('SUPER_ADMIN'), async (req, res, next) => {
   let client = null;
   try {
     const { rows: hrRows } = await query(
-      `SELECT id, full_name FROM users WHERE id = $1 AND UPPER(role) = 'HR' AND status = 'active' LIMIT 1`,
+      `SELECT id, full_name FROM users WHERE id = $1 AND UPPER(role::text) = 'HR' AND status::text = 'active' LIMIT 1`,
       [hrId]
     );
     if (hrRows.length === 0) {

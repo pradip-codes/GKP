@@ -699,16 +699,16 @@ async function bulkUpdateAccountStatus({ action, scope = 'ALL', userIds = [], ro
   } else if (Array.isArray(roles) && roles.length > 0) {
     const upperRoles = roles.map(r => String(r).toUpperCase());
     queryParams.push(upperRoles);
-    whereClauses.push(`UPPER(role) = ANY($${queryParams.length})`);
+    whereClauses.push(`UPPER(role::text) = ANY($${queryParams.length})`);
   } else {
     const normScope = String(scope || 'ALL').trim().toUpperCase();
     if (normScope === 'EMPLOYEES' || normScope === 'EMPLOYEE') {
-      whereClauses.push(`UPPER(role) = 'EMPLOYEE'`);
+      whereClauses.push(`UPPER(role::text) = 'EMPLOYEE'`);
     } else if (normScope === 'ADMINS' || normScope === 'ADMIN') {
-      whereClauses.push(`UPPER(role) = 'ADMIN'`);
+      whereClauses.push(`UPPER(role::text) = 'ADMIN'`);
     } else {
       // ALL employees and admins
-      whereClauses.push(`UPPER(role) IN ('EMPLOYEE', 'ADMIN', 'HR', 'VIEWER', 'MODERATOR')`);
+      whereClauses.push(`UPPER(role::text) IN ('EMPLOYEE', 'ADMIN', 'HR', 'VIEWER', 'MODERATOR')`);
     }
   }
 
@@ -718,7 +718,7 @@ async function bulkUpdateAccountStatus({ action, scope = 'ALL', userIds = [], ro
       queryParams.push(String(actorAdminId));
       whereClauses.push(`id::text != $${queryParams.length}`);
     }
-    whereClauses.push(`UPPER(role) != 'SUPER_ADMIN'`);
+    whereClauses.push(`UPPER(role::text) != 'SUPER_ADMIN'`);
   }
 
   const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';

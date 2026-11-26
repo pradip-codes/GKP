@@ -240,7 +240,7 @@ router.post('/payslip-requests', roleCheck('EMPLOYEE'), async (req, res, next) =
     );
 
     // Notify active HR users (non-blocking)
-    query(`SELECT id FROM users WHERE UPPER(role) = 'HR' AND status = 'active'`)
+    query(`SELECT id FROM users WHERE UPPER(role::text) = 'HR' AND status::text = 'active'`)
       .then(async ({ rows: hrUsers }) => {
         const empName = req.employee.full_name || req.employee.employee_id || 'An employee';
         for (const hr of hrUsers) {

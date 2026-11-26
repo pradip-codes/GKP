@@ -1150,13 +1150,22 @@ const deleteAdmin = async (req, res, next) => {
     const mode = req.query.mode || req.body?.mode || 'permanent';
     const { softDeleteUserAccount, deleteUserAccount } = require('../auth/user-deletion.service.js');
     let result;
-    if (mode === 'temporary') {
-      result = await softDeleteUserAccount(id, extraIdentifiers);
-    } else {
-      result = await deleteUserAccount(id);
-      if (extraIdentifiers.userId && extraIdentifiers.userId !== id) {
-        await deleteUserAccount(extraIdentifiers.userId).catch(() => {});
+    try {
+      if (mode === 'temporary') {
+        result = await softDeleteUserAccount(id, extraIdentifiers);
+      } else {
+        result = await deleteUserAccount(id);
+        if (extraIdentifiers.userId && extraIdentifiers.userId !== id) {
+          await deleteUserAccount(extraIdentifiers.userId).catch(() => {});
+        }
       }
+    } catch (svcErr) {
+      // Return a readable error instead of a bare "Internal Server Error"
+      const msg = String(svcErr?.message || '');
+      if (svcErr?.statusCode === 409 || svcErr?.code === 'FK_VIOLATION') return error(res, msg, 409);
+      if (/Super Administrator/i.test(msg)) return error(res, msg, 403);
+      if (/not found/i.test(msg)) return error(res, msg, 404);
+      throw svcErr;
     }
 
     // Record action in audit logs
