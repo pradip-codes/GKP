@@ -192,8 +192,8 @@ export default function EmployeeVerification() {
           </div>
         </div>
 
-        {/* Dynamic Warning Alert Banner (if pending) */}
-        {!isOverallVerified && (
+        {/* Dynamic Warning Alert Banner (if pending or any item requires re-upload) */}
+        {(!isOverallVerified || missing_items.length > 0) && (
           <div style={{
             background: C.goldLight, border: `1px solid ${C.gold}`, borderRadius: '16px',
             padding: isMobile ? '16px' : '18px 20px', marginBottom: '20px',

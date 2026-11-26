@@ -256,54 +256,18 @@ export default function EmployeeManagement() {
   }, [drawerEmp?.id, drawerTab, attendanceMonth, attendanceYear]);
 
   const handleSingleDocAction = async (empId, docKey, action, reasonText = '') => {
-    const isApprove = action === 'VERIFIED';
+    const isApprove = action === 'VERIFIED' || action === 'APPROVED';
+    const canonicalKey = normalizeDocumentType(docKey);
+    const statusValue = isApprove ? 'APPROVED' : 'REJECTED';
+
     const payload = {
-      kyc_status: isApprove ? 'UNDER_REVIEW' : 'REJECTED'
+      document_type: canonicalKey || docKey,
+      status: statusValue,
+      rejection_reason: isApprove ? null : reasonText
     };
 
-    const canonicalKey = normalizeDocumentType(docKey);
-
-    if (canonicalKey === 'aadhaar') {
-      payload.aadhaar_action = action;
-      if (!isApprove) payload.aadhaar_reason = reasonText;
-    } else if (canonicalKey === 'pan') {
-      payload.pan_action = action;
-      if (!isApprove) payload.pan_reason = reasonText;
-    } else if (canonicalKey === 'bank_proof' || docKey === 'bank') {
-      payload.bank_action = action;
-      payload.bank_proof_action = action;
-      if (!isApprove) {
-        payload.bank_reason = reasonText;
-        payload.bank_proof_reason = reasonText;
-      }
-    } else if (canonicalKey === 'video' || docKey === 'video') {
-      payload.video_action = action;
-      if (!isApprove) payload.video_reason = reasonText;
-    } else if (canonicalKey === 'face_biometric' || docKey === 'face') {
-      payload.biometric_action = action;
-      if (!isApprove) payload.biometric_reason = reasonText;
-    } else if (docKey === 'photo') {
-      payload.photo_action = action;
-      if (!isApprove) payload.photo_reason = reasonText;
-    } else if (docKey === 'offer_letter') {
-      payload.offer_letter_action = action;
-      if (!isApprove) payload.offer_letter_reason = reasonText;
-    } else if (docKey === 'resume') {
-      payload.resume_action = action;
-      if (!isApprove) payload.resume_reason = reasonText;
-    } else if (docKey === 'education_certificate') {
-      payload.education_certificate_action = action;
-      if (!isApprove) payload.education_certificate_reason = reasonText;
-    } else if (docKey === 'experience_letter') {
-      payload.experience_letter_action = action;
-      if (!isApprove) payload.experience_letter_reason = reasonText;
-    } else if (docKey === 'terms_video' || docKey === 'video') {
-      payload.video_action = action;
-      if (!isApprove) payload.video_reason = reasonText;
-    }
-
     try {
-      const res = await api.post(`/employees/${empId}/kyc-verify`, payload);
+      const res = await api.post(`/employees/${empId}/verify-document`, payload);
       if (res.data?.success) {
         fetchDrawerEmp360(empId);
         fetchData();
@@ -6390,6 +6354,7 @@ Generated On        : ${new Date().toLocaleString()}
                                       }
                                     }}
                                     style={{ padding: '5px 10px', background: '#EF444415', color: '#DC2626', border: '1px solid #EF444440', borderRadius: '8px', fontSize: '11.5px', fontWeight: 800, cursor: 'pointer' }}
+                                    title="Reject only this document so the employee can re-upload without deactivating an active account"
                                   >
                                     ✕ Reject
                                   </button>

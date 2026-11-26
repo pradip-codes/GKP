@@ -1644,8 +1644,13 @@ router.post('/:id/kyc-verify', async (req, res, next) => {
     let video_verified = existing.video_verified || false;
     let video_rejection_reason = existing.video_rejection_reason || null;
 
-    const isBulkApprove = kyc_status === 'VERIFIED' || kyc_status === 'APPROVED';
-    const isBulkReject = kyc_status === 'REJECTED';
+    const hasSingleDocAction = Boolean(
+      pan_action || aadhaar_action || bank_action || video_action ||
+      photo_action || address_proof_action || education_certificate_action ||
+      req.body.offer_letter_action || req.body.resume_action || req.body.experience_letter_action
+    );
+    const isBulkApprove = !hasSingleDocAction && (kyc_status === 'VERIFIED' || kyc_status === 'APPROVED');
+    const isBulkReject = !hasSingleDocAction && kyc_status === 'REJECTED';
 
     if (isBulkApprove) {
       pan_status = 'VERIFIED'; pan_verified = true; pan_rejection_reason = null;
@@ -1858,8 +1863,8 @@ router.post('/:id/kyc-verify', async (req, res, next) => {
       ]
     );
 
-    // Update employee activation status and user account status
-    if (isFullyVerified) {
+    // Update employee activation status and user account status ONLY on explicit bulk KYC approve/reject
+    if (isBulkApprove || isFullyVerified) {
       await query(
         `UPDATE employees SET activation_status = 'APPROVED', employee_status = 'ACTIVE', activated_at = NOW() WHERE id = $1`,
         [id]
@@ -1868,7 +1873,7 @@ router.post('/:id/kyc-verify', async (req, res, next) => {
         `UPDATE users SET status = 'active' WHERE id = (SELECT user_id FROM employees WHERE id = $1) AND id IS NOT NULL`,
         [id]
       );
-    } else if (finalKycStatus === 'REJECTED') {
+    } else if (isBulkReject) {
       await query(
         `UPDATE employees SET activation_status = 'REJECTED', employee_status = 'ONBOARDING' WHERE id = $1`,
         [id]
@@ -3638,8 +3643,21 @@ router.post('/:id/verify-document', async (req, res, next) => {
       `, [vStatus, finalStatus === 'APPROVED', finalStatus === 'REJECTED' ? rejection_reason : null, empId]).catch(err => logger.warn('Silent catch warning:', err.message));
     }
 
+    if (finalStatus === 'REJECTED') {
+      const empUserRes = await query(`SELECT user_id FROM employees WHERE id = $1`, [empId]).catch(() => ({ rows: [] }));
+      const empUserId = empUserRes.rows[0]?.user_id;
+      if (empUserId) {
+        const prettyDoc = normDocType.replace(/_/g, ' ').toUpperCase();
+        await createNotification({
+          userId: empUserId,
+          title: `Document Re-Upload Required: ${prettyDoc}`,
+          message: `Please re-upload your ${prettyDoc} from Employee Verification. Reason: ${rejection_reason || 'Please upload a clear updated copy.'}`,
+          type: 'KYC_NOTIFICATION'
+        }).catch(err => logger.warn('Silent catch warning:', err.message));
+      }
+    }
+
     // Recalculate complete state
-    invalidateEmployeeVerificationCache(empId);
     invalidateEmployeeVerificationCache(empId);
     const updatedState = await calculateEmployeeVerificationState(empId);
 

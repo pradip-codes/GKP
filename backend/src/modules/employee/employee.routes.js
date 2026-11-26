@@ -2245,8 +2245,11 @@ router.post('/submit-verification', async (req, res, next) => {
       WHERE employee_id = $1 AND verification_status = 'NOT_STARTED' AND document_url IS NOT NULL
     `, [empId]).catch(() => {});
 
-    // Update employee activation status to PENDING if not already VERIFIED
-    if (vState.overall_status !== 'VERIFIED') {
+    // Update employee activation status to PENDING only if not already VERIFIED / APPROVED / ACTIVE
+    const isAlreadyActivated =
+      String(req.employee.activation_status || '').toUpperCase() === 'APPROVED' ||
+      String(req.employee.employee_status || '').toUpperCase() === 'ACTIVE';
+    if (!isAlreadyActivated && vState.overall_status !== 'VERIFIED') {
       await query(`
         UPDATE employees 
         SET activation_status = 'PENDING', updated_at = NOW()

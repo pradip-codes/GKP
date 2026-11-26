@@ -362,30 +362,37 @@ async function calculateEmployeeVerificationState(employeeId) {
   const isAllDocsApproved = approvedDocsCount === totalRequiredDocs;
   const isVideoVerified = videoStatus === 'VERIFIED';
   const isInfoVerified = infoStatus === 'VERIFIED';
+  const isAlreadyActivated =
+    String(employee.activation_status || '').toUpperCase() === 'APPROVED' ||
+    String(employee.employee_status || '').toUpperCase() === 'ACTIVE';
 
   let overallStatus = 'PENDING';
-  if (videoStatus === 'REJECTED' || missingItems.some(i => i.status === 'REJECTED')) {
+  if (isAlreadyActivated && videoStatus !== 'REJECTED') {
+    // Keep already-activated employees active when a single document (e.g. bank proof) is rejected/deleted for re-upload;
+    // the item remains in missingItems so the employee is prompted to re-upload without locking their account.
+    overallStatus = 'VERIFIED';
+  } else if (videoStatus === 'REJECTED' || missingItems.some(i => i.status === 'REJECTED')) {
     overallStatus = 'REJECTED';
-  } else if ((isAllDocsApproved && isVideoVerified) || (employee.activation_status === 'APPROVED' && videoStatus !== 'REJECTED')) {
+  } else if (isAllDocsApproved && isVideoVerified) {
     overallStatus = 'VERIFIED';
   } else if (approvedDocsCount > 0 || videoStatus === 'UNDER_REVIEW' || underReviewItems.length > 0) {
     overallStatus = 'UNDER_REVIEW';
   }
 
-  // Update employee record if changed
+  // Update employee record if changed (never downgrade an already-activated employee back to PENDING/REJECTED for single-doc updates)
   if (overallStatus === 'VERIFIED') {
     await query(`
       UPDATE employees 
       SET activation_status = 'APPROVED', employee_status = 'ACTIVE'
       WHERE id = $1
     `, [employeeId]).catch(() => {});
-  } else if (overallStatus === 'REJECTED') {
+  } else if (overallStatus === 'REJECTED' && !isAlreadyActivated) {
     await query(`
       UPDATE employees 
       SET activation_status = 'REJECTED'
       WHERE id = $1
     `, [employeeId]).catch(() => {});
-  } else if (overallStatus === 'UNDER_REVIEW') {
+  } else if (overallStatus === 'UNDER_REVIEW' && !isAlreadyActivated) {
     await query(`
       UPDATE employees 
       SET activation_status = 'PENDING'
