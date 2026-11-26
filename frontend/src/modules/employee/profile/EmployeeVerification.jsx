@@ -136,7 +136,12 @@ export default function EmployeeVerification() {
   } = verState || {};
 
   const isOverallVerified = overall_status === 'VERIFIED';
-  const isFaceVerified = Boolean(has_biometric_reference || face_status === 'VERIFIED' || face_biometric_status === 'VERIFIED');
+  const isFaceRejected = face_status === 'REJECTED' || face_biometric_status === 'REJECTED';
+  const isFaceVerified = !isFaceRejected && Boolean(has_biometric_reference || face_status === 'VERIFIED' || face_biometric_status === 'VERIFIED');
+  const faceRejectionReason =
+    verState?.biometric_rejection_reason ||
+    missing_items.find(i => i.type === 'face_biometric' && i.status === 'REJECTED')?.reason ||
+    'Your previous face biometric snapshot was reset by Admin. Please re-capture clearly.';
 
   const isInfoDone = information_status === 'VERIFIED' || information_status === 'UNDER_REVIEW';
   const isDocsDone = approved_docs_count === total_docs_count || (documents.length > 0 && documents.every(d => d.status === 'APPROVED' || d.status === 'UNDER_REVIEW'));
@@ -605,23 +610,35 @@ export default function EmployeeVerification() {
               <div>
                 <h3 style={{ fontSize: isMobile ? '16px' : '18px', fontWeight: 800, color: C.text, margin: 0 }}>Face Biometric Verification</h3>
                 <p style={{ fontSize: '12px', color: C.textMid, margin: '2px 0 0 0' }}>
-                  Status: <strong style={{ color: isFaceVerified ? C.green : C.gold }}>{isFaceVerified ? 'VERIFIED' : 'ACTION REQUIRED'}</strong>
+                  Status: <strong style={{ color: isFaceVerified ? C.green : (isFaceRejected ? '#DC2626' : C.gold) }}>{isFaceVerified ? 'VERIFIED' : (isFaceRejected ? 'RE-CAPTURE REQUIRED' : 'ACTION REQUIRED')}</strong>
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setFaceModalOpen(true)}
                 style={{
-                  background: isFaceVerified ? C.bgSecondary : C.teal,
+                  background: isFaceVerified ? C.bgSecondary : (isFaceRejected ? '#DC2626' : C.teal),
                   color: isFaceVerified ? C.text : '#fff',
                   border: isFaceVerified ? `1px solid ${C.border}` : 'none',
                   padding: '8px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 700,
                   cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0
                 }}
               >
-                <FaCamera style={{ fontSize: '12px' }} /> {isFaceVerified ? 'Re-enroll' : 'Start Verification'}
+                <FaCamera style={{ fontSize: '12px' }} /> {isFaceVerified ? 'Re-enroll' : (isFaceRejected ? 'Re-capture Face' : 'Start Verification')}
               </button>
             </div>
+
+            {isFaceRejected && (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', padding: '12px 14px', borderRadius: '10px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <FaExclamationTriangle style={{ color: '#DC2626', fontSize: '15px' }} />
+                  <strong style={{ fontSize: '13px', color: '#991B1B', fontWeight: 800 }}>Face Biometric Reset / Rejected</strong>
+                </div>
+                <div style={{ fontSize: '12px', color: '#991B1B', fontWeight: 600 }}>
+                  "{faceRejectionReason}"
+                </div>
+              </div>
+            )}
 
             {isFaceVerified ? (
               <div style={{ background: C.greenLight, border: '1px solid #BBF7D0', borderRadius: '12px', padding: isMobile ? '16px' : '20px', textAlign: 'center' }}>

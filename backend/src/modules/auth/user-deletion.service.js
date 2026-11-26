@@ -173,19 +173,19 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
     const empParams = [];
     if (userUuids.length > 0) {
       empParams.push(userUuids);
-      empConditions.push(`user_id = ANY({empParams.length}::uuid[])`);
+      empConditions.push(`user_id = ANY($${empParams.length}::uuid[])`);
     }
     if (codeList.length > 0) {
       empParams.push(codeList);
-      empConditions.push(`employee_id = ANY({empParams.length}::text[])`);
+      empConditions.push(`employee_id = ANY($${empParams.length}::text[])`);
     }
     if (emailList.length > 0) {
       empParams.push(emailList);
-      empConditions.push(`LOWER(email_id) = ANY({empParams.length}::text[])`);
+      empConditions.push(`LOWER(email_id) = ANY($${empParams.length}::text[])`);
     }
     if (mobileList.length > 0) {
       empParams.push(mobileList);
-      empConditions.push(`mobile_number = ANY({empParams.length}::text[])`);
+      empConditions.push(`mobile_number = ANY($${empParams.length}::text[])`);
     }
 
     if (empConditions.length > 0) {
@@ -212,23 +212,23 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
     const userParams = [];
     if (userUuids.length > 0) {
       userParams.push(userUuids);
-      userConditions.push(`id = ANY({userParams.length}::uuid[])`);
+      userConditions.push(`id = ANY($${userParams.length}::uuid[])`);
     }
     if (finalEmpUuids.length > 0) {
       userParams.push(finalEmpUuids);
-      userConditions.push(`id IN (SELECT user_id FROM employees WHERE id = ANY({userParams.length}::uuid[]) AND user_id IS NOT NULL)`);
+      userConditions.push(`id IN (SELECT user_id FROM employees WHERE id = ANY($${userParams.length}::uuid[]) AND user_id IS NOT NULL)`);
     }
     if (finalCodeList.length > 0) {
       userParams.push(finalCodeList);
-      userConditions.push(`employee_id = ANY({userParams.length}::text[])`);
+      userConditions.push(`employee_id = ANY($${userParams.length}::text[])`);
     }
     if (finalEmailList.length > 0) {
       userParams.push(finalEmailList);
-      userConditions.push(`LOWER(email) = ANY({userParams.length}::text[])`);
+      userConditions.push(`LOWER(email) = ANY($${userParams.length}::text[])`);
     }
     if (finalMobileList.length > 0) {
       userParams.push(finalMobileList);
-      userConditions.push(`mobile = ANY({userParams.length}::text[])`);
+      userConditions.push(`mobile = ANY($${userParams.length}::text[])`);
     }
 
     if (userConditions.length > 0) {
@@ -264,16 +264,16 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
       const pParams = [];
       if (resolvedPartnerUuids.length > 0) {
         pParams.push(resolvedPartnerUuids);
-        pConds.push(`id = ANY({pParams.length}::uuid[])`);
-        pConds.push(`parent_partner_id = ANY({pParams.length}::uuid[])`);
+        pConds.push(`id = ANY($${pParams.length}::uuid[])`);
+        pConds.push(`parent_partner_id = ANY($${pParams.length}::uuid[])`);
       }
       if (resolvedUserUuids.length > 0) {
         pParams.push(resolvedUserUuids);
-        pConds.push(`user_id = ANY({pParams.length}::uuid[])`);
+        pConds.push(`user_id = ANY($${pParams.length}::uuid[])`);
       }
       if (resolvedCodes.length > 0) {
         pParams.push(resolvedCodes);
-        pConds.push(`partner_code = ANY({pParams.length}::text[])`);
+        pConds.push(`partner_code = ANY($${pParams.length}::text[])`);
       }
       if (pConds.length > 0) {
         await safeExec(`UPDATE partner_profiles SET status = 'suspended', updated_at = NOW() WHERE ${pConds.join(' OR ')}`, pParams);
@@ -289,11 +289,11 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
       const wParams = [];
       if (resolvedPartnerUuids.length > 0) {
         wParams.push(resolvedPartnerUuids);
-        wConds.push(`partner_id = ANY({wParams.length}::uuid[])`);
+        wConds.push(`partner_id = ANY($${wParams.length}::uuid[])`);
       }
       if (resolvedUserUuids.length > 0) {
         wParams.push(resolvedUserUuids);
-        wConds.push(`user_id = ANY({wParams.length}::uuid[])`);
+        wConds.push(`user_id = ANY($${wParams.length}::uuid[])`);
       }
       if (wConds.length > 0) {
         await safeExec(`UPDATE partner_wallets SET status = 'inactive', updated_at = NOW() WHERE ${wConds.join(' OR ')}`, wParams);
@@ -306,23 +306,23 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
     const empUpdParams = [];
     if (resolvedEmpUuids.length > 0) {
       empUpdParams.push(resolvedEmpUuids);
-      empUpdConds.push(`id = ANY({empUpdParams.length}::uuid[])`);
+      empUpdConds.push(`id = ANY($${empUpdParams.length}::uuid[])`);
     }
     if (resolvedUserUuids.length > 0) {
       empUpdParams.push(resolvedUserUuids);
-      empUpdConds.push(`user_id = ANY({empUpdParams.length}::uuid[])`);
+      empUpdConds.push(`user_id = ANY($${empUpdParams.length}::uuid[])`);
     }
     if (resolvedCodes.length > 0) {
       empUpdParams.push(resolvedCodes);
-      empUpdConds.push(`employee_id = ANY({empUpdParams.length}::text[])`);
+      empUpdConds.push(`employee_id = ANY($${empUpdParams.length}::text[])`);
     }
     if (resolvedEmails.length > 0) {
       empUpdParams.push(resolvedEmails);
-      empUpdConds.push(`LOWER(email_id) = ANY({empUpdParams.length}::text[])`);
+      empUpdConds.push(`LOWER(email_id) = ANY($${empUpdParams.length}::text[])`);
     }
     if (resolvedMobiles.length > 0) {
       empUpdParams.push(resolvedMobiles);
-      empUpdConds.push(`mobile_number = ANY({empUpdParams.length}::text[])`);
+      empUpdConds.push(`mobile_number = ANY($${empUpdParams.length}::text[])`);
     }
 
     if (empUpdConds.length > 0) {
@@ -354,15 +354,15 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
     const candParams = [];
     if (resolvedCodes.length > 0) {
       candParams.push(resolvedCodes);
-      candConds.push(`reference_code = ANY({candParams.length}::text[]) OR employee_id = ANY({candParams.length}::text[])`);
+      candConds.push(`reference_code = ANY($${candParams.length}::text[]) OR employee_id = ANY($${candParams.length}::text[])`);
     }
     if (resolvedMobiles.length > 0) {
       candParams.push(resolvedMobiles);
-      candConds.push(`mobile_number = ANY({candParams.length}::text[])`);
+      candConds.push(`mobile_number = ANY($${candParams.length}::text[])`);
     }
     if (resolvedEmails.length > 0) {
       candParams.push(resolvedEmails);
-      candConds.push(`LOWER(email_id) = ANY({candParams.length}::text[])`);
+      candConds.push(`LOWER(email_id) = ANY($${candParams.length}::text[])`);
     }
     if (candConds.length > 0) {
       await safeExec(
@@ -376,19 +376,19 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
     const userUpdParams = [];
     if (resolvedUserUuids.length > 0) {
       userUpdParams.push(resolvedUserUuids);
-      userUpdConds.push(`id = ANY({userUpdParams.length}::uuid[])`);
+      userUpdConds.push(`id = ANY($${userUpdParams.length}::uuid[])`);
     }
     if (resolvedCodes.length > 0) {
       userUpdParams.push(resolvedCodes);
-      userUpdConds.push(`employee_id = ANY({userUpdParams.length}::text[])`);
+      userUpdConds.push(`employee_id = ANY($${userUpdParams.length}::text[])`);
     }
     if (resolvedEmails.length > 0) {
       userUpdParams.push(resolvedEmails);
-      userUpdConds.push(`LOWER(email) = ANY({userUpdParams.length}::text[])`);
+      userUpdConds.push(`LOWER(email) = ANY($${userUpdParams.length}::text[])`);
     }
     if (resolvedMobiles.length > 0) {
       userUpdParams.push(resolvedMobiles);
-      userUpdConds.push(`mobile = ANY({userUpdParams.length}::text[])`);
+      userUpdConds.push(`mobile = ANY($${userUpdParams.length}::text[])`);
     }
     if (userUpdConds.length > 0) {
       await safeExec(
@@ -438,7 +438,7 @@ const softDeleteUserAccount = async (inputId, extraIdentifiers = {}) => {
  * @param {string} inputId - UUID, employee_id, email, or mobile of team_member, partner_profile, employee, or user
  * @returns {Promise<Object>} Deleted user record info
  */
-const deleteUserAccount = async (inputId) => {
+const deleteUserAccount = async (inputId, extraIdentifiers = {}) => {
   const client = await getClient();
   try {
     await client.query('BEGIN');
@@ -469,7 +469,6 @@ const deleteUserAccount = async (inputId) => {
 
     // Generic safety net: every NULLABLE uuid foreign key that points at users/employees is set to NULL for the
     // rows being deleted. Tables added after this service was written can then never block a permanent delete.
-    // (NOT NULL references are untouched - they must be purged explicitly or the delete reports a clear 409.)
     const nullifyNullableForeignKeys = async (refTable, ids) => {
       if (!Array.isArray(ids) || ids.length === 0) return;
       const { rows } = await safeQuery(
@@ -489,14 +488,52 @@ const deleteUserAccount = async (inputId) => {
       }
     };
 
+    // Second safety net for permanent delete: handle any remaining NOT NULL uuid FKs pointing at users/employees.
+    // Historical audit/creator/reviewer/operator references on shared tables are reassigned to fallbackUserId when
+    // available; user/employee-owned child records are purged so DELETE FROM users / employees never throws 500/23503.
+    const resolveRemainingNotNullForeignKeys = async (refTable, ids, fallbackUserId = null) => {
+      if (!Array.isArray(ids) || ids.length === 0) return;
+      const { rows } = await safeQuery(
+        `SELECT c.conrelid::regclass::text AS tbl, a.attname AS col
+           FROM pg_constraint c
+           JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+          WHERE c.contype = 'f'
+            AND c.confrelid = $1::regclass
+            AND array_length(c.conkey, 1) = 1
+            AND a.attnotnull
+            AND a.atttypid = 'uuid'::regtype`,
+        [refTable]
+      );
+      for (const r of rows) {
+        const rawCol = String(r.col);
+        const col = `"${rawCol.replace(/"/g, '""')}"`;
+        if (
+          refTable === 'users' &&
+          fallbackUserId &&
+          !ids.includes(fallbackUserId) &&
+          /(_by|_head_id|_operator_id|operator_id|interviewer_id)$/i.test(rawCol)
+        ) {
+          await safeExec(`UPDATE ${r.tbl} SET ${col} = $2 WHERE ${col} = ANY($1::uuid[])`, [ids, fallbackUserId]);
+        } else {
+          await safeExec(`DELETE FROM ${r.tbl} WHERE ${col} = ANY($1::uuid[])`, [ids]);
+        }
+      }
+    };
+
     // ── 1. COMPREHENSIVE IDENTITY RESOLUTION ──────────────────────────────────
-    let actualUserId = null;
+    let actualUserId = extraIdentifiers.userId && isUuid(extraIdentifiers.userId) ? extraIdentifiers.userId : null;
     let userRecord = null;
     const allEmployeeIds = new Set();
     const allPartnerIds = new Set();
     const emails = new Set();
     const mobiles = new Set();
     const empCodes = new Set();
+
+    if (extraIdentifiers.empId && isUuid(extraIdentifiers.empId)) allEmployeeIds.add(extraIdentifiers.empId);
+    if (extraIdentifiers.partnerId && isUuid(extraIdentifiers.partnerId)) allPartnerIds.add(extraIdentifiers.partnerId);
+    if (extraIdentifiers.empCode) empCodes.add(String(extraIdentifiers.empCode).trim());
+    if (extraIdentifiers.email && String(extraIdentifiers.email).includes('@')) emails.add(String(extraIdentifiers.email).trim().toLowerCase());
+    if (extraIdentifiers.mobile) mobiles.add(String(extraIdentifiers.mobile).trim());
 
     if (typeof inputId === 'string' && !isUuid(inputId)) {
       if (inputId.includes('@')) {
@@ -1090,6 +1127,7 @@ const deleteUserAccount = async (inputId) => {
       await safeExec(`UPDATE employee_candidates SET referred_by_employee_id = NULL WHERE referred_by_employee_id = ANY($1::uuid[])`, [empUuids]);
 
       await nullifyNullableForeignKeys('employees', empUuids);
+      await resolveRemainingNotNullForeignKeys('employees', empUuids, fallbackId);
       await safeExec(`DELETE FROM employees WHERE id = ANY($1::uuid[])`, [empUuids]);
     }
 
@@ -1151,23 +1189,26 @@ const deleteUserAccount = async (inputId) => {
     // Clean up admin bank assignments and candidate records by employee codes or emails
     if (codeList.length > 0 || emailList.length > 0) {
       const p = [];
-      const conds = [];
+      const uConds = [];
+      const eConds = [];
       if (codeList.length > 0) {
         p.push(codeList);
-        conds.push(`employee_id = ANY($${p.length}::text[])`);
+        uConds.push(`employee_id = ANY($${p.length}::text[])`);
+        eConds.push(`employee_id = ANY($${p.length}::text[])`);
       }
       if (emailList.length > 0) {
         p.push(emailList);
-        conds.push(`email ILIKE ANY($${p.length}::text[])`);
+        uConds.push(`email ILIKE ANY($${p.length}::text[])`);
+        eConds.push(`email_id ILIKE ANY($${p.length}::text[])`);
       }
       await safeExec(`
         DELETE FROM admin_bank_assignments 
-        WHERE admin_id IN (SELECT id FROM users WHERE ${conds.join(' OR ')})
+        WHERE admin_id IN (SELECT id FROM users WHERE ${uConds.join(' OR ')})
       `, p);
 
       await safeExec(`
         DELETE FROM employees 
-        WHERE ${conds.join(' OR ')}
+        WHERE ${eConds.join(' OR ')}
       `, p);
     }
 
@@ -1267,6 +1308,7 @@ const deleteUserAccount = async (inputId) => {
     let deletedCount = 0;
     if (actualUserId) {
       await nullifyNullableForeignKeys('users', [actualUserId]);
+      await resolveRemainingNotNullForeignKeys('users', [actualUserId], fallbackId);
       const delRes = await client.query(`DELETE FROM users WHERE id = $1`, [actualUserId]);
       deletedCount = delRes.rowCount || 0;
     }
@@ -1287,8 +1329,17 @@ const deleteUserAccount = async (inputId) => {
         conds.push(`mobile = ANY($${p.length}::text[])`);
       }
       if (conds.length > 0) {
-        const altDel = await client.query(`DELETE FROM users WHERE ${conds.join(' OR ')}`, p);
-        deletedCount = altDel.rowCount || 0;
+        const { rows: altRows } = await safeQuery(
+          `SELECT id FROM users WHERE (${conds.join(' OR ')}) AND role <> 'SUPER_ADMIN'`,
+          p
+        );
+        const altIds = altRows.map(r => r.id).filter(isUuid);
+        if (altIds.length > 0) {
+          await nullifyNullableForeignKeys('users', altIds);
+          await resolveRemainingNotNullForeignKeys('users', altIds, fallbackId);
+          const altDel = await client.query(`DELETE FROM users WHERE id = ANY($1::uuid[])`, [altIds]);
+          deletedCount = altDel.rowCount || 0;
+        }
       }
     }
 

@@ -1154,9 +1154,9 @@ const deleteAdmin = async (req, res, next) => {
       if (mode === 'temporary') {
         result = await softDeleteUserAccount(id, extraIdentifiers);
       } else {
-        result = await deleteUserAccount(id);
+        result = await deleteUserAccount(id, extraIdentifiers);
         if (extraIdentifiers.userId && extraIdentifiers.userId !== id) {
-          await deleteUserAccount(extraIdentifiers.userId).catch(() => {});
+          await deleteUserAccount(extraIdentifiers.userId, extraIdentifiers).catch(() => {});
         }
       }
     } catch (svcErr) {

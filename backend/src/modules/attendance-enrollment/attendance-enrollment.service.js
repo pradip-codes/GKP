@@ -208,7 +208,12 @@ const commitFaceEnrollment = async ({ sessionToken, imageBuffer, originalName, m
       [session.employeeId]
     );
 
-    let nextVersion = 1;
+    // Fetch max historical version so S3 keys and version history advance monotonically even after reset/revoke
+    const { rows: [verRow] } = await client.query(
+      `SELECT COALESCE(MAX(version), 0) AS max_ver FROM employee_biometric_templates WHERE employee_id = $1`,
+      [session.employeeId]
+    );
+    let nextVersion = Number(verRow?.max_ver || 0) + 1;
 
     if (existingTemplate) {
       if (!session.isReEnrollment && !isSuperAdmin) {
@@ -228,8 +233,6 @@ const commitFaceEnrollment = async ({ sessionToken, imageBuffer, originalName, m
         previous_version: existingTemplate.version,
         reason: session.reason || 'Replaced by new enrollment'
       }).catch(() => {});
-
-      nextVersion = (existingTemplate.version || 1) + 1;
     }
 
     // 3. Upload to private S3: employee-biometric/{employeeId}/v{version}/reference.{ext}
@@ -368,17 +371,20 @@ const getEmployeeBiometricStatus = async (employeeId, reqUser) => {
     [targetEmpId]
   );
 
-  let activeTemplate = templates.find(t => t.status === 'ACTIVE') || templates[0] || null;
+  const activeTemplate = templates.find(t => t.status === 'ACTIVE') || null;
+  const lastRevokedTemplate = templates.find(t => t.status === 'REVOKED') || null;
   let activeImageUrl = null;
   if (activeTemplate?.s3_key) {
     activeImageUrl = await resolveS3Url(activeTemplate.s3_key).catch(() => null);
-  } else {
+  } else if (templates.length === 0) {
+    // Only fall back to non-rejected face biometric docs when no template history exists
     const { rows: [faceDoc] } = await query(
       `SELECT * 
        FROM employee_documents 
        WHERE employee_id = $1 
+         AND COALESCE(UPPER(verification_status), 'PENDING') <> 'REJECTED'
          AND (
-           LOWER(document_type) IN ('face', 'face_biometric', 'biometric', 'face_verification', 'face_reference', 'selfie', 'photo', 'profile_photo')
+           LOWER(document_type) IN ('face', 'face_biometric', 'biometric', 'face_verification', 'face_reference', 'selfie')
            OR LOWER(document_type) LIKE '%face%'
          )
        ORDER BY created_at DESC LIMIT 1`,
@@ -389,25 +395,24 @@ const getEmployeeBiometricStatus = async (employeeId, reqUser) => {
       activeImageUrl = await resolveS3Url(rawKey).catch(() => null);
     } else {
       const { rows: [empRow] } = await query(
-        `SELECT to_jsonb(e)->>'profile_photo_url' as profile_photo_url,
-                to_jsonb(e)->>'face_reference_url' as face_reference_url,
-                to_jsonb(e)->>'photo_url' as photo_url,
+        `SELECT to_jsonb(e)->>'face_reference_url' as face_reference_url,
                 to_jsonb(e)->>'selfie_url' as selfie_url
          FROM employees e WHERE id = $1 LIMIT 1`,
         [targetEmpId]
       ).catch(() => ({ rows: [] }));
-      const empFace = empRow?.face_reference_url || empRow?.profile_photo_url || empRow?.photo_url || empRow?.selfie_url;
+      const empFace = empRow?.face_reference_url || empRow?.selfie_url;
       if (empFace) {
         activeImageUrl = await resolveS3Url(empFace).catch(() => null);
       }
     }
   }
 
+  const isEnrolled = Boolean(activeTemplate || activeImageUrl);
   return {
     employee_id: employeeId,
-    is_enrolled: Boolean(activeTemplate || activeImageUrl),
-    status: activeTemplate ? (activeTemplate.status || 'ACTIVE') : (activeImageUrl ? 'ACTIVE' : 'NOT_ENROLLED'),
-    active_template: (activeTemplate || activeImageUrl) ? {
+    is_enrolled: isEnrolled,
+    status: isEnrolled ? 'ACTIVE' : (lastRevokedTemplate ? 'REVOKED' : 'NOT_ENROLLED'),
+    active_template: isEnrolled ? {
       id: activeTemplate?.id || 'doc-face',
       version: activeTemplate?.version || 1,
       status: activeTemplate?.status || 'ACTIVE',
@@ -416,6 +421,7 @@ const getEmployeeBiometricStatus = async (employeeId, reqUser) => {
       enrolled_by_name: activeTemplate?.enrolled_by_name || 'System',
       image_url: activeImageUrl
     } : null,
+    last_revoked_template: lastRevokedTemplate || null,
     history: (reqUser?.role || '').toUpperCase() === 'SUPER_ADMIN' ? templates : []
   };
 };
@@ -858,6 +864,79 @@ const revokeEnvironmentReference = async (referenceCode, reason, reqUser) => {
   return ref;
 };
 
+/**
+ * Super Admin / Admin / HR: Revoke / reset an employee's active face biometric so they can re-capture from their own device.
+ */
+const revokeEmployeeBiometric = async ({ employeeId, reason, reqUser }) => {
+  if (!employeeId) {
+    const error = new Error('employee_id is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rawId = String(employeeId).trim();
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
+
+  let emp = null;
+  if (isUuid) {
+    const { rows: [found] } = await query(
+      `SELECT id, employee_id, full_name, user_id FROM employees WHERE id = $1 OR user_id = $1 LIMIT 1`,
+      [rawId]
+    );
+    emp = found;
+  }
+  if (!emp) {
+    const { rows: [foundByCode] } = await query(
+      `SELECT id, employee_id, full_name, user_id FROM employees WHERE employee_id = $1 OR candidate_id::text = $1 LIMIT 1`,
+      [rawId]
+    );
+    emp = foundByCode;
+  }
+  if (!emp) {
+    const error = new Error('Employee record not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const reasonText = (reason && reason.trim()) || 'Face biometric reset by admin — please re-capture your face photo.';
+
+  const { rows: revokedRows } = await query(
+    `UPDATE employee_biometric_templates
+     SET status = 'REVOKED', revoked_at = NOW(), revoked_by = $1, revocation_reason = $2,
+         admin_review_status = 'REJECTED', admin_reviewed_by = $1, admin_reviewed_at = NOW(), admin_review_notes = $2, updated_at = NOW()
+     WHERE employee_id = $3 AND status = 'ACTIVE'
+     RETURNING id, version`,
+    [reqUser.id, reasonText, emp.id]
+  );
+
+  await query(
+    `UPDATE employee_documents
+     SET verification_status = 'REJECTED', rejection_reason = $1, verified_by = $2, verified_at = NOW(), updated_at = NOW()
+     WHERE employee_id = $3 AND (LOWER(document_type) IN ('face', 'face_biometric', 'biometric', 'face_verification', 'face_reference', 'selfie') OR LOWER(document_type) LIKE '%face%')`,
+    [reasonText, reqUser.id, emp.id]
+  ).catch(() => {});
+
+  if (emp.user_id) {
+    await query(
+      `INSERT INTO notifications (user_id, title, message, type, is_read, created_at)
+       VALUES ($1, $2, $3, 'FACE_VERIFICATION_REMINDER', false, NOW())`,
+      [emp.user_id, 'Face Verification Reset Required', reasonText]
+    ).catch(() => {});
+  }
+
+  await logAction(reqUser, 'FACE_BIOMETRIC_REVOKED', emp.id, {
+    revoked_count: revokedRows.length,
+    reason: reasonText,
+  }).catch(() => {});
+
+  return {
+    success: true,
+    employee_id: emp.id,
+    revoked_count: revokedRows.length,
+    message: 'Face biometric reset successfully. Employee can now re-capture from their device.',
+  };
+};
+
 module.exports = {
   resolveEmployeeId,
   createEnrollmentSession,
@@ -869,6 +948,7 @@ module.exports = {
   getReminderHistory,
   markReminderSeen,
   getSignedPreviewUrl,
+  revokeEmployeeBiometric,
   getEnvironmentReferences,
   registerEnvironmentReference,
   revokeEnvironmentReference,

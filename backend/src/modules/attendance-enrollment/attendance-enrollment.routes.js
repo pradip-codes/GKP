@@ -26,9 +26,10 @@ router.post(['/reminder', '/reminders', '/reminder/', '/reminders/'], authorize(
 router.get(['/reminders/:employeeId', '/reminder/:employeeId'], authorize('SUPER_ADMIN', 'ADMIN', 'HR'), ctrl.getReminderHistory);
 router.post(['/reminders/:id/seen', '/reminder/:id/seen'], ctrl.markReminderSeen);
 
-// ── Super Admin Re-Enrollment ────────────────────────────────────
+// ── Super Admin Re-Enrollment & Reset ────────────────────────────
 router.post(['/re-enrollment/session', '/re-enrollment/session/'], authorize('SUPER_ADMIN'), ctrl.createReEnrollmentSession);
 router.post(['/re-enrollment/commit', '/re-enrollment/commit/'], authorize('SUPER_ADMIN'), upload.single('face_image'), ctrl.commitReEnrollment);
+router.post(['/revoke', '/revoke/'], authorize('SUPER_ADMIN', 'ADMIN', 'HR'), ctrl.revokeEnrollment);
 
 // ── Secure Temporary Image Preview (Admin/Super Admin only) ──────
 router.get(['/preview/:employeeId', '/preview/:employeeId/'], authorize('SUPER_ADMIN', 'ADMIN'), ctrl.getPreviewUrl);

@@ -11,6 +11,12 @@ const {
 } = require('./verification.service');
 const {
   DOCUMENT_TYPES,
+  VIDEO_DOCUMENT_TYPES,
+  BANK_DOCUMENT_TYPES,
+  AADHAAR_DOCUMENT_TYPES,
+  PAN_DOCUMENT_TYPES,
+  FACE_DOCUMENT_TYPES,
+  PHOTO_DOCUMENT_TYPES,
   normalizeDocumentType,
   isVideoDocument,
   isBankDocument,
@@ -1151,16 +1157,19 @@ router.get('/:id', async (req, res, next) => {
       ).catch(() => ({ rows: [] }));
     }
 
+    const latestBio = bioRes.rows[0] || null;
+    const activeBio = latestBio && latestBio.status === 'ACTIVE' ? latestBio : null;
     let bioImageUrl = null;
-    if (bioRes.rows.length > 0 && bioRes.rows[0].s3_key) {
-      bioImageUrl = await resolveS3Url(bioRes.rows[0].s3_key);
+    if (activeBio?.s3_key) {
+      bioImageUrl = await resolveS3Url(activeBio.s3_key);
     }
 
-    // Fallback: check employee_documents for any face verification image
-    if (!bioImageUrl && Array.isArray(docs)) {
+    // Fallback: check employee_documents for a non-rejected face image only if no template history exists
+    if (!latestBio && !bioImageUrl && Array.isArray(docs)) {
       const faceDoc = docs.find(d => {
         const t = String(d.document_type || '').toLowerCase().trim();
-        return ['face', 'face_biometric', 'biometric', 'face_verification', 'face_reference', 'selfie'].includes(t) || t.includes('face');
+        const st = String(d.verification_status || '').toUpperCase();
+        return st !== 'REJECTED' && (['face', 'face_biometric', 'biometric', 'face_verification', 'face_reference', 'selfie'].includes(t) || t.includes('face'));
       });
       if (faceDoc) {
         const rawKey = faceDoc.document_url || faceDoc.document_key || faceDoc.file_url || faceDoc.s3_key;
@@ -1170,28 +1179,33 @@ router.get('/:id', async (req, res, next) => {
       }
     }
 
+    const isEnrolled = Boolean(activeBio || bioImageUrl);
     const biometrics = {
-      is_enrolled: bioRes.rows.length > 0 || Boolean(bioImageUrl),
-      active_template: (bioRes.rows.length > 0 || bioImageUrl) ? {
-        id: bioRes.rows[0]?.id || 'doc-face',
-        version: bioRes.rows[0]?.version || 1,
-        status: bioRes.rows[0]?.status || 'ACTIVE',
-        admin_review_status: bioRes.rows[0]?.admin_review_status || 'PENDING',
-        admin_review_notes: bioRes.rows[0]?.admin_review_notes || null,
-        admin_reviewed_at: bioRes.rows[0]?.admin_reviewed_at || null,
-        enrolled_at: bioRes.rows[0]?.enrolled_at || new Date().toISOString(),
-        s3_key: bioRes.rows[0]?.s3_key || null,
+      is_enrolled: isEnrolled,
+      status: activeBio ? 'ACTIVE' : (latestBio?.status || (bioImageUrl ? 'ACTIVE' : 'NOT_ENROLLED')),
+      active_template: isEnrolled ? {
+        id: activeBio?.id || 'doc-face',
+        version: activeBio?.version || 1,
+        status: activeBio?.status || 'ACTIVE',
+        admin_review_status: activeBio?.admin_review_status || 'PENDING',
+        admin_review_notes: activeBio?.admin_review_notes || null,
+        admin_reviewed_at: activeBio?.admin_reviewed_at || null,
+        enrolled_at: activeBio?.enrolled_at || new Date().toISOString(),
+        s3_key: activeBio?.s3_key || null,
         image_url: bioImageUrl
       } : null
     };
 
     // Attach biometric URLs directly to employee object for seamless frontend display
-    employee.face_reference_url = bioImageUrl || vState?.biometric_template?.image_url || null;
+    employee.face_reference_url = isEnrolled ? (bioImageUrl || vState?.biometric_template?.image_url || null) : null;
     employee.face_verification_url = employee.face_reference_url;
-    employee.biometric_enrolled = Boolean(biometrics.is_enrolled);
-    employee.face_enrolled = Boolean(biometrics.is_enrolled);
-    employee.has_biometric_reference = Boolean(biometrics.is_enrolled);
-    employee.face_verification_status = biometrics.active_template?.admin_review_status === 'APPROVED' ? 'VERIFIED' : (biometrics.is_enrolled ? 'ENROLLED' : 'PENDING');
+    employee.biometric_enrolled = isEnrolled;
+    employee.face_enrolled = isEnrolled;
+    employee.has_biometric_reference = isEnrolled;
+    employee.face_verification_status = isEnrolled
+      ? (biometrics.active_template?.admin_review_status === 'APPROVED' ? 'VERIFIED' : 'ENROLLED')
+      : (latestBio?.status === 'REVOKED' ? 'REVOKED' : 'PENDING');
+    employee.biometric_rejection_reason = !isEnrolled ? (vState?.biometric_rejection_reason || latestBio?.admin_review_notes || null) : null;
 
     // 11. Compile dynamic recent audit & onboarding activities from verified timestamps
     const recentActivities = [];
@@ -3640,19 +3654,19 @@ router.post('/:id/verify-document', async (req, res, next) => {
   }
 });
 
-// POST /api/v1/employees/:id/verify-biometric — Admin approve, reject or flag face biometric enrollment
+// POST /api/v1/employees/:id/verify-biometric — Admin approve, reject, flag, or reset face biometric enrollment
 router.post('/:id/verify-biometric', async (req, res, next) => {
   try {
     const empId = req.params.id;
-    const { action, notes } = req.body; // action: 'APPROVED' | 'REJECTED' | 'FLAGGED'
+    const { action, notes } = req.body; // action: 'APPROVED' | 'REJECTED' | 'FLAGGED' | 'RESET' | 'REVOKED'
 
     if (!action) {
-      return res.status(400).json({ success: false, message: 'action is required (APPROVED, REJECTED, FLAGGED)' });
+      return res.status(400).json({ success: false, message: 'action is required (APPROVED, REJECTED, FLAGGED, RESET)' });
     }
 
     const upperAction = String(action).toUpperCase();
-    if (!['APPROVED', 'REJECTED', 'FLAGGED'].includes(upperAction)) {
-      return res.status(400).json({ success: false, message: 'Invalid action. Must be APPROVED, REJECTED, or FLAGGED' });
+    if (!['APPROVED', 'REJECTED', 'FLAGGED', 'RESET', 'REVOKED'].includes(upperAction)) {
+      return res.status(400).json({ success: false, message: 'Invalid action. Must be APPROVED, REJECTED, FLAGGED, or RESET' });
     }
 
     if (upperAction === 'APPROVED') {
@@ -3662,19 +3676,29 @@ router.post('/:id/verify-biometric', async (req, res, next) => {
         WHERE employee_id = $3 AND status = 'ACTIVE'
       `, [req.user.id, notes || 'Face biometric enrollment approved by admin', empId]);
     } else {
-      // REJECTED or FLAGGED: Revoke template so employee must re-enroll with good lighting / clear face
+      const reviewStatus = (upperAction === 'RESET' || upperAction === 'REVOKED') ? 'REJECTED' : upperAction;
+      const reasonText = notes || 'Face biometric enrollment reset by admin — please re-capture your face snapshot.';
+
+      // Revoke active template so employee can re-capture from their own device
       await query(`
         UPDATE employee_biometric_templates
         SET status = 'REVOKED', revoked_at = NOW(), revoked_by = $1, revocation_reason = $2,
-            admin_review_status = $3, admin_reviewed_by = $1, admin_reviewed_at = NOW(), admin_review_notes = $2
+            admin_review_status = $3, admin_reviewed_by = $1, admin_reviewed_at = NOW(), admin_review_notes = $2, updated_at = NOW()
         WHERE employee_id = $4 AND status = 'ACTIVE'
-      `, [req.user.id, notes || 'Face biometric enrollment rejected due to poor image quality', upperAction, empId]);
+      `, [req.user.id, reasonText, reviewStatus, empId]);
+
+      // Also mark any face biometric document row as REJECTED so fallback checks don't keep showing enrolled
+      await query(`
+        UPDATE employee_documents
+        SET verification_status = 'REJECTED', rejection_reason = $1, verified_by = $2, verified_at = NOW(), updated_at = NOW()
+        WHERE employee_id = $3 AND (LOWER(document_type) = ANY($4::text[]) OR LOWER(document_type) LIKE '%face%')
+      `, [reasonText, req.user.id, empId, [...FACE_DOCUMENT_TYPES, 'face_reference', 'selfie', 'teleprompter_face']]).catch(() => {});
 
       // Send in-app notification to employee
       await createNotification({
         userId: (await query(`SELECT user_id FROM employees WHERE id = $1`, [empId])).rows[0]?.user_id,
-        title: 'Face Biometric Check Requires Re-Capture',
-        message: `Your face biometric verification was flagged by admin: ${notes || 'Image unclear or poor lighting'}. Please re-capture your face snapshot in good lighting.`,
+        title: 'Face Biometric Reset — Re-Capture Required',
+        message: `Your face biometric verification was reset by admin: ${reasonText}`,
         type: 'KYC_NOTIFICATION'
       }).catch(err => logger.warn('Silent catch warning:', err.message));
     }
@@ -3685,6 +3709,70 @@ router.post('/:id/verify-biometric', async (req, res, next) => {
     res.json({
       success: true,
       message: `Face biometric enrollment marked as ${upperAction}`,
+      data: updatedState
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/v1/employees/:id/documents/:docType — Delete/reset an uploaded employee document so they can upload fresh
+router.delete('/:id/documents/:docType', async (req, res, next) => {
+  try {
+    const empId = req.params.id;
+    const normDocType = normalizeDocumentType(req.params.docType);
+    if (!normDocType) {
+      return res.status(400).json({ success: false, message: 'Valid document type is required' });
+    }
+
+    let matchTypes = [normDocType];
+    if (isBankDocument(normDocType)) matchTypes = [...BANK_DOCUMENT_TYPES];
+    else if (isVideoDocument(normDocType)) matchTypes = [...VIDEO_DOCUMENT_TYPES];
+    else if (isPanDocument(normDocType)) matchTypes = [...PAN_DOCUMENT_TYPES];
+    else if (isAadhaarDocument(normDocType)) matchTypes = [...AADHAAR_DOCUMENT_TYPES];
+    else if (normDocType === DOCUMENT_TYPES.PHOTO || PHOTO_DOCUMENT_TYPES.includes(normDocType)) matchTypes = [...PHOTO_DOCUMENT_TYPES, 'avatar'];
+    else if (isFaceBiometricDocument(normDocType)) matchTypes = [...FACE_DOCUMENT_TYPES, 'face_reference', 'selfie'];
+
+    await query(
+      `DELETE FROM employee_documents WHERE employee_id = $1 AND LOWER(document_type) = ANY($2::text[])`,
+      [empId, matchTypes]
+    );
+
+    if (isPanDocument(normDocType)) {
+      await query(
+        `UPDATE employee_kyc SET pan_document_url = NULL, pan_document_key = NULL, pan_status = 'PENDING', pan_verified = false, pan_rejection_reason = NULL, updated_at = NOW() WHERE employee_id = $1`,
+        [empId]
+      ).catch(() => {});
+    } else if (isAadhaarDocument(normDocType)) {
+      await query(
+        `UPDATE employee_kyc SET aadhaar_document_url = NULL, aadhaar_document_key = NULL, aadhaar_status = 'PENDING', aadhaar_verified = false, aadhaar_rejection_reason = NULL, updated_at = NOW() WHERE employee_id = $1`,
+        [empId]
+      ).catch(() => {});
+    } else if (isBankDocument(normDocType)) {
+      await query(
+        `UPDATE employee_kyc SET bank_document_url = NULL, bank_document_key = NULL, bank_status = 'PENDING', bank_verified = false, bank_rejection_reason = NULL, updated_at = NOW() WHERE employee_id = $1`,
+        [empId]
+      ).catch(() => {});
+    } else if (isVideoDocument(normDocType)) {
+      await query(
+        `UPDATE employee_terms_acceptance SET video_url = NULL, video_key = NULL, video_file_name = NULL, video_size = NULL, verification_status = 'PENDING', verification_notes = NULL, updated_at = NOW() WHERE employee_id = $1`,
+        [empId]
+      ).catch(() => {});
+    } else if (normDocType === DOCUMENT_TYPES.PHOTO) {
+      await query(`UPDATE employees SET profile_photo_url = NULL, updated_at = NOW() WHERE id = $1`, [empId]).catch(() => {});
+    } else if (isFaceBiometricDocument(normDocType)) {
+      await query(
+        `UPDATE employee_biometric_templates SET status = 'REVOKED', revoked_at = NOW(), revoked_by = $1, revocation_reason = 'Document deleted/reset by admin', admin_review_status = 'REJECTED', updated_at = NOW() WHERE employee_id = $2 AND status = 'ACTIVE'`,
+        [req.user.id, empId]
+      ).catch(() => {});
+    }
+
+    invalidateEmployeeVerificationCache(empId);
+    const updatedState = await calculateEmployeeVerificationState(empId);
+
+    res.json({
+      success: true,
+      message: `${normDocType.toUpperCase().replace(/_/g, ' ')} deleted/reset successfully. Employee can upload a new copy.`,
       data: updatedState
     });
   } catch (err) {

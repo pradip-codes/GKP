@@ -285,6 +285,27 @@ const revokeEnvironmentReference = async (req, res) => {
   }
 };
 
+// POST /api/v1/attendance/enrollment/revoke
+const revokeEnrollment = async (req, res) => {
+  try {
+    const { employee_id, reason } = req.body;
+    if (!employee_id) {
+      return error(res, 'employee_id is required', 400);
+    }
+
+    const result = await service.revokeEmployeeBiometric({
+      employeeId: employee_id,
+      reason,
+      reqUser: req.user,
+    });
+
+    return success(res, result, result.message);
+  } catch (err) {
+    logger.error('Error revoking face enrollment:', err.message);
+    return error(res, err.message, err.statusCode || 500);
+  }
+};
+
 module.exports = {
   createSession,
   commitFaceEnrollment,
@@ -297,6 +318,7 @@ module.exports = {
   createReEnrollmentSession,
   commitReEnrollment,
   getPreviewUrl,
+  revokeEnrollment,
   getEnvironmentReferences,
   registerEnvironmentReference,
   revokeEnvironmentReference,

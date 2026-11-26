@@ -281,27 +281,35 @@ async function calculateEmployeeVerificationState(employeeId) {
     `, [employeeId]).catch(() => ({ rows: [] }));
   }
 
-  const activeBio = bioRes.rows[0] || null;
-  let hasBiometricReference = !!activeBio;
+  const latestBio = bioRes.rows[0] || null;
+  const activeBio = latestBio && latestBio.status === 'ACTIVE' ? latestBio : null;
+  const isRevokedBio = Boolean(latestBio && latestBio.status === 'REVOKED');
+  let hasBiometricReference = Boolean(activeBio);
   let biometricStatus = 'NOT_COMPLETED';
-  let bioReviewNotes = null;
+  let bioReviewNotes = latestBio?.admin_review_notes || latestBio?.revocation_reason || null;
 
   let faceImageUrl = null;
   if (activeBio?.s3_key) {
     faceImageUrl = await resolveS3Url(activeBio.s3_key);
   }
 
-  // Fallback: check docsRes.rows for any face document if faceImageUrl not found yet
-  if (!faceImageUrl && Array.isArray(docsRes.rows)) {
+  // Fallback: check docsRes.rows for a non-rejected face document only if no template history exists yet
+  let rejectedFaceDoc = null;
+  if (Array.isArray(docsRes.rows)) {
     const faceDoc = docsRes.rows.find(d => {
       const t = String(d.document_type || '').toLowerCase().trim();
       return ['face', 'face_biometric', 'biometric', 'face_verification', 'face_reference', 'selfie'].includes(t) || t.includes('face');
     });
     if (faceDoc) {
-      const rawKey = faceDoc.document_url || faceDoc.document_key || faceDoc.file_url || faceDoc.s3_key;
-      if (rawKey) {
-        faceImageUrl = await resolveS3Url(rawKey);
-        hasBiometricReference = true;
+      const fSt = String(faceDoc.verification_status || '').toUpperCase();
+      if (fSt === 'REJECTED') {
+        rejectedFaceDoc = faceDoc;
+      } else if (!latestBio && !faceImageUrl) {
+        const rawKey = faceDoc.document_url || faceDoc.document_key || faceDoc.file_url || faceDoc.s3_key;
+        if (rawKey) {
+          faceImageUrl = await resolveS3Url(rawKey);
+          hasBiometricReference = true;
+        }
       }
     }
   }
@@ -330,6 +338,16 @@ async function calculateEmployeeVerificationState(employeeId) {
         text: 'Face Biometric Verification – Under Review'
       });
     }
+  } else if (isRevokedBio || rejectedFaceDoc) {
+    biometricStatus = 'REJECTED';
+    bioReviewNotes = bioReviewNotes || rejectedFaceDoc?.rejection_reason || 'Face biometric reset by admin. Please re-capture your face verification.';
+    missingItems.push({
+      type: 'face_biometric',
+      label: 'Face Biometric Verification',
+      status: 'REJECTED',
+      reason: bioReviewNotes,
+      text: `Face Biometric Verification – Reset / Re-capture Required${bioReviewNotes ? ' (' + bioReviewNotes + ')' : ''}`
+    });
   } else {
     missingItems.push({
       type: 'face_biometric',
@@ -406,6 +424,7 @@ async function calculateEmployeeVerificationState(employeeId) {
     video_notes: videoNotes,
     face_status: biometricStatus,
     face_biometric_status: biometricStatus,
+    biometric_rejection_reason: bioReviewNotes,
     has_biometric_reference: hasBiometricReference,
     biometric_enrolled_at: activeBio?.created_at || null,
     biometric_template: activeBio ? {

@@ -313,6 +313,20 @@ export default function EmployeeManagement() {
     }
   };
 
+  const handleDeleteSingleDoc = async (empId, docKey, docName) => {
+    if (!window.confirm(`Delete / reset "${docName}" so the employee can upload a new copy?`)) return;
+    try {
+      const res = await api.delete(`/employees/${empId}/documents/${encodeURIComponent(docKey)}`);
+      if (res.data?.success) {
+        alert(res.data.message || `${docName} deleted/reset successfully`);
+        fetchDrawerEmp360(empId);
+        fetchData();
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || `Failed to delete ${docName}`);
+    }
+  };
+
   useEffect(() => {
     if (drawerEmp) {
       setIsEditingEmpInfo(false);
@@ -1780,19 +1794,25 @@ Generated On        : ${new Date().toLocaleString()}
 
   const handleVerifyBiometric = async (empId, action) => {
     let notes = '';
-    if (action === 'REJECTED' || action === 'FLAGGED') {
-      notes = prompt('Enter reason for rejecting / flagging Face Biometric enrollment (e.g. blurry image, poor lighting, face partially obscured):');
-      if (!notes || !notes.trim()) return;
+    if (action === 'REJECTED' || action === 'FLAGGED' || action === 'RESET') {
+      const label = action === 'RESET' ? 'resetting' : 'rejecting / flagging';
+      const entered = prompt(`Enter reason for ${label} Face Biometric enrollment (employee will be asked to re-capture):`, action === 'RESET' ? 'Face recognition reset by Super Admin — please re-capture' : '');
+      if (entered === null) return;
+      notes = entered.trim();
+      if (!notes && action !== 'RESET') return;
     }
 
     try {
       const res = await api.post(`/employees/${empId}/verify-biometric`, {
         action,
-        notes: notes ? notes.trim() : null
+        notes: notes || null
       });
       if (res.data?.success) {
-        alert(`Face Biometric enrollment marked as ${action}`);
+        alert(action === 'RESET' ? 'Face biometric reset! Employee can now re-capture from their device.' : `Face Biometric enrollment marked as ${action}`);
         fetchData();
+        if (drawerEmp && drawerEmp.id === empId) {
+          fetchDrawerEmp360(empId);
+        }
         if (selectedEmp && selectedEmp.id === empId) {
           handleOpen360View(selectedEmp);
         }
@@ -5389,7 +5409,7 @@ Generated On        : ${new Date().toLocaleString()}
                         <button
                           onClick={() => {
                             setDrawerActionsOpen(false);
-                            setSelectedEmp(drawerEmp);
+                            handleOpen360View(drawerEmp);
                           }}
                           style={{ width: '100%', padding: '9px 12px', background: 'transparent', border: 'none', borderRadius: '8px', textAlign: 'left', fontSize: '12.5px', fontWeight: 700, color: C.text, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
                           onMouseEnter={(e) => e.currentTarget.style.background = C.bgSecondary}
@@ -6373,6 +6393,17 @@ Generated On        : ${new Date().toLocaleString()}
                                   >
                                     ✕ Reject
                                   </button>
+
+                                  {/* Delete / Reset Document Button */}
+                                  {(docInfo.url || isVerified || isRejected || isSubmitted) && (
+                                    <button
+                                      onClick={() => handleDeleteSingleDoc(drawerEmp.id, docItem.key, docItem.name)}
+                                      style={{ padding: '5px 10px', background: '#64748B15', color: '#475569', border: '1px solid #94A3B840', borderRadius: '8px', fontSize: '11.5px', fontWeight: 800, cursor: 'pointer' }}
+                                      title="Delete uploaded file and unlock upload for employee"
+                                    >
+                                      🗑 Delete
+                                    </button>
+                                  )}
                                 </div>
                               </div>
 
@@ -6463,19 +6494,19 @@ Generated On        : ${new Date().toLocaleString()}
                     drawer360Data?.kyc?.photo_url ||
                     null;
 
-                  // Unified fallbacks: if either image is captured, show it!
-                  const finalProfileImg = profileImg || faceVerificationImg;
-                  const finalFaceImg = faceVerificationImg || profileImg;
+                  // Keep Profile Photo and Face Biometric template strictly separate
+                  const finalProfileImg = profileImg;
+                  const finalFaceImg = faceVerificationImg;
 
                   const isFaceEnrolled = Boolean(
                     finalFaceImg ||
                     drawer360Data?.biometrics?.is_enrolled ||
                     drawer360Data?.verification_state?.has_biometric_reference ||
-                    emp.face_verification_status === 'VERIFIED' || 
-                    emp.biometric_enrolled || 
-                    emp.face_enrolled || 
-                    emp.face_status === 'VERIFIED' || 
-                    emp.face_status === 'ENROLLED' ||
+                    emp.face_verification_status === 'VERIFIED' ||
+                    emp.face_verification_status === 'ENROLLED' ||
+                    emp.biometric_enrolled ||
+                    emp.face_enrolled ||
+                    emp.face_status === 'VERIFIED' ||
                     emp.biometric_status === 'ACTIVE'
                   );
 
@@ -6498,25 +6529,36 @@ Generated On        : ${new Date().toLocaleString()}
                                 Biometric Version: V{drawer360Data?.biometrics?.active_template?.version || '1'} | Enrolled Date: {emp.activated_at ? new Date(emp.activated_at).toLocaleDateString('en-IN') : 'Active'} | Status: <span style={{ color: '#059669' }}>ACTIVE ✓</span>
                               </div>
                               <div style={{ fontSize: '12px', color: '#065F46', marginTop: '6px', lineHeight: 1.4 }}>
-                                Your biometric reference is locked. Employees cannot replace it. Re-enrollment requires Super Admin authorization.
+                                Your biometric reference is locked. Employees cannot replace it until reset or re-enrolled by Super Admin.
                               </div>
                             </div>
                           </div>
 
-                          <div style={{ display: 'flex', gap: '12px' }}>
+                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                             <button
                               onClick={() => {
                                 setBiometricModalEmp(emp);
                                 setBiometricModalOpen(true);
                               }}
                               style={{
-                                flex: 1, padding: '10px 14px', background: '#059669', color: '#ffffff', border: 'none',
+                                flex: 1, minWidth: '200px', padding: '10px 14px', background: '#059669', color: '#ffffff', border: 'none',
                                 borderRadius: '8px', fontSize: '12.5px', fontWeight: 800, cursor: 'pointer',
                                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
                                 boxShadow: '0 2px 8px rgba(5, 150, 105, 0.25)'
                               }}
                             >
                               🔒 Re-Enroll / Modify Biometric Reference
+                            </button>
+                            <button
+                              onClick={() => handleVerifyBiometric(emp.id, 'RESET')}
+                              style={{
+                                flex: 1, minWidth: '200px', padding: '10px 14px', background: '#DC2626', color: '#ffffff', border: 'none',
+                                borderRadius: '8px', fontSize: '12.5px', fontWeight: 800, cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                boxShadow: '0 2px 8px rgba(220, 38, 38, 0.25)'
+                              }}
+                            >
+                              🔄 Reset Face (Allow Employee Re-Capture)
                             </button>
                           </div>
                         </div>
@@ -6528,9 +6570,11 @@ Generated On        : ${new Date().toLocaleString()}
                               ▲
                             </div>
                             <div>
-                              <div style={{ fontSize: '15.5px', fontWeight: 900, color: '#C2410C' }}>Face Verification Pending</div>
+                              <div style={{ fontSize: '15.5px', fontWeight: 900, color: '#C2410C' }}>
+                                {emp.face_verification_status === 'REVOKED' ? 'Face Reset — Re-Capture Pending' : 'Face Verification Pending'}
+                              </div>
                               <div style={{ fontSize: '12.5px', color: '#9A3412', marginTop: '2px' }}>
-                                No authoritative face biometric reference captured yet.
+                                {emp.biometric_rejection_reason || 'No active face biometric reference captured yet. Employee can capture from their portal.'}
                               </div>
                             </div>
                           </div>

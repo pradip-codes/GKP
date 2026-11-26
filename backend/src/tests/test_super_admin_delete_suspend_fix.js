@@ -4,10 +4,12 @@ const path = require('path');
 const assert = require('assert');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-// 1. Dynamic SQL placeholders must be "$" + index, never a bare index (that renders "ANY(1::uuid[])")
+// 1. Dynamic SQL placeholders must be "$$" + index (rendering "$1::..."), never bare "${...}::" or "{...}::"
 const del = read('modules/auth/user-deletion.service.js');
 const bare = del.match(/(?<!\$)\$\{\s*\w+\.length\s*\}\s*::/g) || [];
 assert.strictEqual(bare.length, 0, `Found ${bare.length} bare placeholder(s) in user-deletion.service.js`);
+const stripped = del.match(/ANY\(\s*\{\s*\w+\.length\s*\}\s*::/g) || [];
+assert.strictEqual(stripped.length, 0, `Found ${stripped.length} stripped placeholder(s) in user-deletion.service.js`);
 
 // 2. role / status are enums in users: never call UPPER() on them without a ::text cast
 for (const rel of ['modules/hr/hr.routes.js', 'modules/employee/employee.hr.routes.js', 'modules/referrals/referrals.routes.js', 'modules/super-admin/accountStatus.service.js']) {

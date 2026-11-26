@@ -26,6 +26,7 @@ export default function BiometricManagementModal({ isOpen, onClose, employee = n
   const [sessionToken, setSessionToken] = useState('');
   const [reEnrollFile, setReEnrollFile] = useState(null);
   const [submittingReEnroll, setSubmittingReEnroll] = useState(false);
+  const [revokingFace, setRevokingFace] = useState(false);
 
   // Send Reminder State
   const [showReminderModal, setShowReminderModal] = useState(false);
@@ -140,6 +141,35 @@ export default function BiometricManagementModal({ isOpen, onClose, employee = n
       alert(err.response?.data?.message || 'Failed to fetch signed preview URL');
     } finally {
       setLoadingPreview(false);
+    }
+  };
+
+  const handleRevokeFace = async () => {
+    if (!selectedEmp?.id) return;
+    const reason = window.prompt(
+      `Reset face recognition for ${selectedEmp.full_name || 'this employee'} so they can re-capture from their own device? Enter reason:`,
+      'Face recognition reset by Super Admin — please re-capture'
+    );
+    if (reason === null) return;
+
+    setRevokingFace(true);
+    try {
+      const token = getAccessToken() || localStorage.getItem('token') || sessionStorage.getItem('token');
+      const res = await axios.post(
+        `${getApiV1Url()}/attendance/enrollment/revoke`,
+        { employee_id: selectedEmp.id, reason: reason.trim() || 'Face recognition reset by Super Admin' },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      if (res.data?.success) {
+        alert('✓ Face biometric reset! Employee can now re-capture from their own device.');
+        setSignedPreviewUrl('');
+        fetchEmployeeStatus(selectedEmp.id);
+        fetchReminderHistory(selectedEmp.id);
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to reset face biometric');
+    } finally {
+      setRevokingFace(false);
     }
   };
 
@@ -491,7 +521,9 @@ export default function BiometricManagementModal({ isOpen, onClose, employee = n
                     </div>
                   ) : (
                     <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: `1px dashed ${C.border}`, fontSize: '12.5px', color: '#92400E' }}>
-                      ⚠️ No active biometric reference enrolled. Employee cannot mark biometric attendance until enrolled.
+                      {statusData?.status === 'REVOKED'
+                        ? `🔄 Face biometric was reset (${statusData?.last_revoked_template?.revocation_reason || 'by Admin'}). Employee can now re-capture from their device.`
+                        : '⚠️ No active biometric reference enrolled. Employee cannot mark biometric attendance until enrolled.'}
                     </div>
                   )}
                 </div>
@@ -499,17 +531,31 @@ export default function BiometricManagementModal({ isOpen, onClose, employee = n
                 {/* Actions Toolbar */}
                 <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
                   {statusData?.is_enrolled && (
-                    <button
-                      onClick={fetchPreviewUrl}
-                      disabled={loadingPreview}
-                      style={{
-                        padding: '10px 16px', borderRadius: '12px', background: C.bgSecondary,
-                        border: `1px solid ${C.border}`, color: C.text, fontWeight: 800, fontSize: '12.5px',
-                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
-                      }}
-                    >
-                      <FaEye /> {loadingPreview ? 'Generating Signed URL...' : 'Preview Active Photo'}
-                    </button>
+                    <>
+                      <button
+                        onClick={fetchPreviewUrl}
+                        disabled={loadingPreview}
+                        style={{
+                          padding: '10px 16px', borderRadius: '12px', background: C.bgSecondary,
+                          border: `1px solid ${C.border}`, color: C.text, fontWeight: 800, fontSize: '12.5px',
+                          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+                        }}
+                      >
+                        <FaEye /> {loadingPreview ? 'Generating Signed URL...' : 'Preview Active Photo'}
+                      </button>
+                      <button
+                        onClick={handleRevokeFace}
+                        disabled={revokingFace}
+                        style={{
+                          padding: '10px 16px', borderRadius: '12px', background: '#DC2626',
+                          color: '#fff', border: 'none', fontWeight: 800, fontSize: '12.5px',
+                          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
+                          boxShadow: '0 4px 12px rgba(220, 38, 38, 0.25)'
+                        }}
+                      >
+                        <FaSync /> {revokingFace ? 'Resetting...' : 'Reset Face (Allow Employee Re-Capture)'}
+                      </button>
+                    </>
                   )}
 
                   {!statusData?.is_enrolled && (

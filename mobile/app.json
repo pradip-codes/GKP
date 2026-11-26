@@ -25,7 +25,12 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.gharkapaisa.app"
+      "bundleIdentifier": "com.gharkapaisa.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "GharKaPaisa requires camera access for KYC face verification, teleprompter video recording, and attendance liveness checks.",
+        "NSMicrophoneUsageDescription": "GharKaPaisa requires microphone access for teleprompter video verification.",
+        "NSFaceIDUsageDescription": "GharKaPaisa uses Face ID / biometric authentication for secure attendance verification."
+      }
     },
     "android": {
       "package": "com.gharkapaisa.app",
