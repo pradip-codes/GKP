@@ -5046,17 +5046,6 @@ const updateApplicationDetails = async (req, res, next) => {
       return notFound(res, 'Application or Lead record not found');
     }
 
-    // VKYC Executive Code (manual, editable). Staff only; '' clears it; undefined leaves it untouched.
-    let vkycExecCodeToSave = null;
-    if (req.body.vkyc_executive_code !== undefined && !['PARTNER', 'TEAM_MEMBER'].includes((req.user?.role || '').toUpperCase())) {
-      const execCode = String(req.body.vkyc_executive_code || '').trim().toUpperCase();
-      if (execCode !== '' && !/^[A-Z0-9_-]{1,30}$/.test(execCode)) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ success: false, message: 'VKYC Executive Code may contain only letters, numbers, - and _ (max 30 characters).' });
-      }
-      vkycExecCodeToSave = execCode;
-    }
-
     const userRole = (req.user?.role || '').toUpperCase();
     if (['PARTNER', 'TEAM_MEMBER'].includes(userRole)) {
       const { rows: [partner] } = await client.query(`SELECT id FROM partner_profiles WHERE user_id = $1`, [req.user.id]);
@@ -5083,6 +5072,35 @@ const updateApplicationDetails = async (req, res, next) => {
     if (isSalesExecUserLocal && app.sales_claimed_by && app.sales_claimed_by !== req.user?.id && !['ADMIN', 'SUPER_ADMIN'].includes(userRole)) {
       await client.query('ROLLBACK');
       return forbidden(res, `This application has been claimed by another Administrative Sales Operator (${app.sales_claimed_by_name || 'Operator'}). You are not authorized to modify it.`);
+    }
+
+    const isKycOperatorLocal = ['KYC_OPERATOR', 'KYC OPERATOR'].includes(userDesignation) || ['KYC_OPERATOR', 'KYC OPERATOR'].includes(userRole);
+    const isSalesExecOnlyLocal = ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE'].includes(userRole);
+
+    // Role-wise Executive Codes (manual, editable). Only the owning role may set/clear its code; other roles' keys are silently ignored.
+    const parseExecutiveCode = (rawVal, label) => {
+      const code = String(rawVal || '').trim().toUpperCase();
+      if (code !== '' && !/^[A-Z0-9_-]{1,30}$/.test(code)) {
+        return { error: `${label} may contain only letters, numbers, - and _ (max 30 characters).` };
+      }
+      return { value: code };
+    };
+    let vkycExecCodeToSave = null;
+    let processExecCodeToSave = null;
+    let curableExecCodeToSave = null;
+    for (const [allowed, key, label, assign] of [
+      [isKycOperatorLocal, 'vkyc_executive_code', 'VKYC Executive Code', (v) => { vkycExecCodeToSave = v; }],
+      [isSalesExecOnlyLocal, 'process_executive_code', 'Process Executive Code', (v) => { processExecCodeToSave = v; }],
+      [isCurableOperatorLocal, 'curable_executive_code', 'Curable Executive Code', (v) => { curableExecCodeToSave = v; }],
+    ]) {
+      if (allowed && req.body[key] !== undefined) {
+        const parsed = parseExecutiveCode(req.body[key], label);
+        if (parsed.error) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ success: false, message: parsed.error });
+        }
+        assign(parsed.value);
+      }
     }
 
     const isRestrictedAdminStatus = ['approved', 'rejected', 'disbursed', 'commission_released', 'super_admin_approved'].includes((status || '').toLowerCase());
@@ -5446,14 +5464,20 @@ const updateApplicationDetails = async (req, res, next) => {
       }
     }
 
-    if (vkycExecCodeToSave !== null) {
-      try {
-        await client.query('SAVEPOINT vkyc_exec_sp');
-        await client.query(`UPDATE applications SET vkyc_executive_code = NULLIF($1::text, '') WHERE id = $2`, [vkycExecCodeToSave, app.id]);
-        await client.query('RELEASE SAVEPOINT vkyc_exec_sp');
-      } catch (vkycExecErr) {
-        await client.query('ROLLBACK TO SAVEPOINT vkyc_exec_sp').catch(err => logger.warn('Silent catch warning:', err.message));
-        logger.warn('Failed to save vkyc_executive_code:', vkycExecErr.message);
+    for (const [col, val, sp] of [
+      ['vkyc_executive_code', vkycExecCodeToSave, 'vkyc_exec_sp'],
+      ['process_executive_code', processExecCodeToSave, 'process_exec_sp'],
+      ['curable_executive_code', curableExecCodeToSave, 'curable_exec_sp'],
+    ]) {
+      if (val !== null) {
+        try {
+          await client.query(`SAVEPOINT ${sp}`);
+          await client.query(`UPDATE applications SET ${col} = NULLIF($1::text, '') WHERE id = $2`, [val, app.id]);
+          await client.query(`RELEASE SAVEPOINT ${sp}`);
+        } catch (execErr) {
+          await client.query(`ROLLBACK TO SAVEPOINT ${sp}`).catch(err => logger.warn('Silent catch warning:', err.message));
+          logger.warn(`Failed to save ${col}: ${execErr.message}`);
+        }
       }
     }
 

@@ -325,6 +325,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
   const isDigitalCurable = ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(userDesignation) || ['DIGITAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR'].includes(role);
   const isEmailCurable = ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation) || ['EMAIL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(role);
   const isCurableOperator = isPhysicalCurable || isDigitalCurable || isEmailCurable;
+  const isKycOperator = ['KYC_OPERATOR', 'KYC OPERATOR'].includes(role) || ['KYC_OPERATOR', 'KYC OPERATOR'].includes(userDesignation);
   const isAdministrativeOperator = ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(userDesignation) || ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE SALES OPERATOR', 'ADMINISTRATIVE_SALES_OPERATOR'].includes(role);
   const isSalesExecUser = (['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE'].includes(userDesignation) || ['ADMINISTRATIVE SALES EXECUTIVE', 'ADMINISTRATIVE_SALES_EXECUTIVE'].includes(role)) && !isAdministrativeOperator;
   const isOpsOperator = ['ADMINISTRATIVE_OPERATOR', 'ADMINISTRATIVE OPERATOR', 'OPERATOR', 'PAN_CHECKER', 'PAN CHECKER', 'QD_OPERATOR', 'QD OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR', 'PHYSICAL_CURABLE', 'PHYSICAL CURABLE', 'DIGITAL_CURABLE', 'DIGITAL CURABLE', 'EMAIL_CURABLE', 'EMAIL CURABLE', 'PHYSICAL_CURABLE_OPERATOR', 'PHYSICAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR'].includes(role) || ['ADMINISTRATIVE OPERATOR', 'ADMINISTRATIVE_OPERATOR', 'PAN CHECKER', 'PAN_CHECKER', 'QD OPERATOR', 'QD_OPERATOR', 'FINAL STATUS OPERATOR', 'FINAL_STATUS_OPERATOR', 'QUERABLE_OPERATOR', 'QUERABLE OPERATOR', 'QUERYABLE_OPERATOR', 'QUERYABLE OPERATOR', 'PHYSICAL CURABLE', 'PHYSICAL_CURABLE', 'DIGITAL CURABLE', 'DIGITAL_CURABLE', 'EMAIL CURABLE', 'EMAIL_CURABLE', 'PHYSICAL CURABLE OPERATOR', 'PHYSICAL_CURABLE_OPERATOR', 'DIGITAL CURABLE OPERATOR', 'DIGITAL_CURABLE_OPERATOR', 'EMAIL CURABLE OPERATOR', 'EMAIL_CURABLE_OPERATOR'].includes(userDesignation);
@@ -441,6 +442,16 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
   const [appNumber, setAppNumber] = useState(application?.app_number || application?.application_no || '');
   const [vkycUrl, setVkycUrl] = useState(application?.vkyc_url || application?.vkyc_link || '');
   const [vkycExecutiveCode, setVkycExecutiveCode] = useState(String(application?.vkyc_executive_code || ''));
+  const [processExecutiveCode, setProcessExecutiveCode] = useState(String(application?.process_executive_code || ''));
+  const [curableExecutiveCode, setCurableExecutiveCode] = useState(String(application?.curable_executive_code || ''));
+  const sanitizeExecCodeInput = (val) => String(val || '').replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 30);
+  const activeExecField = isKycOperator
+    ? { key: 'vkyc_executive_code', label: '8. VKYC EXECUTIVE CODE', value: vkycExecutiveCode, setter: setVkycExecutiveCode }
+    : isSalesExecUser
+      ? { key: 'process_executive_code', label: '8. PROCESS EXECUTIVE CODE', value: processExecutiveCode, setter: setProcessExecutiveCode }
+      : isCurableOperator
+        ? { key: 'curable_executive_code', label: '8. CURABLE EXECUTIVE CODE', value: curableExecutiveCode, setter: setCurableExecutiveCode }
+        : null;
   const [digitalJourneyUrl, setDigitalJourneyUrl] = useState(
     application?.digital_journey_url || application?.digital_link || application?.redirect_url || application?.product_url || application?.product?.partner_url || application?.product?.public_url || ''
   );
@@ -776,6 +787,8 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
         ));
         if (app.vkyc_url || pd.vkyc_url) setVkycUrl(app.vkyc_url || pd.vkyc_url || '');
         if (app.vkyc_executive_code !== undefined && app.vkyc_executive_code !== null) setVkycExecutiveCode(String(app.vkyc_executive_code));
+        if (app.process_executive_code !== undefined && app.process_executive_code !== null) setProcessExecutiveCode(String(app.process_executive_code));
+        if (app.curable_executive_code !== undefined && app.curable_executive_code !== null) setCurableExecutiveCode(String(app.curable_executive_code));
         const realDigitalUrl = app.digital_journey_url || pd.digital_journey_url || app.digital_link || app.redirect_url || app.product_url || app.product?.partner_url || app.product?.public_url || '';
         if (realDigitalUrl) setDigitalJourneyUrl(realDigitalUrl);
 
@@ -946,6 +959,9 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
         notes: userRemarkToSave,
         backend_remark: backendRemark
       };
+      const activeExecPayload = activeExecField
+        ? { [activeExecField.key]: String(activeExecField.value || '').trim().toUpperCase() }
+        : {};
       if (formType === 'qd') {
         payload = {
           ...payload,
@@ -970,7 +986,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           bank_ref_number: (bankRefNumber || losNo || '').trim() || undefined,
           los_no: (bankRefNumber || losNo || '').trim() || undefined,
           vkyc_url: vkycUrl,
-          vkyc_executive_code: String(vkycExecutiveCode || '').trim().toUpperCase(),
+          ...activeExecPayload,
           status: 'submitted'
         };
       } else if (formType === 'remark') {
@@ -1004,7 +1020,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
           vkyc_status: kycStage || vkycStage || 'None',
           vkyc_stage: vkycStage || kycStage || 'None',
           vkyc_url: vkycUrl,
-          vkyc_executive_code: String(vkycExecutiveCode || '').trim().toUpperCase(),
+          ...activeExecPayload,
           dispatch_status: dispatchStatus || 'None',
           in_process_stage: inProcessStage || 'None',
           bank_current_lead_status: bankCurrentLeadStatus || 'None',
@@ -1344,9 +1360,9 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                   gap: '6px',
                   boxShadow: '0 2px 8px rgba(2, 132, 199, 0.3)'
                 }}
-                title="Open HDFC FD wes CC Link"
+                title="Open HDFC FD Web CC Link"
               >
-                <ExternalLink size={15} /> FD wes CC link
+                <ExternalLink size={15} /> FD Web CC Link
               </button>
             )}
 
@@ -2323,12 +2339,12 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                     </div>
                   </div>
 
-                  {/* HDFC FD wes CC Link Field (Super Admin Managed) */}
+                  {/* HDFC FD Web CC Link Field (Super Admin Managed) */}
                   {isHdfcCreditCard && (
                     <div style={{ gridColumn: '1 / -1', marginTop: '6px', padding: '14px', background: '#f0fdf4', borderRadius: '10px', border: '1px solid #bbf7d0' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                         <label style={{ fontSize: '11px', color: '#166534', fontWeight: 800, textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '6px', margin: 0 }}>
-                          <LinkIcon size={14} color="#16a34a" /> HDFC FD WES CC LINK (Super Admin Managed)
+                          <LinkIcon size={14} color="#16a34a" /> HDFC FD WEB CC LINK (Super Admin Managed)
                         </label>
                         <span style={{ fontSize: '10px', fontWeight: 700, background: '#dcfce7', color: '#166534', padding: '2px 8px', borderRadius: '10px' }}>
                           SUPER ADMIN MANAGED
@@ -2349,7 +2365,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                           }}
                           style={{ padding: '8px 14px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
                         >
-                          <ExternalLink size={13} /> Open FD wes CC link
+                          <ExternalLink size={13} /> Open FD Web CC Link
                         </button>
                       </div>
                     </div>
@@ -3107,33 +3123,37 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                         </select>
                       </div>
 
-                      {/* 8. VKYC EXECUTIVE CODE (manual / editable) */}
-                      <div>
-                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>8. VKYC EXECUTIVE CODE</label>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <input
-                            type="text"
-                            maxLength={30}
-                            disabled={!canEditRemark}
-                            value={vkycExecutiveCode}
-                            onChange={(e) => setVkycExecutiveCode(e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 30))}
-                            placeholder="e.g. GKP-EMP-001 (manual entry)"
-                            style={{ flex: 1, padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', background: !canEditRemark ? '#f8fafc' : '#fff' }}
-                          />
-                          {canEditRemark && (user?.employee_id || user?.employee_code) && (
-                            <button
-                              type="button"
-                              onClick={() => setVkycExecutiveCode(String(user.employee_id || user.employee_code).replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase().slice(0, 30))}
-                              style={{ padding: '0 12px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#f1f5f9', fontSize: '11px', fontWeight: 800, color: '#334155', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                            >
-                              Use my code
-                            </button>
-                          )}
+                      {/* 8. ROLE-WISE EXECUTIVE CODE (manual / editable) */}
+                      {(isKycOperator || isSalesExecUser || isCurableOperator) && activeExecField && (
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>
+                            {isKycOperator ? '8. VKYC EXECUTIVE CODE' : isSalesExecUser ? '8. PROCESS EXECUTIVE CODE' : '8. CURABLE EXECUTIVE CODE'}
+                          </label>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <input
+                              type="text"
+                              maxLength={30}
+                              disabled={!canEditRemark}
+                              value={activeExecField.value}
+                              onChange={(e) => activeExecField.setter(sanitizeExecCodeInput(e.target.value))}
+                              placeholder="e.g. GKP-EMP-001 (manual entry)"
+                              style={{ flex: 1, padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', background: !canEditRemark ? '#f8fafc' : '#fff' }}
+                            />
+                            {canEditRemark && (user?.employee_id || user?.employee_code) && (
+                              <button
+                                type="button"
+                                onClick={() => activeExecField.setter(sanitizeExecCodeInput(user.employee_id || user.employee_code))}
+                                style={{ padding: '0 12px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#f1f5f9', fontSize: '11px', fontWeight: 800, color: '#334155', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              >
+                                Use my code
+                              </button>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#0284c7', marginTop: '4px', fontWeight: 600 }}>
+                            Editable manually. Letters, numbers, - and _ only. Leave empty to clear.
+                          </div>
                         </div>
-                        <div style={{ fontSize: '11px', color: '#0284c7', marginTop: '4px', fontWeight: 600 }}>
-                          Editable manually. Letters, numbers, - and _ only. Leave empty to clear.
-                        </div>
-                      </div>
+                      )}
                     </>
                   ) : isTataCobrandHdfc ? (
                     /* 🆃 TATA CO-BRAND HDFC WORKFLOW */
@@ -3607,9 +3627,9 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                             />
                           </div>
 
-                          {/* 3. CUREABLE REMARK */}
+                          {/* 3. CURABLE REMARK */}
                           <div>
-                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>3. CUREABLE REMARK</label>
+                            <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>3. CURABLE REMARK</label>
                             <select
                               disabled={!canEditRemark}
                               value={queryableRemark || 'NOT REQUIRED'}
@@ -3718,13 +3738,13 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                                 </div>
 
                                 <div>
-                                  <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e3a8a', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>CUREBAL SALES REMARK</label>
+                                  <label style={{ fontSize: '12px', fontWeight: 800, color: '#1e3a8a', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>CURABLE SALES REMARK</label>
                                   <input
                                     type="text"
                                     disabled={!canEditRemark}
                                     value={queryableSalesRemark}
                                     onChange={(e) => setQueryableSalesRemark(e.target.value)}
-                                    placeholder="Enter Curebal Sales Remark"
+                                    placeholder="Enter Curable Sales Remark"
                                     style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: !canEditRemark ? '#f8fafc' : '#fff' }}
                                   />
                                 </div>
@@ -3883,7 +3903,7 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                       )}
                     </div>
                     <div>
-                      <span style={{ color: '#64748b', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' }}>Cureable Remark: </span>
+                      <span style={{ color: '#64748b', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' }}>Curable Remark: </span>
                       <strong style={{ color: '#0284c7', background: '#eff6ff', padding: '2px 8px', borderRadius: '4px', border: '1px solid #bfdbfe' }}>
                         {queryableRemark || 'NOT REQUIRED'}
                       </strong>
@@ -4241,9 +4261,9 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                         </select>
                       </div>
 
-                      {/* CUREABLE REMARK */}
+                      {/* CURABLE REMARK */}
                       <div>
-                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>CUREABLE REMARK</label>
+                        <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>CURABLE REMARK</label>
                         <select
                           disabled={!canEditFinal}
                           value={queryableRemark || 'NOT REQUIRED'}
@@ -4765,9 +4785,9 @@ const AdminDocumentVerificationModal = ({ application: rawApplication, app: rawA
                     </div>
                   )}
 
-                  {/* CUREABLE REMARK */}
+                  {/* CURABLE REMARK */}
                   <div>
-                    <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>CUREABLE REMARK</label>
+                    <label style={{ fontSize: '12px', fontWeight: 800, color: '#334155', display: 'block', marginBottom: '6px', textTransform: 'uppercase' }}>CURABLE REMARK</label>
                     <select
                       disabled={!canEditFinal}
                       value={queryableRemark || 'NOT REQUIRED'}

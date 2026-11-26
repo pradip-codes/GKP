@@ -409,6 +409,8 @@ const migrate = async () => {
 
     ALTER TABLE applications 
     ADD COLUMN IF NOT EXISTS vkyc_executive_code VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS process_executive_code VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS curable_executive_code VARCHAR(100),
     ADD COLUMN IF NOT EXISTS backend_remark TEXT,
     ADD COLUMN IF NOT EXISTS sales_operator_code VARCHAR(100),
     ADD COLUMN IF NOT EXISTS pan_checker_code VARCHAR(100),
