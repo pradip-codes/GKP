@@ -28,12 +28,12 @@ const REQUIRED_33_HEADERS = [
   'Final card approval',
   'User remark',
   'Bank remark',
-  'Cureble stage',
+  'Curable Remark',
   'Primary code',
   'Secondary code',
   'Cureble type',
   'Cureble operator code',
-  'Salas operator code',
+  'Curable Sales Remark',
   'Remark opretor code',
   'Decline reason',
   'Created date'
@@ -243,12 +243,30 @@ const getFrontendColDefs = (hideCustomerMobile, isAdminOperator) => [
       return (cleanBank !== '' && cleanBank.toUpperCase() !== 'NA' && cleanBank.toUpperCase() !== 'N/A') ? cleanBank : 'NA';
     }
   },
-  { header: 'Cureble stage', getVal: a => a.cureble_stage || a.curable_stage || a.queryable_remark || a.physical_details?.cureble_stage || a.physical_details?.queryable_remark || 'NA' },
+  { header: 'Curable Remark', getVal: a => {
+      for (const val of [a.queryable_remark, a.curable_remark, a.physical_details?.queryable_remark, a.physical_details?.curable_remark, a.curable_stage]) {
+        if (val !== undefined && val !== null) {
+          const clean = String(val).trim();
+          if (clean !== '' && clean.toUpperCase() !== 'NA' && clean.toUpperCase() !== 'N/A') return clean;
+        }
+      }
+      return 'NA';
+    }
+  },
   { header: 'Primary code', getVal: a => a.primary_code || a.decline_code || a.physical_details?.primary_code || a.physical_details?.decline_code || 'NA' },
   { header: 'Secondary code', getVal: a => a.secondary_code || a.physical_details?.secondary_code || 'NA' },
   { header: 'Cureble type', getVal: a => a.cureble_type || a.curable_type || a.digital_remark || a.physical_details?.cureble_type || a.physical_details?.digital_remark || 'NA' },
   { header: 'Cureble operator code', getVal: a => a.cureble_operator_code || a.curable_operator_code || a.curable_executive || a.physical_details?.cureble_operator_code || 'NA' },
-  { header: 'Salas operator code', getVal: a => a.salas_operator_code || a.sales_operator_code || a.queryable_sales_remark || a.physical_details?.sales_operator_code || a.physical_details?.salas_operator_code || 'NA' },
+  { header: 'Curable Sales Remark', getVal: a => {
+      for (const val of [a.queryable_sales_remark, a.curable_sales_remark, a.physical_details?.queryable_sales_remark, a.physical_details?.curable_sales_remark]) {
+        if (val !== undefined && val !== null) {
+          const clean = String(val).trim();
+          if (clean !== '' && clean.toUpperCase() !== 'NA' && clean.toUpperCase() !== 'N/A') return clean;
+        }
+      }
+      return 'NA';
+    }
+  },
   { header: 'Remark opretor code', getVal: a => a.remark_opretor_code || a.remark_operator_code || a.last_operator_code || a.physical_details?.remark_operator_code || a.physical_details?.remark_opretor_code || 'NA' },
   { header: 'Decline reason', getVal: a => a.decline_reason || a.decline_remark || a.offer_decline_reason || a.physical_details?.decline_reason || a.physical_details?.decline_remark || 'NA' },
   { header: 'Created date', getVal: a => (a.created_at || a.createdAt || a.application_date) ? new Date(a.created_at || a.createdAt || a.application_date).toLocaleDateString('en-IN') : 'N/A' }
@@ -282,11 +300,13 @@ const mockApplications = [
     final_card_approval: 'APPROVED_ACTIVE',
     user_remark: 'All customer documents verified cleanly',
     bank_remark: 'Approved with credit limit 150000',
-    cureble_stage: 'STAGE_CLEAR',
+    queryable_remark: 'DIGITAL SOLVED',
+    cureble_stage: 'All customer documents verified cleanly',
     primary_code: 'PR-01',
     secondary_code: 'SEC-02',
     cureble_type: 'DIGITAL_APPROVED',
     cureble_operator_code: 'OP-441',
+    queryable_sales_remark: 'Customer completed video KYC follow-up',
     salas_operator_code: 'SALES-102',
     remark_opretor_code: 'REM-301',
     decline_reason: 'NA',
@@ -364,6 +384,9 @@ for (let r = 1; r < parsedFrontend.length; r++) {
 }
 console.log(`✔ All ${mockApplications.length} data rows have exactly 33 fields, even with commas, quotes, nulls, and newlines!`);
 
+// Assert row 1 Curable Remark and Curable Sales Remark values are mapped accurately (not shadowed by user_remark/sales_operator_code)
+assert.strictEqual(parsedFrontend[1][24], 'DIGITAL SOLVED', 'Curable Remark column (idx 24) must output saved queryable_remark');
+assert.strictEqual(parsedFrontend[1][29], 'Customer completed video KYC follow-up', 'Curable Sales Remark column (idx 29) must output saved queryable_sales_remark');
 // Assert row 3 commas handled properly without shifting columns
 assert.strictEqual(parsedFrontend[3][5], 'Hyderabad, Telangana, South Zone', 'City with commas must be parsed intact into a single column');
 // Assert row 4 quotes handled properly

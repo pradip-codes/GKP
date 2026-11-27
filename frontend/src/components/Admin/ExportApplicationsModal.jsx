@@ -588,6 +588,19 @@ export default function ExportApplicationsModal({ isOpen, onClose, defaultApplic
         { header: 'Created Date', getVal: a => a.created_at ? new Date(a.created_at).toLocaleDateString('en-IN') : 'N/A' }
       );
 
+      // Helper to resolve the first non-empty, non-NA value for remark columns
+      const pickCleanDumpVal = (...candidates) => {
+        for (const val of candidates) {
+          if (val !== undefined && val !== null) {
+            const clean = String(val).trim();
+            if (clean !== '' && clean.toUpperCase() !== 'NA' && clean.toUpperCase() !== 'N/A') {
+              return clean;
+            }
+          }
+        }
+        return 'NA';
+      };
+
       // 33-column HDFC GharKaPaisa dump format
       const HDFC_COL_DEFS = [
         { header: 'Application no', getVal: a => a.app_number || a.application_no || a.id || '' },
@@ -640,12 +653,12 @@ export default function ExportApplicationsModal({ isOpen, onClose, defaultApplic
             return (cleanBank !== '' && cleanBank.toUpperCase() !== 'NA' && cleanBank.toUpperCase() !== 'N/A') ? cleanBank : 'NA';
           }
         },
-        { header: 'Cureble stage', getVal: a => a.cureble_stage || a.curable_stage || a.queryable_remark || a.physical_details?.cureble_stage || a.physical_details?.queryable_remark || 'NA' },
+        { header: 'Curable Remark', getVal: a => pickCleanDumpVal(a.queryable_remark, a.curable_remark, a.physical_details?.queryable_remark, a.physical_details?.curable_remark, a.curable_stage) },
         { header: 'Primary code', getVal: a => a.primary_code || a.decline_code || a.physical_details?.primary_code || a.physical_details?.decline_code || 'NA' },
         { header: 'Secondary code', getVal: a => a.secondary_code || a.physical_details?.secondary_code || 'NA' },
         { header: 'Cureble type', getVal: a => a.cureble_type || a.curable_type || a.digital_remark || a.physical_details?.cureble_type || a.physical_details?.digital_remark || 'NA' },
         { header: 'Cureble operator code', getVal: a => a.cureble_operator_code || a.curable_operator_code || a.curable_executive || a.physical_details?.cureble_operator_code || 'NA' },
-        { header: 'Salas operator code', getVal: a => a.salas_operator_code || a.sales_operator_code || a.queryable_sales_remark || a.physical_details?.sales_operator_code || a.physical_details?.salas_operator_code || 'NA' },
+        { header: 'Curable Sales Remark', getVal: a => pickCleanDumpVal(a.queryable_sales_remark, a.curable_sales_remark, a.physical_details?.queryable_sales_remark, a.physical_details?.curable_sales_remark) },
         { header: 'Remark opretor code', getVal: a => a.remark_opretor_code || a.remark_operator_code || a.last_operator_code || a.physical_details?.remark_operator_code || a.physical_details?.remark_opretor_code || 'NA' },
         { header: 'Decline reason', getVal: a => a.decline_reason || a.decline_remark || a.offer_decline_reason || a.physical_details?.decline_reason || a.physical_details?.decline_remark || 'NA' },
         { header: 'Created date', getVal: a => (a.created_at || a.createdAt || a.application_date) ? new Date(a.created_at || a.createdAt || a.application_date).toLocaleDateString('en-IN') : 'N/A' }

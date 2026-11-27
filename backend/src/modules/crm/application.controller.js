@@ -4511,6 +4511,8 @@ const exportApplicationsCSV = async (req, res, next) => {
           COALESCE(NULLIF(a.kyc_stage, ''), NULLIF(pad.kyc_stage, ''), NULLIF(a.vkyc_stage, ''), NULLIF(a.vkyc_status, ''), NULLIF(pad.vkyc_stage, '')) as kyc_stage,
           COALESCE(NULLIF(a.card_approval_stage, ''), NULLIF(pad.card_approval_stage, ''), NULLIF(a.digital_card_issued, ''), NULLIF(pad.digital_card_issued, '')) as final_card_approval,
           COALESCE(NULLIF(a.user_remark, ''), NULLIF(pad.user_remark, ''), a.notes, a.operational_remarks) as user_remark,
+          COALESCE(NULLIF(a.queryable_remark, ''), NULLIF(pad.queryable_remark, ''), NULLIF(a.cureble_stage, ''), NULLIF(pad.cureble_stage, '')) as queryable_remark,
+          COALESCE(NULLIF(a.queryable_sales_remark, ''), NULLIF(pad.queryable_sales_remark, '')) as queryable_sales_remark,
           COALESCE(NULLIF(a.user_remark, ''), NULLIF(pad.user_remark, '')) as cureble_stage,
           COALESCE(NULLIF(a.primary_decline_code, ''), NULLIF(pad.primary_decline_code, ''), NULLIF(a.decline_code, ''), NULLIF(pad.decline_code, '')) as primary_code,
           COALESCE(NULLIF(a.secondary_decline_code, ''), NULLIF(pad.secondary_decline_code, '')) as secondary_code,
@@ -4572,6 +4574,8 @@ const exportApplicationsCSV = async (req, res, next) => {
           NULL as kyc_stage,
           NULL as final_card_approval,
           NULL as user_remark,
+          NULL as queryable_remark,
+          NULL as queryable_sales_remark,
           NULL as cureble_stage,
           NULL as primary_code,
           NULL as secondary_code,
@@ -4712,12 +4716,12 @@ const exportApplicationsCSV = async (req, res, next) => {
         'Final card approval',
         'User remark',
         'Bank remark',
-        'Cureble stage',
+        'Curable Remark',
         'Primary code',
         'Secondary code',
         'Cureble type',
         'Cureble operator code',
-        'Salas operator code',
+        'Curable Sales Remark',
         'Remark opretor code',
         'Decline reason',
         'Created date'
@@ -4746,6 +4750,13 @@ const exportApplicationsCSV = async (req, res, next) => {
         const rawBankClean = (row.bank_remark && String(row.bank_remark).trim() !== '' && String(row.bank_remark).toUpperCase() !== 'N/A' && String(row.bank_remark).toUpperCase() !== 'NA') ? String(row.bank_remark).trim() : 'NA';
         const userRemark = userRemarkClean;
         const bankRemark = userRemarkClean !== 'NA' ? userRemarkClean : rawBankClean;
+        const cleanDumpVal = (v) => {
+          if (v === undefined || v === null) return 'NA';
+          const s = String(v).trim();
+          return (s !== '' && s.toUpperCase() !== 'NA' && s.toUpperCase() !== 'N/A') ? s : 'NA';
+        };
+        const curableRemarkVal = cleanDumpVal(row.queryable_remark || row.curable_remark);
+        const curableSalesRemarkVal = cleanDumpVal(row.queryable_sales_remark || row.curable_sales_remark);
         const declineReason = (row.decline_reason && String(row.decline_reason).trim() !== '' && String(row.decline_reason).toUpperCase() !== 'N/A') ? row.decline_reason : 'NA';
 
         const rowValues = [
@@ -4773,12 +4784,12 @@ const exportApplicationsCSV = async (req, res, next) => {
           formatCsvField(row.final_card_approval || 'NA'),
           formatCsvField(userRemark),
           formatCsvField(bankRemark),
-          formatCsvField(row.cureble_stage || 'NA'),
+          formatCsvField(curableRemarkVal),
           formatCsvField(row.primary_code || 'NA'),
           formatCsvField(row.secondary_code || 'NA'),
           formatCsvField(row.cureble_type || 'NA'),
           formatCsvField(row.cureble_operator_code || 'NA'),
-          formatCsvField(row.salas_operator_code || row.sales_operator_code || 'NA'),
+          formatCsvField(curableSalesRemarkVal),
           formatCsvField(row.remark_opretor_code || row.remark_operator_code || 'NA'),
           formatCsvField(declineReason),
           formatCsvField(row.created_at ? new Date(row.created_at).toLocaleDateString('en-IN') : 'N/A')
