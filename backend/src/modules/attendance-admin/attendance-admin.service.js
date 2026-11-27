@@ -34,8 +34,40 @@ const getTodayAdminAttendance = async ({
   const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
   const offset = (pageNum - 1) * limitNum;
 
+  // Deduplicate active/non-terminated employees per person identity (normalized 10-digit mobile, email, or user_id)
+  const dedupCte = `
+    WITH ranked_employees AS (
+      SELECT
+        e.*,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(
+            NULLIF(CASE WHEN LENGTH(REGEXP_REPLACE(COALESCE(u.mobile, e.mobile_number, ''), '[^0-9]', '', 'g')) >= 10
+              THEN RIGHT(REGEXP_REPLACE(COALESCE(u.mobile, e.mobile_number, ''), '[^0-9]', '', 'g'), 10)
+            END, ''),
+            NULLIF(LOWER(TRIM(COALESCE(u.email, e.email_id, ''))), ''),
+            e.user_id::TEXT,
+            e.id::TEXT
+          )
+          ORDER BY
+            CASE WHEN att.id IS NOT NULL THEN 0 ELSE 1 END,
+            CASE WHEN e.employee_status = 'ACTIVE' THEN 0 WHEN e.employee_status = 'ONBOARDING' THEN 1 ELSE 2 END,
+            CASE WHEN e.employee_id ~ '^CAND' THEN 0 WHEN e.employee_id ~ '^EMP' THEN 1 ELSE 2 END,
+            e.created_at ASC NULLS LAST,
+            e.id ASC
+        ) AS _rn
+      FROM employees e
+      LEFT JOIN users u ON u.id = e.user_id
+      LEFT JOIN employee_attendance att ON att.employee_id = e.id AND att.attendance_date = $1
+      WHERE e.employee_status != 'TERMINATED'
+    ),
+    deduped_employees AS (
+      SELECT * FROM ranked_employees WHERE _rn = 1
+    )
+  `;
+
   // 1. Overview summary metrics across active employee population for targetDate
   const summaryQuery = `
+    ${dedupCte}
     SELECT
       COUNT(e.id)::INT AS total_employees,
       COUNT(att.id) FILTER (WHERE att.status = 'PRESENT' OR att.status = 'PART_TIME' OR att.status = 'FULL_TIME')::INT AS total_present,
@@ -46,10 +78,8 @@ const getTodayAdminAttendance = async ({
       COUNT(att.id) FILTER (WHERE att.attendance_type = 'PART_TIME' OR att.status = 'PART_TIME')::INT AS total_part_time,
       COUNT(att.id) FILTER (WHERE att.attendance_type = 'FULL_TIME' OR (att.status = 'PRESENT' AND (att.attendance_type IS NULL OR att.attendance_type = 'FULL_TIME')))::INT AS total_full_time,
       COUNT(att.id) FILTER (WHERE att.is_re_attendance = TRUE)::INT AS total_re_attendance
-    FROM employees e
-    LEFT JOIN users u ON u.id = e.user_id
+    FROM deduped_employees e
     LEFT JOIN employee_attendance att ON att.employee_id = e.id AND att.attendance_date = $1
-    WHERE e.employee_status != 'TERMINATED'
   `;
   const { rows: [summaryRow] } = await query(summaryQuery, [targetDate]);
 
@@ -71,7 +101,7 @@ const getTodayAdminAttendance = async ({
   let paramIdx = 2;
 
   let baseWhere = `
-    WHERE e.employee_status != 'TERMINATED'
+    WHERE 1=1
   `;
 
   if (search && search.trim()) {
@@ -104,8 +134,9 @@ const getTodayAdminAttendance = async ({
 
   // Count query for pagination
   const countQuery = `
+    ${dedupCte}
     SELECT COUNT(e.id)::INT AS total
-    FROM employees e
+    FROM deduped_employees e
     LEFT JOIN users u ON u.id = e.user_id
     LEFT JOIN employee_attendance att ON att.employee_id = e.id AND att.attendance_date = $1
     ${baseWhere}
@@ -116,6 +147,7 @@ const getTodayAdminAttendance = async ({
   // Records query
   const listParams = [...params, limitNum, offset];
   const recordsQuery = `
+    ${dedupCte}
     SELECT
       e.id AS employee_id,
       e.employee_id AS employee_code,
@@ -126,7 +158,7 @@ const getTodayAdminAttendance = async ({
       e.designation,
       e.work_location,
       att.id AS attendance_id,
-      att.attendance_date,
+      att.attendance_date::TEXT AS attendance_date,
       att.check_in_time,
       att.check_out_time,
       COALESCE(att.status, 'NOT_MARKED') AS attendance_status,
@@ -146,7 +178,7 @@ const getTodayAdminAttendance = async ({
       COALESCE((SELECT COUNT(*)::INT FROM employee_tasks et WHERE et.employee_id = e.id AND et.task_date = $1 AND et.status = 'completed'), 0) AS completed_tasks,
       COALESCE((SELECT COUNT(*)::INT FROM employee_tasks et WHERE et.employee_id = e.id AND et.task_date = $1 AND et.task_type = 'EXTRA'), 0) AS extra_tasks_count,
       COALESCE((SELECT COUNT(*)::INT FROM employee_tasks et WHERE et.employee_id = e.id AND et.task_date = $1 AND (et.carried_from_date IS NOT NULL OR et.carry_count > 0 OR et.task_type = 'CARRY_OVER')), 0) AS carry_forward_tasks_count
-    FROM employees e
+    FROM deduped_employees e
     LEFT JOIN users u ON u.id = e.user_id
     LEFT JOIN employee_attendance att ON att.employee_id = e.id AND att.attendance_date = $1
     ${baseWhere}
@@ -280,7 +312,7 @@ const getAdminAttendanceHistory = async ({
       e.department,
       e.designation,
       e.work_location,
-      att.attendance_date,
+      att.attendance_date::TEXT AS attendance_date,
       att.check_in_time,
       att.check_out_time,
       att.status AS attendance_status,
@@ -371,17 +403,19 @@ const getEmployeeAttendanceDetails = async (employeeId, month, year, date) => {
   let empParams;
   if (isUuid) {
     empQuery = `
-      SELECT id, employee_id, full_name, email_id, mobile_number, designation, department, work_location, joining_date, employee_status
+      SELECT id, employee_id, full_name, email_id, mobile_number, designation, department, work_location, joining_date::TEXT AS joining_date, employee_status
       FROM employees 
       WHERE (id = $1 OR user_id = $1 OR candidate_id = $1) AND employee_status != 'TERMINATED'
+      ORDER BY CASE WHEN employee_status = 'ACTIVE' THEN 0 ELSE 1 END, created_at ASC NULLS LAST
       LIMIT 1
     `;
     empParams = [cleanEmpId];
   } else {
     empQuery = `
-      SELECT id, employee_id, full_name, email_id, mobile_number, designation, department, work_location, joining_date, employee_status
+      SELECT id, employee_id, full_name, email_id, mobile_number, designation, department, work_location, joining_date::TEXT AS joining_date, employee_status
       FROM employees 
       WHERE (employee_id = $1 OR mobile_number = $1) AND employee_status != 'TERMINATED'
+      ORDER BY CASE WHEN employee_status = 'ACTIVE' THEN 0 ELSE 1 END, created_at ASC NULLS LAST
       LIMIT 1
     `;
     empParams = [cleanEmpId];
@@ -399,7 +433,7 @@ const getEmployeeAttendanceDetails = async (employeeId, month, year, date) => {
   const { rows: [dailyAtt] } = await query(
     `SELECT
        id AS attendance_id,
-       attendance_date,
+       attendance_date::TEXT AS attendance_date,
        check_in_time,
        check_out_time,
        status AS attendance_status,
@@ -423,7 +457,7 @@ const getEmployeeAttendanceDetails = async (employeeId, month, year, date) => {
 
   // 2. Fetch Tasks for targetDate
   const { rows: dailyTasks } = await query(
-    `SELECT id, title, task_type, status, task_date, carried_from_date, carry_count, submitted_at, created_at
+    `SELECT id, title, task_type, status, task_date::TEXT AS task_date, carried_from_date::TEXT AS carried_from_date, carry_count, submitted_at, created_at
      FROM employee_tasks
      WHERE employee_id = $1 AND task_date = $2
      ORDER BY created_at ASC`,
@@ -542,7 +576,7 @@ const getEmployeeAttendanceDetails = async (employeeId, month, year, date) => {
   const { rows: monthlyRecords } = await query(
     `SELECT
        id AS attendance_id,
-       attendance_date,
+       attendance_date::TEXT AS attendance_date,
        check_in_time,
        check_out_time,
        status AS attendance_status,
@@ -588,7 +622,7 @@ const getEmployeeAttendanceDetails = async (employeeId, month, year, date) => {
 
   // 5. Monthly tasks
   const { rows: taskRecords } = await query(
-    `SELECT id, title, task_type, status, task_date, carried_from_date, carry_count, submitted_at, created_at
+    `SELECT id, title, task_type, status, task_date::TEXT AS task_date, carried_from_date::TEXT AS carried_from_date, carry_count, submitted_at, created_at
      FROM employee_tasks
      WHERE employee_id = $1
        AND EXTRACT(MONTH FROM task_date) = $2

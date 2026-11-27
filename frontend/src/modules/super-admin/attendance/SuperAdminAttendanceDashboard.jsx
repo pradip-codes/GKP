@@ -631,14 +631,36 @@ export default function SuperAdminAttendanceDashboard() {
   const formatDateReadable = (dateStr) => {
     if (!dateStr) return '-';
     try {
-      const parts = dateStr.split('-');
-      if (parts.length === 3) {
-        const d = new Date(parts[0], parts[1] - 1, parts[2]);
-        return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+      if (dateStr instanceof Date) {
+        if (isNaN(dateStr.getTime())) return '-';
+        return dateStr.toLocaleDateString('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        });
       }
-      return dateStr;
+      const str = String(dateStr).trim();
+      const plainDateMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (plainDateMatch) {
+        const [, year, month, day] = plainDateMatch;
+        const d = new Date(Number(year), Number(month) - 1, Number(day));
+        if (!isNaN(d.getTime())) {
+          return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+        }
+      }
+      const parsed = new Date(str);
+      if (!isNaN(parsed.getTime())) {
+        return parsed.toLocaleDateString('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        });
+      }
+      return str;
     } catch {
-      return dateStr;
+      return '-';
     }
   };
 

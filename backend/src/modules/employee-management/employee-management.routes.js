@@ -291,9 +291,21 @@ async function syncAndSeedEmployees() {
         COALESCE(c.experience_type, 'Full-time'), COALESCE(c.offered_salary, c.expected_salary, 18000), COALESCE(c.how_did_you_hear, 'Career Portal'),
         'ONBOARDING', 'PENDING'
       FROM employee_candidates c
-      LEFT JOIN users u ON (u.mobile = TRIM(c.mobile_number) OR (u.email IS NOT NULL AND LOWER(u.email) = LOWER(TRIM(c.email_id))))
-      WHERE NOT EXISTS (SELECT 1 FROM employees e WHERE e.candidate_id = c.id OR e.mobile_number = TRIM(c.mobile_number))
-      ON CONFLICT (mobile_number) DO UPDATE SET user_id = EXCLUDED.user_id
+      LEFT JOIN users u ON (
+        u.mobile = TRIM(c.mobile_number)
+        OR RIGHT(REGEXP_REPLACE(COALESCE(u.mobile, ''), '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(COALESCE(c.mobile_number, ''), '[^0-9]', '', 'g'), 10)
+        OR (u.email IS NOT NULL AND LOWER(u.email) = LOWER(TRIM(c.email_id)))
+      )
+      WHERE NOT EXISTS (
+        SELECT 1 FROM employees e
+        WHERE e.candidate_id = c.id
+           OR e.mobile_number = TRIM(c.mobile_number)
+           OR (LENGTH(REGEXP_REPLACE(COALESCE(c.mobile_number, ''), '[^0-9]', '', 'g')) >= 10
+               AND RIGHT(REGEXP_REPLACE(COALESCE(e.mobile_number, ''), '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(COALESCE(c.mobile_number, ''), '[^0-9]', '', 'g'), 10))
+           OR (u.id IS NOT NULL AND e.user_id = u.id)
+           OR (c.email_id IS NOT NULL AND TRIM(c.email_id) != '' AND LOWER(TRIM(e.email_id)) = LOWER(TRIM(c.email_id)))
+      )
+      ON CONFLICT (mobile_number) DO UPDATE SET user_id = COALESCE(employees.user_id, EXCLUDED.user_id)
     `).catch(e => logger.warn('Employee candidate sync note:', e.message));
 
     // Fix existing employees/users to use candidate reference_code strictly via candidate_id & user_id linkage
@@ -364,8 +376,15 @@ async function syncAndSeedEmployees() {
       FROM users u
       WHERE u.role = 'EMPLOYEE'
         AND (u.designation IS NULL OR (u.designation NOT ILIKE '%HR%' AND u.designation NOT ILIKE '%Human Resource%'))
-        AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.user_id = u.id OR e.mobile_number = TRIM(u.mobile))
-      ON CONFLICT (mobile_number) DO UPDATE SET user_id = EXCLUDED.user_id
+        AND NOT EXISTS (
+          SELECT 1 FROM employees e
+          WHERE e.user_id = u.id
+             OR e.mobile_number = TRIM(u.mobile)
+             OR (LENGTH(REGEXP_REPLACE(COALESCE(u.mobile, ''), '[^0-9]', '', 'g')) >= 10
+                 AND RIGHT(REGEXP_REPLACE(COALESCE(e.mobile_number, ''), '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(COALESCE(u.mobile, ''), '[^0-9]', '', 'g'), 10))
+             OR (u.email IS NOT NULL AND TRIM(u.email) != '' AND LOWER(TRIM(e.email_id)) = LOWER(TRIM(u.email)))
+        )
+      ON CONFLICT (mobile_number) DO UPDATE SET user_id = COALESCE(employees.user_id, EXCLUDED.user_id)
     `).catch(e => logger.warn('User-to-employee sync note:', e.message));
 
     // 4. Update users.employee_id from employees table if users.employee_id is null

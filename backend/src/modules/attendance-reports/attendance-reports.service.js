@@ -171,7 +171,7 @@ const getAttendanceReports = async ({
   const listQuery = `
     SELECT
       att.id AS attendance_id,
-      att.attendance_date,
+      att.attendance_date::TEXT AS attendance_date,
       e.id AS employee_uuid,
       e.employee_id AS employee_code,
       e.full_name AS employee_name,
@@ -399,7 +399,7 @@ const exportAttendanceReports = async ({
     SELECT
       att.id AS attendance_id,
       att.employee_id,
-      att.attendance_date,
+      att.attendance_date::TEXT AS attendance_date,
       e.full_name AS employee_name,
       e.employee_id AS employee_code,
       e.department,
@@ -469,11 +469,11 @@ const exportAttendanceReports = async ({
     SELECT
       et.id AS task_id,
       et.employee_id,
-      et.task_date,
+      et.task_date::TEXT AS task_date,
       et.title,
       et.status AS task_status,
       et.task_type,
-      et.carried_from_date,
+      et.carried_from_date::TEXT AS carried_from_date,
       et.carry_count,
       et.submitted_at,
       et.created_at,

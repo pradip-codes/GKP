@@ -92,6 +92,7 @@ jobs:
               "    sudo -u ubuntu node src/database/migrations/migrate_hdfc_curing_designations.js || true",
               "    sudo -u ubuntu node src/database/migrations/migrate_application_performance_optimization.js || true",
               "    sudo -u ubuntu node src/database/migrations/migrate_vkyc_executive_code.js || true",
+              "    sudo -u ubuntu node src/database/migrations/migrate_deduplicate_employees.js || true",
               "  fi",
               "done",
               "sudo -u ubuntu pm2 reload all --update-env || sudo -u ubuntu pm2 restart all --update-env || true",
