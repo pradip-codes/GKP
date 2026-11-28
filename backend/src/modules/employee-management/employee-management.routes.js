@@ -276,7 +276,7 @@ async function syncAndSeedEmployees() {
       FROM employee_candidates c
       WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.mobile = TRIM(c.mobile_number) OR (u.email IS NOT NULL AND LOWER(u.email) = LOWER(TRIM(c.email_id))))
       ON CONFLICT (mobile) DO UPDATE SET role = 'EMPLOYEE'
-    `).catch(e => logger.warn('User candidate sync note:', e.message));
+    `).catch(e => logger.warn(`User candidate sync note: ${e.message}`));
 
     // 2. Sync candidates into employees table
     await query(`
@@ -306,7 +306,7 @@ async function syncAndSeedEmployees() {
            OR (c.email_id IS NOT NULL AND TRIM(c.email_id) != '' AND LOWER(TRIM(e.email_id)) = LOWER(TRIM(c.email_id)))
       )
       ON CONFLICT (mobile_number) DO UPDATE SET user_id = COALESCE(employees.user_id, EXCLUDED.user_id)
-    `).catch(e => logger.warn('Employee candidate sync note:', e.message));
+    `).catch(e => logger.warn(`Employee candidate sync note: ${e.message}`));
 
     // Fix existing employees/users to use candidate reference_code strictly via candidate_id & user_id linkage
     await query(`
@@ -315,21 +315,25 @@ async function syncAndSeedEmployees() {
       FROM employee_candidates c
       WHERE e.candidate_id = c.id
         AND c.reference_code IS NOT NULL AND c.reference_code != ''
-        AND (e.employee_id LIKE 'YOH-%' OR e.employee_id IS NULL OR e.employee_id = '');
+        AND (e.employee_id LIKE 'YOH-%' OR e.employee_id IS NULL OR e.employee_id = '')
+        AND NOT EXISTS (SELECT 1 FROM employees x WHERE x.employee_id = c.reference_code AND x.id <> e.id)
+    `).catch(e => logger.warn(`Employee refcode sync note: ${e.message}`));
 
+    await query(`
       UPDATE users u
       SET employee_id = e.employee_id
       FROM employees e
       WHERE e.user_id = u.id
         AND e.employee_id IS NOT NULL AND e.employee_id != ''
-        AND (u.employee_id IS NULL OR u.employee_id != e.employee_id);
-    `).catch(e => logger.warn('Refcode sync note:', e.message));
+        AND (u.employee_id IS NULL OR u.employee_id != e.employee_id)
+        AND NOT EXISTS (SELECT 1 FROM users x WHERE x.employee_id = e.employee_id AND x.id <> u.id)
+    `).catch(e => logger.warn(`Refcode sync note: ${e.message}`));
 
     // Delete any partner_profiles for users with EMPLOYEE role
     await query(`
       DELETE FROM partner_profiles 
       WHERE user_id IN (SELECT id FROM users WHERE role = 'EMPLOYEE')
-    `).catch(e => logger.warn('Partner profile employee cleanup note:', e.message));
+    `).catch(e => logger.warn(`Partner profile employee cleanup note: ${e.message}`));
 
     // 3. Sync HR users into hr_profiles
     await query(`
@@ -347,19 +351,9 @@ async function syncAndSeedEmployees() {
       WHERE u.role = 'HR'
         AND NOT EXISTS (SELECT 1 FROM hr_profiles hp WHERE hp.user_id = u.id OR hp.mobile_number = TRIM(u.mobile))
       ON CONFLICT DO NOTHING;
-    `).catch(e => logger.warn('HR sync note:', e.message));
+    `).catch(e => logger.warn(`HR sync note: ${e.message}`));
 
-    // Remove any HR records from employees table so they do not show on super-admin/employees
-    const hrEmpSubquery = `SELECT id FROM employees WHERE user_id IN (SELECT id FROM users WHERE role = 'HR') OR designation ILIKE '%HR%' OR designation ILIKE '%Human Resource%'`;
-    await query(`DELETE FROM employee_onboarding_checklist WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
-    await query(`DELETE FROM employee_hierarchy WHERE employee_id IN (${hrEmpSubquery}) OR team_leader_id IN (${hrEmpSubquery}) OR manager_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
-    await query(`DELETE FROM employee_joining_details WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
-    await query(`DELETE FROM employee_kyc WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
-    await query(`DELETE FROM employee_documents WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
-    await query(`DELETE FROM employee_terms_acceptance WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
-    await query(`DELETE FROM employee_product_links WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
-    await query(`DELETE FROM employee_incentive_transactions WHERE employee_id IN (${hrEmpSubquery})`).catch(err => logger.warn('Silent catch warning:', err.message));
-    await query(`DELETE FROM employees WHERE id IN (${hrEmpSubquery})`).catch(e => logger.warn('Delete HR employees note:', e.message));
+    // HR/Admin staff keep their employees row because attendance, face templates and check-in state are ON DELETE CASCADE from employees(id); HR users are already hidden from the Super Admin Employees list/stats by the u.role = 'EMPLOYEE' and designation filters in GET / and GET /stats.
 
     // 4. Sync non-HR users with role EMPLOYEE into employees table (catches directly registered/created users)
     await query(`
@@ -385,7 +379,7 @@ async function syncAndSeedEmployees() {
              OR (u.email IS NOT NULL AND TRIM(u.email) != '' AND LOWER(TRIM(e.email_id)) = LOWER(TRIM(u.email)))
         )
       ON CONFLICT (mobile_number) DO UPDATE SET user_id = COALESCE(employees.user_id, EXCLUDED.user_id)
-    `).catch(e => logger.warn('User-to-employee sync note:', e.message));
+    `).catch(e => logger.warn(`User-to-employee sync note: ${e.message}`));
 
     // 4. Update users.employee_id from employees table if users.employee_id is null
     await query(`
@@ -393,7 +387,8 @@ async function syncAndSeedEmployees() {
       SET employee_id = e.employee_id
       FROM employees e
       WHERE e.user_id = u.id AND (u.employee_id IS NULL OR u.employee_id = '')
-    `).catch(e => logger.warn('User employee_id sync note:', e.message));
+        AND NOT EXISTS (SELECT 1 FROM users x WHERE x.employee_id = e.employee_id AND x.id <> u.id)
+    `).catch(e => logger.warn(`User employee_id sync note: ${e.message}`));
 
     // 5. Create checklist records for synced employees
     await query(`
@@ -402,7 +397,7 @@ async function syncAndSeedEmployees() {
       FROM employees e
       WHERE NOT EXISTS (SELECT 1 FROM employee_onboarding_checklist ch WHERE ch.employee_id = e.id)
       ON CONFLICT (employee_id) DO NOTHING
-    `).catch(e => logger.warn('Checklist sync note:', e.message));
+    `).catch(e => logger.warn(`Checklist sync note: ${e.message}`));
 
     // 4. Seed initial employees if total count is 0
     const checkEmp = await query(`SELECT COUNT(*) FROM employees`);
@@ -476,9 +471,9 @@ async function syncAndSeedEmployees() {
           WHEN h.hierarchy_level = 'TC' THEN 'TC'
           ELSE e.designation
         END)
-    `).catch(err => logger.warn('Designation standardization sync note:', err.message));
+    `).catch(err => logger.warn(`Designation standardization sync note: ${err.message}`));
     } catch (err) {
-      logger.warn('syncAndSeedEmployees error:', err.message);
+      logger.warn(`syncAndSeedEmployees error: ${err.message}`);
     } finally {
       isEmployeeSyncInProgress = null;
     }

@@ -390,13 +390,21 @@ router.post('/candidates/:id/select', async (req, res, next) => {
 
     // Check if user already exists
     let userRes = await query(`SELECT id FROM users WHERE mobile = $1 OR email = $2`, [candidate.mobile_number, candidate.email_id]);
-    let userId = null;
+    let userId = userRes.rows[0]?.id || null;
 
-    const employee_id = (candidate.reference_code && /^CAND\d+$/.test(candidate.reference_code))
+    let employee_id = (candidate.reference_code && /^CAND\d+$/.test(candidate.reference_code))
       ? candidate.reference_code
       : (candidate.employee_id && /^CAND\d+$/.test(candidate.employee_id))
         ? candidate.employee_id
         : await generateEmployeeId();
+
+    const { rows: existingUserOwner } = await query(
+      `SELECT id FROM users WHERE employee_id = $1 AND ($2::uuid IS NULL OR id <> $2::uuid) LIMIT 1`,
+      [employee_id, userId]
+    );
+    if (existingUserOwner.length > 0) {
+      employee_id = await generateEmployeeId();
+    }
 
     // Generate readable temporary password
     const tempPassword = `GKP@${Math.floor(100000 + Math.random() * 900000)}`;
@@ -421,6 +429,19 @@ router.post('/candidates/:id/select', async (req, res, next) => {
     // Ensure employee is NOT present in partner_profiles table
     if (userId) {
       await query(`DELETE FROM partner_profiles WHERE user_id = $1`, [userId]).catch(() => {});
+    }
+
+    // Check if employee_id already belongs to another employee row before INSERT INTO employees
+    const { rows: existingEmpOwner } = await query(
+      `SELECT id FROM employees WHERE employee_id = $1 AND ($2::uuid IS NULL OR user_id IS DISTINCT FROM $2::uuid) LIMIT 1`,
+      [employee_id, userId]
+    );
+    if (existingEmpOwner.length > 0) {
+      employee_id = await generateEmployeeId();
+      await query(
+        `UPDATE users SET employee_id = $1 WHERE id = $2 AND NOT EXISTS (SELECT 1 FROM users u2 WHERE u2.employee_id = $1 AND u2.id <> $2)`,
+        [employee_id, userId]
+      ).catch(() => {});
     }
 
     // Create Employee record

@@ -92,6 +92,7 @@ jobs:
               "    sudo -u ubuntu node src/database/migrations/migrate_hdfc_curing_designations.js || true",
               "    sudo -u ubuntu node src/database/migrations/migrate_application_performance_optimization.js || true",
               "    sudo -u ubuntu node src/database/migrations/migrate_vkyc_executive_code.js || true",
+              "    sudo -u ubuntu node -e '\''require(\"./src/database/migrations/migrate_employee_referral_code\").migrateEmployeeReferralCode().then(() => process.exit(0)).catch(() => process.exit(0))'\'' || true",
               "    sudo -u ubuntu node src/database/migrations/migrate_deduplicate_employees.js || true",
               "  fi",
               "done",
