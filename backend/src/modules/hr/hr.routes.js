@@ -4,7 +4,7 @@ const { query } = require('../../config/database');
 const jwtAuth = require('../../middleware/authentication/jwtAuth.middleware');
 const roleCheck = require('../../middleware/authorization/role.middleware');
 const bcrypt = require('bcryptjs');
-const { sendEmployeeInvitationEmail, sendCandidateAssignedToHrEmail, sendCandidateRejectionEmail } = require('../../services/email/email.service');
+const { sendEmployeeInvitationEmail, sendCandidateAssignedToHrEmail, sendCandidateSelectedEmail, sendCandidateRejectionEmail } = require('../../services/email/email.service');
 const { sendSms, sendEmployeeInviteSms } = require('../../services/sms/sms.service');
 const logger = require('../../config/logger');
 const { getSignedDownloadUrl } = require('../../services/aws/s3.service');
@@ -354,19 +354,38 @@ router.post('/candidates/:id/interview', async (req, res, next) => {
   try {
     const { id } = req.params;
     const { interview_status, interview_date, interview_feedback, interview_rating } = req.body;
+    const normalizedStatus = String(interview_status || 'INTERVIEWED').trim().toUpperCase();
 
     const { rows } = await query(
       `UPDATE employee_candidates 
        SET interview_status = $1, interview_date = $2, interview_feedback = $3, interview_rating = $4, interviewer_id = $5, updated_at = NOW()
        WHERE id = $6 RETURNING *`,
-      [interview_status || 'INTERVIEWED', interview_date || new Date(), interview_feedback, interview_rating, req.user.id, id]
+      [normalizedStatus, interview_date || new Date(), interview_feedback, interview_rating, req.user.id, id]
     );
 
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Candidate not found' });
     }
 
-    res.json({ success: true, message: 'Interview details updated', data: rows[0] });
+    const updatedCandidate = rows[0];
+
+    if (normalizedStatus === 'SELECTED' && updatedCandidate.email_id && typeof sendCandidateSelectedEmail === 'function') {
+      sendCandidateSelectedEmail({
+        candidateEmail: updatedCandidate.email_id,
+        candidateName: updatedCandidate.full_name,
+        referenceCode: updatedCandidate.reference_code,
+        targetRole: updatedCandidate.offered_designation || updatedCandidate.target_role,
+        interviewFeedback: interview_feedback || updatedCandidate.interview_feedback
+      }).catch(e => logger.warn(`[SELECT-FEEDBACK-EMAIL] Failed to send selection email to ${updatedCandidate.email_id}: ${e.message}`));
+    }
+
+    res.json({
+      success: true,
+      message: normalizedStatus === 'SELECTED'
+        ? 'Interview details updated and selection notification email sent.'
+        : 'Interview details updated',
+      data: updatedCandidate
+    });
   } catch (err) {
     next(err);
   }
